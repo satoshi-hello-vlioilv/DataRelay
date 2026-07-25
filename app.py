@@ -1,15 +1,25 @@
 from __future__ import annotations
-import atexit, configparser, csv, gc, json, logging, os, shutil, sqlite3, subprocess, sys, tempfile, threading, time, traceback, uuid, webbrowser
+import atexit, calendar, configparser, csv, gc, json, logging, os, shutil, sqlite3, subprocess, sys, tempfile, threading, time, traceback, uuid, webbrowser
 from collections import deque
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from flask import Flask, jsonify, render_template, request
 
-APP_VERSION='V31'; APP_VERSION_TITLE='ヘッダーと並列進捗表示のUIUX改善'; APP_RELEASED_AT='2026-07-25'
-BUILD_VERSION=f'{APP_VERSION}-header-and-lane-grid-refresh'; BASE=Path(__file__).resolve().parent; SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='V33'; APP_VERSION_TITLE='ハートビート監視によるゾンビプロセス防止'; APP_RELEASED_AT='2026-07-25'
+BUILD_VERSION=f'{APP_VERSION}-heartbeat-watchdog'; BASE=Path(__file__).resolve().parent; SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
- {'version':'V31','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+ {'version':'V33','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+  'ブラウザー側から10秒間隔でハートビートを送信し、バックエンドが生存を確認するようにしました。',
+  '45秒以上ハートビートが途絶えた場合、実行中のジョブが無く、かつ有効な自動実行ルールも無いときに限り、アプリが自動的に終了するようにしました。',
+  'タブを閉じ忘れた場合でもPythonプロセスが残り続けないようにする一方、自動実行スケジュールがある場合は無人稼働を継続します。',
+ ]},
+ {'version':'V32','date':'2026-07-25','title':'対象ファイル一覧への進捗統合表示','notes':[
+  '対象ファイル一覧の「自動実行」列を「進捗・次回実行」列へ再設計し、直近の開始予定時刻と予定の種類（手動のみ／定期／複数指定など）を表示するようにしました。',
+  '実行中・実行キュー待ちの対象は、一覧の該当行がそのまま進捗バーへ切り替わり、工程・経過時間を確認できるようにしました。',
+  '進捗表示中の行をクリックすると、詳細な進捗モーダルを直接開けるようにしました。',
+ ]},
+ {'version':'V31','date':'2026-07-25','title':'ヘッダーと並列進捗表示のUIUX改善','notes':[
   'ヘッダーのバージョン表示をアプリ名の直後へ移動し、状態表示・操作ボタンを役割ごとに区切り線で整理しました。',
   '並列実行の進捗レーンを、ライン数に応じて自動的に列数が変わるグリッド表示へ変更し、最大8ラインでも縦に伸びすぎず見やすく収まるようにしました。',
   '並列実行時の進捗モーダル幅を拡張し、レーン数が多い場合でも余裕を持って表示できるようにしました。',
@@ -31,7 +41,10 @@ CHANGELOG=[
  {'version':'V7〜V12','date':'','title':'基本レイアウトとログ基盤の整備','notes':['1画面に収まるレイアウトへ変更し、実行ログを工程単位でレポート化しました。']},
 ]
 app=Flask(__name__); app.config['SEND_FILE_MAX_AGE_DEFAULT']=0; run_lock=threading.Lock(); stop_event=threading.Event(); status_lock=threading.Lock(); command_queue_lock=threading.RLock(); command_queue_event=threading.Event(); command_queue=[]; active_command=None
-status={'build_version':BUILD_VERSION,'running':False,'current':'','current_job_id':'','current_job_name':'','current_index':0,'total_jobs':0,'step':'idle','step_label':'待機中','step_percent':0,'completed_jobs':0,'failed_jobs':0,'started_at':'','elapsed_seconds':0,'symnavi_window':'未起動','last_result':'未実行','last_finished_at':'','error_detail':'','activity_detail':'','activity_value':'','heartbeat_at':'','parallel_lines':[]}
+# ブラウザー側ハートビート監視。フロントからの生存信号が途絶えたら、ジョブ実行中でなく、
+# かつ有効な自動実行ルールも無い場合にだけ自プロセスを終了し、閉じ忘れによるゾンビ化を防ぐ。
+HEARTBEAT_TIMEOUT_SECONDS=45; heartbeat_lock=threading.Lock(); last_heartbeat_at=time.time()
+status={'build_version':BUILD_VERSION,'running':False,'current':'','current_job_id':'','current_job_name':'','current_index':0,'total_jobs':0,'step':'idle','step_label':'待機中','step_percent':0,'completed_jobs':0,'failed_jobs':0,'started_at':'','elapsed_seconds':0,'symnavi_window':'未起動','last_result':'未実行','last_finished_at':'','error_detail':'','activity_detail':'','activity_value':'','heartbeat_at':'','parallel_lines':[],'batch_job_ids':[]}
 log=logging.getLogger('navi'); log.setLevel(logging.INFO)
 if not log.handlers:
  h=logging.FileHandler(BASE/'logs'/'app.log',encoding='utf-8'); h.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')); log.addHandler(h)
@@ -811,10 +824,10 @@ def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,
   db=local_export/f'{Path(j["output_file"]).stem}_{stamp}{Path(j["output_file"]).suffix}'
   common_intermediate='API_DIRECT_XLSX' if fmt=='xlsx' else 'CSV'
   planned=db if fmt=='xlsx' else dde_work/f'navi_{job_index}_{stamp}.csv'
-  update_parallel_line(line_name,job=j['name'],state='開始',percent=5,detail=fmt);log.info('PARALLEL_JOB_START line=%s job=%s index=%s/%s format=%s target=%s',line_name,j['name'],job_index,total_jobs,fmt,target)
+  update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='開始',percent=5,detail=fmt);log.info('PARALLEL_JOB_START line=%s job=%s index=%s/%s format=%s target=%s',line_name,j['name'],job_index,total_jobs,fmt,target)
   log.info('PIPELINE job=%s engine=api parallel_line=%s common_intermediate=%s format=%s planned_intermediate=%s converted=%s target=%s',j['name'],line_name,common_intermediate,fmt,planned,db,target)
   api_client=NavigatorApi(resolve_path(cfg['symnavi_exe']),log,cfg.get('navigator_api_dll'))
-  update_parallel_line(line_name,job=j['name'],state='API接続',percent=10,detail='セッション接続');session_started=time.perf_counter();session_elapsed=api_client.open_session(user,pw,server);log.info('PARALLEL_API_SESSION line=%s job=%s dll=%s elapsed=%.2fs is_opened=1',line_name,j['name'],api_client.dll_path,session_elapsed)
+  update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='API接続',percent=10,detail='セッション接続');session_started=time.perf_counter();session_elapsed=api_client.open_session(user,pw,server);log.info('PARALLEL_API_SESSION line=%s job=%s dll=%s elapsed=%.2fs is_opened=1',line_name,j['name'],api_client.dll_path,session_elapsed)
   profiles=api_data_source_profiles(resolve_path(cfg['symnavim_conf']))
   if not any(p.get('kind')=='oracle' for p in profiles):
    profiles.insert(0,{'section':'NavigatorCredentialFallback','kind':'oracle','user':user,'password':pw,'server':'','option':'','resource':'','resource_kind':'0','credential_source':'navigator_session'})
@@ -829,11 +842,11 @@ def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,
    log.info('APIカタログ読込条件 line=%s dll=%s cwd=%s catalog_full=%s catalog_name=%s extension=%s size=%s mtime_ns=%s strategy=original_fullpath',line_name,api_client.dll_path,os.getcwd(),api_rne,api_rne.name,api_rne.suffix,rne_stat.st_size,rne_stat.st_mtime_ns)
    t=phase_log('api_open_catalog',job=j['name'],line=line_name);handle,api_elapsed=api_client.open_catalog(api_rne);phase_log('api_open_catalog',t,job=j['name'],line=line_name,handle=handle,api_elapsed=f'{api_elapsed:.2f}s',strategy='original_fullpath')
   finally:os.chdir(previous_cwd)
-  update_parallel_line(line_name,job=j['name'],state='問い合わせ実行',percent=35,detail='API execute');t=phase_log('api_execute_catalog',job=j['name'],line=line_name);api_number,api_elapsed=api_client.execute(handle);phase_log('api_execute_catalog',t,job=j['name'],line=line_name,number=api_number,api_elapsed=f'{api_elapsed:.2f}s')
+  update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='問い合わせ実行',percent=35,detail='API execute');t=phase_log('api_execute_catalog',job=j['name'],line=line_name);api_number,api_elapsed=api_client.execute(handle);phase_log('api_execute_catalog',t,job=j['name'],line=line_name,number=api_number,api_elapsed=f'{api_elapsed:.2f}s')
   t=phase_log('api_get_dimensions',job=j['name'],line=line_name);expected_rows,expected_cols=api_client.dimensions(handle);phase_log('api_get_dimensions',t,job=j['name'],line=line_name,rows=expected_rows,columns=expected_cols)
   api_direct_output=False
   if fmt=='xlsx':
-   update_parallel_line(line_name,job=j['name'],state='XLSX保存',percent=58,detail='直接出力')
+   update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='XLSX保存',percent=58,detail='直接出力')
    try:
     if db.exists():
      try:db.unlink()
@@ -849,25 +862,25 @@ def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,
      if db.exists():db.unlink()
     except:pass
   if not api_direct_output:
-   update_parallel_line(line_name,job=j['name'],state='CSV保存',percent=58,detail='API保存')
+   update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='CSV保存',percent=58,detail='API保存')
    api_csv=dde_work/f'navi_{job_index}_{stamp}.csv'
    t=phase_log('api_save_csv',job=j['name'],line=line_name);save_elapsed=api_client.save_csv(handle,api_csv);phase_log('api_save_csv',t,job=j['name'],line=line_name,api_elapsed=f'{save_elapsed:.2f}s',size=api_csv.stat().st_size if api_csv.exists() else 0)
    if not api_csv.is_file() or api_csv.stat().st_size<=0:raise RuntimeError(f'API中間CSVが作成されませんでした: {api_csv}')
    intermediate=api_csv
   t=phase_log('api_close_catalog',job=j['name'],line=line_name);api_client.close_catalog();phase_log('api_close_catalog',t,job=j['name'],line=line_name)
-  update_parallel_line(line_name,job=j['name'],state='変換・検証',percent=75,detail=fmt)
+  update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='変換・検証',percent=75,detail=fmt)
   if api_direct_output:
    t=phase_log('format_conversion',job=j['name'],line=line_name,format=fmt,mode='api_direct_xlsx');phase_log('format_conversion',t,job=j['name'],line=line_name,format=fmt,mode='api_direct_xlsx',rows=nr,columns=nc)
   else:
    t=phase_log('format_conversion',job=j['name'],line=line_name,format=fmt);nr,nc=export_data(intermediate,db,j,bool(cfg['settings']['reject_zero_rows']),expected_rows,expected_cols);phase_log('format_conversion',t,job=j['name'],line=line_name,format=fmt,rows=nr,columns=nc)
-  update_parallel_line(line_name,job=j['name'],state='公開',percent=90,detail=str(target));t=phase_log('publish',job=j['name'],line=line_name);pub=publish(db,target,backup,int(cfg['settings']['backup_generations']));phase_log('publish',t,job=j['name'],line=line_name,published=pub['published'])
+  update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='公開',percent=90,detail=str(target));t=phase_log('publish',job=j['name'],line=line_name);pub=publish(db,target,backup,int(cfg['settings']['backup_generations']));phase_log('publish',t,job=j['name'],line=line_name,published=pub['published'])
   total=time.perf_counter()-job_started
-  update_parallel_line(line_name,job=j['name'],state='完了',percent=100,detail=f'{nr}件/{nc}列',elapsed=round(total,1));log.info('PARALLEL_JOB_RESULT line=%s job=%s format=%s rows=%s columns=%s elapsed=%.2fs target=%s published=%s',line_name,j['name'],fmt,nr,nc,total,target,pub['published'])
+  update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='完了',percent=100,detail=f'{nr}件/{nc}列',elapsed=round(total,1));log.info('PARALLEL_JOB_RESULT line=%s job=%s format=%s rows=%s columns=%s elapsed=%.2fs target=%s published=%s',line_name,j['name'],fmt,nr,nc,total,target,pub['published'])
   result=f'{j["name"]}: {nr}件/{nc}列 / {total:.1f}秒'+('' if pub['published'] else f' / 更新保留: {pub["pending"]}')
   return {'ok':True,'job':j['name'],'format':fmt,'rows':nr,'columns':nc,'elapsed':total,'target':str(target),'result':result}
  except Exception as e:
   total=time.perf_counter()-job_started
-  update_parallel_line(line_name,job=j.get('name',''),state='失敗',percent=100,detail=str(e),elapsed=round(total,1));log.error('PARALLEL_JOB_ERROR line=%s job=%s elapsed=%.2fs error=%s\n%s',line_name,j.get('name'),total,e,traceback.format_exc())
+  update_parallel_line(line_name,job=j.get('name',''),job_id=j.get('id',''),state='失敗',percent=100,detail=str(e),elapsed=round(total,1));log.error('PARALLEL_JOB_ERROR line=%s job=%s elapsed=%.2fs error=%s\n%s',line_name,j.get('name'),total,e,traceback.format_exc())
   return {'ok':False,'job':j.get('name',''), 'elapsed':total, 'error':str(e)}
  finally:
   if api_client:
@@ -904,7 +917,7 @@ def run_api_process_batch(jobs,cfg,user,pw,server,dde_work,work,backup,max_lines
   flags=getattr(subprocess,'CREATE_NO_WINDOW',0)
   proc=subprocess.Popen([sys.executable,str(BASE/'api_worker.py'),str(payload_path)],cwd=str(BASE),env=env,creationflags=flags)
   active[slot]={'proc':proc,'job':job,'index':index,'line':line,'status':status_path,'result':result_path,'started':time.perf_counter()}
-  update_parallel_line(line,job=job['name'],state='起動',percent=2,detail=f'予約 {index}/{total} / PID {proc.pid}',queue_index=index,slot=slot,started_at=datetime.now().isoformat(timespec='seconds'))
+  update_parallel_line(line,job=job['name'],job_id=job['id'],state='起動',percent=2,detail=f'予約 {index}/{total} / PID {proc.pid}',queue_index=index,slot=slot,started_at=datetime.now().isoformat(timespec='seconds'))
   log.info('WORKER_START batch_id=%s line=%s pid=%s job=%s queue_index=%s/%s',batch_id,line,proc.pid,job['name'],index,total)
  for slot in range(1,max_lines+1):
   if queue:start_one(slot)
@@ -912,7 +925,7 @@ def run_api_process_batch(jobs,cfg,user,pw,server,dde_work,work,backup,max_lines
   for slot,item in list(active.items()):
    worker_status=_read_worker_json(item['status'])
    if worker_status:
-    update_parallel_line(item['line'],job=worker_status.get('job') or item['job']['name'],state=worker_status.get('state','処理中'),percent=worker_status.get('percent',0),detail=worker_status.get('detail',''),elapsed=round(time.perf_counter()-item['started'],1),pid=worker_status.get('pid',item['proc'].pid))
+    update_parallel_line(item['line'],job=worker_status.get('job') or item['job']['name'],job_id=item['job']['id'],state=worker_status.get('state','処理中'),percent=worker_status.get('percent',0),detail=worker_status.get('detail',''),elapsed=round(time.perf_counter()-item['started'],1),pid=worker_status.get('pid',item['proc'].pid))
    rc=item['proc'].poll()
    if rc is None:continue
    result=_read_worker_json(item['result'],{'ok':False,'job':item['job']['name'],'error':f'Worker終了コード {rc}','elapsed':time.perf_counter()-item['started']})
@@ -937,7 +950,7 @@ def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=No
  try:
   startup_started=time.perf_counter();cfg_started=time.perf_counter();cfg=load();log.info('STARTUP_PHASE phase=config_load elapsed=%.2fs',time.perf_counter()-cfg_started);jobs=[j for j in cfg['jobs'] if j.get('enabled') and (not job_ids or j['id'] in job_ids)]
   if not jobs:raise ValueError('実行対象がありません')
-  selection_elapsed=time.perf_counter()-cfg_started;first_job=jobs[0]; first_fmt=normalize_output_format(first_job.get('output_format'),first_job.get('output_file')); first_target=resolve_path(first_job.get('output_folder') or cfg['default_output_folder'])/canonical_output_file(first_job.get('output_file'),first_fmt); progress.started=time.time(); requested_lines=max(1,int(parallel_lines_override or 1)); execution_mode='parallel' if str(cfg['settings'].get('extract_engine') or 'api').lower()=='api' and len(jobs)>1 and requested_lines>1 else 'serial'; set_status(run_id=run_id or uuid.uuid4().hex,execution_mode=execution_mode,requested_lines=requested_lines,parallel_mode=(execution_mode=='parallel'),parallel_lines=[],queue_total=0,queue_waiting=0,queue_active=0,queue_completed=0,parallel_max_lines=(requested_lines if execution_mode=='parallel' else 0),parallel_speedup=0); set_status(running=True,current='準備中',current_job_id=first_job['id'],current_job_name=first_job['name'],current_index=1,total_jobs=len(jobs),completed_jobs=0,failed_jobs=0,output_format=first_fmt,output_file=canonical_output_file(first_job.get('output_file'),first_fmt),output_target=str(first_target),started_at=datetime.now().isoformat(timespec='seconds'),elapsed_seconds=0,symnavi_window='起動待ち',step='prepare',step_label='設定を確認しています',step_percent=3,last_result='実行中',error_detail=''); log.info('BUILD_VERSION=%s',BUILD_VERSION); log.info('処理開始 trigger=%s jobs=%s',trigger,[j['rne'] for j in jobs]);log.info('STARTUP_PHASE phase=config_and_job_selection elapsed=%.2fs',selection_elapsed)
+  selection_elapsed=time.perf_counter()-cfg_started;first_job=jobs[0]; first_fmt=normalize_output_format(first_job.get('output_format'),first_job.get('output_file')); first_target=resolve_path(first_job.get('output_folder') or cfg['default_output_folder'])/canonical_output_file(first_job.get('output_file'),first_fmt); progress.started=time.time(); requested_lines=max(1,int(parallel_lines_override or 1)); execution_mode='parallel' if str(cfg['settings'].get('extract_engine') or 'api').lower()=='api' and len(jobs)>1 and requested_lines>1 else 'serial'; set_status(run_id=run_id or uuid.uuid4().hex,execution_mode=execution_mode,requested_lines=requested_lines,parallel_mode=(execution_mode=='parallel'),parallel_lines=[],queue_total=0,queue_waiting=0,queue_active=0,queue_completed=0,parallel_max_lines=(requested_lines if execution_mode=='parallel' else 0),parallel_speedup=0,batch_job_ids=[j['id'] for j in jobs]); set_status(running=True,current='準備中',current_job_id=first_job['id'],current_job_name=first_job['name'],current_index=1,total_jobs=len(jobs),completed_jobs=0,failed_jobs=0,output_format=first_fmt,output_file=canonical_output_file(first_job.get('output_file'),first_fmt),output_target=str(first_target),started_at=datetime.now().isoformat(timespec='seconds'),elapsed_seconds=0,symnavi_window='起動待ち',step='prepare',step_label='設定を確認しています',step_percent=3,last_result='実行中',error_detail=''); log.info('BUILD_VERSION=%s',BUILD_VERSION); log.info('処理開始 trigger=%s jobs=%s',trigger,[j['rne'] for j in jobs]);log.info('STARTUP_PHASE phase=config_and_job_selection elapsed=%.2fs',selection_elapsed)
   for k in ('symnavi_exe','symnavim_conf','symnavim_def'):
    if not resolve_path(cfg[k]).is_file():raise FileNotFoundError(f'{k}がありません: {cfg[k]}')
   cred_started=time.perf_counter();user,pw,server,_=creds(resolve_path(cfg['symnavim_conf']));log.info('STARTUP_PHASE phase=credential_load elapsed=%.2fs',time.perf_counter()-cred_started);path_started=time.perf_counter();rne_root=resolve_path(cfg['rne_folder']);work=resolve_path(cfg['work_folder']);backup=resolve_path(cfg['backup_folder']);work.mkdir(parents=True,exist_ok=True);dde_work=dde_staging_folder();log.info('STARTUP_PHASE phase=path_prepare elapsed=%.2fs total=%.2fs',time.perf_counter()-path_started,time.perf_counter()-startup_started);log.info('共通一時保存先: %s',dde_work)
@@ -1122,6 +1135,82 @@ def schedule_key(job,rule,now):
  if kind=='monthly' and now.day in rule.get('month_days',[1]):return now.strftime('%Y-%m-%d')+tm
  if kind=='specific_dates' and now.strftime('%Y-%m-%d') in rule.get('dates',[]):return now.strftime('%Y-%m-%d')+tm
  return None
+
+def next_occurrence(rule,now):
+ """予定一覧表示用に、ルール1件が次に実行される日時を1つ返す（過去日時・無効ルールはNone）。"""
+ if not rule.get('enabled',True):return None
+ kind=rule.get('type','daily'); tm=str(rule.get('time') or '06:00')
+ try:hh,mm=map(int,tm.split(':'))
+ except Exception:hh,mm=6,0
+ if kind=='interval':
+  mins=max(1,int(rule.get('interval_minutes',60) or 60)); epoch=int(now.timestamp())
+  return datetime.fromtimestamp((epoch//(mins*60)+1)*(mins*60))
+ if kind=='daily':
+  cand=now.replace(hour=hh,minute=mm,second=0,microsecond=0); return cand if cand>now else cand+timedelta(days=1)
+ if kind=='weekdays':
+  days=set(rule.get('weekdays') or [])
+  if not days:return None
+  for add in range(8):
+   d=now+timedelta(days=add)
+   if d.weekday() in days:
+    cand=d.replace(hour=hh,minute=mm,second=0,microsecond=0)
+    if cand>now:return cand
+  return None
+ if kind=='monthly':
+  days=rule.get('month_days') or [1]
+  for add in range(62):
+   d=(now+timedelta(days=add)).date(); last=calendar.monthrange(d.year,d.month)[1]
+   target={(last if x==-1 else x) for x in days}
+   if d.day in target:
+    cand=datetime(d.year,d.month,d.day,hh,mm)
+    if cand>now:return cand
+  return None
+ if kind=='specific_dates':
+  best=None
+  for ds in (rule.get('dates') or []):
+   try:y,mo,da=map(int,str(ds).split('-'))
+   except Exception:continue
+   cand=datetime(y,mo,da,hh,mm)
+   if cand>now and (best is None or cand<best):best=cand
+  return best
+ return None
+
+def job_schedule_hint(rules):
+ if not rules:return '手動のみ'
+ if len(rules)>1:return f'複数指定 ({len(rules)}件)'
+ r=rules[0]; kind=r.get('type','daily')
+ if kind=='interval':return f'定期 ({max(1,int(r.get("interval_minutes",60) or 60))}分ごと)'
+ return {'daily':'毎日','weekdays':'曜日指定','monthly':'月日指定','specific_dates':'特定日'}.get(kind,kind)
+
+def job_schedule_preview(job,now):
+ if not job.get('enabled'):return {'id':job['id'],'next_run':None,'hint':'対象が無効'}
+ rules=[r for r in job.get('schedules',[]) if r.get('enabled')]
+ candidates=[c for c in (next_occurrence(r,now) for r in rules) if c]
+ next_run=min(candidates) if candidates else None
+ return {'id':job['id'],'next_run':next_run.isoformat(timespec='minutes') if next_run else None,'hint':job_schedule_hint(rules)}
+def any_enabled_schedule_exists():
+ try:
+  cfg=load()
+  return any(j.get('enabled') and any(r.get('enabled') for r in j.get('schedules',[])) for j in cfg['jobs'])
+ except Exception:
+  return True  # 判定に失敗した場合は自動実行を壊さない側へ倒し、終了させない。
+
+def heartbeat_watchdog():
+ time.sleep(10)  # 初回ページ読込み・最初のハートビート到達までの猶予。
+ while not stop_event.wait(10):
+  try:
+   with heartbeat_lock:silence=time.time()-last_heartbeat_at
+   if silence<=HEARTBEAT_TIMEOUT_SECONDS:continue
+   if status['running']:
+    log.info('HEARTBEAT_WATCHDOG silence=%.0fs だが実行中のため終了を見送りました',silence);continue
+   if any_enabled_schedule_exists():
+    log.info('HEARTBEAT_WATCHDOG silence=%.0fs だが有効な自動実行ルールがあるため常駐を継続します',silence);continue
+   log.info('HEARTBEAT_WATCHDOG silence=%.0fsを検出し、ブラウザーが閉じられたと判断してアプリを終了します',silence)
+   for h in log.handlers:h.flush()
+   stop_event.set();os._exit(0)
+  except Exception:
+   log.exception('ハートビート監視エラー')
+
 def scheduler():
  time.sleep(3)
  while not stop_event.wait(15):
@@ -1152,6 +1241,10 @@ def get_config():
  return jsonify(c)
 @app.put('/api/config')
 def put_config():save(request.get_json(force=True));return jsonify(ok=True)
+@app.get('/api/schedule-preview')
+def schedule_preview():
+ c=load(); now=datetime.now()
+ return jsonify(items=[job_schedule_preview(j,now) for j in c['jobs']])
 @app.post('/api/run')
 def run_all():
  try:
@@ -1369,6 +1462,12 @@ def instance_info():
 def version_info():
  return jsonify(version=APP_VERSION,build_version=BUILD_VERSION,title=APP_VERSION_TITLE,released_at=APP_RELEASED_AT,changelog=CHANGELOG)
 
+@app.post('/api/heartbeat')
+def heartbeat():
+ global last_heartbeat_at
+ with heartbeat_lock:last_heartbeat_at=time.time()
+ return jsonify(ok=True,timeout_seconds=HEARTBEAT_TIMEOUT_SECONDS)
+
 @app.post('/api/shutdown-app')
 def shutdown_app():
  def stop():
@@ -1379,6 +1478,6 @@ def shutdown_app():
 def shutdown():stop_event.set()
 if __name__=='__main__':
  migrate_legacy_settings()
- threading.Thread(target=scheduler,daemon=True,name='scheduler').start(); threading.Thread(target=command_dispatcher,daemon=True,name='command-dispatcher').start(); 
+ threading.Thread(target=scheduler,daemon=True,name='scheduler').start(); threading.Thread(target=command_dispatcher,daemon=True,name='command-dispatcher').start(); threading.Thread(target=heartbeat_watchdog,daemon=True,name='heartbeat-watchdog').start()
  if os.environ.get('NAVI_LAUNCHED_BY_GUARD')!='1':threading.Timer(1.2,lambda:webbrowser.open(f'http://{HOST}:{PORT}')).start()
  app.run(host=HOST,port=PORT,debug=False,threaded=True)
