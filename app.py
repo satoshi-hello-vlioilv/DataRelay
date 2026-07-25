@@ -5,11 +5,16 @@ from datetime import datetime
 from pathlib import Path
 from flask import Flask, jsonify, render_template, request
 
-APP_VERSION='V30'; APP_VERSION_TITLE='設定画面の再構成とバージョン管理'; APP_RELEASED_AT='2026-07-25'
-BUILD_VERSION=f'{APP_VERSION}-settings-ia-version-center'; BASE=Path(__file__).resolve().parent; SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='V31'; APP_VERSION_TITLE='ヘッダーと並列進捗表示のUIUX改善'; APP_RELEASED_AT='2026-07-25'
+BUILD_VERSION=f'{APP_VERSION}-header-and-lane-grid-refresh'; BASE=Path(__file__).resolve().parent; SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
- {'version':'V30','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+ {'version':'V31','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+  'ヘッダーのバージョン表示をアプリ名の直後へ移動し、状態表示・操作ボタンを役割ごとに区切り線で整理しました。',
+  '並列実行の進捗レーンを、ライン数に応じて自動的に列数が変わるグリッド表示へ変更し、最大8ラインでも縦に伸びすぎず見やすく収まるようにしました。',
+  '並列実行時の進捗モーダル幅を拡張し、レーン数が多い場合でも余裕を持って表示できるようにしました。',
+ ]},
+ {'version':'V30','date':'2026-07-25','title':'設定画面の再構成とバージョン管理','notes':[
   '共通設定を「接続とパス／抽出方式／並列実行／DDE互換設定／安全性とバックアップ／バージョン情報」のカテゴリー別ナビゲーション構成へ再編しました。',
   'API方式選択時にもDDE専用項目（DDE接続待機・XLS生成待機）が常に表示されていた構成を見直し、選択中の抽出方式に応じて使用状況を明示するようにしました。',
   'ヘッダーのバージョン表示と共通設定内の「バージョン情報」から、アプリ内で更新履歴を確認できるようにしました。',
