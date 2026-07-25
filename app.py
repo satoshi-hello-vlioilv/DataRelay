@@ -5,7 +5,26 @@ from datetime import datetime
 from pathlib import Path
 from flask import Flask, jsonify, render_template, request
 
-BUILD_VERSION='V29-vertical-progress-log-workspace'; BASE=Path(__file__).resolve().parent; SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='V30'; APP_VERSION_TITLE='設定画面の再構成とバージョン管理'; APP_RELEASED_AT='2026-07-25'
+BUILD_VERSION=f'{APP_VERSION}-settings-ia-version-center'; BASE=Path(__file__).resolve().parent; SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+# アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
+CHANGELOG=[
+ {'version':'V30','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+  '共通設定を「接続とパス／抽出方式／並列実行／DDE互換設定／安全性とバックアップ／バージョン情報」のカテゴリー別ナビゲーション構成へ再編しました。',
+  'API方式選択時にもDDE専用項目（DDE接続待機・XLS生成待機）が常に表示されていた構成を見直し、選択中の抽出方式に応じて使用状況を明示するようにしました。',
+  'ヘッダーのバージョン表示と共通設定内の「バージョン情報」から、アプリ内で更新履歴を確認できるようにしました。',
+ ]},
+ {'version':'V29','date':'','title':'進捗の縦積み表示とログ管理機能の強化','notes':[
+  '並列実行の進捗表示を横並びから縦積みレイアウトへ変更しました。',
+  '実行ログへ種別（実行処理／設定変更／実行キュー／性能計測／公開処理／エラー）の色分け表示を追加しました。',
+  'ログの検索語・種別・レベルによるフィルター機能と、フィルター結果や選択行をまとめてコピーする機能を追加しました。',
+  '保存期間を指定した古いログの一括削除、および選択行・表示結果の削除機能を追加しました。',
+ ]},
+ {'version':'V21','date':'','title':'実行キューの可視化','notes':['実行待ちの対象と処理順序を一覧表示し、順序変更・解除を行えるようにしました。']},
+ {'version':'V17〜V20','date':'','title':'並列進捗モーダルの安定化','notes':['並列実行レーンの状態表示と、進捗モーダルの再表示導線を整備しました。']},
+ {'version':'V13〜V16','date':'','title':'API並列実行の導入','notes':['API方式による複数ライン同時実行と、プロセス分離方式の予約キュー管理を追加しました。']},
+ {'version':'V7〜V12','date':'','title':'基本レイアウトとログ基盤の整備','notes':['1画面に収まるレイアウトへ変更し、実行ログを工程単位でレポート化しました。']},
+]
 app=Flask(__name__); app.config['SEND_FILE_MAX_AGE_DEFAULT']=0; run_lock=threading.Lock(); stop_event=threading.Event(); status_lock=threading.Lock(); command_queue_lock=threading.RLock(); command_queue_event=threading.Event(); command_queue=[]; active_command=None
 status={'build_version':BUILD_VERSION,'running':False,'current':'','current_job_id':'','current_job_name':'','current_index':0,'total_jobs':0,'step':'idle','step_label':'待機中','step_percent':0,'completed_jobs':0,'failed_jobs':0,'started_at':'','elapsed_seconds':0,'symnavi_window':'未起動','last_result':'未実行','last_finished_at':'','error_detail':'','activity_detail':'','activity_value':'','heartbeat_at':'','parallel_lines':[]}
 log=logging.getLogger('navi'); log.setLevel(logging.INFO)
@@ -1340,6 +1359,10 @@ def validate():
 @app.get('/api/instance')
 def instance_info():
  return jsonify(app='SymfoNaviDataHub',display_name='SymfoNavi Data Hub',build_version=BUILD_VERSION,pid=os.getpid(),port=PORT,path=str(BASE))
+
+@app.get('/api/version')
+def version_info():
+ return jsonify(version=APP_VERSION,build_version=BUILD_VERSION,title=APP_VERSION_TITLE,released_at=APP_RELEASED_AT,changelog=CHANGELOG)
 
 @app.post('/api/shutdown-app')
 def shutdown_app():
