@@ -5,11 +5,17 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from flask import Flask, jsonify, render_template, request
 
-APP_VERSION='V33'; APP_VERSION_TITLE='ハートビート監視によるゾンビプロセス防止'; APP_RELEASED_AT='2026-07-25'
-BUILD_VERSION=f'{APP_VERSION}-heartbeat-watchdog'; BASE=Path(__file__).resolve().parent; SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='V34'; APP_VERSION_TITLE='ブラウザーとアプリ稼働状態の同期'; APP_RELEASED_AT='2026-07-25'
+BUILD_VERSION=f'{APP_VERSION}-browser-lifecycle-sync'; BASE=Path(__file__).resolve().parent; SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
- {'version':'V33','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+ {'version':'V34','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+  'コマンドプロンプトを表示しない start.vbs を追加しました（初回セットアップは引き続きstart.batを使用します）。',
+  '実行中にブラウザーを閉じようとすると警告が表示されるようにし、「アプリを終了」ボタンからは確認のうえ実行を中断して終了できるようにしました。',
+  '実行中のジョブと実行キューを中断するAPIを追加しました（並列(プロセス分離)ラインは即時終了、直列実行は安全な区切りまで進めてから停止します）。',
+  'サーバーへの接続が失われた場合に、その旨をブラウザー画面へ明示し、タブを閉じるよう案内する通知を追加しました。',
+ ]},
+ {'version':'V33','date':'2026-07-25','title':'ハートビート監視によるゾンビプロセス防止','notes':[
   'ブラウザー側から10秒間隔でハートビートを送信し、バックエンドが生存を確認するようにしました。',
   '45秒以上ハートビートが途絶えた場合、実行中のジョブが無く、かつ有効な自動実行ルールも無いときに限り、アプリが自動的に終了するようにしました。',
   'タブを閉じ忘れた場合でもPythonプロセスが残り続けないようにする一方、自動実行スケジュールがある場合は無人稼働を継続します。',
@@ -44,6 +50,10 @@ app=Flask(__name__); app.config['SEND_FILE_MAX_AGE_DEFAULT']=0; run_lock=threadi
 # ブラウザー側ハートビート監視。フロントからの生存信号が途絶えたら、ジョブ実行中でなく、
 # かつ有効な自動実行ルールも無い場合にだけ自プロセスを終了し、閉じ忘れによるゾンビ化を防ぐ。
 HEARTBEAT_TIMEOUT_SECONDS=45; heartbeat_lock=threading.Lock(); last_heartbeat_at=time.time()
+# 実行中断（ユーザーによる明示キャンセル）。プロセス分離ワーカーはterminateで即時停止できるが、
+# 直列(DDE/API)実行中の1件はCOM/DDE操作の途中で安全に打ち切れないため、次のジョブ開始前でのみ打ち切る。
+cancel_requested=threading.Event(); active_workers_lock=threading.Lock(); active_workers={}
+class RunCancelled(Exception):pass
 status={'build_version':BUILD_VERSION,'running':False,'current':'','current_job_id':'','current_job_name':'','current_index':0,'total_jobs':0,'step':'idle','step_label':'待機中','step_percent':0,'completed_jobs':0,'failed_jobs':0,'started_at':'','elapsed_seconds':0,'symnavi_window':'未起動','last_result':'未実行','last_finished_at':'','error_detail':'','activity_detail':'','activity_value':'','heartbeat_at':'','parallel_lines':[],'batch_job_ids':[]}
 log=logging.getLogger('navi'); log.setLevel(logging.INFO)
 if not log.handlers:
@@ -903,6 +913,7 @@ def run_api_process_batch(jobs,cfg,user,pw,server,dde_work,work,backup,max_lines
  batch_id=datetime.now().strftime('%Y%m%d_%H%M%S_')+uuid.uuid4().hex[:8]
  runtime=dde_work/'parallel_runtime'/('parallel_'+batch_id);runtime.mkdir(parents=True,exist_ok=True)
  queue=deque(enumerate(jobs,1));active={};results=[];failures=[];completed=0
+ with active_workers_lock:active_workers.clear()
  batch_started=time.perf_counter(); total=len(jobs); max_lines=max(1,min(int(max_lines),total))
  set_status(parallel_lines=[{'line':f'ライン {n}','job':'','state':'待機','percent':0,'elapsed':0,'detail':'開始待ち','slot':n} for n in range(1,max_lines+1)],queue_total=total,queue_waiting=total,queue_active=0,queue_completed=0,parallel_max_lines=max_lines,parallel_mode=True,symnavi_window=f'独立プロセス {max_lines}ライン')
  log.info('PARALLEL_BATCH_START model=process-isolated trigger=%s batch_id=%s runtime=%s jobs=%s max_lines=%s total_jobs=%s parent_pid=%s',trigger,batch_id,runtime,[j['rne'] for j in jobs],max_lines,total,os.getpid())
@@ -917,11 +928,28 @@ def run_api_process_batch(jobs,cfg,user,pw,server,dde_work,work,backup,max_lines
   flags=getattr(subprocess,'CREATE_NO_WINDOW',0)
   proc=subprocess.Popen([sys.executable,str(BASE/'api_worker.py'),str(payload_path)],cwd=str(BASE),env=env,creationflags=flags)
   active[slot]={'proc':proc,'job':job,'index':index,'line':line,'status':status_path,'result':result_path,'started':time.perf_counter()}
+  with active_workers_lock:active_workers[slot]=proc
   update_parallel_line(line,job=job['name'],job_id=job['id'],state='起動',percent=2,detail=f'予約 {index}/{total} / PID {proc.pid}',queue_index=index,slot=slot,started_at=datetime.now().isoformat(timespec='seconds'))
   log.info('WORKER_START batch_id=%s line=%s pid=%s job=%s queue_index=%s/%s',batch_id,line,proc.pid,job['name'],index,total)
  for slot in range(1,max_lines+1):
   if queue:start_one(slot)
  while active:
+  if cancel_requested.is_set():
+   log.info('PARALLEL_BATCH_CANCELLED batch_id=%s active=%s queued=%s',batch_id,len(active),len(queue))
+   queue.clear()
+   for slot,item in list(active.items()):
+    try:item['proc'].terminate()
+    except Exception:pass
+   for slot,item in list(active.items()):
+    try:item['proc'].wait(timeout=5)
+    except Exception:
+     try:item['proc'].kill()
+     except Exception:pass
+    failures.append({'ok':False,'job':item['job']['name'],'error':'ユーザーにより中断されました','elapsed':time.perf_counter()-item['started']})
+    update_parallel_line(item['line'],job=item['job']['name'],job_id=item['job']['id'],state='中断',percent=100,detail='ユーザーにより中断されました',elapsed=round(time.perf_counter()-item['started'],1))
+    with active_workers_lock:active_workers.pop(slot,None)
+    del active[slot]
+   break
   for slot,item in list(active.items()):
    worker_status=_read_worker_json(item['status'])
    if worker_status:
@@ -932,8 +960,9 @@ def run_api_process_batch(jobs,cfg,user,pw,server,dde_work,work,backup,max_lines
    completed+=1
    (results if result.get('ok') else failures).append(result)
    log.info('WORKER_END batch_id=%s line=%s pid=%s job=%s returncode=%s ok=%s elapsed=%.2fs',batch_id,item['line'],item['proc'].pid,item['job']['name'],rc,result.get('ok'),result.get('elapsed',0))
+   with active_workers_lock:active_workers.pop(slot,None)
    del active[slot]
-   if queue:start_one(slot)
+   if queue and not cancel_requested.is_set():start_one(slot)
   waiting=len(queue);running=len(active)
   set_status(completed_jobs=completed,current_index=min(completed+running,total),current_job_name=f'予約キュー処理中: 実行 {running} / 待機 {waiting}',step='save',step_label=f'API並列処理 実行 {running}・待機 {waiting}・完了 {completed}',step_percent=round(100*completed/max(1,total)),activity_detail=f'{max_lines}ラインで予約クエリを処理',activity_value=f'実行 {running} / 待機 {waiting} / 完了 {completed}/{total}',queue_total=total,queue_waiting=waiting,queue_active=running,queue_completed=completed)
   time.sleep(.25)
@@ -946,6 +975,7 @@ def run_api_process_batch(jobs,cfg,user,pw,server,dde_work,work,backup,max_lines
 
 def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=None):
  if not run_lock.acquire(False):raise RuntimeError('別の処理が実行中です')
+ cancel_requested.clear()
  proc=srv=api_client=None; hide_done=None; window_watch_stop=None; window_watch_thread=None; access_prewarm_thread=None
  try:
   startup_started=time.perf_counter();cfg_started=time.perf_counter();cfg=load();log.info('STARTUP_PHASE phase=config_load elapsed=%.2fs',time.perf_counter()-cfg_started);jobs=[j for j in cfg['jobs'] if j.get('enabled') and (not job_ids or j['id'] in job_ids)]
@@ -962,6 +992,7 @@ def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=No
   log.info('EXECUTION_MODE mode=%s requested_lines=%s selected_jobs=%s',('parallel-process' if engine=='api' and len(jobs)>1 and api_parallel_lines>1 else 'serial'),api_parallel_lines,len(jobs))
   if engine=='api' and len(jobs)>1 and api_parallel_lines>1:
    results,failures,batch_elapsed=run_api_process_batch(jobs,cfg,user,pw,server,dde_work,work,backup,api_parallel_lines,trigger)
+   if cancel_requested.is_set():raise RunCancelled(f'{len(results)}/{len(jobs)}件完了後に中断されました')
    if failures:raise RuntimeError('API並列実行で失敗: '+' | '.join(f"{r['job']}: {r.get('error')}" for r in failures))
    msg='正常終了 | 全件%sファイル / %.1f秒 | '%(len(results),batch_elapsed)+' | '.join(r['result'] for r in results)
    progress('complete','すべての処理が完了しました',100);set_status(last_result=msg,last_finished_at=datetime.now().isoformat(timespec='seconds'),elapsed_seconds=int(time.time()-progress.started));log.info(msg)
@@ -990,6 +1021,7 @@ def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=No
   else:raise ValueError('抽出エンジンが不正です: '+engine)
   progress('ready','処理の準備が完了しました',20); results=[]
   for job_index,j in enumerate(jobs,1):
+   if cancel_requested.is_set():raise RunCancelled(f'{job_index-1}/{len(jobs)}件完了後に中断されました')
    set_status(current_index=job_index,current_job_id=j['id'],current_job_name=j['name'],output_format=normalize_output_format(j.get('output_format'),j.get('output_file')),output_file=canonical_output_file(j.get('output_file'),normalize_output_format(j.get('output_format'),j.get('output_file'))))
    preflight_started=phase_log('job_preflight',job=j['name']); progress('open',f'{j["name"]}: 入出力先を確認しています',22,activity_detail='事前確認',activity_value='出力先・保留ファイル・RNEを確認'); rp=resolve_rne_path(j,cfg); out_dir=resolve_path(j.get('output_folder') or cfg['default_output_folder']); fmt=validate_output_contract(j,'before-extraction'); j['_accdb_template']=str(resolve_path(cfg.get('accdb_template','.\\assets\\empty.accdb'))); target=out_dir/j['output_file']; set_status(output_target=str(target)); log.info('実行設定 job=%s format=%s output_file=%s target=%s',j['name'],fmt,j['output_file'],target); apply_pending(target,backup,int(cfg['settings']['backup_generations'])); phase_log('job_preflight',preflight_started,job=j['name'],rne=rp,target=target)
    if not rp.is_file():raise FileNotFoundError('RNEがありません: '+str(rp))
@@ -1067,9 +1099,12 @@ def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=No
      if p:p.unlink()
     except:pass
   msg='正常終了 | '+' | '.join(results); progress('complete','すべての処理が完了しました',100); set_status(last_result=msg,last_finished_at=datetime.now().isoformat(timespec='seconds'),elapsed_seconds=int(time.time()-progress.started)); log.info(msg)
+ except RunCancelled as e:
+  msg='中断されました: '+str(e); set_status(step='cancelled',step_label='ユーザーの操作により中断しました',step_percent=100,last_result=msg,error_detail='',last_finished_at=datetime.now().isoformat(timespec='seconds'),elapsed_seconds=int(time.time()-getattr(progress,'started',time.time()))); log.info('RUN_CANCELLED %s',msg)
  except Exception as e:
   msg='異常終了: '+str(e); set_status(step='error',step_label='処理を完了できませんでした',failed_jobs=1,step_percent=100,last_result=msg,error_detail=str(e),last_finished_at=datetime.now().isoformat(timespec='seconds'),elapsed_seconds=int(time.time()-getattr(progress,'started',time.time()))); log.error('%s\n%s',msg,traceback.format_exc()); raise
  finally:
+  cancel_requested.clear()
   set_status(running=False,current='',current_job_id='',symnavi_window='終了済み')
   if window_watch_stop:window_watch_stop.set()
   if window_watch_thread:window_watch_thread.join(timeout=1.0)
@@ -1258,6 +1293,20 @@ def run_one(job_id):
   item,position=enqueue_command([job_id],'manual-single',1)
   return jsonify(ok=True,queued=True,queue_id=item['id'],position=position,parallel_lines=1,job_names=item['job_names'])
  except Exception as e:return jsonify(error=str(e)),400
+@app.post('/api/run/cancel')
+def cancel_run():
+ with command_queue_lock:
+  queue_cleared=len(command_queue); command_queue.clear()
+ if not status.get('running'):
+  log.info('CANCEL_REQUESTED_IDLE queue_cleared=%s',queue_cleared)
+  return jsonify(ok=True,was_running=False,workers_terminated=0,queue_cleared=queue_cleared)
+ cancel_requested.set()
+ with active_workers_lock:workers=list(active_workers.values())
+ for p in workers:
+  try:p.terminate()
+  except Exception:pass
+ log.info('CANCEL_REQUESTED workers_terminated=%s queue_cleared=%s',len(workers),queue_cleared)
+ return jsonify(ok=True,was_running=True,workers_terminated=len(workers),queue_cleared=queue_cleared)
 @app.get('/api/execution-queue')
 def get_execution_queue():
  response=jsonify(queue_snapshot());response.headers['Cache-Control']='no-store';return response
