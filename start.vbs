@@ -1,53 +1,206 @@
-' SymfoNavi Data Hub - hidden launcher.
-' Starts start_app.py (single-instance guard + detached app.py + opens the browser)
-' without ever showing a console/command-prompt window.
-' Initial setup (installing Python packages) should still be done once via start.bat;
-' this script assumes the required packages are already installed.
 Option Explicit
 
-Dim shell, fso, scriptDir, target, launched, errMsg
+' SymfoNavi Data Hub - single hidden launcher
+' No start.bat is required for normal startup.
+
+Const APP_URL = "http://127.0.0.1:5031"
+Const INSTANCE_URL = "http://127.0.0.1:5031/api/instance"
+Const STARTUP_TIMEOUT_SECONDS = 60
+
+Dim shell, fso, scriptDir, logDir, startupLog, vbsLog
+Dim pythonCmd, target, commandLine, rc
 
 Set shell = CreateObject("WScript.Shell")
 Set fso = CreateObject("Scripting.FileSystemObject")
+
 scriptDir = fso.GetParentFolderName(WScript.ScriptFullName)
-target = scriptDir & "\start_app.py"
+logDir = fso.BuildPath(scriptDir, "logs")
+startupLog = fso.BuildPath(logDir, "startup.log")
+vbsLog = fso.BuildPath(logDir, "vbs_launcher.log")
+target = fso.BuildPath(scriptDir, "start_app.py")
+
+If Not fso.FolderExists(logDir) Then fso.CreateFolder logDir
+shell.CurrentDirectory = scriptDir
+WriteLog "START script=" & WScript.ScriptFullName
 
 If Not fso.FileExists(target) Then
-    MsgBox "start_app.py ãŒè¦‹ã¤ã‹ã‚Šã¾ã›ã‚“ã€‚" & vbCrLf & vbCrLf & target, vbCritical, "SymfoNavi Data Hub"
-    WScript.Quit 1
+    Fail "start_app.py ‚ªŒ©‚Â‚©‚è‚Ü‚¹‚ñB", target
 End If
 
-shell.CurrentDirectory = scriptDir
-launched = False
-errMsg = ""
-
-On Error Resume Next
-
-' pythonw.exe (ã‚³ãƒ³ã‚½ãƒ¼ãƒ«ã‚’æŒãŸãªã„Python)ã‚’å„ªå…ˆã™ã‚‹ã€‚
-Err.Clear
-shell.Run "pythonw.exe """ & target & """", 0, False
-If Err.Number = 0 Then
-    launched = True
-Else
-    errMsg = Err.Description
+' If the server is already running, do not create another Python process.
+If ApplicationReady() Then
+    WriteLog "EXISTING_SERVER detected"
+    OpenBrowser
+    WScript.Quit 0
 End If
 
-If Not launched Then
-    Err.Clear
-    shell.Run "python.exe """ & target & """", 0, False
-    If Err.Number = 0 Then
-        launched = True
-    Else
-        errMsg = Err.Description
+' Match the successful batch file's Python selection order.
+pythonCmd = FindPython()
+If pythonCmd = "" Then
+    Fail "Python‚ğ‹N“®‚Å‚«‚Ü‚¹‚ñ‚Å‚µ‚½B", _
+         "Python 3‚ÌƒCƒ“ƒXƒg[ƒ‹ó‘Ô‚ÆPATH‚ğŠm”F‚µ‚Ä‚­‚¾‚³‚¢B"
+End If
+WriteLog "PYTHON command=" & pythonCmd
+
+' Check the exact environment selected above. Install only when imports fail.
+rc = RunHiddenWait(pythonCmd & " -c " & Quote("import flask,xlrd,win32ui,dde,openpyxl") & _
+                   " >> " & Quote(startupLog) & " 2>&1")
+If rc <> 0 Then
+    WriteLog "DEPENDENCY_CHECK failed rc=" & rc
+    If Not fso.FileExists(fso.BuildPath(scriptDir, "requirements.txt")) Then
+        Fail "•K—v‚ÈPythonƒpƒbƒP[ƒW‚ª•s‘«‚µ‚Ä‚¢‚Ü‚·B", _
+             "requirements.txt ‚ªŒ©‚Â‚©‚è‚Ü‚¹‚ñB"
+    End If
+
+    rc = RunHiddenWait(pythonCmd & " -m pip install --user -r " & _
+                       Quote(fso.BuildPath(scriptDir, "requirements.txt")) & _
+                       " >> " & Quote(startupLog) & " 2>&1")
+    If rc <> 0 Then
+        Fail "PythonƒpƒbƒP[ƒW‚Ì“±“ü‚É¸”s‚µ‚Ü‚µ‚½B", _
+             "logs\startup.log ‚ğŠm”F‚µ‚Ä‚­‚¾‚³‚¢B"
     End If
 End If
 
-On Error Goto 0
+' Start start_app.py without a console. The Python launcher retains
+' multi-instance protection and detached app.py startup.
+commandLine = pythonCmd & " " & Quote(target) & _
+              " >> " & Quote(startupLog) & " 2>&1"
+WriteLog "LAUNCH " & commandLine
 
-If Not launched Then
-    MsgBox "Pythonã‚’èµ·å‹•ã§ãã¾ã›ã‚“ã§ã—ãŸã€‚" & vbCrLf & _
-           "Python 3ãŒã‚¤ãƒ³ã‚¹ãƒˆãƒ¼ãƒ«ã•ã‚Œã€PATHã«ç™»éŒ²ã•ã‚Œã¦ã„ã‚‹ã‹ç¢ºèªã—ã¦ãã ã•ã„ã€‚" & vbCrLf & vbCrLf & _
-           "åˆå›ã‚»ãƒƒãƒˆã‚¢ãƒƒãƒ—ãŒæœªå®Ÿæ–½ã®å ´åˆã¯ã€å…ˆã« start.bat ã‚’ä¸€åº¦å®Ÿè¡Œã—ã¦ãã ã•ã„ã€‚" & vbCrLf & vbCrLf & _
-           "è©³ç´°: " & errMsg, vbCritical, "SymfoNavi Data Hub"
-    WScript.Quit 1
+On Error Resume Next
+Err.Clear
+rc = shell.Run(ComSpecCommand(commandLine), 0, False)
+If Err.Number <> 0 Then
+    Dim launchError
+    launchError = "Err " & Err.Number & ": " & Err.Description
+    On Error GoTo 0
+    Fail "ƒAƒvƒŠ‚Ì‹N“®—v‹‚É¸”s‚µ‚Ü‚µ‚½B", launchError
 End If
+On Error GoTo 0
+
+' The VBS owns browser startup. This avoids dependence on Python's
+' webbrowser module or the Python Install Manager windowed process.
+If WaitForApplication(STARTUP_TIMEOUT_SECONDS) Then
+    WriteLog "SERVER_READY url=" & APP_URL
+    OpenBrowser
+    WScript.Quit 0
+End If
+
+Fail "ƒAƒvƒŠƒT[ƒo[‚Ì‹N“®‚ğŠm”F‚Å‚«‚Ü‚¹‚ñ‚Å‚µ‚½B", _
+     "logs\vbs_launcher.logAlogs\launcher.logAlogs\startup.logAlogs\app.log ‚ğŠm”F‚µ‚Ä‚­‚¾‚³‚¢B"
+
+Function FindPython()
+    Dim candidates, item, result
+    candidates = Array("py -3", "python")
+    FindPython = ""
+
+    For Each item In candidates
+        result = RunHiddenWait(CStr(item) & " --version >> " & Quote(startupLog) & " 2>&1")
+        If result = 0 Then
+            FindPython = CStr(item)
+            Exit Function
+        End If
+        WriteLog "PYTHON_SKIP command=" & CStr(item) & " rc=" & result
+    Next
+End Function
+
+Function RunHiddenWait(innerCommand)
+    On Error Resume Next
+    Err.Clear
+    RunHiddenWait = shell.Run(ComSpecCommand(innerCommand), 0, True)
+    If Err.Number <> 0 Then
+        WriteLog "RUN_ERROR command=" & innerCommand & _
+                 " number=" & Err.Number & " description=" & Err.Description
+        RunHiddenWait = -1
+    End If
+    Err.Clear
+    On Error GoTo 0
+End Function
+
+Function ComSpecCommand(innerCommand)
+    ComSpecCommand = shell.ExpandEnvironmentStrings("%ComSpec%") & _
+                     " /d /s /c " & Quote(innerCommand)
+End Function
+
+Function ApplicationReady()
+    Dim http, body
+    ApplicationReady = False
+    Set http = Nothing
+
+    On Error Resume Next
+    Err.Clear
+    Set http = CreateObject("MSXML2.XMLHTTP.6.0")
+    If Err.Number = 0 Then
+        http.Open "GET", INSTANCE_URL, False
+        http.setRequestHeader "Cache-Control", "no-cache"
+        http.Send
+        If http.Status = 200 Then
+            body = http.responseText
+            If InStr(1, body, "SymfoNaviDataHub", vbTextCompare) > 0 Or _
+               InStr(1, body, "NaviToSQLite", vbTextCompare) > 0 Then
+                ApplicationReady = True
+            End If
+        End If
+    End If
+    Err.Clear
+    On Error GoTo 0
+End Function
+
+Function WaitForApplication(seconds)
+    Dim n
+    WaitForApplication = False
+    For n = 1 To seconds * 2
+        If ApplicationReady() Then
+            WaitForApplication = True
+            Exit Function
+        End If
+        WScript.Sleep 500
+    Next
+End Function
+
+Sub OpenBrowser()
+    Dim appShell
+    WriteLog "BROWSER_REQUEST url=" & APP_URL
+
+    On Error Resume Next
+    Err.Clear
+    Set appShell = CreateObject("Shell.Application")
+    appShell.ShellExecute APP_URL, "", "", "open", 1
+    If Err.Number = 0 Then
+        WriteLog "BROWSER_REQUEST method=Shell.Application result=accepted"
+        On Error GoTo 0
+        Exit Sub
+    End If
+
+    WriteLog "BROWSER_RETRY method=explorer error=" & Err.Number & " " & Err.Description
+    Err.Clear
+    shell.Run "explorer.exe " & Quote(APP_URL), 1, False
+    If Err.Number = 0 Then
+        WriteLog "BROWSER_REQUEST method=explorer result=accepted"
+    Else
+        WriteLog "BROWSER_FAILED error=" & Err.Number & " " & Err.Description
+        MsgBox "ƒAƒvƒŠ‚Í‹N“®‚µ‚Ü‚µ‚½‚ªAƒuƒ‰ƒEƒU[‚ğŠJ‚¯‚Ü‚¹‚ñ‚Å‚µ‚½B" & _
+               vbCrLf & vbCrLf & APP_URL, vbExclamation, "SymfoNavi Data Hub"
+    End If
+    Err.Clear
+    On Error GoTo 0
+End Sub
+
+Function Quote(value)
+    Quote = Chr(34) & CStr(value) & Chr(34)
+End Function
+
+Sub WriteLog(message)
+    Dim stream
+    On Error Resume Next
+    Set stream = fso.OpenTextFile(vbsLog, 8, True, 0)
+    stream.WriteLine Now & " " & message
+    stream.Close
+    On Error GoTo 0
+End Sub
+
+Sub Fail(title, detail)
+    WriteLog "ERROR " & title & " detail=" & detail
+    MsgBox title & vbCrLf & vbCrLf & detail, vbCritical, "SymfoNavi Data Hub"
+    WScript.Quit 1
+End Sub
