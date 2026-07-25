@@ -1,0 +1,46 @@
+{
+  "backup_folder": ".\\backup",
+  "default_output_folder": "\\\\Nlmsrvngy03\\Read\\【New】仕掛\\SQL",
+  "jobs": [
+    {
+      "enabled": true,
+      "id": "aa4c3a4a-a661-4d9d-82c9-8e0b7ca1821e",
+      "name": "SIKALOTDEF",
+      "output_file": "SIKALOTDEF.txt",
+      "output_folder": "\\\\Nlmsrvngy03\\Read\\【New】仕掛\\SQL",
+      "output_format": "txt",
+      "rne": "SIKALOTDEF.RNE",
+      "rne_path": ".\\rne\\SIKALOTDEF.RNE",
+      "schedules": [],
+      "sheet": "Page1",
+      "table": "仕掛",
+      "type": "詳細データ"
+    },
+    {
+      "enabled": true,
+      "id": "93ee32c0-788c-4d59-9cff-32f6fc90c694",
+      "name": "SIKALOTNOW",
+      "output_file": "SIKALOTNOW.csv",
+      "output_folder": "\\\\Nlmsrvngy03\\Read\\【New】仕掛\\SQL",
+      "output_format": "csv",
+      "rne": "SIKALOTNOW.RNE",
+      "rne_path": ".\\rne\\SIKALOTNOW.RNE",
+      "schedules": [],
+      "sheet": "Page1",
+      "table": "仕掛",
+      "type": "詳細データ"
+    }
+  ],
+  "rne_folder": ".\\rne",
+  "settings": {
+    "backup_generations": 5,
+    "dde_timeout_seconds": 120,
+    "output_wait_seconds": 300,
+    "reject_zero_rows": true,
+    "startup_run": false
+  },
+  "symnavi_exe": "C:\\NAVICL\\bin\\SymNavi.exe",
+  "symnavim_conf": "symnavim.conf",
+  "symnavim_def": "symnavim.def",
+  "work_folder": ".\\work"
+}
