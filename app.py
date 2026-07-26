@@ -1268,6 +1268,12 @@ def scheduler():
 @app.get('/')
 def index():
  response=app.make_response(render_template('index.html'));response.headers['Cache-Control']='no-store, no-cache, must-revalidate, max-age=0';response.headers['Pragma']='no-cache';return response
+@app.get('/favicon.ico')
+def favicon():
+ # favicon.icoの中身はSVG。拡張子と実体の食い違いでブラウザーが弾かないよう、明示的にimage/svg+xmlで返す。
+ f=BASE/'favicon.ico'
+ if not f.is_file():return ('',404)
+ response=app.make_response(f.read_bytes());response.headers['Content-Type']='image/svg+xml';response.headers['Cache-Control']='public, max-age=86400';return response
 @app.get('/api/config')
 def get_config():
  c=load()
