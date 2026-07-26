@@ -215,3 +215,597 @@ tr:has(.rowprogress.is-running) td{background:#f6fcfd}tr:has(.rowprogress.is-err
 .server-lost-card p{margin:0;color:var(--muted);font-size:12.5px;line-height:1.6}
 .server-lost-card small{color:#a3391f;font-size:11.5px;font-weight:700}
 .server-lost-card button{margin-top:6px}
+
+/* V35: target-list progress polish + last-run + dynamic naming builder */
+.jobs-table{min-width:1240px}
+.jobs-table .c-check{width:34px}
+.jobs-table .c-state{width:58px}
+.jobs-table th:nth-child(3){width:168px}
+.jobs-table th:nth-child(4){width:178px}
+.jobs-table th:nth-child(5){width:188px}
+.jobs-table th:nth-child(6){width:auto}
+.jobs-table .c-progress{width:254px}
+.jobs-table .c-action{width:150px}
+.jobs-table td.c-progress{padding:5px 8px}
+.rowprogress{min-width:0;max-width:100%;overflow:hidden}
+.rp-schedule{min-width:0;max-width:100%;gap:3px}
+.rp-next-row,.rp-last-row{display:flex;align-items:center;gap:6px;min-width:0}
+.rp-next-label,.rp-last-label{font-size:9px;font-weight:800;color:#7f8f9a;background:#eef3f5;border-radius:4px;padding:1px 5px;flex:none;letter-spacing:.02em}
+.rp-last-label{background:#f0eef5;color:#7a7391}
+.rp-next{font-size:12px;font-weight:800;color:#203542;flex:none;white-space:nowrap}
+.rp-hint{font-size:10.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.rp-last{font-size:11px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;color:#5d737d}
+.rp-last.ok{color:#0a7a54}
+.rp-last.ng{color:#b93b32}
+.rp-last.warn{color:#a76100}
+.rp-last.none{color:#95a3ac;font-weight:600}
+.rp-live{min-width:0;max-width:100%}
+.rp-live-top{gap:8px}
+.rp-state{max-width:none;flex:1 1 auto;min-width:0}
+.rp-elapsed{flex:none}
+.rp-track{width:100%}
+.rp-detail{max-width:100%}
+.name-var-badge{display:inline-block;font-size:9px;font-weight:800;color:#0a6c86;background:#dcf1f5;border:1px solid #b6e0e8;border-radius:4px;padding:0 4px;margin-right:5px;vertical-align:1px}
+/* dynamic naming builder */
+.naming-box{border:1px solid #dbe4e9;border-radius:9px;background:#f8fbfc;padding:11px 12px;margin-bottom:10px}
+.naming-mode{display:inline-flex;background:#eaf1f4;border:1px solid #d3e0e6;border-radius:8px;padding:3px;gap:3px;margin-bottom:11px}
+.naming-tab{background:transparent;color:#436072;font-size:12px;padding:6px 15px;border-radius:6px}
+.naming-tab.on{background:#fff;color:#0a5f77;box-shadow:0 1px 3px #15384d1f}
+.naming-pane{display:none}
+.naming-pane.on{display:block}
+.naming-field{display:grid;gap:4px;font-size:12px;font-weight:700;color:#435661;margin-bottom:6px}
+.naming-chips{display:grid;gap:8px;margin:6px 0 10px}
+.chip-group{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.chip-label{font-size:10.5px;font-weight:800;color:#5f7581;min-width:106px;letter-spacing:.02em}
+.chip{background:#eef5f7;color:#1f5568;border:1px solid #cadfe6;border-radius:14px;padding:4px 11px;font-size:11.5px;font-weight:700}
+.chip:hover{background:#dcecf1;border-color:#a9d2dd;filter:none}
+.naming-preview{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px;background:#0f2733;color:#e7f4f7;border-radius:8px;padding:9px 12px}
+.np-label{font-size:10px;font-weight:800;letter-spacing:.08em;color:#7fd4dd}
+#m-name-preview{font:13px Consolas,monospace;color:#fff;font-weight:700;word-break:break-all}
+#m-name-preview-meta{font-size:10.5px;color:#9fc4cd;flex:1 1 100%}
+.naming-help code{background:#eaf1f4;border-radius:4px;padding:0 4px;font-size:10.5px;color:#2b6072}
+
+/* V36: editor modal information architecture — basic / input / output hierarchy with color-coded section badges */
+.sectiontitle{display:flex;align-items:center;gap:8px}
+.sect-badge{flex:none;width:22px;height:22px;border-radius:6px;display:grid;place-items:center;font-size:11px;font-weight:900;font-style:normal;letter-spacing:0}
+.sb-basic{background:#e6f3f6;color:#0b6d86}
+.sb-input{background:#eceafc;color:#4b4fb0}
+.sb-output{background:#e5f5ef;color:#0b6b4c}
+.sect-input{border-bottom-color:#cfccef}
+.sect-output{border-bottom-color:#c2e6d6}
+.naming-sub{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap;margin:11px 2px 6px}
+.naming-sub b{font-size:12px;font-weight:800;color:#305265}
+.naming-sub small{font-size:10.5px;color:#7c8f99;line-height:1.4}
+
+/* ============================================================
+   v1.0.0: 対象ファイル設定モーダルの再設計
+   - 出力形式（拡張子）を出力ファイル名の直上へ配置（要望1）
+   - 「基本・入出力」と「自動実行」をタブ分離しスクロールレス化（要望2）
+   - 認知心理学(近接・領域分け) / 情報アーキテクチャ(2階層タブ) / 色彩調和(既存パレット踏襲)
+   ============================================================ */
+/* --- editor tabs --- */
+.editor-tabs{display:flex;gap:8px;padding:4px;background:#eef3f5;border:1px solid #d7e0e5;border-radius:10px;margin-bottom:14px}
+.editor-tab{flex:1;display:flex;align-items:center;gap:9px;background:transparent;color:#4a6270;border:1px solid transparent;border-radius:8px;padding:9px 12px;text-align:left;cursor:pointer;position:relative;min-width:0}
+.editor-tab:hover{background:#e2ecef}
+.editor-tab.on{background:#fff;border-color:#bfe1e6;box-shadow:0 1px 5px #15384d1a}
+.etab-badge{flex:none;width:26px;height:26px;border-radius:8px;display:grid;place-items:center;font-size:12px;font-weight:900;font-style:normal;background:#dbe7eb;color:#4a6270}
+.editor-tab.on .eb-io{background:#e6f3f6;color:#0b6d86}
+.editor-tab.on .eb-sched{background:#f1eaf9;color:#5c3f96}
+.etab-text{display:grid;gap:1px;min-width:0}
+.etab-text b{font-size:13px;font-weight:800;color:#31505d;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.editor-tab[data-etab="io"].on .etab-text b{color:#0b6d86}
+.editor-tab[data-etab="schedule"].on .etab-text b{color:#5c3f96}
+.etab-text small{font-size:10.5px;color:#748790;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.etab-count{position:absolute;top:7px;right:9px;min-width:20px;height:18px;padding:0 6px;border-radius:9px;background:#5c3f96;color:#fff;font-size:10.5px;font-weight:800;display:inline-flex;align-items:center;justify-content:center}
+.editor-pane{display:none;animation:etab-fade .18s ease}
+.editor-pane.on{display:block}
+@keyframes etab-fade{from{opacity:.4;transform:translateY(2px)}to{opacity:1;transform:none}}
+/* --- inline output format + filename (要望1) --- */
+.naming-format-row{display:flex;align-items:flex-end;gap:12px 16px;flex-wrap:wrap;margin-bottom:11px;padding-bottom:11px;border-bottom:1px dashed #d3e0e6}
+.naming-format-field{display:grid;gap:4px;font-size:12px;font-weight:800;color:#3f5661;min-width:230px}
+.naming-format-field select{min-width:230px}
+.naming-format-row .format-note{flex:1 1 260px;min-width:0;margin-top:0;color:#0a6c86;font-weight:700;line-height:1.5;align-self:center}
+.filename-combo{display:flex;align-items:stretch;border:1px solid #aebdc6;border-radius:6px;overflow:hidden;background:#fff}
+.filename-combo:focus-within{outline:3px solid #ccebef;border-color:#118899}
+.filename-combo input{border:0!important;border-radius:0;flex:1 1 auto;min-width:0}
+.filename-combo input:focus{outline:0}
+.ext-suffix{flex:none;display:flex;align-items:center;padding:0 13px;background:#eaf6f8;color:#0a6c86;font:13px Consolas,monospace;font-weight:800;border-left:1px solid #cadfe6}
+.naming-hint-inline{font-weight:600;color:#8395a0;font-size:10.5px}
+.naming-field{gap:5px}
+/* --- side-by-side 入力/出力 for a scroll-less body --- */
+.io-columns{display:grid;grid-template-columns:1fr 1fr;gap:12px 20px;margin-top:6px}
+.io-col{min-width:0}
+.io-col .sectiontitle{margin-top:0}
+.io-col .hint{margin-top:8px}
+@media(max-width:820px){.io-columns{grid-template-columns:1fr;gap:2px 0}}
+/* --- keep the editor within the viewport on short desktop windows --- */
+@media(max-height:760px){
+ .editor-tabs{margin-bottom:9px}
+ .editor-tab{padding:7px 10px}
+ .etab-text small{display:none}
+ .sectiontitle{padding:7px 0 5px;margin-bottom:7px}
+ .naming-box{padding:9px 10px;margin-bottom:8px}
+ .naming-mode{margin-bottom:8px}
+}
+/* ============================================================
+   v1.1.0: 対象ファイル設定モーダルの改良
+   - 要望1: タブ切替時にモーダルの大きさが変化しないよう本文領域の高さを固定
+   - 要望2: 命名プレビューを命名パターンの直下へ移動し、桁数調整チップを拡充
+   - 認知心理学(近接・一貫性) / 情報アーキテクチャ(入力→結果→部品) / 色彩調和(既存パレット踏襲)
+   ============================================================ */
+/* --- 要望1: エディタ本文の高さを固定し、タブ間で寸法を一定に保つ --- */
+#editor .modalbody{height:min(72vh,600px)}
+@media(max-height:760px){#editor .modalbody{height:min(82vh,520px)}}
+@media(max-height:520px){#editor .modalbody{height:auto;max-height:78vh}}
+/* --- 要望2: プレビューを命名パターン直下へ。入力の結果が近接して見えるよう強調 --- */
+#naming-template .naming-field{margin-bottom:8px}
+#naming-template .naming-preview{margin:0 0 12px;border:1px solid #16505f;box-shadow:0 3px 10px rgba(15,39,51,.18)}
+#naming-template .naming-preview .np-label{align-self:center}
+#naming-template .naming-preview #m-name-preview{font-size:14px}
+#naming-template .naming-chips{border-top:1px dashed #d3e0e6;padding-top:11px;margin-top:2px}
+/* 桁数調整用の小型チップ。個別トークンを密度高く並べる */
+.chip-mini{padding:3px 9px;font-size:11px;background:#f0f5f7;border-color:#d3e2e8;color:#33606f}
+.chip-mini:hover{background:#e2eef2;border-color:#b3d4de}
+.chip-group .chip[title]{cursor:pointer}
+@media(max-width:820px){.chip-label{min-width:100%;margin-bottom:2px}}
+
+/* ============================================================
+   v1.2.0: 自動実行UI刷新 / 記号数で桁調整できる命名 / キュー内訳 / カレンダービュー
+   認知心理学(近接・一貫性) / 情報アーキテクチャ(役割別グルーピング) / 色彩調和(既存パレット踏襲)
+   ============================================================ */
+.visually-hidden{position:absolute!important;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+
+/* --- 実行キューの内訳バッジ（要望3） --- */
+#cq-summary{display:inline-flex;flex-wrap:wrap;gap:5px;align-items:center}
+.cq-badge{font-size:11px;font-weight:800;padding:2px 8px;border-radius:999px;white-space:nowrap;line-height:1.6}
+.cq-badge.cq-auto{background:#e6f3f6;color:#0b6d86}
+.cq-badge.cq-manual{background:#f1eaf9;color:#5c3f96}
+.cq-badge.cq-wait{background:#f6eddd;color:#81591b}
+.cq-badge.cq-run{background:#e5f5ef;color:#0b6b4c}
+
+/* --- 命名: 記号数で桁調整（要望2） --- */
+.chip-digit{background:#eef7f4;border-color:#c2e2d6;color:#0b6b4c;font-family:Consolas,"Yu Gothic UI";letter-spacing:.02em}
+.chip-digit:hover{background:#dcefe7;border-color:#a7d6c4}
+.chip-builder{align-items:center}
+.digit-input{width:auto!important;flex:0 1 210px;height:30px;font:12px Consolas,"Yu Gothic UI";border:1px solid #c2d6db;border-radius:7px}
+.chip-insert{background:#0d8191;color:#fff;border:1px solid #0b6d86}
+.chip-insert:hover{background:#0b6d86;filter:none}
+.digit-help{flex:1 1 100%;font-size:10.5px;color:#6b8088;margin-top:2px}
+
+/* ============================================================
+   自動実行ルールの設定UI（要望1）
+   ============================================================ */
+#rule-editor .modal.rulemodal{width:min(560px,94vw)}
+#rule-editor .modalbody{display:grid;gap:14px}
+.rule-basics{display:grid;grid-template-columns:1fr auto;gap:10px 16px;align-items:center}
+.rule-namefield{display:grid;gap:5px;font-size:12px;font-weight:700;color:#425661}
+.rule-enable{display:inline-flex;align-items:center;gap:8px;font-size:12px;font-weight:700;color:#425661;white-space:nowrap}
+.rule-enable input{width:18px;height:18px}
+.rule-section{display:grid;gap:8px}
+.rule-section-label{font-size:11px;font-weight:900;color:#305265;letter-spacing:.02em}
+/* パターン選択: カード型セグメント */
+.pattern-seg{display:grid;grid-template-columns:repeat(5,1fr);gap:7px}
+.pattern-card{display:grid;justify-items:center;gap:6px;background:#f7fafb;border:1.5px solid #dbe4e9;border-radius:10px;padding:10px 6px;color:#4a6270;text-align:center;cursor:pointer;transition:border-color .15s,background .15s,box-shadow .15s}
+.pattern-card:hover{background:#eef4f6;border-color:#bcd6dd}
+.pattern-card.on{background:#eaf6f8;border-color:#12a0a4;box-shadow:0 2px 8px #12979e26}
+.pattern-card .pc-ico{width:30px;height:30px;border-radius:9px;display:grid;place-items:center;font-size:13px;font-weight:900;font-style:normal;background:#e2edf0;color:#4a6270}
+.pattern-card.on .pc-ico{background:#0d8191;color:#fff}
+.pattern-card span{display:grid;gap:1px;min-width:0}
+.pattern-card b{font-size:12px;font-weight:800;color:#31505d}
+.pattern-card.on b{color:#0b6d86}
+.pattern-card small{font-size:9.5px;color:#7c8f99;line-height:1.3}
+/* 時刻: フローティング時刻ピッカー + クイックチップ */
+.time-floating{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.time-floating #r-time{width:auto;min-width:130px;font:15px Consolas,"Yu Gothic UI";font-weight:700;height:38px;border:1.5px solid #b6c8cf;border-radius:9px;padding:6px 10px}
+.time-quick{display:flex;flex-wrap:wrap;gap:5px}
+.time-chip{background:#eef4f6;color:#315a68;border:1px solid #cfe0e5;border-radius:999px;padding:5px 11px;font-size:11px;font-weight:700}
+.time-chip:hover{background:#dfeced;filter:none}
+.rule-detail{margin-top:0;background:#f4f8fa;padding:13px;border-radius:10px;display:grid;gap:9px;border:1px solid #e0e9ec}
+.rule-detail-note{display:grid;gap:3px}
+.rule-detail-note b{font-size:13px;color:#22404d}
+.rule-detail-note span{font-size:11.5px;color:#5f7581}
+/* 曜日トグルチップ */
+.weekday-chips{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}
+.wchip{position:relative;display:grid;place-items:center;background:#fff;border:1.5px solid #d3e0e6;border-radius:9px;padding:9px 0;font-size:13px;font-weight:800;color:#4a6270;cursor:pointer;user-select:none}
+.wchip input{position:absolute;opacity:0;pointer-events:none}
+.wchip.on{background:#0d8191;border-color:#0b6d86;color:#fff}
+.wchip.sat{color:#2166a8}.wchip.sun{color:#b03a3a}
+.wchip.sat.on,.wchip.sun.on{color:#fff}
+.chip-quick{display:flex;flex-wrap:wrap;gap:6px}
+.mini-btn{background:#edf3f6;color:#2b5566;border:1px solid #cfdfe4;border-radius:7px;padding:5px 11px;font-size:11px;font-weight:700}
+.mini-btn:hover{background:#e0ebef;filter:none}
+/* 月の日付グリッド */
+.monthday-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:5px}
+.mday{background:#fff;border:1px solid #d6e1e6;border-radius:7px;padding:7px 0;font-size:12px;font-weight:700;color:#43606c;cursor:pointer}
+.mday:hover{background:#eef4f6;filter:none}
+.mday.on{background:#0d8191;border-color:#0b6d86;color:#fff}
+.mday-last{grid-column:span 2;font-size:11px}
+/* 間隔 */
+.interval-field{display:flex;align-items:center;gap:8px}
+.interval-field #r-interval{width:120px;font:15px Consolas;font-weight:700;height:38px;text-align:right}
+.interval-field em{font-style:normal;font-weight:700;color:#4a6270;font-size:12px}
+/* 特定日ミニカレンダー */
+.mini-cal{background:#fff;border:1px solid #d6e1e6;border-radius:10px;padding:9px;display:grid;gap:6px}
+.mini-cal-head{display:flex;align-items:center;justify-content:space-between}
+.mini-cal-head .mc-title{font-size:13px;font-weight:800;color:#22404d}
+.iconnav{background:#edf3f6;color:#2b5566;border:1px solid #cfdfe4;border-radius:7px;padding:3px 11px;font-size:16px;line-height:1;font-weight:800}
+.iconnav:hover{background:#dfeced;filter:none}
+.mini-cal-week{display:grid;grid-template-columns:repeat(7,1fr);gap:3px;font-size:10.5px;font-weight:800;color:#7f909a;text-align:center}
+.mini-cal-week .wk-sun{color:#b03a3a}.mini-cal-week .wk-sat{color:#2166a8}
+.mini-cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:3px}
+.mc-empty{height:30px}
+.mc-day{height:30px;border:1px solid #e0e9ec;border-radius:6px;background:#fff;font-size:12px;font-weight:700;color:#43606c;cursor:pointer}
+.mc-day:hover{background:#eef4f6;filter:none}
+.mc-day.sun{color:#b03a3a}.mc-day.sat{color:#2166a8}
+.mc-day.on{background:#0d8191;border-color:#0b6d86;color:#fff}
+.picked-dates{display:flex;flex-wrap:wrap;gap:6px;min-height:26px}
+.picked-empty{font-size:11px;color:#95a3ac}
+.date-tag{display:inline-flex;align-items:center;gap:6px;background:#eaf6f8;color:#0b6d86;border:1px solid #bfe1e6;border-radius:999px;padding:3px 6px 3px 10px;font:11px Consolas,"Yu Gothic UI";font-weight:700}
+.date-tag i{cursor:pointer;font-style:normal;width:16px;height:16px;display:grid;place-items:center;border-radius:50%;background:#0d8191;color:#fff;font-size:11px}
+.date-tag i:hover{background:#b93b32}
+@media(max-width:560px){.pattern-seg{grid-template-columns:repeat(3,1fr)}.pattern-card small{display:none}}
+
+/* ============================================================
+   カレンダービュー（要望4）
+   ============================================================ */
+#calendar.on{height:100%;overflow:hidden;display:grid}
+.cal-shell{display:grid;grid-template-rows:auto auto auto auto minmax(0,1fr);gap:9px;min-height:0;height:100%;padding:2px 0}
+.cal-toolbar{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:10px}
+.cal-nav{display:flex;align-items:center;gap:8px}
+.cal-title{font-size:20px;margin:0 4px;color:#17384e;min-width:150px}
+.cal-controls{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.cal-view-toggle{display:inline-flex;background:#eef3f5;border:1px solid #d3e0e6;border-radius:9px;padding:3px;gap:3px}
+.cal-viewbtn{background:transparent;color:#436072;font-size:12px;padding:6px 13px;border-radius:6px}
+.cal-viewbtn.on{background:#fff;color:#0a5f77;box-shadow:0 1px 3px #15384d1f}
+.cal-jobfilter{width:auto;min-width:160px;height:34px}
+.cal-legend{display:flex;flex-wrap:wrap;gap:12px;align-items:center;font-size:11px;color:#4a6270;padding:2px 0}
+.cal-legend .leg{display:inline-flex;align-items:center;gap:5px}
+.cal-legend .leg::before{content:'';width:11px;height:11px;border-radius:3px;display:inline-block}
+.leg-sched::before{background:#12a0a4}
+.leg-interval::before{background:#7658ae}
+.leg-ok::before{background:#1ca97a}
+.leg-ng::before{background:#c9564a}
+.leg-warn::before{background:#c99a44}
+.leg-manual{color:#5c3f96}
+.leg-auto{color:#0b6d86}
+.cal-summary{font-size:12px;color:#3c5561;background:#f4f8fa;border:1px solid #e0e9ec;border-radius:8px;padding:7px 12px}
+.cal-summary b{color:#0b6d86;font-size:13px;margin:0 1px}
+.cal-weekhead{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;font-size:11px;font-weight:800;color:#5f7581;text-align:center}
+.cal-weekhead .wk-sun{color:#b03a3a}.cal-weekhead .wk-sat{color:#2166a8}
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);grid-auto-rows:minmax(92px,1fr);gap:6px;min-height:0;overflow:auto;padding-right:2px}
+.cal-cell{background:#fff;border:1px solid #e2eaee;border-radius:9px;padding:5px;display:grid;grid-template-rows:auto minmax(0,1fr);gap:4px;min-height:0;overflow:hidden;cursor:pointer;transition:border-color .15s,box-shadow .15s}
+.cal-cell:hover{border-color:#9fd0d6;box-shadow:0 3px 10px #15384d12}
+.cal-cell.cal-empty{background:transparent;border:0;cursor:default;box-shadow:none}
+.cal-cell.cal-today{border-color:#12a0a4;box-shadow:0 0 0 1.5px #12a0a455 inset}
+.cal-date{font-size:12px;font-weight:800;color:#3c5561}
+.cal-cell.sun .cal-date{color:#b03a3a}.cal-cell.sat .cal-date{color:#2166a8}
+.cal-cell.cal-today .cal-date span{background:#0d8191;color:#fff;border-radius:50%;padding:1px 6px}
+.cal-events{display:grid;gap:3px;align-content:start;overflow:hidden}
+.cal-ev{display:block;width:100%;text-align:left;font-size:10.5px;font-weight:700;padding:2px 6px;border-radius:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border:0;line-height:1.5}
+.cal-ev.ev-sched{background:#e2f3f5;color:#0a6c86;cursor:pointer}
+.cal-ev.ev-sched:hover{background:#cfeaee;filter:none}
+.cal-ev.ev-interval{background:#efeafa;color:#53398b}
+.cal-ev.ev-exec{cursor:default}
+.cal-ev.ev-exec.ok{background:#e2f4ec;color:#0a7a54}
+.cal-ev.ev-exec.ng{background:#fbe4e1;color:#a5372c}
+.cal-ev.ev-exec.warn{background:#f6ecd7;color:#8a5f18}
+.cal-more{font-size:9.5px;color:#7f909a;padding:0 4px}
+@media(max-height:760px){.cal-grid{grid-auto-rows:minmax(76px,1fr)}}
+@media(max-width:820px){.cal-grid{grid-auto-rows:minmax(70px,auto)}.cal-ev{font-size:10px}}
+
+/* 日別詳細ダイアログ */
+.calday-modal{width:min(560px,94vw);max-height:88vh;display:flex;flex-direction:column;background:#fff}
+.calday-body{display:grid;gap:14px}
+.calday-sec h3{font-size:13px;margin:0 0 8px;color:#22404d;border-bottom:1px solid #e0e9ec;padding-bottom:5px}
+.calday-list{display:grid;gap:6px}
+.calday-item{display:grid;grid-template-columns:auto 1fr auto auto;align-items:center;gap:9px;background:#f7fafb;border:1px solid #e2eaee;border-radius:8px;padding:7px 10px}
+.calday-item.sched{border-left:4px solid #12a0a4}
+.calday-item.interval{border-left:4px solid #7658ae}
+.calday-item.exec.ok{border-left:4px solid #1ca97a}
+.calday-item.exec.ng{border-left:4px solid #c9564a}
+.calday-item.exec.warn{border-left:4px solid #c99a44}
+.ci-time{font:12px Consolas;font-weight:800;color:#0b6d86;min-width:42px}
+.ci-main{min-width:0}
+.ci-main b{display:block;font-size:12.5px;color:#22404d;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ci-main small{display:block;font-size:10.5px;color:#6b7d85}
+.calday-item .ci-edit,.calday-item .ci-run{padding:5px 10px;font-size:11px}
+.calday-item.exec{grid-template-columns:auto 1fr}
+.calday-empty{font-size:12px;color:#95a3ac;margin:0}
+.calday-quickadd{margin-top:6px;background:#eef6f8;border:1px solid #cde3e8;border-radius:9px;padding:11px 12px;display:grid;gap:6px}
+.calday-quickadd b{font-size:12px;color:#0b6d86}
+.calday-quickadd .hint{margin:0}
+.quickadd-row{display:grid;grid-template-columns:1fr auto auto;gap:8px;align-items:center}
+.quickadd-row select,.quickadd-row input{height:34px}
+.quickadd-row input[type=time]{width:120px}
+
+/* ============================================================
+   v1.3.0: 自動実行UIの寸法安定化 / 命名パターンのコンパクト化＋カスタム /
+           抽出方式への設定集約 / カレンダー配色と余白調整
+   認知心理学(近接・一貫性・グルーピング) / 情報アーキテクチャ(役割別階層) / 色彩調和(既存パレット踏襲)
+   ============================================================ */
+
+/* --- 要望3: 抽出方式の選択で、その方式に必要な設定だけを同じ画面へ集約 --- */
+.engine-choose{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:4px 0 12px;max-width:660px}
+.engine-card{display:flex;align-items:flex-start;gap:11px;text-align:left;background:#f7fafb;border:1.5px solid #dbe4e9;border-radius:11px;padding:12px 13px;cursor:pointer;position:relative;transition:border-color .15s,background .15s,box-shadow .15s}
+.engine-card:hover{background:#eef4f6;border-color:#bcd6dd}
+.engine-card.on{background:#eaf6f8;border-color:#12a0a4;box-shadow:0 2px 10px #12979e22}
+.engine-card-ic{flex:none;width:38px;height:38px;border-radius:10px;display:grid;place-items:center;font-size:12px;font-weight:900;font-style:normal;letter-spacing:.02em}
+.ec-api{background:#e6f3f6;color:#0b6d86}
+.ec-dde{background:#eef2f4;color:#425863}
+.engine-card.on .ec-api{background:#0d8191;color:#fff}
+.engine-card.on .ec-dde{background:#4a6270;color:#fff}
+.engine-card-text{display:grid;gap:3px;min-width:0}
+.engine-card-text b{font-size:13.5px;font-weight:800;color:#22404d}
+.engine-card.on .engine-card-text b{color:#0b6d86}
+.engine-card-text small{font-size:11px;color:#6b7d85;line-height:1.5}
+.engine-card-check{position:absolute;top:9px;right:11px;width:20px;height:20px;border-radius:50%;display:grid;place-items:center;font-size:12px;font-weight:900;font-style:normal;background:#dbe7eb;color:#fff;opacity:0;transition:opacity .15s}
+.engine-card.on .engine-card-check{opacity:1;background:#0d8191}
+.engine-branch{margin-top:2px;border:1px solid #e0e9ec;border-radius:11px;padding:12px 14px 14px;background:#fbfdfd;max-width:660px}
+.engine-branch+.engine-branch{margin-top:10px}
+.branch-head{display:flex;align-items:center;gap:10px;padding-bottom:9px;margin-bottom:2px;border-bottom:1px solid #e6eef1}
+.branch-badge{flex:none;width:30px;height:30px;border-radius:9px;display:grid;place-items:center;font-weight:900;font-style:normal}
+.branch-title{display:grid;gap:1px;min-width:0}
+.branch-title b{font-size:13px;font-weight:800;color:#22404d}
+.branch-title small{font-size:10.5px;color:#7c8f99}
+.settings-subhead{display:block;font-size:10.5px;font-weight:900;letter-spacing:.03em;color:#5f7581;margin:2px 0 -2px}
+.engine-branch .settings-block{margin-top:13px;max-width:none;gap:9px}
+.engine-branch .settings-block:first-of-type{margin-top:8px}
+#engine-scope-badge{white-space:nowrap}
+@media(max-width:640px){.engine-choose{grid-template-columns:1fr}}
+@media(max-height:720px){.engine-card{padding:9px 10px}.engine-card-ic{width:32px;height:32px}.engine-card-text small{display:none}.branch-head{padding-bottom:6px}.engine-branch{padding:10px 12px 11px}}
+
+/* --- 要望2: 命名パターンを「よく使う」代表＋「カスタム」折りたたみへ整理 --- */
+.naming-quick{display:grid;gap:10px;margin:2px 0 9px}
+.nq-block{display:grid;gap:5px}
+.nq-label{font-size:11px;font-weight:800;color:#3f5661;display:flex;align-items:baseline;gap:8px}
+.nq-label small{font-weight:600;color:#8395a0;font-size:10px}
+.chip-row{display:flex;flex-wrap:wrap;gap:6px}
+.chip-preset{background:#eef7f4;border:1px solid #bfe0d3;color:#0b6b4c;font-weight:700}
+.chip-preset:hover{background:#dcefe7;border-color:#a7d6c4;filter:none}
+.naming-custom{border:1px solid #dbe4e9;border-radius:9px;background:#fff;margin-top:2px;overflow:hidden}
+.naming-custom>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:8px;padding:9px 12px;background:#f4f8fa;font-size:12px;color:#31505d}
+.naming-custom>summary::-webkit-details-marker{display:none}
+.naming-custom>summary b{font-weight:800}
+.naming-custom>summary small{color:#8395a0;font-weight:600;font-size:10.5px;margin-left:auto}
+.nc-caret{font-style:normal;color:#0d8191;transition:transform .15s;display:inline-block;font-size:11px}
+.naming-custom[open]>summary .nc-caret{transform:rotate(90deg)}
+.naming-custom[open]>summary{border-bottom:1px solid #e0e9ec}
+.naming-custom-body{padding:11px 12px}
+.nc-guide{margin:0 0 11px;padding:8px 11px;background:#eef6f8;border:1px solid #cde3e8;border-radius:8px;font-size:11px;color:#3c5561;line-height:1.7}
+.nc-guide b{color:#0b6d86}
+.nc-guide code{background:#dcf1f5;border-radius:4px;padding:0 4px;color:#0a6c86;font-size:10.5px}
+.naming-custom-body .naming-chips{margin:0}
+.naming-custom-body .naming-help{margin-top:10px}
+
+/* --- 要望1: 実行ルールモーダルの寸法固定＋実行タイミング確認欄 --- */
+#rule-editor .modal.rulemodal{width:min(600px,94vw)}
+#rule-editor .modalbody{height:min(84vh,648px);overflow:auto;align-content:start}
+@media(max-height:680px){#rule-editor .modalbody{height:86vh}}
+.rule-detail{min-height:172px;align-content:start}
+.rule-live{display:flex;align-items:center;gap:11px;margin-top:12px;padding:10px 13px;background:#0f2733;border-radius:9px}
+.rule-live .rl-ic{flex:none;font-size:10px;font-weight:900;letter-spacing:.06em;color:#0f2733;background:#7fd4dd;border-radius:6px;padding:4px 8px}
+.rule-live .rl-text{display:grid;gap:2px;min-width:0}
+.rule-live .rl-text small{font-size:10px;color:#9fc4cd;letter-spacing:.04em}
+.rule-live #r-live-summary{font-size:14px;font-weight:800;color:#fff;word-break:break-all;line-height:1.4}
+
+/* --- 要望4: カレンダー配色の階層整理（予定系＝寒色 / 実績系＝状態色）と余白微調整 --- */
+.cal-legend{gap:8px 11px}
+.leg-group{font-size:10px;font-weight:900;letter-spacing:.04em;border-radius:999px;padding:2px 9px}
+.leg-group-plan{color:#0b6d86;background:#e6f3f6;border:1px solid #c3e2e8}
+.leg-group-exec{color:#3c5561;background:#eef3f5;border:1px solid #dde6ea}
+.leg-sep{width:1px;height:15px;background:#d7e0e5;display:inline-block}
+.leg-interval::before{background:#4b62b8}
+.cal-ev.ev-interval{background:#e9ecf9;color:#3a4d9c}
+.calday-item.interval{border-left-color:#4b62b8}
+.cal-shell{gap:7px;padding:2px 0 9px}
+.cal-summary{padding:6px 12px}
+.cal-grid{grid-auto-rows:minmax(84px,1fr);padding-bottom:3px}
+@media(max-height:860px){.cal-grid{grid-auto-rows:minmax(76px,1fr)}}
+@media(max-height:760px){.cal-shell{gap:6px;padding-bottom:7px}.cal-grid{grid-auto-rows:minmax(66px,1fr)}}
+@media(max-height:680px){.cal-grid{grid-auto-rows:minmax(58px,1fr)}}
+
+/* ============================================================
+   v1.4.0: 自動実行スケジュールUIのプリセット(サジェスト)化と寸法安定化
+   - 要望: 実行パターンを切り替えてもモーダルの寸法が変わらないよう、詳細条件エリアの
+           高さを余裕を持って固定（一貫性の維持による認知負荷の低減）。
+   - 要望: カスタム性の高い組み合わせ例をプリセット(サジェスト)として常設し、
+           クリックで名称・時刻・パターンを一括入力できるようにする。
+   認知心理学(近接・一貫性・選択肢のチャンク化) / 情報アーキテクチャ(素早い開始→細部調整の階層)
+   / 色彩調和(既存パレット踏襲・パターン種別ごとの寒色/紫の系統色)
+   ============================================================ */
+/* --- 詳細条件エリアの高さを固定し、パターン切替でモーダルがガタつかないようにする --- */
+.rule-detail{min-height:0;height:214px;overflow:auto}
+#r-detail .rule-detail-note{align-content:center;min-height:100%}
+#r-detail .mini-cal{margin:0}
+@media(max-height:760px){.rule-detail{height:186px}}
+@media(max-height:680px){.rule-detail{height:150px}}
+/* --- おすすめプリセット(サジェスト) --- */
+.rule-preset-section .rule-section-label{display:block}
+.rule-preset-section .rule-section-label small{display:block;font-weight:600;color:#8395a0;font-size:10px;margin-top:2px;letter-spacing:0}
+.preset-suggest{display:grid;grid-template-columns:repeat(auto-fill,minmax(158px,1fr));gap:7px}
+.preset-chip{display:flex;align-items:center;gap:9px;text-align:left;background:#f6fafb;border:1px solid #d5e3e8;border-radius:10px;padding:8px 10px;cursor:pointer;transition:border-color .15s,background .15s,box-shadow .15s;min-width:0}
+.preset-chip:hover{background:#eef5f7;border-color:#a9d2dd;filter:none}
+.preset-chip.on{background:#eaf6f8;border-color:#12a0a4;box-shadow:0 2px 8px #12979e22}
+.preset-ic{flex:none;width:31px;height:31px;border-radius:9px;display:grid;place-items:center;font-size:14px;font-weight:900;font-style:normal;background:#e2edf0;color:#4a6270}
+.preset-ic.pi-daily{background:#e6f3f6;color:#0b6d86}
+.preset-ic.pi-weekdays{background:#e2f0f7;color:#1f6aa8}
+.preset-ic.pi-monthly{background:#e5f4ec;color:#0b6b4c}
+.preset-ic.pi-interval{background:#e9ecf9;color:#3a4d9c}
+.preset-chip.on .preset-ic{background:#0d8191;color:#fff}
+.preset-tx{display:grid;gap:1px;min-width:0}
+.preset-tx b{font-size:12px;font-weight:800;color:#2a4a58;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.preset-chip.on .preset-tx b{color:#0b6d86}
+.preset-tx small{font-size:10px;color:#7c8f99;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@media(max-width:560px){.preset-suggest{grid-template-columns:1fr 1fr}.preset-tx small{display:none}}
+@media(max-height:680px){.preset-tx small{display:none}.preset-chip{padding:6px 8px}.preset-ic{width:27px;height:27px}}
+
+/* ============================================================
+   v1.5.0: 複数キュー表示の是正 / 変数タグの刷新 / 変数由来の色分け / 用途コメント欄
+   - 要望1: 実行キュー要約バッジを対象(job)単位の実状態(処理中/完了/失敗/待機)へ連動。
+            一覧の完了行が「順番待ち」へ戻らないよう確定状態を保持し、完了は緑で固定。
+   - 要望2: 変数タグを実トークンの有無で判定。日付タグをExcel書式のようにY/M/Dの数で桁調整。
+            出力ファイル名のリストで、変数由来の部分に色を付ける。
+   - 要望3: 出力対象ごとの用途コメント欄を追加。
+   認知心理学(近接・一貫性・状態の即時フィードバック) / 情報アーキテクチャ(役割別階層) / 色彩調和(既存パレット踏襲)
+   ============================================================ */
+/* --- 要望1: 実行キュー要約バッジの状態連動 --- */
+#cq-summary .cq-badge.cq-run{background:#e2f3f5;color:#08727f}
+#cq-summary .cq-badge.cq-done{background:#e2f4ec;color:#0a7a54}
+#cq-summary .cq-badge.cq-fail{background:#fbe4e1;color:#a5372c}
+#cq-summary .cq-badge.cq-wait{background:#f6eddd;color:#81591b}
+#cq-summary .cq-badge.cq-idle{background:#eef2f4;color:#647177}
+#cq-summary .cq-badge.cq-sep{padding:0;width:1px;min-width:1px;background:#d7e0e5;border-radius:0;align-self:stretch;margin:1px 3px}
+/* --- 要望2: 出力ファイル名のうち、変数由来の部分を色分け --- */
+/* v1.6.0 要望2: 一覧の変数由来部分はマーカー(背景)ではなく文字色のみで区別する。変数バッジとの視覚的な衝突を避ける。 */
+.primarytext .fname-var{background:none;color:#0a6c86;border-radius:0;padding:0;font-weight:800}
+#m-name-preview .fname-var,.naming-preview .fname-var{color:#7fd4dd;background:none;border-radius:0;padding:0;font-weight:800}
+/* --- 要望2: 日付・時刻の変数タグビルダー（Excel書式のように桁を選ぶ） --- */
+.var-tag-builder{border:1px solid #cfe3e8;background:#f6fbfc;border-radius:10px;padding:11px 12px}
+/* v1.6.0 要望1: 日付の対象(現在日時/更新日/作成日)を桁数指定とセットで選ぶ */
+.vtb-source{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:8px 0 4px}
+.vtb-source-label{font-size:10.5px;font-weight:800;color:#5f7581;margin-right:2px}
+.vtb-srcbtn{padding:5px 12px;font-size:11px;font-weight:700;border-radius:999px;background:#eef4f6;color:#315a68;border:1px solid #cfe0e5}
+.vtb-srcbtn:hover{background:#dfeced;filter:none}
+.vtb-srcbtn.on{background:#0d8191;color:#fff;border-color:#0b6d86}
+/* v1.8.0 要望1-③: 日付の計算(EDATE/DateAdd相当)。補助操作として暖色系で区別する */
+.vtb-offset{margin:8px 0 4px;padding:9px 10px;background:#fbf7ef;border:1px solid #ecdcbf;border-radius:9px}
+.vtb-offset-label{display:block;font-size:10.5px;font-weight:800;color:#7a5a1f;margin-bottom:6px}
+.vtb-offset-label small{display:block;font-weight:600;color:#a08454;font-size:10px;margin-top:1px;letter-spacing:0}
+.vtb-offset-row{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-bottom:8px}
+.vtb-offbox{display:grid;gap:5px;justify-items:center;background:#fff;border:1px solid #ecdcbf;border-radius:8px;padding:7px 6px;min-width:0}
+.vtb-offname{font-size:11px;font-weight:900;color:#7a5a1f}
+.vtb-stepper{display:inline-flex;align-items:stretch;border:1px solid #e0cfa8;border-radius:7px;overflow:hidden;background:#fff}
+.vtb-stepper button{width:28px;padding:4px 0;font-size:14px;font-weight:900;line-height:1;background:#f5ecda;color:#8a6417;border:0;border-radius:0}
+.vtb-stepper button:hover{background:#efe0c1;filter:none}
+.vtb-offnum{width:52px;height:auto;text-align:center;font-weight:800;font-size:12px;border:0;border-left:1px solid #ecdcbf;border-right:1px solid #ecdcbf;border-radius:0;padding:4px 2px;color:#4a3a1a;background:#fff}
+.vtb-offnum:focus{outline:2px solid #eccf8f;border-color:#e0cfa8}
+.vtb-offnum::-webkit-outer-spin-button,.vtb-offnum::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.vtb-offpreset{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.vtb-offpreset-label{font-size:10.5px;font-weight:800;color:#7a5a1f;margin-right:2px}
+.vtb-offchip{padding:4px 11px;font-size:11px;font-weight:700;border-radius:999px;background:#f5ecda;color:#8a6417;border:1px solid #e0cfa8}
+.vtb-offchip:hover{background:#efe0c1;filter:none}
+.vtb-offchip.on{background:#b5822a;color:#fff;border-color:#9a6d1e}
+.vtb-grid-label{display:block;font-size:10.5px;font-weight:800;color:#5f7581;margin:6px 0 -2px}
+.vtb-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px;margin:8px 0}
+.vtb-part{display:grid;gap:5px;background:#fff;border:1px solid #dbe6ea;border-radius:8px;padding:7px 6px;min-width:0}
+.vtb-name{font-size:11px;font-weight:900;color:#305265;text-align:center}
+.vtb-opts{display:grid;gap:3px}
+.vtb-opts button{padding:4px 4px;font-size:10.5px;font-weight:700;border-radius:6px;background:#eef4f6;color:#43606c;border:1px solid #d7e2e7;line-height:1.2}
+.vtb-opts button:hover{background:#e1ecef;filter:none}
+.vtb-opts button.on{background:#0d8191;color:#fff;border-color:#0b6d86}
+.vtb-sep{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:2px 0 9px}
+.vtb-sep-label{font-size:10.5px;font-weight:800;color:#5f7581;margin-right:2px}
+.vtb-sepbtn{padding:4px 11px;font-size:11px;font-weight:700;border-radius:999px;background:#eef4f6;color:#315a68;border:1px solid #cfe0e5}
+.vtb-sepbtn:hover{background:#dfeced;filter:none}
+.vtb-sepbtn.on{background:#0d8191;color:#fff;border-color:#0b6d86}
+.vtb-foot{display:flex;flex-wrap:wrap;align-items:center;gap:10px;justify-content:space-between}
+.vtb-preview{display:flex;flex-wrap:wrap;align-items:baseline;gap:7px;min-width:0}
+.vtb-plabel{font-size:10px;font-weight:800;letter-spacing:.04em;color:#7c8f99}
+#vtb-token{font:12px Consolas,"Yu Gothic UI";font-weight:800;color:#0a6c86;background:#e6f3f6;border:1px solid #c3e2e8;border-radius:6px;padding:2px 7px}
+#vtb-example{font:12px Consolas,"Yu Gothic UI";font-weight:800;color:#22404d}
+@media(max-width:820px){.vtb-grid{grid-template-columns:repeat(3,1fr)}.vtb-offset-row{grid-template-columns:repeat(3,1fr)}}
+@media(max-width:560px){.vtb-offset-row{grid-template-columns:1fr}}
+@media(max-height:760px){.vtb-part{padding:5px}.vtb-name{font-size:10px}.vtb-offset{padding:7px 8px}.vtb-offbox{padding:5px}}
+/* --- 要望3: 出力対象の用途コメント欄 --- */
+.comment-field{display:grid;gap:5px;margin:10px 0 4px;font-size:12px;font-weight:700;color:#435661}
+.comment-label{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.comment-label small{font-weight:600;color:#8395a0;font-size:10.5px}
+.comment-badge{flex:none;font-style:normal;font-size:10px;font-weight:900;color:#5c3f96;background:#f1eaf9;border:1px solid #ddcdf1;border-radius:5px;padding:1px 6px}
+#m-comment{width:100%;min-height:44px;height:auto;resize:vertical;line-height:1.5;padding:7px 9px;font:inherit;font-size:12.5px;border:1px solid #aebdc6;border-radius:7px;background:#fff}
+#m-comment:focus{outline:3px solid #ccebef;border-color:#118899}
+/* 一覧の用途コメント表示 */
+.job-comment{display:flex;align-items:center;gap:5px;margin-top:2px;min-width:0}
+.job-comment .jc-ic{flex:none;font-style:normal;font-size:9px;font-weight:900;color:#5c3f96;background:#f1eaf9;border:1px solid #e0d3f2;border-radius:4px;padding:0 4px;line-height:1.5}
+.job-comment span{font-size:10.5px;color:#6b7d85;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+/* ============================================================
+   v1.7.0: 抽出期間（動的日付）UI
+   認知心理学(近接・即時フィードバック・一貫性) / 情報アーキテクチャ(単位→開始→終了→対象→プレビューの順) / 色彩調和(既存パレット踏襲・時間系はティール)
+   ============================================================ */
+.sb-period{background:#dff3f5;color:#08727f}
+.sect-period{border-bottom-color:#bfe4e8;margin-top:14px}
+.period-section{margin-top:4px}
+.period-optional{margin-left:auto;font-size:10px;font-weight:800;color:#5a7b82;background:#eef6f7;border:1px solid #cfe6e9;border-radius:999px;padding:2px 9px}
+.period-enable{display:flex;align-items:flex-start;gap:10px;background:#f6fbfc;border:1px solid #d7e8ec;border-radius:10px;padding:11px 13px}
+.period-enable input{width:18px;height:18px;margin-top:2px;flex:none}
+.period-enable-text{display:grid;gap:2px;min-width:0}
+.period-enable-text b{font-size:12.5px;color:#20404a}
+.period-enable-text small{font-size:10.5px;color:#6a828a;line-height:1.5}
+.period-body{margin-top:10px;border:1px solid #dbe7ea;border-left:4px solid #22a6b0;border-radius:10px;background:#fafdfd;padding:12px 13px;display:grid;gap:12px}
+.period-presets{display:grid;gap:6px}
+.period-presets-label{font-size:10.5px;font-weight:800;color:#5f7581;letter-spacing:.02em}
+.period-presets-label small{font-weight:600;color:#8497a0;margin-left:6px}
+.period-preset-row{display:flex;flex-wrap:wrap;gap:6px}
+.period-preset{background:#eef6f7;border-color:#cbe4e8;color:#0b6570}
+.period-preset:hover{background:#dcecf0;border-color:#a9d2dd}
+.period-grid{display:grid;grid-template-columns:auto 1fr 1fr;gap:10px 16px;align-items:end}
+.period-field{display:grid;gap:5px;min-width:0}
+.period-flabel{font-size:11px;font-weight:800;color:#43616b;letter-spacing:.02em}
+.period-unit-seg{display:inline-flex;background:#eaf1f3;border:1px solid #d3e0e4;border-radius:8px;padding:3px;gap:3px}
+.period-unitbtn{background:transparent;color:#456;font-size:12px;padding:6px 14px;border-radius:6px;white-space:nowrap}
+.period-unitbtn.on{background:#fff;color:#08727f;box-shadow:0 1px 3px #15384d1f}
+.period-offset{display:flex;align-items:center;gap:7px;background:#fff;border:1px solid #cddce2;border-radius:8px;padding:6px 9px;flex-wrap:wrap}
+.period-offset .po-base{font-size:12px;font-weight:800;color:#2c5563;background:#e9f5f6;border-radius:6px;padding:3px 8px;white-space:nowrap}
+.period-offset input{width:64px;height:32px;text-align:center;font-weight:700;border:1px solid #cddce2}
+.period-offset .po-unit{font-style:normal;font-size:12px;color:#5b727a;white-space:nowrap}
+.po-dir{display:inline-flex;margin-left:auto;background:#eef3f4;border:1px solid #d3e0e4;border-radius:7px;padding:2px;gap:2px}
+.po-dirbtn{background:transparent;color:#5a6f77;font-size:11px;font-weight:800;padding:5px 12px;border-radius:5px}
+.po-dirbtn.on{background:#08849a;color:#fff}
+.period-cp{display:grid;gap:8px}
+.period-cpfield{display:grid;gap:5px}
+.period-cplabel{font-size:11px;font-weight:800;color:#43616b}
+.period-cplabel small{display:block;font-weight:600;font-size:10.5px;color:#8497a0;margin-top:2px}
+.period-cprow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:7px}
+.period-cprow button{white-space:nowrap}
+.period-cpresult{border:1px solid #dbe7ea;border-radius:8px;background:#f4f9fa;padding:9px 11px;display:grid;gap:7px}
+.period-cp-ok{margin:0;font-size:11.5px;font-weight:800;color:#0a7a54}
+.period-cp-ng{margin:0;font-size:11.5px;font-weight:800;color:#b23a30}
+.period-cp-note{margin:0;font-size:10.5px;color:#7a8b91;word-break:break-word}
+.period-cp-list{display:flex;flex-wrap:wrap;gap:6px}
+.period-cp-pick{display:inline-flex;align-items:center;gap:7px;background:#eaf6f8;border-color:#bfe1e6;color:#0b6570}
+.period-cp-pick em{font-style:normal;font-size:10px;color:#5f7c84;background:#fff;border-radius:4px;padding:1px 5px}
+.period-cp-pick:hover{background:#d8eef1;border-color:#a4d3dc}
+.period-preview{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px;background:#0f2b33;color:#e7f5f7;border-radius:8px;padding:9px 12px}
+.period-preview .pp-label{font-size:10px;font-weight:800;letter-spacing:.08em;color:#7fd4dd}
+#m-period-preview{font:14px Consolas,"Yu Gothic UI";font-weight:800;color:#fff}
+#m-period-preview-meta{flex:1 1 100%;font-size:10.5px;color:#9fc7cf}
+@media(max-width:820px){.period-grid{grid-template-columns:1fr}.period-field-unit .period-unit-seg{width:100%}.period-cprow{grid-template-columns:1fr}}
+/* ============================================================
+   v1.9.0: 一覧のドラッグ&ドロップ並べ替え・管理単位の削除・カレンダー実績の削除
+   認知心理学(操作アフォーダンスの明示・破壊操作の抑制的配色) / 情報アーキテクチャ(順序=問い合わせ順の一貫性) / 色彩調和(既存パレット踏襲・削除は警告系)
+   ============================================================ */
+/* --- ドラッグハンドルと並べ替え時のフィードバック --- */
+.jobs-table td.c-check{white-space:nowrap}
+.drag-handle{display:none;vertical-align:middle;margin-right:4px;color:#9aabb4;cursor:grab;font-size:12px;font-weight:900;letter-spacing:-2px;user-select:none;line-height:1}
+.jobs-table tr.reorderable .drag-handle{display:inline-block}
+.jobs-table tr.reorderable{cursor:default}
+.jobs-table tr.reorderable .drag-handle:hover{color:#0d8191}
+.jobs-table tr.reorderable:active .drag-handle{cursor:grabbing}
+.jobs-table tr.dragging{opacity:.5;background:#eaf6f8}
+.jobs-table tr.drop-before td{box-shadow:inset 0 3px 0 -1px #0d8191}
+.jobs-table tr.drop-after td{box-shadow:inset 0 -3px 0 -1px #0d8191}
+/* --- 一覧の削除ボタン（破壊操作は警告系で抑制的に） --- */
+.rowactions .delete{background:#fff0ee;color:#b93b32;border:1px solid #efc7bf}
+.rowactions .delete:hover{background:#f9dcd8;filter:none}
+/* --- カレンダー日別ダイアログ: 実績セクションの見出しと削除 --- */
+.calday-sechead{display:flex;align-items:center;justify-content:space-between;gap:10px;border-bottom:1px solid #e0e9ec;padding-bottom:5px;margin-bottom:8px}
+.calday-sechead h3{border-bottom:0;margin:0;padding:0}
+.calday-sechead .ci-clear-day{padding:5px 10px;font-size:11px;white-space:nowrap}
+.calday-item.exec{grid-template-columns:auto 1fr auto}
+.calday-item .ci-del{padding:5px 10px;font-size:11px;justify-self:end}
+
+.output-link{color:#087c98;font-weight:700;text-decoration:none;cursor:pointer}.output-link:hover{text-decoration:underline}
+/* アイコン操作ボタン: ボタン外形サイズは従来どおり維持し、中の絵柄だけを枠ギリギリまで拡大する */
+.rowactions .icon-action{min-width:32px;width:32px;height:28px;padding:0!important;display:inline-flex;align-items:center;justify-content:center;font-size:18px;line-height:1;overflow:hidden}
+.rowactions .icon-action.delete{font-size:16px}
+.jobs-table tbody tr.selected{outline:2px solid #16a0a4;background:#eaf6f8}
+/* Output list: text buttons and slightly wider working area. */
+body > main{max-width:1620px;padding-left:12px;padding-right:12px}
+.jobs-table .c-action{width:176px}
+.rowactions{gap:4px;white-space:nowrap}
+.rowactions button{height:28px;min-width:36px;width:auto;padding:5px 7px!important;font-size:11px!important;line-height:1;font-weight:700}
+.rowactions .icon-action{height:28px;min-width:36px;width:auto;padding:5px 7px!important;font-size:11px!important}
+.output-link{display:block;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* Drag handle vertical centering: align the glyph and checkbox to the row's visual center. */
+.jobs-table td.c-check{vertical-align:middle;padding-top:0;padding-bottom:0}
+.jobs-table tr.reorderable .drag-handle{display:inline-flex;align-items:center;justify-content:center;width:12px;height:16px;margin-right:4px;vertical-align:middle;line-height:16px;transform:translateY(-1px)}
+.jobs-table td.c-check .rowcheck{display:inline-block;margin:0;vertical-align:middle}

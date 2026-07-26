@@ -9,7 +9,7 @@ def atomic_json(path,data):
 def main():
     payload=json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
     from app import process_api_parallel_job
-    result=process_api_parallel_job(payload['job'],payload['job_index'],payload['total_jobs'],payload['cfg'],payload['user'],payload['password'],payload['server'],Path(payload['dde_work']),Path(payload['work']),Path(payload['backup']))
+    result=process_api_parallel_job(payload['job'],payload['job_index'],payload['total_jobs'],payload['cfg'],payload['user'],payload['password'],payload['server'],Path(payload['dde_work']),Path(payload['backup']))
     atomic_json(os.environ['NAVI_WORKER_RESULT'],result)
     return 0 if result.get('ok') else 2
 if __name__=='__main__':
