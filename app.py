@@ -1,60 +1,141 @@
 from __future__ import annotations
-import atexit, calendar, configparser, csv, gc, json, logging, os, shutil, sqlite3, subprocess, sys, tempfile, threading, time, traceback, uuid, webbrowser
+import atexit, calendar, configparser, csv, gc, json, logging, os, re, shutil, sqlite3, subprocess, sys, tempfile, threading, time, traceback, uuid, webbrowser
 from collections import deque
 from datetime import datetime, timedelta
 from pathlib import Path
 from flask import Flask, jsonify, render_template, request
 
-APP_VERSION='V34'; APP_VERSION_TITLE='ブラウザーとアプリ稼働状態の同期'; APP_RELEASED_AT='2026-07-25'
-BUILD_VERSION=f'{APP_VERSION}-browser-lifecycle-sync'; BASE=Path(__file__).resolve().parent; SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.9.0'; APP_VERSION_TITLE='一覧のドラッグ&ドロップ並べ替え・管理単位の削除・カレンダー実績の削除・時刻タグの1桁対応'; APP_RELEASED_AT='2026-07-26'
+BUILD_VERSION=f'{APP_VERSION}-list-and-history'; BASE=Path(__file__).resolve().parent; SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
- {'version':'V34','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+ {'version':'1.9.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+  'ファイル名の変数タグを高度化しました。時（H）・分（I）・秒（S）にも桁数「1桁」を追加し、時刻に関するタグも1桁で指定できるようにしました（例: h→9、hh→09）。年・月・日と同様に、使う部分ごとに1桁/2桁（年は2桁/4桁）を選んで直感的に桁を調整できます（要望1）。',
+  'ファイル出力管理単位の一覧を、ドラッグ&ドロップで並べ替えできるようにしました。並び順はそのまま問い合わせ（実行）順に反映され、変更は即時保存されます。並べ替えは「登録順」表示かつ検索・絞り込みを解除している状態で有効になり、各行のドラッグハンドルから操作します（要望2-①）。',
+  '一覧の各管理単位に「削除」を追加しました。確認のうえ、その管理単位の登録内容と自動実行ルールを削除し、即時保存します（要望2-②）。',
+  'カレンダーの実施記録（実績）を削除できるようにしました。日別ダイアログの各実績の「削除」で1件ずつ、または「この日の実績を全削除」でまとめて削除できます（対象の絞り込み中はその対象のみ）。削除後はカレンダーと一覧の直前実施履歴へ即時反映します（要望3）。',
+  '認知心理学(操作アフォーダンスの明示・破壊操作の抑制的配色・即時フィードバック) / 情報アーキテクチャ(並び順=問い合わせ順の一貫性) / 色彩調和(既存パレット踏襲・削除は警告系で統一)。',
+ ]},
+ {'version':'1.8.0','date':APP_RELEASED_AT,'title':'日付変数タグの高度化（対象×桁数×日付計算の統合ビルダー）','notes':[
+  '日付・時刻の変数タグビルダーを刷新し、「①日付の対象」「②日付の計算」「③使う部分と桁数」を1か所で組み合わせて1つのタグを作れるようにしました。専用タグの乱立をやめ、直感的な操作へ統合しました（要望1-①②③）。',
+  '日付の計算（要望1-③）を追加しました。基準日（現在日時／対象ファイル更新日／対象ファイル作成日）を軸に、年・月・週・日・時・分・秒を前後へずらせます。ExcelのEDATE関数やVBAのDateAddのように「Nヶ月前」「N年後」などをタグへ組み込めます（例: 前月度、前年、過去7日基準）。月末を跨ぐ計算はEDATE同様に月末へ丸めます。',
+  '対象と桁数の組み合わせ（要望1-①②）を強化しました。対象を選び、年/月/日/時/分/秒それぞれの桁数（Y/M/D の数）を選ぶだけで、YYYYMMDD→20260726、YYYYMD→2026726 のような微調整を、生成タグと実例を見ながら直感的に行えます。対象を切り替えても桁数・計算の設定は保持されます。',
+  '生成されるタグに日付計算を反映しました（例: {now-1M:YYYYMM}、{rne_ctime+1Y:YYYYMMDD}）。命名パターンへ直接記入する場合も、対象名の直後へ +N/-N（Y=年 M=月 W=週 D=日 H=時 I=分 S=秒）を並べて指定できます。プレビューは処理日時を基準に実ファイル名を即時試算します。',
+  '認知心理学(操作の統合・近接・即時フィードバック) / 情報アーキテクチャ(対象→計算→桁数の一貫した順序) / 色彩調和(既存パレット踏襲・日付計算は補助色で区別)。',
+ ]},
+ {'version':'1.7.0','date':APP_RELEASED_AT,'title':'RNE時間管理ポイントの相対期間（動的日付）指定に対応','notes':[
+  'RNEに定義済みの時間型管理ポイントに対し、実行時の処理日時を基準にした相対期間（動的日付）で抽出範囲を自動指定できるようにしました。RNEやカラム指定は変更せず、期間だけをAPI実行直前に差し替えます（Navigator APIのNaviChangePeriodを使用）。',
+  '対象ファイル設定モーダルの入出力タブに「抽出期間（動的日付）」セクションを新設しました。単位（月度／年月日）と、開始・終了の相対オフセット（当月／当日を基準に前後Nを指定）を、認知心理学の近接・一貫性に沿ったコンパクトなUIで設定できます。',
+  '設定した相対期間から実際に抽出される期間を、その場でリアルタイムにプレビュー表示します（例: 2026年6月度 ～ 2026年7月度）。よく使う組み合わせ（前月・今月・当日・前日・過去7日・月初〜現在など）をワンクリックで適用できるプリセットも用意しました。',
+  '対象RNE内の時間型管理ポイントを自動検出する「候補を取得」を追加しました（Navigator API方式で接続可能な場合）。検出できない環境でも管理ポイント名の手入力、または時間フィールドの自動選択で動作します。',
+  '期間が有効なジョブでは、実行ログに適用した単位・開始終了・対象管理ポイントを記録し、定期実行でもどの期間で抽出したかを後から追跡できるようにしました。',
+  '認知心理学(近接・即時フィードバック・一貫性) / 情報アーキテクチャ(入力データ内での期間条件の階層化) / 色彩調和(既存パレット踏襲・入力系の系統色)。',
+ ]},
+ {'version':'1.6.0','date':APP_RELEASED_AT,'title':'日付変数タグの対象選択と桁数調整の統合・変数由来の色分けを文字色のみへ','notes':[
+  '日付・時刻の変数タグに「日付の対象」の選択を追加しました。現在日時／対象ファイル更新日／対象ファイル作成日の中から対象を選び、そのまま桁数（Y/M/D の数）の指定と組み合わせて1つのタグを生成できます。例: 対象ファイル更新日 + YYYYMD で {rne_mtime:YYYYMD} → 2026726。（認知心理学: 選択→桁調整の一連操作への統合）',
+  '対象ごとに別々だった日付専用タグ（RNE更新日・RNE作成日など）を、上記のタグビルダーへ集約しました。専用タグの乱立をやめ、対象の切り替えと桁数調整を同じ場所で直感的に行えるようにしました（情報アーキテクチャ: 役割の一元化）。',
+  '直接入力での桁数調整（YYYYMMDD→20260726、YYYYMD→2026726 のように Y/M/D の記号数がそのまま桁数）も従来どおり利用でき、タグビルダーの生成結果と一致します（一貫性）。',
+  '出力ファイル名の一覧で、変数由来の部分の強調をマーカー（背景色）から文字色のみの区別へ変更しました。変数バッジとの視覚的な衝突を解消しました（色彩調和: 状態表現の役割分担）。',
+  '認知心理学(操作の統合・近接・一貫性) / 情報アーキテクチャ(役割の一元化) / 色彩調和(強調手段の整理)。',
+ ]},
+ {'version':'1.5.0','date':APP_RELEASED_AT,'title':'複数キュー表示の是正・変数タグの刷新・変数由来の色分け・用途コメント欄','notes':[
+  '複数キュー処理の表示不具合を修正しました。実行キュー要約バッジを「処理中／完了／失敗／待機」の対象(ファイル)単位の実状態へ連動させ、進捗と件数が一致するようにしました（状態の即時フィードバック）。',
+  '一覧の進捗表示で、完了したはずの対象が「順番待ち」コメントへ戻り、進捗バーの色も待機色へ戻ってしまう不具合を修正しました。バックエンドが対象ごとの確定状態(完了/失敗)を保持し、完了は緑のまま最後まで固定します。',
+  'ファイル名の変数扱い判定を是正しました。変数欄へ文字を入力しただけ（固定文字）では変数バッジを表示せず、実際に {変数} が使われている場合のみ変数として扱います（実処理での判定）。',
+  '日付・時刻の変数タグを刷新しました。使う部分(年/月/日/時/分/秒)をONにして桁数を選ぶだけで、Excelの書式設定のように Y/M/D の数で桁が決まる分かりやすいタグへ変更しました。生成されるタグと実例をその場で確認できます。',
+  '出力ファイル名の一覧・プレビューで、元が変数である部分に色を付けて識別できるようにしました（固定文字と変数の視覚的な区別）。',
+  '出力対象ごとに用途・メモを記録できるコメント欄を追加しました。一覧にも表示され、検索の対象になります（情報の追跡性）。',
+  '認知心理学(状態の即時フィードバック・近接・一貫性) / 情報アーキテクチャ(役割別階層) / 色彩調和(既存パレット踏襲・状態色の統一)。',
+ ]},
+ {'version':'1.4.0','date':APP_RELEASED_AT,'title':'自動実行スケジュールUIのプリセット(サジェスト)化と寸法安定化','notes':[
+  '自動実行ルールの設定モーダルに「おすすめの組み合わせ」プリセット(サジェスト)を新設しました。平日始業前(月〜金 8:30)・平日昼休み・平日終業後・毎日夜間/早朝・1時間ごと・30分ごと・月初・月末など実務で多い組み合わせを、クリック1回で名称・時刻・実行パターンまで一括入力できます。適用後も各項目を個別に調整でき、カスタム性を保ちます（認知心理学: 選択肢のチャンク化と素早い開始点の提示）。',
+  '現在のフォーム内容と一致するプリセットを自動でハイライトし、どの組み合わせが選ばれているかを一目で把握できるようにしました。手入力で条件を変えるとハイライトも即座に追従します（一貫性・フィードバックの明確化）。',
+  '実行パターン（毎日／曜日／月の日付／一定間隔／特定日）を切り替えても、詳細条件エリアの高さを余裕を持って固定し、モーダルの寸法が変化しないようにしました。プリセット追加後も本文の高さに余白を確保し、ミニカレンダー表示時でも寸法が安定します（情報アーキテクチャ・レイアウトの一貫性）。',
+  'プリセットの識別記号（週／毎／月／間）を実行パターン種別ごとの系統色（曜日=青、毎日=ティール、月=緑、間隔=紫）で色分けし、既存パレットと調和させました（色彩調和）。',
+ ]},
+ {'version':'1.3.0','date':APP_RELEASED_AT,'title':'自動実行UIの寸法安定化・命名パターンのコンパクト化＋カスタム・抽出方式への設定集約・カレンダー配色と余白調整','notes':[
+  '自動実行スケジュールのルール設定モーダルで、実行パターン（毎日／曜日／月の日付／一定間隔／特定日）を切り替えても本文領域の高さを固定し、モーダルの寸法がころころ変化しないようにしました。あわせて、設定内容から実行タイミングを日本語で常時表示する確認欄を追加しました（一貫性の維持による認知負荷の低減）。',
+  'ファイル命名パターンのUIを整理しました。散らかりやすいタグ形式のボタンは「よく使う組み合わせ／よく使う変数」に代表を絞ってコンパクトに常設し、細かい桁数調整や対象ファイル日付などの詳細は「カスタム」折りたたみへ集約しました。カスタム冒頭に変数の仕組み（{ } と : 書式）の説明を追加し、構造を理解しやすくしました（情報アーキテクチャの階層化）。',
+  '共通設定を再編し、「抽出方式」を選ぶとその方式で必要な設定だけを同じ画面へ表示するようにしました。Navigator API選択時は並列処理（API専用）とDLL診断を、DDE互換選択時は待機時間と画面制御をまとめて表示します。関連する設定が一箇所に集まり、設定すべき項目が把握しやすくなりました（関連性のグルーピング）。',
+  'カレンダービューの配色を「予定（時刻指定・一定間隔）」と「実績（完了・中断・失敗）」の2系統へ階層的に整理し、凡例もグループ表示にしました。一定間隔の色を予定系の寒色に合わせて調和させています。カレンダー表示領域の縦方向の余白を表示エリアに合わせて微調整し、下部の詰まりを解消しました（色彩調和と余白設計）。',
+ ]},
+ {'version':'1.2.0','date':APP_RELEASED_AT,'title':'自動実行スケジュールUIの刷新・記号数で桁調整できる命名・キュー内訳表示・カレンダービュー','notes':[
+  '自動実行ルールの設定UIを刷新しました。実行パターンをカード型セグメントで選び、時刻はフローティングの時刻ピッカー、曜日はトグルチップ、月の日付は31日グリッド＋月末チップ、特定日はカレンダーから複数日を選択できるようにしました。文字サイズと余白を統一し視認性を高めました（認知心理学の近接・一貫性）。',
+  'ファイル命名で年月日時分秒の桁数を「記号の数」で調整できるようにしました。YYYYMD・YYMMDD・h:s のように、Y/M/D/h/m/s の連続数がそのまま桁数（ゼロ埋め幅）になります。命名パターンへ直接入力する桁数ビルダーとチップを追加しました。',
+  '実行キューの内訳を一覧化しました。ヘッダーのキュー要約に「定期 N件／即実行 M件／待機 K件」を常時表示し、種別ごとの件数が一目で分かるようにしました。',
+  'カレンダービューを新設しました。予定（自動実行）と実施済みの履歴を月カレンダー上に色分け表示し、日クリックで当日の予定・実績の確認、対象編集への遷移、単発実行ルールの追加ができます（情報アーキテクチャ／色彩調和）。',
+ ]},
+ {'version':'1.1.0','date':'2026-07-26','title':'命名プレビューの近接配置・桁数調整・タブ切替時のモーダル寸法固定','notes':[
+  '対象ファイル設定モーダルで「自動実行」タブへ切り替えても本文領域の高さを固定し、タブ切替時にモーダルの寸法が変化しないようにしました（一貫性の維持による認知負荷の低減）。',
+  '変数命名のプレビューを命名パターン入力欄の直下へ移動し、入力（原因）と結果（プレビュー）を近接配置しました。パターンを打ち込んだ結果が即座に理解できます。',
+  '日付・時刻の桁数を調整できるよう命名チップを拡充しました。YYYYMMDD／YYMMDD／YYYYMM／YYMM／HHMMSS／HHMM に加え、年4桁・年2桁・月・日・時・分・秒を個別に挿入できます（:などファイル名に使えない文字は自動除去する旨も明記）。',
+  'ヘッダーのバージョンバッジの番号左側に「ver」を付与し、表示中のバージョンであることを明確にしました。',
+ ]},
+ {'version':'1.0.0','date':'2026-07-26','title':'出力形式の位置最適化・自動実行のタブ分離・バージョン体系の刷新','notes':[
+  '出力形式（拡張子）の選択を出力ファイル名のすぐ隣へ移動し、形式を変えると最終ファイル名の拡張子が変わることを視覚的に把握できるようにしました。固定名の入力欄には拡張子を含めず、拡張子は出力形式から自動付与する方式へ統一しました（固定名と拡張子の競合を解消）。',
+  '対象ファイル設定モーダルをタブ構成（「基本・入出力」と「自動実行」）へ再編し、スクロールレスで全項目を見渡せるようにしました。設定項目を役割ごとの階層へ整理し、認知負荷を下げました。',
+  'バージョン番号をV表記からセマンティックバージョニング（1.0.0形式）へ全面刷新し、これまでの更新履歴を 1.0.0 に至る系譜として振り直しました。',
+ ]},
+ {'version':'0.12.0','date':'2026-07-26','title':'設定モーダル再構成・並列既定2・ハートビート誤検知修正','notes':[
+  '対象ファイル設定モーダルを情報アーキテクチャに沿って再構成しました。出力ファイル名を管理名称の直下へ移動し、入力データ（RNE・読込シート・読込形式）と出力データ（出力形式・出力先・テーブル名）を階層で分離しました。',
+  '並列実行の既定を2ラインへ変更しました。読込のたびに1ラインへ戻していた旧テスト実装の名残を除去し、ユーザーが変更した並列ライン数は即時保存され、次回起動以降も保持されます。',
+  'ブラウザーのタブを切り替えて非アクティブにしただけの状態を「閉じられた」と誤検知してアプリを終了する不具合を修正しました。バックグラウンド抑制を考慮して無音判定を200秒へ拡大し、タブを実際に閉じた時だけビーコンで即時判定します（リロード・タブ切替では終了しません）。',
+  '処理の都合で使わなくなった空フォルダー（.\\work）の自動生成を廃止しました。中間・変換ファイルは従来どおりローカル作業領域のみで作成します。',
+ ]},
+ {'version':'0.11.0','date':'2026-07-26','title':'一覧進捗の刷新と変数ファイル名','notes':[
+  '対象ファイル一覧の進捗列を再設計し、進捗バーのはみ出しと列幅の不均衡を解消しました。列幅を役割ごとに最適化し、横スクロール依存を抑えました。',
+  '各対象へ「直前の実施日時」と結果（完了／失敗／中断）・実行区分（手動／定期）を常時表示し、バッチ実行や定期実行が完了したかどうかを一覧で確認できるようにしました。',
+  '出力ファイル名に変数（実行日時、対象RNEの更新日・作成日、RNE名の文字列操作など）を組み合わせて指定できる動的命名機能を追加しました。命名ビルダーとリアルタイムプレビューを搭載しています。',
+  '実行のたびに変数を展開して命名するため、同一処理でも日付別などでファイルを蓄積できます。展開後の実ファイル名を実行ログへ記録します。',
+ ]},
+ {'version':'0.10.0','date':'2026-07-25','title':'ブラウザーとアプリ稼働状態の同期','notes':[
   'コマンドプロンプトを表示しない start.vbs を追加しました（初回セットアップは引き続きstart.batを使用します）。',
   '実行中にブラウザーを閉じようとすると警告が表示されるようにし、「アプリを終了」ボタンからは確認のうえ実行を中断して終了できるようにしました。',
   '実行中のジョブと実行キューを中断するAPIを追加しました（並列(プロセス分離)ラインは即時終了、直列実行は安全な区切りまで進めてから停止します）。',
   'サーバーへの接続が失われた場合に、その旨をブラウザー画面へ明示し、タブを閉じるよう案内する通知を追加しました。',
  ]},
- {'version':'V33','date':'2026-07-25','title':'ハートビート監視によるゾンビプロセス防止','notes':[
+ {'version':'0.9.0','date':'2026-07-25','title':'ハートビート監視によるゾンビプロセス防止','notes':[
   'ブラウザー側から10秒間隔でハートビートを送信し、バックエンドが生存を確認するようにしました。',
   '45秒以上ハートビートが途絶えた場合、実行中のジョブが無く、かつ有効な自動実行ルールも無いときに限り、アプリが自動的に終了するようにしました。',
   'タブを閉じ忘れた場合でもPythonプロセスが残り続けないようにする一方、自動実行スケジュールがある場合は無人稼働を継続します。',
  ]},
- {'version':'V32','date':'2026-07-25','title':'対象ファイル一覧への進捗統合表示','notes':[
+ {'version':'0.8.0','date':'2026-07-25','title':'対象ファイル一覧への進捗統合表示','notes':[
   '対象ファイル一覧の「自動実行」列を「進捗・次回実行」列へ再設計し、直近の開始予定時刻と予定の種類（手動のみ／定期／複数指定など）を表示するようにしました。',
   '実行中・実行キュー待ちの対象は、一覧の該当行がそのまま進捗バーへ切り替わり、工程・経過時間を確認できるようにしました。',
   '進捗表示中の行をクリックすると、詳細な進捗モーダルを直接開けるようにしました。',
  ]},
- {'version':'V31','date':'2026-07-25','title':'ヘッダーと並列進捗表示のUIUX改善','notes':[
+ {'version':'0.7.0','date':'2026-07-25','title':'ヘッダーと並列進捗表示のUIUX改善','notes':[
   'ヘッダーのバージョン表示をアプリ名の直後へ移動し、状態表示・操作ボタンを役割ごとに区切り線で整理しました。',
   '並列実行の進捗レーンを、ライン数に応じて自動的に列数が変わるグリッド表示へ変更し、最大8ラインでも縦に伸びすぎず見やすく収まるようにしました。',
   '並列実行時の進捗モーダル幅を拡張し、レーン数が多い場合でも余裕を持って表示できるようにしました。',
  ]},
- {'version':'V30','date':'2026-07-25','title':'設定画面の再構成とバージョン管理','notes':[
+ {'version':'0.6.0','date':'2026-07-25','title':'設定画面の再構成とバージョン管理','notes':[
   '共通設定を「接続とパス／抽出方式／並列実行／DDE互換設定／安全性とバックアップ／バージョン情報」のカテゴリー別ナビゲーション構成へ再編しました。',
   'API方式選択時にもDDE専用項目（DDE接続待機・XLS生成待機）が常に表示されていた構成を見直し、選択中の抽出方式に応じて使用状況を明示するようにしました。',
   'ヘッダーのバージョン表示と共通設定内の「バージョン情報」から、アプリ内で更新履歴を確認できるようにしました。',
  ]},
- {'version':'V29','date':'','title':'進捗の縦積み表示とログ管理機能の強化','notes':[
+ {'version':'0.5.0','date':'2026-07-25','title':'進捗の縦積み表示とログ管理機能の強化','notes':[
   '並列実行の進捗表示を横並びから縦積みレイアウトへ変更しました。',
   '実行ログへ種別（実行処理／設定変更／実行キュー／性能計測／公開処理／エラー）の色分け表示を追加しました。',
   'ログの検索語・種別・レベルによるフィルター機能と、フィルター結果や選択行をまとめてコピーする機能を追加しました。',
   '保存期間を指定した古いログの一括削除、および選択行・表示結果の削除機能を追加しました。',
  ]},
- {'version':'V21','date':'','title':'実行キューの可視化','notes':['実行待ちの対象と処理順序を一覧表示し、順序変更・解除を行えるようにしました。']},
- {'version':'V17〜V20','date':'','title':'並列進捗モーダルの安定化','notes':['並列実行レーンの状態表示と、進捗モーダルの再表示導線を整備しました。']},
- {'version':'V13〜V16','date':'','title':'API並列実行の導入','notes':['API方式による複数ライン同時実行と、プロセス分離方式の予約キュー管理を追加しました。']},
- {'version':'V7〜V12','date':'','title':'基本レイアウトとログ基盤の整備','notes':['1画面に収まるレイアウトへ変更し、実行ログを工程単位でレポート化しました。']},
+ {'version':'0.4.0','date':'','title':'実行キューの可視化','notes':['実行待ちの対象と処理順序を一覧表示し、順序変更・解除を行えるようにしました。']},
+ {'version':'0.3.0','date':'','title':'並列進捗モーダルの安定化','notes':['並列実行レーンの状態表示と、進捗モーダルの再表示導線を整備しました。（旧V17〜V20）']},
+ {'version':'0.2.0','date':'','title':'API並列実行の導入','notes':['API方式による複数ライン同時実行と、プロセス分離方式の予約キュー管理を追加しました。（旧V13〜V16）']},
+ {'version':'0.1.0','date':'','title':'基本レイアウトとログ基盤の整備','notes':['1画面に収まるレイアウトへ変更し、実行ログを工程単位でレポート化しました。（旧V7〜V12）']},
 ]
 app=Flask(__name__); app.config['SEND_FILE_MAX_AGE_DEFAULT']=0; run_lock=threading.Lock(); stop_event=threading.Event(); status_lock=threading.Lock(); command_queue_lock=threading.RLock(); command_queue_event=threading.Event(); command_queue=[]; active_command=None
 # ブラウザー側ハートビート監視。フロントからの生存信号が途絶えたら、ジョブ実行中でなく、
 # かつ有効な自動実行ルールも無い場合にだけ自プロセスを終了し、閉じ忘れによるゾンビ化を防ぐ。
-HEARTBEAT_TIMEOUT_SECONDS=45; heartbeat_lock=threading.Lock(); last_heartbeat_at=time.time()
+# 0.12.0（旧V36）: 非アクティブ（タブ切替）でもブラウザーは生存しているため、バックグラウンド時のタイマー抑制（多くのブラウザーで最悪1分に1回程度まで低速化）を考慮し、
+# ハートビート途絶の判定しきい値を余裕を持って200秒へ拡大する。加えてタブが実際に閉じられた場合は明示シグナルで即時判定する。
+HEARTBEAT_TIMEOUT_SECONDS=200; CLOSE_GRACE_SECONDS=12; heartbeat_lock=threading.Lock(); last_heartbeat_at=time.time(); browser_closed_explicit=False; browser_closing_at=0.0
 # 実行中断（ユーザーによる明示キャンセル）。プロセス分離ワーカーはterminateで即時停止できるが、
 # 直列(DDE/API)実行中の1件はCOM/DDE操作の途中で安全に打ち切れないため、次のジョブ開始前でのみ打ち切る。
 cancel_requested=threading.Event(); active_workers_lock=threading.Lock(); active_workers={}
 class RunCancelled(Exception):pass
-status={'build_version':BUILD_VERSION,'running':False,'current':'','current_job_id':'','current_job_name':'','current_index':0,'total_jobs':0,'step':'idle','step_label':'待機中','step_percent':0,'completed_jobs':0,'failed_jobs':0,'started_at':'','elapsed_seconds':0,'symnavi_window':'未起動','last_result':'未実行','last_finished_at':'','error_detail':'','activity_detail':'','activity_value':'','heartbeat_at':'','parallel_lines':[],'batch_job_ids':[]}
+status={'build_version':BUILD_VERSION,'running':False,'current':'','current_job_id':'','current_job_name':'','current_index':0,'total_jobs':0,'step':'idle','step_label':'待機中','step_percent':0,'completed_jobs':0,'failed_jobs':0,'started_at':'','elapsed_seconds':0,'symnavi_window':'未起動','last_result':'未実行','last_finished_at':'','error_detail':'','activity_detail':'','activity_value':'','heartbeat_at':'','parallel_lines':[],'batch_job_ids':[],'queue_completed_ids':[],'queue_failed_ids':[],'queue_running_ids':[],'queue_waiting_ids':[]}
 log=logging.getLogger('navi'); log.setLevel(logging.INFO)
 if not log.handlers:
  h=logging.FileHandler(BASE/'logs'/'app.log',encoding='utf-8'); h.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')); log.addHandler(h)
@@ -83,8 +164,21 @@ def init_settings_db():
   CREATE TABLE IF NOT EXISTS schedules (id TEXT PRIMARY KEY,job_id TEXT NOT NULL,display_order INTEGER NOT NULL DEFAULT 0,enabled INTEGER NOT NULL DEFAULT 1,name TEXT NOT NULL,schedule_type TEXT NOT NULL,time_value TEXT,interval_minutes INTEGER,weekdays_json TEXT,month_days_json TEXT,dates_json TEXT,updated_at TEXT NOT NULL,FOREIGN KEY(job_id) REFERENCES jobs(id) ON DELETE CASCADE);
   CREATE TABLE IF NOT EXISTS scheduler_state (state_key TEXT PRIMARY KEY,state_value TEXT NOT NULL,updated_at TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS schema_info (key TEXT PRIMARY KEY,value TEXT NOT NULL);
+  CREATE TABLE IF NOT EXISTS job_runs (job_id TEXT PRIMARY KEY,job_name TEXT,finished_at TEXT,status TEXT,trigger TEXT,detail TEXT,rows INTEGER,cols INTEGER,output_file TEXT,updated_at TEXT NOT NULL DEFAULT '');
+  CREATE TABLE IF NOT EXISTS run_history (id INTEGER PRIMARY KEY AUTOINCREMENT,job_id TEXT,job_name TEXT,finished_at TEXT,status TEXT,trigger TEXT,detail TEXT,rows INTEGER,cols INTEGER,output_file TEXT);
+  CREATE INDEX IF NOT EXISTS idx_run_history_finished ON run_history(finished_at);
   """)
-  c.execute("INSERT OR REPLACE INTO schema_info(key,value) VALUES('schema_version','1')")
+  c.execute("INSERT OR REPLACE INTO schema_info(key,value) VALUES('schema_version','2')")
+ ensure_schema_upgrades()
+
+def ensure_schema_upgrades():
+ # 既存DBへ後方互換で列を追加する。動的命名（naming_mode / output_pattern）・用途コメント（comment）用。
+ with settings_connection() as c:
+  cols=[r['name'] for r in c.execute('PRAGMA table_info(jobs)')]
+  if 'naming_mode' not in cols:c.execute("ALTER TABLE jobs ADD COLUMN naming_mode TEXT NOT NULL DEFAULT 'fixed'")
+  if 'output_pattern' not in cols:c.execute("ALTER TABLE jobs ADD COLUMN output_pattern TEXT NOT NULL DEFAULT ''")
+  if 'comment' not in cols:c.execute("ALTER TABLE jobs ADD COLUMN comment TEXT NOT NULL DEFAULT ''")
+  if 'period_json' not in cols:c.execute("ALTER TABLE jobs ADD COLUMN period_json TEXT NOT NULL DEFAULT ''")
 
 def _decode_setting(row):
  v=row['value']; t=row['value_type']
@@ -99,6 +193,17 @@ def _encode_setting(value):
  if isinstance(value,(dict,list)):return (json.dumps(value,ensure_ascii=False),'json')
  return (str(value),'text')
 
+def _decode_period(raw):
+ # ジョブごとの相対期間（動的日付）設定を後方互換で読み出す。未設定は無効扱い。
+ try:d=json.loads(raw) if raw else {}
+ except Exception:d={}
+ if not isinstance(d,dict):d={}
+ unit=d.get('unit'); unit=unit if unit in ('month','day') else 'month'
+ def _int(v,default=0):
+  try:return int(v)
+  except Exception:return default
+ return {'enabled':bool(d.get('enabled',False)),'control_point':str(d.get('control_point') or '').strip(),'unit':unit,'from_offset':_int(d.get('from_offset',0)),'to_offset':_int(d.get('to_offset',0))}
+
 def normalize_output_format(value,filename=''):
  fmt=str(value or '').strip().lower()
  aliases={'sqlite':'sqlite3','db':'sqlite3','access':'accdb','excel':'xlsx','xls':'xlsx'}
@@ -108,6 +213,8 @@ def normalize_output_format(value,filename=''):
  if fmt not in ('sqlite3','txt','csv','xlsx','accdb'):fmt=ext_map.get(ext,'sqlite3')
  return fmt
 
+def output_extension(fmt):
+ return {'sqlite3':'.sqlite3','txt':'.txt','csv':'.csv','xlsx':'.xlsx','accdb':'.accdb'}.get(fmt,'.sqlite3')
 def canonical_output_file(filename,fmt):
  ext={'sqlite3':'.sqlite3','txt':'.txt','csv':'.csv','xlsx':'.xlsx','accdb':'.accdb'}[fmt]
  stem=Path(str(filename or 'output')).stem
@@ -122,6 +229,194 @@ def validate_output_contract(job,stage):
  if not match:raise ValueError(f'出力形式不一致: 設定={configured}, 実効={effective}, ファイル={filename}, 期待拡張子={expected}')
  return effective
 
+# ---- 動的ファイル名（変数命名）----------------------------------------------
+# 出力ファイル名に変数を埋め込み、実行のたびに展開する。
+#   日付系: {now:%Y%m%d} {exec:...} {datetime} {date} {time} {rne_mtime:%Y%m%d} {rne_ctime:%Y%m%d}
+#   文字列系: {rne} {rne:left:4} {rne:right:3} {rne:mid:2:3} {rne:upper} {rne:replace:A:B} {name} {table}
+_ILLEGAL_FILENAME=re.compile(r'[\\/:*?"<>|]')
+# 記号の数で桁数を調整できる日付書式（%を使わない簡易パターン）。
+# Y=年 / M=月 / D(またはd)=日 / H(またはh)=時(24h) / m=分 / s=秒。連続した同一記号の数がそのまま桁数（ゼロ埋め幅）になる。
+# 例: {date:YYYYMD} -> 年4桁+月1桁+日1桁 / {date:YYMMDD} -> 年2桁+月2桁+日2桁 / {time:h:s} -> 時:秒。
+_CUSTOM_DATE_TOKEN=re.compile(r'(Y+|M+|D+|d+|H+|h+|m+|s+|[^YMDHhmsd]+)')
+def format_custom_datetime(dt,pattern):
+ if dt is None:return ''
+ out=[]
+ for run in _CUSTOM_DATE_TOKEN.findall(str(pattern or '')):
+  ch=run[0];n=len(run)
+  if ch=='Y':out.append(str(dt.year%(10**n)).zfill(n) if n<4 else f'{dt.year:0{n}d}')
+  elif ch=='M':out.append(f'{dt.month:0{n}d}')
+  elif ch in ('D','d'):out.append(f'{dt.day:0{n}d}')
+  elif ch in ('H','h'):out.append(f'{dt.hour:0{n}d}')
+  elif ch=='m':out.append(f'{dt.minute:0{n}d}')
+  elif ch=='s':out.append(f'{dt.second:0{n}d}')
+  else:out.append(run)
+ return ''.join(out)
+def _looks_like_custom_pattern(arg):
+ # %を含まず、Y/M/D/h/m/s のいずれかを含むものを桁数調整パターンとみなす。
+ return bool(arg) and '%' not in arg and re.search(r'[YMDdHhms]',str(arg)) is not None
+def _apply_text_op(value,arg):
+ value=str(value)
+ if not arg:return value
+ parts=arg.split(':');op=parts[0].strip().lower()
+ try:
+  if op=='left':return value[:max(0,int(parts[1]))]
+  if op=='right':n=max(0,int(parts[1]));return value[-n:] if n>0 else ''
+  if op=='mid':start=int(parts[1]);length=int(parts[2]);return value[start:start+length]
+  if op=='upper':return value.upper()
+  if op=='lower':return value.lower()
+  if op=='replace':return value.replace(parts[1],parts[2] if len(parts)>2 else '')
+ except Exception:return value
+ return value
+
+# ---- 日付の計算（EDATE / DateAdd 相当）----------------------------------------
+# 基準日（現在日時 / 対象ファイル更新日 / 対象ファイル作成日）を軸に、年・月・週・日・時・分・秒を
+# 前後へずらしてから命名へ使えるようにする。トークンの対象名の直後へ +N / -N を並べて指定する。
+#   例: {now-1M:YYYYMMDD}      -> 現在日時の1ヶ月前
+#       {rne_ctime+2Y-1M:YYYYMM} -> 対象ファイル作成日の2年後かつ1ヶ月前（年→月→週→日→時→分→秒の順で適用）
+#       {now-7D:YYYYMMDD}       -> 現在日時の7日前
+# 単位: Y=年 / M=月 / W=週 / D(またはd)=日 / H(またはh)=時 / I=分 / S=秒。
+_DATE_OFFSET_UNIT=re.compile(r'([+-]\d+)([YMWDdHhIS])')
+_SOURCE_OFFSET=re.compile(r'^([A-Za-z_]+)((?:[+-]\d+[YMWDdHhIS])+)?$')
+def _shift_months(dt,months):
+ # 月・年のずらし。EDATEと同様に、日が存在しない場合は月末へ丸める。
+ total=dt.year*12+(dt.month-1)+int(months);y,m=total//12,total%12+1
+ last=calendar.monthrange(y,m)[1]
+ return dt.replace(year=y,month=m,day=min(dt.day,last))
+def apply_date_offset(dt,offset_text):
+ # 対象名に付いた +N/-N の並びを、年→月→週→日→時→分→秒の順で適用する。
+ if dt is None or not offset_text:return dt
+ order={'Y':0,'M':1,'W':2,'D':3,'d':3,'H':4,'h':4,'I':5,'S':6}
+ parts=sorted(_DATE_OFFSET_UNIT.findall(offset_text),key=lambda p:order.get(p[1],9))
+ for sign_num,unit in parts:
+  n=int(sign_num)
+  if unit=='Y':dt=_shift_months(dt,n*12)
+  elif unit=='M':dt=_shift_months(dt,n)
+  elif unit=='W':dt=dt+timedelta(weeks=n)
+  elif unit in ('D','d'):dt=dt+timedelta(days=n)
+  elif unit in ('H','h'):dt=dt+timedelta(hours=n)
+  elif unit=='I':dt=dt+timedelta(minutes=n)
+  elif unit=='S':dt=dt+timedelta(seconds=n)
+ return dt
+def split_source_offset(key):
+ # トークンの対象名から、基準名と日付計算(オフセット)を分離する。未指定なら (key,'') を返す。
+ m=_SOURCE_OFFSET.match(str(key or ''))
+ if not m:return str(key or ''),''
+ return m.group(1),(m.group(2) or '')
+
+def render_filename_template(template,job=None,rne_path=None,now=None):
+ job=job or {};now=now or datetime.now()
+ stem=Path(str(job.get('rne') or job.get('rne_path') or '')).stem
+ mtime=ctime=None
+ try:
+  p=Path(rne_path) if rne_path else None
+  if p and p.is_file():
+   st=p.stat();mtime=datetime.fromtimestamp(st.st_mtime);ctime=datetime.fromtimestamp(getattr(st,'st_ctime',st.st_mtime))
+ except Exception:pass
+ date_tokens={'now':(now,'%Y%m%d_%H%M%S'),'exec':(now,'%Y%m%d_%H%M%S'),'datetime':(now,'%Y%m%d_%H%M%S'),'date':(now,'%Y%m%d'),'time':(now,'%H%M%S'),'rne_mtime':(mtime,'%Y%m%d'),'mtime':(mtime,'%Y%m%d'),'rne_ctime':(ctime,'%Y%m%d'),'ctime':(ctime,'%Y%m%d')}
+ text_tokens={'rne':stem,'rne_name':stem,'rne_stem':stem,'name':str(job.get('name') or ''),'job':str(job.get('name') or ''),'table':str(job.get('table') or '')}
+ def repl(m):
+  raw=m.group(1).strip();key=raw.split(':',1)[0].strip();arg=raw.split(':',1)[1] if ':' in raw else ''
+  base,offset=split_source_offset(key)
+  if base in date_tokens:
+   dt,default=date_tokens[base]
+   if not dt:return ''
+   dt=apply_date_offset(dt,offset)
+   if _looks_like_custom_pattern(arg):return format_custom_datetime(dt,arg)
+   try:return dt.strftime(arg or default)
+   except Exception:return dt.strftime(default)
+  if key in text_tokens:return _apply_text_op(text_tokens[key],arg)
+  return m.group(0)
+ rendered=re.sub(r'\{([^}]*)\}',repl,str(template or ''))
+ rendered=_ILLEGAL_FILENAME.sub('',rendered);rendered=re.sub(r'\s+',' ',rendered).strip().strip('.')
+ return rendered or 'output'
+
+# 命名で使用できる既知トークンのキー一覧。実際に展開できる（＝本当に変数である）ものだけを判定に使う。
+_KNOWN_TOKEN_KEYS={'now','exec','datetime','date','time','rne_mtime','mtime','rne_ctime','ctime','rne','rne_name','rne_stem','name','job','table'}
+def _pattern_variable_keys(pattern):
+ keys=set()
+ for m in re.finditer(r'\{([^}]*)\}',str(pattern or '')):
+  key=m.group(1).strip().split(':',1)[0].strip()
+  base,_off=split_source_offset(key)
+  if base in _KNOWN_TOKEN_KEYS:keys.add(base)
+ return keys
+def has_template_variables(pattern):
+ # 単に変数入力欄へ文字を入れただけ（例: SIKALOTDEF）は変数扱いしない。既知トークン {..} が実在する場合だけTrue。
+ return bool(_pattern_variable_keys(pattern))
+def render_filename_segments(template,job=None,rne_path=None,now=None):
+ """命名パターンを『固定部分』と『変数から展開された部分』へ分解する。
+ 一覧の出力ファイル名で、元が変数である箇所へ色を付けるために使用する。"""
+ job=job or {};now=now or datetime.now()
+ stem=Path(str(job.get('rne') or job.get('rne_path') or '')).stem
+ mtime=ctime=None
+ try:
+  p=Path(rne_path) if rne_path else None
+  if p and p.is_file():
+   st=p.stat();mtime=datetime.fromtimestamp(st.st_mtime);ctime=datetime.fromtimestamp(getattr(st,'st_ctime',st.st_mtime))
+ except Exception:pass
+ date_tokens={'now':(now,'%Y%m%d_%H%M%S'),'exec':(now,'%Y%m%d_%H%M%S'),'datetime':(now,'%Y%m%d_%H%M%S'),'date':(now,'%Y%m%d'),'time':(now,'%H%M%S'),'rne_mtime':(mtime,'%Y%m%d'),'mtime':(mtime,'%Y%m%d'),'rne_ctime':(ctime,'%Y%m%d'),'ctime':(ctime,'%Y%m%d')}
+ text_tokens={'rne':stem,'rne_name':stem,'rne_stem':stem,'name':str(job.get('name') or ''),'job':str(job.get('name') or ''),'table':str(job.get('table') or '')}
+ def expand(raw):
+  raw=raw.strip();key=raw.split(':',1)[0].strip();arg=raw.split(':',1)[1] if ':' in raw else ''
+  base,offset=split_source_offset(key)
+  if base in date_tokens:
+   dt,default=date_tokens[base]
+   if not dt:return '',True
+   dt=apply_date_offset(dt,offset)
+   if _looks_like_custom_pattern(arg):return format_custom_datetime(dt,arg),True
+   try:return dt.strftime(arg or default),True
+   except Exception:return dt.strftime(default),True
+  if key in text_tokens:return _apply_text_op(text_tokens[key],arg),True
+  return '{'+raw+'}',False
+ pattern=str(template or '');segments=[];pos=0
+ for m in re.finditer(r'\{([^}]*)\}',pattern):
+  if m.start()>pos:segments.append({'text':pattern[pos:m.start()],'var':False})
+  text,is_var=expand(m.group(1));segments.append({'text':text,'var':is_var});pos=m.end()
+ if pos<len(pattern):segments.append({'text':pattern[pos:],'var':False})
+ out=[]
+ for s in segments:
+  t=_ILLEGAL_FILENAME.sub('',s['text'])
+  if t=='':continue
+  if out and out[-1]['var']==s['var']:out[-1]['text']+=t
+  else:out.append({'text':t,'var':s['var']})
+ return out
+
+def resolve_output_filename(job,cfg,now=None):
+ fmt=normalize_output_format(job.get('output_format'),job.get('output_file'))
+ mode=str(job.get('naming_mode') or 'fixed').lower()
+ if mode=='template' and str(job.get('output_pattern') or '').strip():
+  rp=None
+  try:rp=resolve_rne_path(job,cfg)
+  except Exception:rp=None
+  base=render_filename_template(job.get('output_pattern'),job=job,rne_path=rp,now=now)
+ else:
+  base=Path(str(job.get('output_file') or 'output')).stem
+ return canonical_output_file(base,fmt)
+
+def record_job_run(job_id,job_name,status_value,trigger,detail='',rows=None,cols=None,output_file=''):
+ if not job_id:return
+ now=datetime.now().isoformat(timespec='seconds')
+ try:
+  with settings_connection() as c:
+   c.execute('INSERT OR REPLACE INTO job_runs(job_id,job_name,finished_at,status,trigger,detail,rows,cols,output_file,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)',(job_id,job_name,now,status_value,trigger,detail,rows,cols,output_file,now))
+   # カレンダーの実施履歴用に追記式でも保持する（job_runsは最新1件のみのため）。
+   c.execute('INSERT INTO run_history(job_id,job_name,finished_at,status,trigger,detail,rows,cols,output_file) VALUES(?,?,?,?,?,?,?,?,?)',(job_id,job_name,now,status_value,trigger,detail,rows,cols,output_file))
+   # 実施履歴は直近2000件へ制限し、肥大化を防ぐ。
+   c.execute('DELETE FROM run_history WHERE id NOT IN (SELECT id FROM run_history ORDER BY id DESC LIMIT 2000)')
+ except Exception:
+  log.exception('JOB_RUN_RECORD_FAILED job=%s',job_name)
+
+def load_job_runs():
+ try:
+  with settings_connection() as c:
+   return {r['job_id']:{'finished_at':r['finished_at'],'status':r['status'],'trigger':r['trigger'],'detail':r['detail'],'rows':r['rows'],'cols':r['cols'],'output_file':r['output_file']} for r in c.execute('SELECT * FROM job_runs')}
+ except Exception:
+  return {}
+
+def last_run_info(run):
+ if not run:return {'last_run':None,'last_status':'','last_trigger':'','last_output':''}
+ trig=str(run.get('trigger') or '');kind='schedule' if trig.startswith('schedule') else 'manual'
+ return {'last_run':run.get('finished_at'),'last_status':run.get('status') or '','last_trigger':kind,'last_output':run.get('output_file') or ''}
+
 def load():
  init_settings_db()
  with settings_connection() as c:
@@ -135,9 +430,14 @@ def load():
     if x['month_days_json']:q['month_days']=json.loads(x['month_days_json'])
     if x['dates_json']:q['dates']=json.loads(x['dates_json'])
     rules.append(q)
-   fmt=normalize_output_format(r['output_format'],r['output_file']); jobs.append({'id':r['id'],'enabled':bool(r['enabled']),'name':r['name'],'rne':r['rne'],'rne_path':r['rne_path'],'output_folder':r['output_folder'],'output_format':fmt,'output_file':canonical_output_file(r['output_file'],fmt),'table':r['table_name'],'sheet':r['sheet_name'],'type':r['read_type'],'schedules':rules})
-  cfg['jobs']=jobs; cfg.setdefault('settings',{}); cfg['settings'].setdefault('extract_engine','api'); stable_migration='stability_profile' not in cfg['settings']; cfg['settings'].setdefault('stability_profile','stable_api_serial'); cfg['settings'].setdefault('api_parallel_lines',1); cfg['settings'].setdefault('api_parallel_max_lines',8); cfg['settings'].setdefault('api_parallel_model','process');
-  if stable_migration: cfg['settings']['api_parallel_lines']=1
+   fmt=normalize_output_format(r['output_format'],r['output_file']); jobs.append({'id':r['id'],'enabled':bool(r['enabled']),'name':r['name'],'rne':r['rne'],'rne_path':r['rne_path'],'output_folder':r['output_folder'],'output_format':fmt,'output_file':canonical_output_file(r['output_file'],fmt),'table':r['table_name'],'sheet':r['sheet_name'],'type':r['read_type'],'naming_mode':(r['naming_mode'] if 'naming_mode' in r.keys() else 'fixed'),'output_pattern':(r['output_pattern'] if 'output_pattern' in r.keys() else ''),'comment':(r['comment'] if 'comment' in r.keys() else ''),'period':_decode_period(r['period_json'] if 'period_json' in r.keys() else ''),'schedules':rules})
+  cfg['jobs']=jobs; cfg.setdefault('settings',{}); cfg['settings'].setdefault('extract_engine','api'); cfg['settings'].setdefault('api_parallel_max_lines',8); cfg['settings'].setdefault('api_parallel_model','process')
+  # 既定の並列ラインは2。旧テスト実装では stability_profile='stable_api_serial' の環境で読込のたびに api_parallel_lines を1へ強制していた（毎回1ラインへ戻る不具合の原因）。
+  # その名残マーカーが残る環境（または初期状態）だけ一度2へ引き上げ、以降はユーザーが保存した値をそのまま尊重する。
+  _prev_profile=cfg['settings'].get('stability_profile')
+  if _prev_profile in (None,'stable_api_serial'):
+   cfg['settings']['api_parallel_lines']=2; cfg['settings']['stability_profile']='balanced_api_parallel'
+  cfg['settings'].setdefault('api_parallel_lines',2); cfg['settings'].setdefault('stability_profile','balanced_api_parallel')
   cfg.setdefault('navigator_api_dll',r'C:\NAVIAP\debugdllVC14x64\SymNaviA.dll'); cfg.setdefault('accdb_template','.\\assets\\empty.accdb'); return cfg
 
 def save(v):
@@ -149,12 +449,12 @@ def save(v):
   keep=[]
   for order,j in enumerate(jobs):
    jid=j.get('id') or str(uuid.uuid4()); keep.append(jid)
-   fmt=normalize_output_format(j.get('output_format'),j.get('output_file')); output_file=canonical_output_file(j.get('output_file'),fmt); log.info('設定保存 job=%s requested_format=%s saved_format=%s requested_file=%s saved_file=%s',j.get('name'),j.get('output_format'),fmt,j.get('output_file'),output_file); c.execute('INSERT OR REPLACE INTO jobs VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',(jid,order,int(bool(j.get('enabled',True))),j.get('name',''),j.get('rne',''),j.get('rne_path',''),j.get('output_folder',''),fmt,output_file,j.get('table','仕掛'),j.get('sheet','Page1'),j.get('type','詳細データ'),now))
+   fmt=normalize_output_format(j.get('output_format'),j.get('output_file')); output_file=canonical_output_file(j.get('output_file'),fmt); log.info('設定保存 job=%s requested_format=%s saved_format=%s requested_file=%s saved_file=%s',j.get('name'),j.get('output_format'),fmt,j.get('output_file'),output_file); c.execute('INSERT OR REPLACE INTO jobs (id,display_order,enabled,name,rne,rne_path,output_folder,output_format,output_file,table_name,sheet_name,read_type,naming_mode,output_pattern,comment,period_json,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',(jid,order,int(bool(j.get('enabled',True))),j.get('name',''),j.get('rne',''),j.get('rne_path',''),j.get('output_folder',''),fmt,output_file,j.get('table','仕掛'),j.get('sheet','Page1'),j.get('type','詳細データ'),str(j.get('naming_mode') or 'fixed'),str(j.get('output_pattern') or ''),str(j.get('comment') or ''),json.dumps(_decode_period(json.dumps(j.get('period') or {},ensure_ascii=False)),ensure_ascii=False),now))
    c.execute('DELETE FROM schedules WHERE job_id=?',(jid,))
    for ro,q in enumerate(j.get('schedules',[])):
     c.execute('INSERT INTO schedules VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',(q.get('id') or str(uuid.uuid4()),jid,ro,int(bool(q.get('enabled',True))),q.get('name','実行ルール'),q.get('type','daily'),q.get('time','06:00'),q.get('interval_minutes'),json.dumps(q.get('weekdays'),ensure_ascii=False) if 'weekdays' in q else None,json.dumps(q.get('month_days'),ensure_ascii=False) if 'month_days' in q else None,json.dumps(q.get('dates'),ensure_ascii=False) if 'dates' in q else None,now))
-  if keep:c.execute('DELETE FROM jobs WHERE id NOT IN ('+','.join('?' for _ in keep)+')',keep)
-  else:c.execute('DELETE FROM jobs')
+  if keep:c.execute('DELETE FROM jobs WHERE id NOT IN ('+','.join('?' for _ in keep)+')',keep);c.execute('DELETE FROM job_runs WHERE job_id NOT IN ('+','.join('?' for _ in keep)+')',keep)
+  else:c.execute('DELETE FROM jobs');c.execute('DELETE FROM job_runs')
 
 def migrate_legacy_settings():
  init_settings_db()
@@ -393,6 +693,44 @@ def phase_log(phase,started=None,**values):
 
 def progress(step,label,percent,**extra):
  set_status(step=step,step_label=label,step_percent=percent,current=label,elapsed_seconds=max(0,int(time.time()-getattr(progress,'started',time.time()))),heartbeat_at=datetime.now().isoformat(timespec='seconds'),**extra)
+
+# ---- 相対期間（動的日付）------------------------------------------------------
+# RNEに定義済みの時間型管理ポイントへ、処理日時を基準にした相対期間を実行直前に適用する。
+# 単位=month: 月度指定 (YYYYMM00 / NAVI_MONTH=0) / 単位=day: 年月日指定 (YYYYMMDD / NAVI_YMD=1)。
+def _add_months(year,month,delta):
+ idx=(year*12+(month-1))+int(delta); return idx//12, idx%12+1
+
+def compute_period(period,now=None):
+ now=now or datetime.now()
+ if not period or not period.get('enabled'):return None
+ unit=period.get('unit') if period.get('unit') in ('month','day') else 'month'
+ try:fo=int(period.get('from_offset',0) or 0)
+ except Exception:fo=0
+ try:to=int(period.get('to_offset',0) or 0)
+ except Exception:to=0
+ if unit=='month':
+  fy,fm=_add_months(now.year,now.month,fo); ty,tm=_add_months(now.year,now.month,to)
+  from_time=f'{fy:04d}{fm:02d}00'; to_time=f'{ty:04d}{tm:02d}00'; condition=0
+  summary=f'{fy}年{fm}月度 ～ {ty}年{tm}月度'
+ else:
+  fd=(now.date()+timedelta(days=fo)); td=(now.date()+timedelta(days=to))
+  from_time=fd.strftime('%Y%m%d'); to_time=td.strftime('%Y%m%d'); condition=1
+  summary=f'{fd:%Y-%m-%d} ～ {td:%Y-%m-%d}'
+ return {'condition':condition,'from_time':from_time,'to_time':to_time,'summary':summary,'unit':unit,'from_offset':fo,'to_offset':to}
+
+def apply_dynamic_period(api_client,handle,job,now=None,line=''):
+ # ジョブに相対期間が設定されていれば、開いたカタログの時間型管理ポイントを差し替える。
+ # 期間が有効なのに適用に失敗した場合は、誤った期間での公開を避けるため例外を送出して失敗させる。
+ period=job.get('period') or {}
+ if not period.get('enabled'):return None
+ spec=compute_period(period,now or datetime.now())
+ if not spec:return None
+ label=str(period.get('control_point') or '').strip()
+ t=phase_log('api_change_period',job=job.get('name'),line=line,unit=spec['unit'],condition=spec['condition'],from_time=spec['from_time'],to_time=spec['to_time'],control_point=(label or '(時間フィールド)'))
+ info=api_client.apply_period(handle,label,spec['condition'],spec['from_time'],spec['to_time'])
+ phase_log('api_change_period',t,job=job.get('name'),line=line,applied_to=info.get('label'),locate=info.get('locate'),summary=spec['summary'])
+ log.info('DYNAMIC_PERIOD job=%s line=%s enabled=1 unit=%s condition=%s from=%s to=%s target=%s summary=%s',job.get('name'),line or '-',spec['unit'],spec['condition'],spec['from_time'],spec['to_time'],info.get('label'),spec['summary'])
+ return {**spec,'target':info.get('label')}
 
 def dde_connect(seconds):
  try: import win32ui, dde
@@ -819,11 +1157,12 @@ def publish(src,dst,backup_root,generations,from_pending=False):
    try:incoming.unlink()
    except OSError:pass
 
-def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,work,backup):
+def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,backup):
  from navigator_api import NavigatorApi
  line_name=os.environ.get('NAVI_WORKER_LINE') or threading.current_thread().name
  job_started=time.perf_counter();api_client=None;api_csv=None;xls=None;db=None
  try:
+  j['output_file']=resolve_output_filename(j,cfg); log.info('OUTPUT_NAME line=%s job=%s mode=%s pattern=%s resolved_file=%s',line_name,j.get('name'),j.get('naming_mode','fixed'),j.get('output_pattern',''),j['output_file'])
   fmt=validate_output_contract(j,'before-extraction')
   j['_accdb_template']=str(resolve_path(cfg.get('accdb_template','.\\assets\\empty.accdb')))
   rp=resolve_rne_path(j,cfg);out_dir=resolve_path(j.get('output_folder') or cfg['default_output_folder']);target=out_dir/j['output_file']
@@ -852,6 +1191,7 @@ def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,
    log.info('APIカタログ読込条件 line=%s dll=%s cwd=%s catalog_full=%s catalog_name=%s extension=%s size=%s mtime_ns=%s strategy=original_fullpath',line_name,api_client.dll_path,os.getcwd(),api_rne,api_rne.name,api_rne.suffix,rne_stat.st_size,rne_stat.st_mtime_ns)
    t=phase_log('api_open_catalog',job=j['name'],line=line_name);handle,api_elapsed=api_client.open_catalog(api_rne);phase_log('api_open_catalog',t,job=j['name'],line=line_name,handle=handle,api_elapsed=f'{api_elapsed:.2f}s',strategy='original_fullpath')
   finally:os.chdir(previous_cwd)
+  if (j.get('period') or {}).get('enabled'):update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='期間指定',percent=30,detail='相対期間を適用');apply_dynamic_period(api_client,handle,j,datetime.now(),line=line_name)
   update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='問い合わせ実行',percent=35,detail='API execute');t=phase_log('api_execute_catalog',job=j['name'],line=line_name);api_number,api_elapsed=api_client.execute(handle);phase_log('api_execute_catalog',t,job=j['name'],line=line_name,number=api_number,api_elapsed=f'{api_elapsed:.2f}s')
   t=phase_log('api_get_dimensions',job=j['name'],line=line_name);expected_rows,expected_cols=api_client.dimensions(handle);phase_log('api_get_dimensions',t,job=j['name'],line=line_name,rows=expected_rows,columns=expected_cols)
   api_direct_output=False
@@ -906,21 +1246,23 @@ def _read_worker_json(path,default=None):
  try:return json.loads(Path(path).read_text(encoding='utf-8'))
  except Exception:return default
 
-def run_api_process_batch(jobs,cfg,user,pw,server,dde_work,work,backup,max_lines,trigger):
+def run_api_process_batch(jobs,cfg,user,pw,server,dde_work,backup,max_lines,trigger):
  """Run each Navigator API session in an isolated Python process.
  Finished lines immediately pull the next queued query until the reservation queue is empty.
  """
  batch_id=datetime.now().strftime('%Y%m%d_%H%M%S_')+uuid.uuid4().hex[:8]
  runtime=dde_work/'parallel_runtime'/('parallel_'+batch_id);runtime.mkdir(parents=True,exist_ok=True)
  queue=deque(enumerate(jobs,1));active={};results=[];failures=[];completed=0
+ # 各対象(ジョブ)の実状態を job_id 単位で保持し、完了後に「待機」へ戻る不具合を防ぐ。
+ completed_ids=[];failed_ids=[];all_job_ids=[j['id'] for j in jobs]
  with active_workers_lock:active_workers.clear()
  batch_started=time.perf_counter(); total=len(jobs); max_lines=max(1,min(int(max_lines),total))
- set_status(parallel_lines=[{'line':f'ライン {n}','job':'','state':'待機','percent':0,'elapsed':0,'detail':'開始待ち','slot':n} for n in range(1,max_lines+1)],queue_total=total,queue_waiting=total,queue_active=0,queue_completed=0,parallel_max_lines=max_lines,parallel_mode=True,symnavi_window=f'独立プロセス {max_lines}ライン')
+ set_status(parallel_lines=[{'line':f'ライン {n}','job':'','state':'待機','percent':0,'elapsed':0,'detail':'開始待ち','slot':n} for n in range(1,max_lines+1)],queue_total=total,queue_waiting=total,queue_active=0,queue_completed=0,queue_completed_ids=[],queue_failed_ids=[],queue_running_ids=[],queue_waiting_ids=list(all_job_ids),parallel_max_lines=max_lines,parallel_mode=True,symnavi_window=f'独立プロセス {max_lines}ライン')
  log.info('PARALLEL_BATCH_START model=process-isolated trigger=%s batch_id=%s runtime=%s jobs=%s max_lines=%s total_jobs=%s parent_pid=%s',trigger,batch_id,runtime,[j['rne'] for j in jobs],max_lines,total,os.getpid())
  def start_one(slot):
   index,job=queue.popleft();line=f'ライン {slot}'
   job_dir=runtime/f'line_{slot}_{index}';job_dir.mkdir(parents=True,exist_ok=True)
-  payload={'job':job,'job_index':index,'total_jobs':total,'cfg':cfg,'user':user,'password':pw,'server':server,'dde_work':str(job_dir/'work'),'work':str(work),'backup':str(backup),'line':line}
+  payload={'job':job,'job_index':index,'total_jobs':total,'cfg':cfg,'user':user,'password':pw,'server':server,'dde_work':str(job_dir/'work'),'backup':str(backup),'line':line}
   Path(payload['dde_work']).mkdir(parents=True,exist_ok=True)
   payload_path=job_dir/'payload.json';result_path=job_dir/'result.json';status_path=job_dir/'status.json'
   payload_path.write_text(json.dumps(payload,ensure_ascii=False),encoding='utf-8')
@@ -946,6 +1288,8 @@ def run_api_process_batch(jobs,cfg,user,pw,server,dde_work,work,backup,max_lines
      try:item['proc'].kill()
      except Exception:pass
     failures.append({'ok':False,'job':item['job']['name'],'error':'ユーザーにより中断されました','elapsed':time.perf_counter()-item['started']})
+    failed_ids.append(item['job']['id'])
+    record_job_run(item['job']['id'],item['job']['name'],'cancelled',trigger,detail='ユーザーにより中断されました')
     update_parallel_line(item['line'],job=item['job']['name'],job_id=item['job']['id'],state='中断',percent=100,detail='ユーザーにより中断されました',elapsed=round(time.perf_counter()-item['started'],1))
     with active_workers_lock:active_workers.pop(slot,None)
     del active[slot]
@@ -959,18 +1303,22 @@ def run_api_process_batch(jobs,cfg,user,pw,server,dde_work,work,backup,max_lines
    result=_read_worker_json(item['result'],{'ok':False,'job':item['job']['name'],'error':f'Worker終了コード {rc}','elapsed':time.perf_counter()-item['started']})
    completed+=1
    (results if result.get('ok') else failures).append(result)
+   (completed_ids if result.get('ok') else failed_ids).append(item['job']['id'])
    log.info('WORKER_END batch_id=%s line=%s pid=%s job=%s returncode=%s ok=%s elapsed=%.2fs',batch_id,item['line'],item['proc'].pid,item['job']['name'],rc,result.get('ok'),result.get('elapsed',0))
+   record_job_run(item['job']['id'],item['job']['name'],'ok' if result.get('ok') else 'failed',trigger,detail=(result.get('result') or result.get('error') or ''),rows=result.get('rows'),cols=result.get('columns'),output_file=Path(result.get('target') or '').name)
    with active_workers_lock:active_workers.pop(slot,None)
    del active[slot]
    if queue and not cancel_requested.is_set():start_one(slot)
   waiting=len(queue);running=len(active)
-  set_status(completed_jobs=completed,current_index=min(completed+running,total),current_job_name=f'予約キュー処理中: 実行 {running} / 待機 {waiting}',step='save',step_label=f'API並列処理 実行 {running}・待機 {waiting}・完了 {completed}',step_percent=round(100*completed/max(1,total)),activity_detail=f'{max_lines}ラインで予約クエリを処理',activity_value=f'実行 {running} / 待機 {waiting} / 完了 {completed}/{total}',queue_total=total,queue_waiting=waiting,queue_active=running,queue_completed=completed)
+  running_ids=[item['job']['id'] for item in active.values()]
+  waiting_ids=[job['id'] for _,job in queue]
+  set_status(completed_jobs=completed,current_index=min(completed+running,total),current_job_name=f'予約キュー処理中: 実行 {running} / 待機 {waiting}',step='save',step_label=f'API並列処理 実行 {running}・待機 {waiting}・完了 {completed}',step_percent=round(100*completed/max(1,total)),activity_detail=f'{max_lines}ラインで予約クエリを処理',activity_value=f'実行 {running} / 待機 {waiting} / 完了 {completed}/{total}',queue_total=total,queue_waiting=waiting,queue_active=running,queue_completed=completed,queue_completed_ids=list(completed_ids),queue_failed_ids=list(failed_ids),queue_running_ids=running_ids,queue_waiting_ids=waiting_ids)
   time.sleep(.25)
  elapsed=time.perf_counter()-batch_started
  sequential_sum=sum(float(r.get('elapsed',0)) for r in results+failures);speedup=sequential_sum/elapsed if elapsed else 0
  summary='; '.join(f"{r.get('job')}={float(r.get('elapsed',0)):.1f}s" for r in results)
  log.info('PARALLEL_BATCH_END model=process-isolated total_jobs=%s succeeded=%s failed=%s max_lines=%s elapsed=%.2fs sequential_sum=%.2fs speedup=%.2fx job_elapsed_summary=%s',total,len(results),len(failures),max_lines,elapsed,sequential_sum,speedup,summary)
- set_status(parallel_speedup=round(speedup,2),queue_waiting=0,queue_active=0,queue_completed=completed,parallel_mode=True)
+ set_status(parallel_speedup=round(speedup,2),queue_waiting=0,queue_active=0,queue_completed=completed,queue_completed_ids=list(completed_ids),queue_failed_ids=list(failed_ids),queue_running_ids=[],queue_waiting_ids=[],parallel_mode=True)
  return results,failures,elapsed
 
 def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=None):
@@ -980,10 +1328,10 @@ def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=No
  try:
   startup_started=time.perf_counter();cfg_started=time.perf_counter();cfg=load();log.info('STARTUP_PHASE phase=config_load elapsed=%.2fs',time.perf_counter()-cfg_started);jobs=[j for j in cfg['jobs'] if j.get('enabled') and (not job_ids or j['id'] in job_ids)]
   if not jobs:raise ValueError('実行対象がありません')
-  selection_elapsed=time.perf_counter()-cfg_started;first_job=jobs[0]; first_fmt=normalize_output_format(first_job.get('output_format'),first_job.get('output_file')); first_target=resolve_path(first_job.get('output_folder') or cfg['default_output_folder'])/canonical_output_file(first_job.get('output_file'),first_fmt); progress.started=time.time(); requested_lines=max(1,int(parallel_lines_override or 1)); execution_mode='parallel' if str(cfg['settings'].get('extract_engine') or 'api').lower()=='api' and len(jobs)>1 and requested_lines>1 else 'serial'; set_status(run_id=run_id or uuid.uuid4().hex,execution_mode=execution_mode,requested_lines=requested_lines,parallel_mode=(execution_mode=='parallel'),parallel_lines=[],queue_total=0,queue_waiting=0,queue_active=0,queue_completed=0,parallel_max_lines=(requested_lines if execution_mode=='parallel' else 0),parallel_speedup=0,batch_job_ids=[j['id'] for j in jobs]); set_status(running=True,current='準備中',current_job_id=first_job['id'],current_job_name=first_job['name'],current_index=1,total_jobs=len(jobs),completed_jobs=0,failed_jobs=0,output_format=first_fmt,output_file=canonical_output_file(first_job.get('output_file'),first_fmt),output_target=str(first_target),started_at=datetime.now().isoformat(timespec='seconds'),elapsed_seconds=0,symnavi_window='起動待ち',step='prepare',step_label='設定を確認しています',step_percent=3,last_result='実行中',error_detail=''); log.info('BUILD_VERSION=%s',BUILD_VERSION); log.info('処理開始 trigger=%s jobs=%s',trigger,[j['rne'] for j in jobs]);log.info('STARTUP_PHASE phase=config_and_job_selection elapsed=%.2fs',selection_elapsed)
+  selection_elapsed=time.perf_counter()-cfg_started;first_job=jobs[0]; first_fmt=normalize_output_format(first_job.get('output_format'),first_job.get('output_file')); first_target=resolve_path(first_job.get('output_folder') or cfg['default_output_folder'])/canonical_output_file(first_job.get('output_file'),first_fmt); progress.started=time.time(); requested_lines=max(1,int(parallel_lines_override or 1)); execution_mode='parallel' if str(cfg['settings'].get('extract_engine') or 'api').lower()=='api' and len(jobs)>1 and requested_lines>1 else 'serial'; set_status(run_id=run_id or uuid.uuid4().hex,execution_mode=execution_mode,requested_lines=requested_lines,parallel_mode=(execution_mode=='parallel'),parallel_lines=[],queue_total=0,queue_waiting=0,queue_active=0,queue_completed=0,queue_completed_ids=[],queue_failed_ids=[],queue_running_ids=[],queue_waiting_ids=[j['id'] for j in jobs],parallel_max_lines=(requested_lines if execution_mode=='parallel' else 0),parallel_speedup=0,batch_job_ids=[j['id'] for j in jobs]); set_status(running=True,current='準備中',current_job_id=first_job['id'],current_job_name=first_job['name'],current_index=1,total_jobs=len(jobs),completed_jobs=0,failed_jobs=0,output_format=first_fmt,output_file=canonical_output_file(first_job.get('output_file'),first_fmt),output_target=str(first_target),started_at=datetime.now().isoformat(timespec='seconds'),elapsed_seconds=0,symnavi_window='起動待ち',step='prepare',step_label='設定を確認しています',step_percent=3,last_result='実行中',error_detail=''); log.info('BUILD_VERSION=%s',BUILD_VERSION); log.info('処理開始 trigger=%s jobs=%s',trigger,[j['rne'] for j in jobs]);log.info('STARTUP_PHASE phase=config_and_job_selection elapsed=%.2fs',selection_elapsed)
   for k in ('symnavi_exe','symnavim_conf','symnavim_def'):
    if not resolve_path(cfg[k]).is_file():raise FileNotFoundError(f'{k}がありません: {cfg[k]}')
-  cred_started=time.perf_counter();user,pw,server,_=creds(resolve_path(cfg['symnavim_conf']));log.info('STARTUP_PHASE phase=credential_load elapsed=%.2fs',time.perf_counter()-cred_started);path_started=time.perf_counter();rne_root=resolve_path(cfg['rne_folder']);work=resolve_path(cfg['work_folder']);backup=resolve_path(cfg['backup_folder']);work.mkdir(parents=True,exist_ok=True);dde_work=dde_staging_folder();log.info('STARTUP_PHASE phase=path_prepare elapsed=%.2fs total=%.2fs',time.perf_counter()-path_started,time.perf_counter()-startup_started);log.info('共通一時保存先: %s',dde_work)
+  cred_started=time.perf_counter();user,pw,server,_=creds(resolve_path(cfg['symnavim_conf']));log.info('STARTUP_PHASE phase=credential_load elapsed=%.2fs',time.perf_counter()-cred_started);path_started=time.perf_counter();rne_root=resolve_path(cfg['rne_folder']);backup=resolve_path(cfg['backup_folder']);dde_work=dde_staging_folder();log.info('STARTUP_PHASE phase=path_prepare elapsed=%.2fs total=%.2fs',time.perf_counter()-path_started,time.perf_counter()-startup_started);log.info('共通一時保存先: %s',dde_work)
   engine=str(cfg['settings'].get('extract_engine') or 'api').lower(); set_status(extract_engine=engine); log.info('抽出エンジン engine=%s stability_profile=%s',engine,cfg['settings'].get('stability_profile','stable_api_serial'))
   if any(normalize_output_format(j.get('output_format'),j.get('output_file'))=='accdb' for j in jobs):
    access_prewarm_thread=prewarm_access_async('process_contains_accdb')
@@ -991,7 +1339,7 @@ def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=No
   log.info('PARALLEL_DECISION engine=%s selected_jobs=%s configured_lines=%s eligible=%s model=process-isolated',engine,len(jobs),api_parallel_lines,engine=='api' and len(jobs)>1 and api_parallel_lines>1)
   log.info('EXECUTION_MODE mode=%s requested_lines=%s selected_jobs=%s',('parallel-process' if engine=='api' and len(jobs)>1 and api_parallel_lines>1 else 'serial'),api_parallel_lines,len(jobs))
   if engine=='api' and len(jobs)>1 and api_parallel_lines>1:
-   results,failures,batch_elapsed=run_api_process_batch(jobs,cfg,user,pw,server,dde_work,work,backup,api_parallel_lines,trigger)
+   results,failures,batch_elapsed=run_api_process_batch(jobs,cfg,user,pw,server,dde_work,backup,api_parallel_lines,trigger)
    if cancel_requested.is_set():raise RunCancelled(f'{len(results)}/{len(jobs)}件完了後に中断されました')
    if failures:raise RuntimeError('API並列実行で失敗: '+' | '.join(f"{r['job']}: {r.get('error')}" for r in failures))
    msg='正常終了 | 全件%sファイル / %.1f秒 | '%(len(results),batch_elapsed)+' | '.join(r['result'] for r in results)
@@ -1019,13 +1367,14 @@ def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=No
   elif engine=='dde':
    progress('launch','SymfoNaviを起動しています',8); proc=subprocess.Popen(f'"{str(resolve_path(cfg['symnavi_exe']))}" -d -u"{user}","{pw}","{server}"'); set_status(symnavi_window='起動済み'); progress('dde','SymfoNaviへのDDE接続を待っています',15); srv,conv=dde_connect(int(cfg['settings']['dde_timeout_seconds'])); hide_done=start_hidden_symnavi(proc,cfg['settings']); log.info('SymfoNavi定期監視を抽出中は停止 mode=pipeline-priority')
   else:raise ValueError('抽出エンジンが不正です: '+engine)
-  progress('ready','処理の準備が完了しました',20); results=[]
+  progress('ready','処理の準備が完了しました',20); results=[]; completed_ids=[]
   for job_index,j in enumerate(jobs,1):
    if cancel_requested.is_set():raise RunCancelled(f'{job_index-1}/{len(jobs)}件完了後に中断されました')
+   j['output_file']=resolve_output_filename(j,cfg); log.info('OUTPUT_NAME job=%s mode=%s pattern=%s resolved_file=%s',j['name'],j.get('naming_mode','fixed'),j.get('output_pattern',''),j['output_file'])
    set_status(current_index=job_index,current_job_id=j['id'],current_job_name=j['name'],output_format=normalize_output_format(j.get('output_format'),j.get('output_file')),output_file=canonical_output_file(j.get('output_file'),normalize_output_format(j.get('output_format'),j.get('output_file'))))
    preflight_started=phase_log('job_preflight',job=j['name']); progress('open',f'{j["name"]}: 入出力先を確認しています',22,activity_detail='事前確認',activity_value='出力先・保留ファイル・RNEを確認'); rp=resolve_rne_path(j,cfg); out_dir=resolve_path(j.get('output_folder') or cfg['default_output_folder']); fmt=validate_output_contract(j,'before-extraction'); j['_accdb_template']=str(resolve_path(cfg.get('accdb_template','.\\assets\\empty.accdb'))); target=out_dir/j['output_file']; set_status(output_target=str(target)); log.info('実行設定 job=%s format=%s output_file=%s target=%s',j['name'],fmt,j['output_file'],target); apply_pending(target,backup,int(cfg['settings']['backup_generations'])); phase_log('job_preflight',preflight_started,job=j['name'],rne=rp,target=target)
    if not rp.is_file():raise FileNotFoundError('RNEがありません: '+str(rp))
-   stamp=datetime.now().strftime('%Y%m%d_%H%M%S_%f'); xls=dde_work/f'navi_{job_index}_{stamp}.xls'; local_export=dde_work/'export'; local_export.mkdir(parents=True,exist_ok=True); db=local_export/f'{Path(j["output_file"]).stem}_{stamp}{Path(j["output_file"]).suffix}'; log.info('変換作業先 local=%s configured_work=%s',db,work); esc=lambda x:str(x).replace('"','""')
+   stamp=datetime.now().strftime('%Y%m%d_%H%M%S_%f'); xls=dde_work/f'navi_{job_index}_{stamp}.xls'; local_export=dde_work/'export'; local_export.mkdir(parents=True,exist_ok=True); db=local_export/f'{Path(j["output_file"]).stem}_{stamp}{Path(j["output_file"]).suffix}'; log.info('変換作業先 local=%s',db); esc=lambda x:str(x).replace('"','""')
    api_planned=(db if engine=='api' and fmt=='xlsx' else (dde_work/f'navi_{job_index}_{stamp}.csv' if engine=='api' else xls));common_intermediate=('API_DIRECT_XLSX' if engine=='api' and fmt=='xlsx' else ('CSV' if engine=='api' else 'XLS'))
    job_started=time.perf_counter(); log.info('PIPELINE job=%s engine=%s common_intermediate=%s format=%s planned_intermediate=%s converted=%s target=%s',j['name'],engine,common_intermediate,fmt,api_planned,db,target)
    if engine=='api':
@@ -1045,6 +1394,9 @@ def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=No
      log.info('APIカタログ読込条件 dll=%s cwd=%s catalog_full=%s catalog_name=%s extension=%s size=%s mtime_ns=%s strategy=original_fullpath',api_client.dll_path,os.getcwd(),api_rne,api_rne.name,api_rne.suffix,rne_stat.st_size,rne_stat.st_mtime_ns)
      t=phase_log('api_open_catalog',job=j['name']); handle,api_elapsed=api_client.open_catalog(api_rne); phase_log('api_open_catalog',t,job=j['name'],handle=handle,api_elapsed=f'{api_elapsed:.2f}s',strategy='original_fullpath')
     finally:os.chdir(previous_cwd)
+    if (j.get('period') or {}).get('enabled'):
+     progress('open',f'{j["name"]}: 相対期間を適用しています',34,activity_detail='Navigator API 期間指定',activity_value=(compute_period(j.get('period'),datetime.now()) or {}).get('summary',''));applied=apply_dynamic_period(api_client,handle,j,datetime.now())
+     if applied:log.info('実行設定 job=%s dynamic_period=%s',j['name'],applied.get('summary'))
     progress('save',f'{j["name"]}: APIで問い合わせを実行しています',38,activity_detail='Navigator API 2/3',activity_value='問い合わせ実行・ダウンロード')
     t=phase_log('api_execute_catalog',job=j['name']); api_number,api_elapsed=api_client.execute(handle); phase_log('api_execute_catalog',t,job=j['name'],number=api_number,api_elapsed=f'{api_elapsed:.2f}s')
     t=phase_log('api_get_dimensions',job=j['name']);expected_rows,expected_cols=api_client.dimensions(handle);phase_log('api_get_dimensions',t,job=j['name'],rows=expected_rows,columns=expected_cols)
@@ -1092,7 +1444,7 @@ def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=No
     t=phase_log('format_conversion',job=j['name'],format=fmt); nr,nc=export_data(intermediate,db,j,bool(cfg['settings']['reject_zero_rows']),expected_rows,expected_cols); phase_log('format_conversion',t,job=j['name'],format=fmt,rows=nr,columns=nc)
    progress('publish',f'{j["name"]}: 検査済みファイルを公開しています',90,activity_detail='公開工程',activity_value=str(target))
    t=phase_log('publish',job=j['name']); pub=publish(db,target,backup,int(cfg['settings']['backup_generations'])); phase_log('publish',t,job=j['name'],published=pub['published'])
-   total=time.perf_counter()-job_started; results.append(f'{j["name"]}: {nr}件/{nc}列 / {total:.1f}秒'+('' if pub['published'] else f' / 更新保留: {pub["pending"]}')); set_status(completed_jobs=job_index); log.info('JOB_RESULT job=%s format=%s rows=%s columns=%s elapsed=%.2fs target=%s',j['name'],fmt,nr,nc,total,target)
+   total=time.perf_counter()-job_started; results.append(f'{j["name"]}: {nr}件/{nc}列 / {total:.1f}秒'+('' if pub['published'] else f' / 更新保留: {pub["pending"]}')); completed_ids.append(j['id']); set_status(completed_jobs=job_index,queue_completed_ids=list(completed_ids)); log.info('JOB_RESULT job=%s format=%s rows=%s columns=%s elapsed=%.2fs target=%s',j['name'],fmt,nr,nc,total,target); record_job_run(j['id'],j['name'],'ok',trigger,detail=f'{nr}件/{nc}列 / {total:.1f}秒',rows=nr,cols=nc,output_file=j['output_file'])
    # 元RNEはAPIが直接参照するため削除対象に含めない。生成物だけを後片付けする。
    for p in (xls,locals().get('api_csv'),db):
     try:
@@ -1101,8 +1453,11 @@ def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=No
   msg='正常終了 | '+' | '.join(results); progress('complete','すべての処理が完了しました',100); set_status(last_result=msg,last_finished_at=datetime.now().isoformat(timespec='seconds'),elapsed_seconds=int(time.time()-progress.started)); log.info(msg)
  except RunCancelled as e:
   msg='中断されました: '+str(e); set_status(step='cancelled',step_label='ユーザーの操作により中断しました',step_percent=100,last_result=msg,error_detail='',last_finished_at=datetime.now().isoformat(timespec='seconds'),elapsed_seconds=int(time.time()-getattr(progress,'started',time.time()))); log.info('RUN_CANCELLED %s',msg)
+  if status.get('running') and status.get('current_job_id'):record_job_run(status['current_job_id'],status.get('current_job_name',''),'cancelled',trigger,detail=msg)
  except Exception as e:
-  msg='異常終了: '+str(e); set_status(step='error',step_label='処理を完了できませんでした',failed_jobs=1,step_percent=100,last_result=msg,error_detail=str(e),last_finished_at=datetime.now().isoformat(timespec='seconds'),elapsed_seconds=int(time.time()-getattr(progress,'started',time.time()))); log.error('%s\n%s',msg,traceback.format_exc()); raise
+  msg='異常終了: '+str(e); set_status(step='error',step_label='処理を完了できませんでした',failed_jobs=1,step_percent=100,last_result=msg,error_detail=str(e),last_finished_at=datetime.now().isoformat(timespec='seconds'),elapsed_seconds=int(time.time()-getattr(progress,'started',time.time()))); log.error('%s\n%s',msg,traceback.format_exc())
+  if status.get('current_job_id'):record_job_run(status['current_job_id'],status.get('current_job_name',''),'failed',trigger,detail=str(e))
+  raise
  finally:
   cancel_requested.clear()
   set_status(running=False,current='',current_job_id='',symnavi_window='終了済み')
@@ -1210,6 +1565,46 @@ def next_occurrence(rule,now):
   return best
  return None
 
+def expand_rule_occurrences(rule,start,end,limit=400):
+ """カレンダー表示用に、ルール1件が[start,end]の期間に実行される日時をすべて返す。
+ interval（一定間隔）は件数が膨大になり得るため、日ごとの回数へ集約した要約情報を別途返す。"""
+ if not rule.get('enabled',True):return [],[]
+ kind=rule.get('type','daily'); tm=str(rule.get('time') or '06:00')
+ try:hh,mm=map(int,tm.split(':'))
+ except Exception:hh,mm=6,0
+ points=[]; interval_days=[]
+ day=start.date(); last_day=end.date()
+ if kind=='interval':
+  mins=max(1,int(rule.get('interval_minutes',60) or 60)); per_day=max(1,(24*60)//mins)
+  d=day
+  while d<=last_day:
+   interval_days.append({'date':d.isoformat(),'minutes':mins,'count':per_day})
+   d+=timedelta(days=1)
+  return points,interval_days
+ if kind=='weekdays':
+  wd=set(rule.get('weekdays') or [])
+  d=day
+  while d<=last_day:
+   if d.weekday() in wd:points.append(datetime(d.year,d.month,d.day,hh,mm))
+   d+=timedelta(days=1)
+ elif kind=='daily':
+  d=day
+  while d<=last_day:
+   points.append(datetime(d.year,d.month,d.day,hh,mm)); d+=timedelta(days=1)
+ elif kind=='monthly':
+  days=rule.get('month_days') or [1]; d=day
+  while d<=last_day:
+   lastn=calendar.monthrange(d.year,d.month)[1]; target={(lastn if x==-1 else x) for x in days}
+   if d.day in target:points.append(datetime(d.year,d.month,d.day,hh,mm))
+   d+=timedelta(days=1)
+ elif kind=='specific_dates':
+  for ds in (rule.get('dates') or []):
+   try:y,mo,da=map(int,str(ds).split('-'))
+   except Exception:continue
+   cand=datetime(y,mo,da,hh,mm)
+   if start<=cand<=end:points.append(cand)
+ return points[:limit],interval_days
+
 def job_schedule_hint(rules):
  if not rules:return '手動のみ'
  if len(rules)>1:return f'複数指定 ({len(rules)}件)'
@@ -1232,15 +1627,24 @@ def any_enabled_schedule_exists():
 
 def heartbeat_watchdog():
  time.sleep(10)  # 初回ページ読込み・最初のハートビート到達までの猶予。
- while not stop_event.wait(10):
+ while not stop_event.wait(5):
   try:
-   with heartbeat_lock:silence=time.time()-last_heartbeat_at
-   if silence<=HEARTBEAT_TIMEOUT_SECONDS:continue
+   with heartbeat_lock:
+    silence=time.time()-last_heartbeat_at
+    explicit=browser_closed_explicit
+    since_close=(time.time()-browser_closing_at) if browser_closing_at else 0
+   # 明示クローズ: タブ×・ウィンドウ×・アプリ終了時にビーコンで通知される。猶予後もハートビートが復帰しなければ実クローズと判断する。
+   # 再読込み（リロード）やタブ切替（非アクティブ）では、復帰したハートビートがこのフラグを解除するため誤検知しない。
+   explicit_close=explicit and since_close>=CLOSE_GRACE_SECONDS and silence>=CLOSE_GRACE_SECONDS
+   # フォールバック: ビーコンが届かない異常終了に備え、バックグラウンド抑制も考慮した長い無音（既定200秒）でも終了判断する。
+   silent_timeout=silence>HEARTBEAT_TIMEOUT_SECONDS
+   if not (explicit_close or silent_timeout):continue
+   reason='explicit_close' if explicit_close else 'heartbeat_timeout'
    if status['running']:
-    log.info('HEARTBEAT_WATCHDOG silence=%.0fs だが実行中のため終了を見送りました',silence);continue
+    log.info('HEARTBEAT_WATCHDOG reason=%s silence=%.0fs だが実行中のため終了を見送りました',reason,silence);continue
    if any_enabled_schedule_exists():
-    log.info('HEARTBEAT_WATCHDOG silence=%.0fs だが有効な自動実行ルールがあるため常駐を継続します',silence);continue
-   log.info('HEARTBEAT_WATCHDOG silence=%.0fsを検出し、ブラウザーが閉じられたと判断してアプリを終了します',silence)
+    log.info('HEARTBEAT_WATCHDOG reason=%s silence=%.0fs だが有効な自動実行ルールがあるため常駐を継続します',reason,silence);continue
+   log.info('HEARTBEAT_WATCHDOG reason=%s silence=%.0fsを検出し、ブラウザーが閉じられたと判断してアプリを終了します',reason,silence)
    for h in log.handlers:h.flush()
    stop_event.set();os._exit(0)
   except Exception:
@@ -1279,13 +1683,177 @@ def get_config():
  c=load()
  try:*_,s=creds(resolve_path(c['symnavim_conf'])); c['credential_status']='読取可能 ['+s+']'
  except Exception as e:c['credential_status']='未確認: '+str(e)
+ now=datetime.now()
+ for j in c['jobs']:
+  pattern=str(j.get('output_pattern') or '').strip()
+  # 変数扱いは「命名モードがtemplate」かつ「既知の変数トークンが実在する」場合のみ。
+  is_var=str(j.get('naming_mode') or 'fixed').lower()=='template' and has_template_variables(pattern)
+  j['output_is_variable']=is_var
+  if is_var:
+   try:
+    rp=None
+    try:rp=str(resolve_rne_path(j,c))
+    except Exception:rp=None
+    fmt=normalize_output_format(j.get('output_format'),j.get('output_file'))
+    j['output_file_preview']=resolve_output_filename(j,c,now)
+    segs=render_filename_segments(pattern,job=j,rne_path=rp,now=now)
+    segs.append({'text':output_extension(fmt),'var':False})
+    j['output_file_segments']=segs
+   except Exception:
+    j['output_file_preview']='';j['output_file_segments']=[]
  return jsonify(c)
 @app.put('/api/config')
 def put_config():save(request.get_json(force=True));return jsonify(ok=True)
+@app.post('/api/settings/parallel-lines')
+def set_parallel_lines():
+ # 並列ライン数だけを即時に保存する軽量エンドポイント。ユーザーが変更したら他の未保存編集に触れずその値を確定し、次回起動以降も保持する。
+ data=request.get_json(silent=True) or {}
+ try:lines=max(1,min(8,int(data.get('lines',2) or 2)))
+ except Exception:lines=2
+ c=load(); c['settings']['api_parallel_lines']=lines; c['settings']['stability_profile']='balanced_api_parallel'; save(c)
+ log.info('設定保存 job=(共通) 並列ライン数を保存 api_parallel_lines=%s',lines)
+ return jsonify(ok=True,api_parallel_lines=lines)
 @app.get('/api/schedule-preview')
 def schedule_preview():
+ c=load(); now=datetime.now(); runs=load_job_runs()
+ return jsonify(items=[{**job_schedule_preview(j,now),**last_run_info(runs.get(j['id']))} for j in c['jobs']])
+@app.get('/api/calendar')
+def calendar_view():
+ # カレンダービュー用: 指定月の予定（scheduled）と実施履歴（executed）を日付ごとに返す。
+ try:year=int(request.args.get('year')); month=int(request.args.get('month'))
+ except Exception:
+  now=datetime.now(); year,month=now.year,now.month
+ month=max(1,min(12,month))
+ first=datetime(year,month,1); last_day=calendar.monthrange(year,month)[1]; last=datetime(year,month,last_day,23,59,59)
  c=load(); now=datetime.now()
- return jsonify(items=[job_schedule_preview(j,now) for j in c['jobs']])
+ scheduled=[]; interval_summary={}
+ for j in c['jobs']:
+  if not j.get('enabled'):continue
+  for r in j.get('schedules',[]):
+   if not r.get('enabled'):continue
+   points,interval_days=expand_rule_occurrences(r,first,last)
+   for p in points:
+    scheduled.append({'date':p.strftime('%Y-%m-%d'),'time':p.strftime('%H:%M'),'datetime':p.isoformat(timespec='minutes'),'job_id':j['id'],'job_name':j['name'],'rule_id':r.get('id'),'rule_name':r.get('name',''),'rule_type':r.get('type',''),'past':p<now})
+   for d in interval_days:
+    key=d['date']; entry=interval_summary.setdefault(key,{'date':key,'jobs':{},'total':0})
+    entry['jobs'].setdefault(j['id'],{'job_id':j['id'],'job_name':j['name'],'rule_name':r.get('name',''),'minutes':d['minutes'],'count':d['count']})
+    entry['total']+=d['count']
+ interval_list=[{'date':v['date'],'total':v['total'],'items':list(v['jobs'].values())} for v in interval_summary.values()]
+ # 実施履歴（追記式run_history）から当月分を取得。
+ executed=[]
+ try:
+  with settings_connection() as conn:
+   for row in conn.execute("SELECT id,job_id,job_name,finished_at,status,trigger,rows,cols,output_file FROM run_history WHERE finished_at>=? AND finished_at<=? ORDER BY finished_at",(first.strftime('%Y-%m-%dT00:00:00'),last.strftime('%Y-%m-%dT23:59:59'))):
+    fa=str(row['finished_at'] or '')
+    if len(fa)<10:continue
+    trig=str(row['trigger'] or ''); kind='schedule' if trig.startswith('schedule') else 'manual'
+    executed.append({'id':row['id'],'date':fa[:10],'time':fa[11:16],'datetime':fa,'job_id':row['job_id'],'job_name':row['job_name'],'status':row['status'],'trigger':kind,'rows':row['rows'],'cols':row['cols'],'output_file':row['output_file']})
+ except Exception:
+  log.exception('CALENDAR_HISTORY_FAILED')
+ return jsonify(year=year,month=month,days_in_month=last_day,first_weekday=first.weekday(),today=now.strftime('%Y-%m-%d'),scheduled=scheduled,interval=interval_list,executed=executed)
+@app.post('/api/schedule/quick-add')
+def schedule_quick_add():
+ # カレンダーから特定日の1回実行ルールを素早く追加する。既存の対象へspecific_datesルールを1件加える。
+ d=request.get_json(force=True) or {}; job_id=d.get('job_id'); date=str(d.get('date') or '').strip(); tm=str(d.get('time') or '06:00').strip()
+ if not job_id or not date:return jsonify(error='対象と日付を指定してください'),400
+ c=load(); j=next((x for x in c['jobs'] if x['id']==job_id),None)
+ if not j:return jsonify(error='対象が見つかりません'),404
+ rule={'id':uuid.uuid4().hex,'enabled':True,'name':d.get('name') or f'{date} 単発実行','type':'specific_dates','time':tm,'dates':[date]}
+ j.setdefault('schedules',[]).append(rule); save(c)
+ log.info('CALENDAR_QUICK_ADD job=%s date=%s time=%s',j['name'],date,tm)
+ return jsonify(ok=True,rule=rule)
+@app.post('/api/run-history/delete')
+def delete_run_history():
+ # カレンダーの実施記録（run_history）を削除する。id指定（複数可）または日付＋任意の対象指定に対応する。
+ d=request.get_json(silent=True) or {}
+ ids=[int(x) for x in (d.get('ids') or []) if str(x).strip().isdigit()]
+ date=str(d.get('date') or '').strip(); job_id=str(d.get('job_id') or '').strip()
+ removed=0
+ try:
+  with settings_connection() as conn:
+   if ids:
+    conn.execute('DELETE FROM run_history WHERE id IN ('+','.join('?' for _ in ids)+')',ids); removed=conn.total_changes
+   elif date:
+    if job_id and job_id!='all':
+     cur=conn.execute("DELETE FROM run_history WHERE substr(finished_at,1,10)=? AND job_id=?",(date,job_id))
+    else:
+     cur=conn.execute("DELETE FROM run_history WHERE substr(finished_at,1,10)=?",(date,))
+    removed=cur.rowcount if cur.rowcount is not None else conn.total_changes
+   else:
+    return jsonify(error='削除対象（idまたは日付）を指定してください'),400
+ except Exception as e:
+  log.exception('RUN_HISTORY_DELETE_FAILED'); return jsonify(error=str(e)),500
+ log.info('RUN_HISTORY_DELETE ids=%s date=%s job_id=%s removed=%s',ids,date or '-',job_id or '-',removed)
+ return jsonify(ok=True,removed=removed)
+@app.post('/api/preview-filename')
+def preview_filename():
+ data=request.get_json(force=True) or {}; c=load(); now=datetime.now()
+ job={'rne':data.get('rne') or '','rne_path':data.get('rne_path') or '','name':data.get('name') or '','table':data.get('table') or '','output_format':data.get('format') or 'sqlite3','output_file':data.get('output_file') or '','naming_mode':'template','output_pattern':data.get('pattern') or ''}
+ rne_found=False; mtime=ctime=None
+ try:
+  rp=resolve_rne_path(job,c)
+  if rp and Path(rp).is_file():
+   rne_found=True; st=Path(rp).stat(); mtime=datetime.fromtimestamp(st.st_mtime).strftime('%Y-%m-%d %H:%M'); ctime=datetime.fromtimestamp(getattr(st,'st_ctime',st.st_mtime)).strftime('%Y-%m-%d %H:%M')
+ except Exception:pass
+ try:filename=resolve_output_filename(job,c,now)
+ except Exception as e:return jsonify(ok=False,error=str(e)),400
+ pattern=str(job.get('output_pattern') or '').strip()
+ is_var=has_template_variables(pattern)
+ fmt=normalize_output_format(job.get('output_format'),job.get('output_file'))
+ try:
+  rp2=str(resolve_rne_path(job,c))
+ except Exception:rp2=None
+ segments=render_filename_segments(pattern,job=job,rne_path=rp2,now=now) if is_var else []
+ if segments:segments.append({'text':output_extension(fmt),'var':False})
+ return jsonify(ok=True,filename=filename,is_variable=is_var,segments=segments,rne_found=rne_found,rne_mtime=mtime,rne_ctime=ctime,now=now.strftime('%Y-%m-%d %H:%M:%S'))
+@app.post('/api/period-preview')
+def period_preview():
+ # 相対期間設定から、処理日時基準で実際に抽出される期間を試算して返す。
+ d=request.get_json(force=True) or {}
+ period={'enabled':True,'unit':(d.get('unit') if d.get('unit') in ('month','day') else 'month'),'from_offset':d.get('from_offset',0),'to_offset':d.get('to_offset',0),'control_point':d.get('control_point') or ''}
+ spec=compute_period(period,datetime.now())
+ if not spec:return jsonify(ok=False,error='期間を計算できません'),400
+ return jsonify(ok=True,now=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),control_point=period['control_point'],**spec)
+@app.post('/api/period-control-points')
+def period_control_points():
+ # 対象RNEを開いて時間型管理ポイントを自動検出する（Navigator API方式で接続可能な場合の補助機能）。
+ data=request.get_json(force=True) or {}; c=load()
+ if str(c['settings'].get('extract_engine') or 'api').lower()!='api':
+  return jsonify(ok=False,error='この自動検出はNavigator API方式のときに使用できます。DDE方式では管理ポイント名を手入力してください'),200
+ job=next((x for x in c['jobs'] if x['id']==data.get('job_id')),None) if data.get('job_id') else None
+ rne_value=str(data.get('rne_path') or (job.get('rne_path') if job else '') or '').strip()
+ if not rne_value:return jsonify(ok=False,error='RNEファイルを指定してください'),200
+ tmp={'rne_path':rne_value,'rne':Path(rne_value).name}
+ try:rp=resolve_rne_path(tmp,c)
+ except Exception as e:return jsonify(ok=False,error=f'RNEパスの解決に失敗しました: {e}'),200
+ if not Path(rp).is_file():return jsonify(ok=False,error=f'RNEが見つかりません: {rp}'),200
+ from navigator_api import NavigatorApi
+ api=None
+ try:
+  user,pw,server,_=creds(resolve_path(c['symnavim_conf']))
+  api=NavigatorApi(resolve_path(c.get('symnavi_exe','')),log,c.get('navigator_api_dll'))
+  if not api.supports_period_change():
+   return jsonify(ok=False,error='このDLLは管理ポイント操作APIを公開していません。管理ポイント名を手入力してください'),200
+  api.open_session(user,pw,server)
+  profiles=api_data_source_profiles(resolve_path(c['symnavim_conf']))
+  if not any(p.get('kind')=='oracle' for p in profiles):
+   profiles.insert(0,{'section':'NavigatorCredentialFallback','kind':'oracle','user':user,'password':pw,'server':'','option':'','resource':'','resource_kind':'0'})
+  for profile in profiles:api.connect_data_source(profile)
+  prev=os.getcwd()
+  try:
+   os.chdir(Path(rp).parent); handle,_=api.open_catalog(Path(rp).resolve())
+  finally:os.chdir(prev)
+  points=api.list_time_control_points(handle); api.close_catalog()
+  time_points=[p for p in points if p.get('is_time')]
+  log.info('PERIOD_CP_DETECT rne=%s total=%s time=%s',rp,len(points),len(time_points))
+  return jsonify(ok=True,points=points,time_points=time_points,count=len(points),time_count=len(time_points))
+ except Exception as e:
+  log.exception('PERIOD_CP_DETECT_FAILED rne=%s',rp)
+  return jsonify(ok=False,error=str(e)),200
+ finally:
+  if api:
+   try:api.close()
+   except Exception:pass
 @app.post('/api/run')
 def run_all():
  try:
@@ -1406,6 +1974,23 @@ def pick_folder():
   from tkinter import filedialog
   data=request.get_json(silent=True) or {}; initial=str(resolve_path(data.get('initial') or str(BASE))); root=tk.Tk(); root.withdraw(); root.attributes('-topmost',True); path=filedialog.askdirectory(initialdir=initial); root.destroy(); return jsonify(path=path)
  except Exception as e:return jsonify(error=str(e)),500
+@app.post('/api/open-path')
+def open_path():
+ # 出力先は社内共有パス(UNC)やローカルパスであり、Webアドレスではない。
+ # ブラウザーを遷移させず、このサーバー(ローカルPC)側でエクスプローラーを開く。
+ data=request.get_json(silent=True) or {}; raw=str(data.get('path') or '').strip()
+ if not raw:return jsonify(ok=False,error='出力先が指定されていません'),400
+ if os.name!='nt':return jsonify(ok=False,error='フォルダーを開けるのはWindowsのみです'),400
+ try:
+  target=resolve_path(raw)
+  # ファイル指定ならその親フォルダーを開く。存在しない場合は明示エラー(Web遷移させない)。
+  if target.is_file():target=target.parent
+  if not target.exists():return jsonify(ok=False,error=f'出力先が見つかりません: {target}'),404
+  os.startfile(str(target))  # type: ignore[attr-defined]
+  log.info('OPEN_PATH path=%s resolved=%s',raw,target)
+  return jsonify(ok=True,resolved=str(target))
+ except Exception as e:
+  log.exception('OPEN_PATH_FAILED path=%s',raw); return jsonify(ok=False,error=str(e)),500
 @app.post('/api/path-convert')
 def path_convert():
  data=request.get_json(silent=True) or {}; value=str(data.get('value') or '').strip(); mode=data.get('mode','absolute')
@@ -1500,7 +2085,7 @@ def apply_path_suggestion():
 @app.post('/api/validate')
 def validate():
  c=load(); checks=[]
- for label,k,typ in [('SymNavi.exe','symnavi_exe','f'),('symnavim.conf','symnavim_conf','f'),('symnavim.def','symnavim_def','f'),('ACCDB空テンプレート','accdb_template','f'),('RNE基本フォルダー','rne_folder','d'),('作業フォルダー','work_folder','d')]:
+ for label,k,typ in [('SymNavi.exe','symnavi_exe','f'),('symnavim.conf','symnavim_conf','f'),('symnavim.def','symnavim_def','f'),('ACCDB空テンプレート','accdb_template','f'),('RNE基本フォルダー','rne_folder','d')]:
   p=resolve_path(c[k]); ok=p.is_file() if typ=='f' else p.is_dir(); item=k if k in ('symnavim_conf','symnavim_def','accdb_template') else ''
   candidates=find_nearby_file(label) if not ok and item else []
   checks.append({'label':label,'ok':ok,'detail':str(p),'configured':c[k],'item':item,'candidates':candidates,'needs_reselect':not ok and item and not candidates})
@@ -1519,9 +2104,16 @@ def version_info():
 
 @app.post('/api/heartbeat')
 def heartbeat():
- global last_heartbeat_at
- with heartbeat_lock:last_heartbeat_at=time.time()
- return jsonify(ok=True,timeout_seconds=HEARTBEAT_TIMEOUT_SECONDS)
+ global last_heartbeat_at,browser_closed_explicit,browser_closing_at
+ # ハートビートが届いた=ページは生存中。非アクティブからの復帰やリロード直後もここで明示クローズ判定を解除する。
+ with heartbeat_lock:last_heartbeat_at=time.time();browser_closed_explicit=False;browser_closing_at=0.0
+ return jsonify(ok=True,timeout_seconds=HEARTBEAT_TIMEOUT_SECONDS,grace_seconds=CLOSE_GRACE_SECONDS)
+@app.post('/api/browser-closing')
+def browser_closing():
+ # タブ×・ウィンドウ×・アプリ終了時にビーコンで通知される明示クローズ。猶予中にハートビートが復帰すればリロード等として扱われ解除される。
+ global browser_closed_explicit,browser_closing_at
+ with heartbeat_lock:browser_closed_explicit=True;browser_closing_at=time.time()
+ return jsonify(ok=True)
 
 @app.post('/api/shutdown-app')
 def shutdown_app():

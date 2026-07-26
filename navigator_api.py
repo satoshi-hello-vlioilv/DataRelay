@@ -11,6 +11,27 @@ NAVI_XLS=9
 NAVI_NOCHANGE=16
 NAVI_NONREPEAT=8
 NAVI_DBMS_ANYDB=8
+# 期間指定の方法（時間型管理ポイントの変更で使用）
+NAVI_MONTH=0   # 月度の期間指定 (fromTime/toTime は YYYYMM00)
+NAVI_YMD=1     # 年月日の期間指定 (fromTime/toTime は YYYYMMDD)
+# 管理ポイント・データ項目の位置情報
+NAVI_ALL=0x1C
+NAVI_SIDE=0x1
+NAVI_HEAD=0x2
+NAVI_COND=0x3
+NAVI_DATA=0x4
+NAVI_IN_DISP=0x0
+NAVI_LABEL=0x0
+# 管理ポイントの種類（NaviGetControlPointType）
+NAVI_CONTROLPOINT_MASTER=0x1
+NAVI_CONTROLPOINT_ALLVALUE=0x2
+NAVI_CONTROLPOINT_CATEGORY=0x3
+NAVI_CONTROLPOINT_BOUND=0x4
+NAVI_CONTROLPOINT_TIME=0x5
+NAVI_CONTROLPOINT_TEMPLATE=0x6
+NAVI_CONTROLPOINT_UNKNOWN=0x7
+NAVI_CONTROLPOINT_RULE=0x8
+CONTROLPOINT_TYPE_NAMES={1:'マスタ型',2:'全値型',3:'カテゴリ型',4:'範囲型',5:'時間型',6:'ユーザ定義の時間型',7:'不明な型',8:'ルール型'}
 ERROR_NAMES={
  3:'NAVI_ERROR_SYMFOWARE',4:'NAVI_ERROR_ORACLE',5:'NAVI_ERROR_SERVERENV',6:'NAVI_ERROR_LOGON',
  7:'NAVI_ERROR_CONNECT',8:'NAVI_ERROR_SERVER',9:'NAVI_ERROR_SESSION',10:'NAVI_ERROR_OPEN',
@@ -98,6 +119,24 @@ class NavigatorApi:
             d.NaviConnectResource.argtypes=[P,S,L,S,S,S];d.NaviConnectResource.restype=None
         if hasattr(d,'NaviConnectResourceNoAuth'):
             d.NaviConnectResourceNoAuth.argtypes=[P];d.NaviConnectResourceNoAuth.restype=None
+        # 時間型管理ポイントの相対期間（動的日付）変更で使用する管理ポイント操作関数群。
+        # DLLが公開していない環境でも起動できるよう、存在するものだけをバインドする。
+        if hasattr(d,'NaviGetControlPoint'):
+            d.NaviGetControlPoint.argtypes=[L,P,S,L,L];d.NaviGetControlPoint.restype=L
+        if hasattr(d,'NaviGetControlPointForTimeSpan'):
+            d.NaviGetControlPointForTimeSpan.argtypes=[L,P];d.NaviGetControlPointForTimeSpan.restype=L
+        if hasattr(d,'NaviChangePeriod'):
+            d.NaviChangePeriod.argtypes=[L,P,L,S,S,S];d.NaviChangePeriod.restype=None
+        if hasattr(d,'NaviChangePeriodKind'):
+            d.NaviChangePeriodKind.argtypes=[L,P,L];d.NaviChangePeriodKind.restype=None
+        if hasattr(d,'NaviGetControlPointNumber'):
+            d.NaviGetControlPointNumber.argtypes=[L,P,L,P];d.NaviGetControlPointNumber.restype=None
+        if hasattr(d,'NaviGetControlPoint2'):
+            d.NaviGetControlPoint2.argtypes=[L,P,L,L];d.NaviGetControlPoint2.restype=L
+        if hasattr(d,'NaviGetControlPointType'):
+            d.NaviGetControlPointType.argtypes=[L,P,P];d.NaviGetControlPointType.restype=None
+        if hasattr(d,'NaviGetNameCP'):
+            d.NaviGetNameCP.argtypes=[L,P,L,S];d.NaviGetNameCP.restype=None
     def info(self):
         return {'ok':True,'dll':self.dll_path,'dll_bits':pe_bits(self.dll_path),'python_bits':struct.calcsize('P')*8,'mode':'Navigator API','attempts':self.attempts}
     def error_code(self):
@@ -170,6 +209,81 @@ class NavigatorApi:
         return self.save_data(h,path,NAVI_XLSX,NAVI_NONREPEAT)
     def save_xls(self,h,path):
         return self.save_data(h,path,NAVI_XLS,NAVI_NONREPEAT)
+    def supports_period_change(self):
+        # 相対期間（動的日付）変更に最低限必要なAPIが公開されているか。
+        return hasattr(self.dll,'NaviChangePeriod') and (hasattr(self.dll,'NaviGetControlPoint') or hasattr(self.dll,'NaviGetControlPointForTimeSpan'))
+    def get_time_control_point(self,h,label='',order=0):
+        # RNEに定義済みの時間型管理ポイントのハンドルを取得する。
+        # label指定時は 条件→表側→表頭 の順に探索。未指定時は時間フィールドの時間型管理ポイントを使う。
+        label=str(label or '').strip()
+        if label:
+            if not hasattr(self.dll,'NaviGetControlPoint'):
+                raise RuntimeError('このDLLはNaviGetControlPointを公開していません。管理ポイント名指定は使用できません')
+            last=None
+            for locate,locname in ((NAVI_COND,'条件'),(NAVI_SIDE,'表側'),(NAVI_HEAD,'表頭')):
+                rc=ctypes.c_long()
+                hcp=int(self.dll.NaviGetControlPoint(h,ctypes.byref(rc),_ansi(label),locate,order))
+                last=rc
+                if int(rc.value)==NAVI_OK and hcp:
+                    return hcp,locname
+            self._check('NaviGetControlPoint',last or ctypes.c_long(1),f'label={label} が見つかりません')
+        if hasattr(self.dll,'NaviGetControlPointForTimeSpan'):
+            rc=ctypes.c_long()
+            hcp=int(self.dll.NaviGetControlPointForTimeSpan(h,ctypes.byref(rc)))
+            if int(rc.value)==NAVI_OK and hcp:
+                return hcp,'時間フィールド'
+            self._check('NaviGetControlPointForTimeSpan',rc,'時間フィールドの時間型管理ポイントを取得できません。管理ポイント名を指定してください')
+        raise RuntimeError('時間型管理ポイントを特定できません。管理ポイント名を指定してください')
+    def change_period(self,h_cp,condition,from_time,to_time,beginning=''):
+        if not hasattr(self.dll,'NaviChangePeriod'):
+            raise RuntimeError('このDLLはNaviChangePeriodを公開していません。相対期間の変更は使用できません')
+        rc=ctypes.c_long();t=time.perf_counter()
+        self.dll.NaviChangePeriod(h_cp,ctypes.byref(rc),int(condition),_ansi(from_time),_ansi(to_time),_ansi(beginning))
+        self._check('NaviChangePeriod',rc,f'condition={condition} from={from_time} to={to_time}')
+        return time.perf_counter()-t
+    def apply_period(self,h,label,condition,from_time,to_time):
+        # RNEを開いたカタログハンドルhに対し、時間型管理ポイントの期間を差し替える。
+        h_cp,locname=self.get_time_control_point(h,label)
+        self.change_period(h_cp,condition,from_time,to_time)
+        return {'handle':h_cp,'locate':locname,'label':label or '(時間フィールド)'}
+    def get_name_cp(self,h_cp):
+        if not hasattr(self.dll,'NaviGetNameCP'):
+            return ''
+        try:
+            buf=ctypes.create_string_buffer(1024);rc=ctypes.c_long()
+            self.dll.NaviGetNameCP(h_cp,ctypes.byref(rc),NAVI_LABEL,buf)
+            if int(rc.value)==NAVI_OK:
+                return (buf.value or b'').decode('mbcs',errors='replace').strip()
+        except Exception:
+            return ''
+        return ''
+    def list_time_control_points(self,h):
+        # RNEに含まれる管理ポイントを列挙し、時間型（TIME/TEMPLATE）を抽出する。
+        # DLLが列挙APIを公開していない環境では明示的に失敗させる（手入力にフォールバックしてもらう）。
+        if not (hasattr(self.dll,'NaviGetControlPointNumber') and hasattr(self.dll,'NaviGetControlPoint2') and hasattr(self.dll,'NaviGetControlPointType')):
+            raise RuntimeError('このDLLは管理ポイント列挙API（NaviGetControlPointNumber/2/Type）を公開していません。管理ポイント名を手入力してください')
+        out=[]
+        for locate,locname in ((NAVI_COND,'条件'),(NAVI_SIDE,'表側'),(NAVI_HEAD,'表頭')):
+            rc=ctypes.c_long();num=ctypes.c_long()
+            try:
+                self.dll.NaviGetControlPointNumber(h,ctypes.byref(rc),locate,ctypes.byref(num))
+            except Exception:
+                continue
+            if int(rc.value)!=NAVI_OK:continue
+            for idx in range(int(num.value)):
+                rc2=ctypes.c_long()
+                hcp=int(self.dll.NaviGetControlPoint2(h,ctypes.byref(rc2),locate,idx))
+                if int(rc2.value)!=NAVI_OK or not hcp:continue
+                ctype=None
+                try:
+                    rc3=ctypes.c_long();tp=ctypes.c_long()
+                    self.dll.NaviGetControlPointType(hcp,ctypes.byref(rc3),ctypes.byref(tp))
+                    if int(rc3.value)==NAVI_OK:ctype=int(tp.value)
+                except Exception:ctype=None
+                name=self.get_name_cp(hcp)
+                is_time=ctype in (NAVI_CONTROLPOINT_TIME,NAVI_CONTROLPOINT_TEMPLATE)
+                out.append({'location':locname,'index':idx,'name':name or f'管理ポイント#{idx+1}','type':ctype,'type_name':CONTROLPOINT_TYPE_NAMES.get(ctype,'不明'),'is_time':is_time})
+        return out
     def close_catalog(self):
         if self.catalog:
             self.dll.NaviCloseCatalog(self.catalog);self.catalog=0
