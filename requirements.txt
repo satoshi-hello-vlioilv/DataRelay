@@ -1,4 +1,0 @@
-Flask>=3.0,<4
-pywin32>=306
-xlrd>=2.0.1
-openpyxl>=3.1
