@@ -1,0 +1,90 @@
+﻿SymfoNavi Data Hub 現行フォルダ・ファイル構成
+
+【各ファイルの役割】
+
+■ start_app.py
+  アプリのPython側の起動入口です。
+  launch_guard.py の main() を呼び出して起動処理を開始します。
+
+■ launch_guard.py
+  アプリの起動監視と多重起動防止を担当します。
+  Flaskアプリの起動、既存インスタンスの確認、ブラウザー起動、
+  ランタイム情報およびランチャーログの管理を行います。
+
+■ app.py
+  Flaskアプリ本体です。
+  画面表示、APIエンドポイント、設定管理、ジョブ管理、スケジュール処理、
+  データ抽出、診断、バックアップ、データビュワーなどの主要機能を持ちます。
+  現在の構成では、バックエンド処理の多くがこの1ファイルに集約されています。
+
+■ navigator_api.py
+  SymfoNavi Navigator APIとの連携処理を担当します。
+  SymNaviA.dllの読み込み、API定数、DLL診断、RNE実行、
+  時間型管理ポイントの期間変更などを扱います。
+
+■ api_worker.py
+  Navigator APIの並列処理用ワーカーです。
+  app.py の process_api_parallel_job() を呼び出し、
+  個別ジョブの処理結果をJSONファイルへ安全に書き込みます。
+
+■ process_manager.py
+  実行中アプリの停止処理を担当します。
+  Flask側の終了API呼び出しと、必要に応じたPythonプロセスの終了処理を行います。
+
+■ index.html
+  Web画面全体の構造を定義するHTMLファイルです。
+  対象ファイル一覧、カレンダー、データビュワー、共通設定、
+  ログ・診断などの画面要素を含みます。
+
+■ app.css
+  Web画面全体のレイアウト、配色、余白、ボタン、一覧、モーダル、
+  データビュワー、設定画面などの表示スタイルを定義します。
+
+■ app.js
+  Web画面の操作とFlask APIとの通信を担当します。
+  一覧表示、設定編集、進捗表示、ドラッグ＆ドロップ、カレンダー、
+  データビュワー、診断、ハートビートなどのフロントエンド処理を含みます。
+
+
+【現在の主な呼び出し関係】
+
+start_app.py
+  └─ launch_guard.py
+       └─ app.py
+            ├─ navigator_api.py
+            ├─ api_worker.py
+            │    └─ app.py 内の並列ジョブ処理
+            ├─ index.html
+            ├─ app.css
+            └─ app.js
+
+process_manager.py
+  └─ app.py が公開する終了APIおよび実行中プロセスを参照
+
+
+【実行時に使用または生成される主なフォルダ】
+
+app.py、launch_guard.py、process_manager.pyの記述から、
+アプリ配置フォルダ直下では次のフォルダも使用されます。
+
+<アプリ配置フォルダ>/
+├─ Config/
+│  ├─ app_settings.sqlite3
+│  ├─ rne/                 RNEファイル配置先として使用
+│  └─ NAVIAP/              Navigator API関連DLLの配置先として使用
+├─ runtime/
+│  └─ app_instance.json    実行中インスタンス情報
+└─ logs/
+   └─ launcher.log         ランチャーのログ
+
+
+
+【高速化後のローカル実行領域】
+%LOCALAPPDATA%\SymfoNaviDataHub\
+├─ runtime\             PID情報・API診断キャッシュ
+├─ logs\                launcher.log・app.log
+├─ pycache\             Pythonバイトコードキャッシュ（置きっぱなし可）
+├─ backup\              ユーザー別バックアップ既定先
+└─ dde_work等             一時処理領域（終了時・次回起動時に削除）
+
+DLLはC:\NAVIAP配下のPython bit数一致DLLを最優先します。利用可能なローカルDLLがない場合だけ、BOX上のConfig\NAVIAPをフォールバック探索します。

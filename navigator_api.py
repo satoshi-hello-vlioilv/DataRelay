@@ -1,0 +1,353 @@
+from __future__ import annotations
+import ctypes, os, re, shutil, struct, time
+from pathlib import Path
+
+NAVI_OK=0
+NAVI_DOWNLOADNOW=0
+NAVI_CSV=1
+NAVI_TXT=2
+NAVI_XLSX=5
+NAVI_XLS=9
+NAVI_NOCHANGE=16
+NAVI_NONREPEAT=8
+NAVI_DBMS_ANYDB=8
+# 期間指定の方法（時間型管理ポイントの変更で使用）
+NAVI_MONTH=0   # 月度の期間指定 (fromTime/toTime は YYYYMM00)
+NAVI_YMD=1     # 年月日の期間指定 (fromTime/toTime は YYYYMMDD)
+# 管理ポイント・データ項目の位置情報
+NAVI_ALL=0x1C
+NAVI_SIDE=0x1
+NAVI_HEAD=0x2
+NAVI_COND=0x3
+NAVI_DATA=0x4
+NAVI_IN_DISP=0x0
+NAVI_LABEL=0x0
+# 管理ポイントの種類（NaviGetControlPointType）
+NAVI_CONTROLPOINT_MASTER=0x1
+NAVI_CONTROLPOINT_ALLVALUE=0x2
+NAVI_CONTROLPOINT_CATEGORY=0x3
+NAVI_CONTROLPOINT_BOUND=0x4
+NAVI_CONTROLPOINT_TIME=0x5
+NAVI_CONTROLPOINT_TEMPLATE=0x6
+NAVI_CONTROLPOINT_UNKNOWN=0x7
+NAVI_CONTROLPOINT_RULE=0x8
+CONTROLPOINT_TYPE_NAMES={1:'マスタ型',2:'全値型',3:'カテゴリ型',4:'範囲型',5:'時間型',6:'ユーザ定義の時間型',7:'不明な型',8:'ルール型'}
+ERROR_NAMES={
+ 3:'NAVI_ERROR_SYMFOWARE',4:'NAVI_ERROR_ORACLE',5:'NAVI_ERROR_SERVERENV',6:'NAVI_ERROR_LOGON',
+ 7:'NAVI_ERROR_CONNECT',8:'NAVI_ERROR_SERVER',9:'NAVI_ERROR_SESSION',10:'NAVI_ERROR_OPEN',
+ 11:'NAVI_ERROR_CATALOG',12:'NAVI_ERROR_EXECMD',13:'NAVI_ERROR_EXECUTE',14:'NAVI_ERROR_DOWNLOAD',
+ 15:'NAVI_ERROR_READ',16:'NAVI_ERROR_SAVEDATA',31:'NAVI_ERROR_SAVE',32:'NAVI_ERROR_FILENOTFOUND',
+ 33:'NAVI_ERROR_BADPATH',34:'NAVI_ERROR_ACCESSDENIED',35:'NAVI_ERROR_DISKFULL',36:'NAVI_ERROR_SHARINGVIOLATION'
+}
+
+def _ansi(value):
+    return str(value).encode('mbcs',errors='strict')
+
+def pe_bits(path):
+    try:
+        with open(path,'rb') as f:
+            if f.read(2)!=b'MZ': return None
+            f.seek(0x3c); off=int.from_bytes(f.read(4),'little'); f.seek(off)
+            if f.read(4)!=b'PE\0\0': return None
+            machine=int.from_bytes(f.read(2),'little')
+        return {0x14c:32,0x8664:64,0xaa64:64}.get(machine)
+    except OSError:return None
+
+NAVIAP_DEPLOY_FOLDERS=('debugdllVC14','debugdllVC14x64','dllVC14','dllVC14x64')
+
+def sync_naviap_runtime(base_dir,source_root=None):
+    """Copy the four product-side NAVIAP runtime folders into Config/NAVIAP.
+
+    All files are copied, not only SymNaviA.dll, so dependent DLLs remain beside it.
+    Existing identical files are retained; newer/different files are refreshed.
+    """
+    src=Path(source_root or r'C:\NAVIAP')
+    dst=Path(base_dir)/'Config'/'NAVIAP'
+    report={'source':str(src),'target':str(dst),'copied':[],'missing':[],'errors':[]}
+    if not src.is_dir():
+        report['errors'].append('製品側NAVIAPフォルダーがありません: '+str(src));return report
+    for name in NAVIAP_DEPLOY_FOLDERS:
+        sf=src/name;df=dst/name
+        if not sf.is_dir():report['missing'].append(str(sf));continue
+        try:
+            df.mkdir(parents=True,exist_ok=True)
+            for item in sf.rglob('*'):
+                if not item.is_file():continue
+                rel=item.relative_to(sf);target=df/rel;target.parent.mkdir(parents=True,exist_ok=True)
+                refresh=not target.exists() or item.stat().st_size!=target.stat().st_size or item.stat().st_mtime_ns>target.stat().st_mtime_ns
+                if refresh:shutil.copy2(item,target);report['copied'].append(str(target))
+        except Exception as e:report['errors'].append(f'{sf}: {e}')
+    return report
+
+def candidate_dlls(symnavi_exe=None,configured_path=None,extra_roots=None,local_only=False):
+    """C:\\NAVIAPを最優先し、利用可能なローカルDLLがなければ共有側を返す。"""
+    pybits=struct.calcsize('P')*8
+    local_root=Path(r'C:\NAVIAP')
+    rx=re.compile(r'(debugdll|dll)vc(\d+)(x64)?$',re.I)
+    local=[]
+    for name in NAVIAP_DEPLOY_FOLDERS:
+        local.append(local_root/name/'SymNaviA.dll')
+    try:
+        if local_root.is_dir():
+            local.extend(x/'SymNaviA.dll' for x in local_root.iterdir() if x.is_dir() and rx.match(x.name))
+    except OSError:pass
+    def unique(seq):
+        out=[];seen=set()
+        for c in seq:
+            c=Path(c);key=os.path.normcase(os.path.normpath(str(c)))
+            if key not in seen:seen.add(key);out.append(c)
+        return out
+    local=unique(local)
+    # 64/32bit一致の実在DLLがローカルにあれば、BOX側には一切触れない。
+    usable=[];other=[]
+    for c in local:
+        try:
+            if c.is_file() and pe_bits(c)==pybits:usable.append(c)
+            else:other.append(c)
+        except OSError:other.append(c)
+    if usable or local_only:
+        return usable+other
+    fallback=[]
+    configured=None
+    if configured_path:
+        cp=Path(os.path.expandvars(os.path.expanduser(str(configured_path).strip())))
+        configured=cp/'SymNaviA.dll' if cp.suffix.lower()!='.dll' else cp
+        fallback.append(configured)
+    roots=[Path(x) for x in (extra_roots or [])]
+    if configured:
+        for anc in configured.parents:
+            if anc.name.upper()=='NAVIAP':roots.append(anc);break
+    for root in unique(roots):
+        for name in NAVIAP_DEPLOY_FOLDERS:fallback.append(root/name/'SymNaviA.dll')
+        try:
+            if root.is_dir():fallback.extend(x/'SymNaviA.dll' for x in root.iterdir() if x.is_dir() and rx.match(x.name))
+        except OSError:pass
+    if symnavi_exe:
+        ep=Path(symnavi_exe);fallback += [ep.parent/'SymNaviA.dll',ep.parent.parent/'bin'/'SymNaviA.dll']
+    fallback.append(Path('SymNaviA.dll'))
+    return local+unique(fallback)
+
+class NavigatorApiError(RuntimeError):
+    def __init__(self,operation,rc,detail=''):
+        self.operation=operation;self.rc=int(rc);self.name=ERROR_NAMES.get(int(rc),'NAVI_ERROR_UNKNOWN')
+        super().__init__(f'{operation}失敗 rc=0x{int(rc):X} name={self.name} {detail}'.strip())
+
+class NavigatorApi:
+    def __init__(self,symnavi_exe=None,logger=None,dll_path=None,base_dir=None):
+        if os.name!='nt':raise RuntimeError('Navigator APIはWindowsでのみ利用できます')
+        self.deploy_report=None
+        extra_roots=[Path(base_dir)/'Config'/'NAVIAP',Path(base_dir)/'NAVIAP'] if base_dir else []
+        self.log=logger;self.dll=None;self.dll_path='';self.dll_dirs=[];errors=[]
+        self.attempts=[]
+        pybits=struct.calcsize('P')*8
+        for candidate in candidate_dlls(symnavi_exe,dll_path,extra_roots):
+            bits=pe_bits(candidate) if Path(candidate).is_file() else None
+            if bits and bits!=pybits:
+                msg=f'{candidate}: DLL={bits}bit / Python={pybits}bit のため対象外';errors.append(msg);self.attempts.append({'path':str(candidate),'exists':True,'dll_bits':bits,'python_bits':pybits,'result':'bit_mismatch'});continue
+            try:
+                cp=Path(candidate)
+                if cp.is_absolute() and cp.parent.is_dir() and hasattr(os,'add_dll_directory'):
+                    self.dll_dirs.append(os.add_dll_directory(str(cp.parent)))
+                self.dll=ctypes.WinDLL(str(cp));self.dll_path=str(cp);self.attempts.append({'path':str(cp),'exists':cp.is_file(),'dll_bits':bits,'python_bits':pybits,'result':'loaded'});break
+            except OSError as e:
+                errors.append(f'{candidate}: {e}');self.attempts.append({'path':str(candidate),'exists':Path(candidate).is_file(),'dll_bits':bits,'python_bits':pybits,'result':'load_error','error':str(e)})
+        if not self.dll:raise RuntimeError('SymNaviA.dllを読み込めません。設定したDLLパスと同一フォルダー内の依存DLLを確認してください。'+' | '.join(errors))
+        self._bind();self.opened=False;self.catalog=0
+    def _bind(self):
+        L=ctypes.c_long; P=ctypes.POINTER(L); S=ctypes.c_char_p
+        d=self.dll
+        d.NaviOpenSession.argtypes=[P,S,S,S];d.NaviOpenSession.restype=None
+        d.NaviCloseSession.argtypes=[];d.NaviCloseSession.restype=None
+        d.NaviIsSessionOpened.argtypes=[];d.NaviIsSessionOpened.restype=L
+        d.NaviOpenCatalog.argtypes=[P,S];d.NaviOpenCatalog.restype=L
+        d.NaviCloseCatalog.argtypes=[L];d.NaviCloseCatalog.restype=None
+        d.NaviExecuteCatalog.argtypes=[L,P,P,L,L];d.NaviExecuteCatalog.restype=None
+        d.NaviSaveData.argtypes=[L,P,S,L,L];d.NaviSaveData.restype=None
+        d.NaviGetFieldNumber.argtypes=[L,P,P];d.NaviGetFieldNumber.restype=None
+        d.NaviGetRecordNumber.argtypes=[L,P,P];d.NaviGetRecordNumber.restype=None
+        d.NaviGetErrorCode.argtypes=[P];d.NaviGetErrorCode.restype=None
+        d.NaviGetErrorMessage.argtypes=[P,ctypes.POINTER(ctypes.c_char_p)];d.NaviGetErrorMessage.restype=None
+        d.NaviConnectOracle.argtypes=[P,S,S];d.NaviConnectOracle.restype=None
+        d.NaviConnectSQLServer.argtypes=[P,S,S];d.NaviConnectSQLServer.restype=None
+        d.NaviConnectRDA.argtypes=[P,S,S,S];d.NaviConnectRDA.restype=None
+        d.NaviConnectBaseDBMS.argtypes=[P,L,S,S,S];d.NaviConnectBaseDBMS.restype=None
+        if hasattr(d,'NaviConnectResource'):
+            d.NaviConnectResource.argtypes=[P,S,L,S,S,S];d.NaviConnectResource.restype=None
+        if hasattr(d,'NaviConnectResourceNoAuth'):
+            d.NaviConnectResourceNoAuth.argtypes=[P];d.NaviConnectResourceNoAuth.restype=None
+        # 時間型管理ポイントの相対期間（動的日付）変更で使用する管理ポイント操作関数群。
+        # DLLが公開していない環境でも起動できるよう、存在するものだけをバインドする。
+        if hasattr(d,'NaviGetControlPoint'):
+            d.NaviGetControlPoint.argtypes=[L,P,S,L,L];d.NaviGetControlPoint.restype=L
+        if hasattr(d,'NaviGetControlPointForTimeSpan'):
+            d.NaviGetControlPointForTimeSpan.argtypes=[L,P];d.NaviGetControlPointForTimeSpan.restype=L
+        if hasattr(d,'NaviChangePeriod'):
+            d.NaviChangePeriod.argtypes=[L,P,L,S,S,S];d.NaviChangePeriod.restype=None
+        if hasattr(d,'NaviChangePeriodKind'):
+            d.NaviChangePeriodKind.argtypes=[L,P,L];d.NaviChangePeriodKind.restype=None
+        if hasattr(d,'NaviGetControlPointNumber'):
+            d.NaviGetControlPointNumber.argtypes=[L,P,L,P];d.NaviGetControlPointNumber.restype=None
+        if hasattr(d,'NaviGetControlPoint2'):
+            d.NaviGetControlPoint2.argtypes=[L,P,L,L];d.NaviGetControlPoint2.restype=L
+        if hasattr(d,'NaviGetControlPointType'):
+            d.NaviGetControlPointType.argtypes=[L,P,P];d.NaviGetControlPointType.restype=None
+        if hasattr(d,'NaviGetNameCP'):
+            d.NaviGetNameCP.argtypes=[L,P,L,S];d.NaviGetNameCP.restype=None
+    def info(self):
+        pybits=struct.calcsize('P')*8;dllbits=pe_bits(self.dll_path);norm=os.path.normcase(os.path.normpath(str(self.dll_path)));local=os.path.normcase(os.path.normpath(r'C:\NAVIAP'))
+        if norm==local or norm.startswith(local+os.sep):reason='ローカルのC:\\NAVIAP配下に、Pythonと同じ%d bitの利用可能なDLLがあるため最優先で選択しました。'%pybits
+        elif 'config'+os.sep+'naviap' in norm.lower():reason='ローカルのC:\\NAVIAP配下に利用可能な%d bit DLLがなかったため、アプリ側Config\\NAVIAPのDLLをフォールバック選択しました。'%pybits
+        else:reason='ローカル標準配置に利用可能なDLLがないため、互換候補の中からPythonと同じ%d bitのDLLを選択しました。'%pybits
+        return {'ok':True,'dll':self.dll_path,'dll_bits':dllbits,'python_bits':pybits,'mode':'Navigator API','attempts':self.attempts,'deploy_report':self.deploy_report,'selection_reason':reason,'bit_diagnosis':f'Python {pybits} bit / DLL {dllbits or "不明"} bit / '+('一致' if dllbits==pybits else '不一致')}
+    def error_code(self):
+        code=ctypes.c_long()
+        try:self.dll.NaviGetErrorCode(ctypes.byref(code));return int(code.value)
+        except Exception:return 0
+    def error_message(self):
+        # 公式サンプルと同じく、詳細コードより先にNavigator Serverメッセージを取得する。
+        rc=ctypes.c_long();message_ptr=ctypes.c_char_p()
+        try:
+            self.dll.NaviGetErrorMessage(ctypes.byref(rc),ctypes.byref(message_ptr))
+            raw=message_ptr.value or b''
+            message=raw.decode('mbcs',errors='replace').strip() if raw else ''
+            return int(rc.value),message
+        except Exception as e:
+            return -1,f'NaviGetErrorMessage取得失敗: {e}'
+    def _check(self,op,rc,detail=''):
+        if int(rc.value)!=NAVI_OK:
+            message_rc,message=self.error_message()
+            detail_code=self.error_code()
+            mapped=ERROR_NAMES.get(detail_code,'NAVI_ERROR_UNKNOWN')
+            server_part=f' server_message_rc=0x{message_rc:X} server_message={message}' if message else f' server_message_rc=0x{message_rc:X} server_message=(なし)'
+            raise NavigatorApiError(op,detail_code or rc.value,f'api_rc=0x{int(rc.value):X} detail_code=0x{detail_code:X} detail_name={mapped}{server_part} {detail}')
+    def open_session(self,user,password,server):
+        rc=ctypes.c_long();t=time.perf_counter();self.dll.NaviOpenSession(ctypes.byref(rc),_ansi(user),_ansi(password),_ansi(server));self._check('NaviOpenSession',rc)
+        state=int(self.dll.NaviIsSessionOpened())
+        if state!=1:raise NavigatorApiError('NaviIsSessionOpened',state,'NaviOpenSession後もセッション未接続')
+        self.opened=True
+        return time.perf_counter()-t
+    def connect_data_source(self,profile):
+        kind=str(profile.get('kind') or '').strip().lower();rc=ctypes.c_long();t=time.perf_counter()
+        user=str(profile.get('user') or '');password=str(profile.get('password') or '');server=str(profile.get('server') or '')
+        option=str(profile.get('option') or '');resource=str(profile.get('resource') or '')
+        if kind=='oracle':self.dll.NaviConnectOracle(ctypes.byref(rc),_ansi(user),_ansi(password))
+        elif kind in ('sqlserver','sql_server'):self.dll.NaviConnectSQLServer(ctypes.byref(rc),_ansi(user),_ansi(password))
+        elif kind=='rda':self.dll.NaviConnectRDA(ctypes.byref(rc),_ansi(user),_ansi(password),_ansi(server))
+        elif kind in ('postgres','postgresql','anydb','basedbms'):self.dll.NaviConnectBaseDBMS(ctypes.byref(rc),NAVI_DBMS_ANYDB,_ansi(user),_ansi(password),_ansi(option))
+        elif kind=='resource':
+            if not hasattr(self.dll,'NaviConnectResource'):raise RuntimeError('このDLLはNaviConnectResourceを公開していません')
+            resource_kind=int(profile.get('resource_kind') or 0);self.dll.NaviConnectResource(ctypes.byref(rc),_ansi(resource),resource_kind,_ansi(user),_ansi(password),_ansi(option))
+        elif kind in ('noauth','resource_noauth'):
+            if not hasattr(self.dll,'NaviConnectResourceNoAuth'):raise RuntimeError('このDLLはNaviConnectResourceNoAuthを公開していません')
+            self.dll.NaviConnectResourceNoAuth(ctypes.byref(rc))
+        else:raise ValueError(f'未対応のAPIデータソース種別: {kind}')
+        self._check('NaviConnect'+kind,rc,f'kind={kind} server={server} resource={resource}')
+        return time.perf_counter()-t
+    def open_catalog(self,path):
+        # NaviOpenCatalogには必ず既存RNEの正規化済み絶対パスを渡す。
+        # ファイル名だけに依存したcwd解決や、関連定義を切断する単体コピーを避ける。
+        catalog=Path(path).expanduser()
+        if not catalog.is_absolute():catalog=(Path.cwd()/catalog).resolve()
+        else:catalog=catalog.resolve()
+        if not catalog.is_file():raise FileNotFoundError(f'RNEカタログがありません: {catalog}')
+        encoded=_ansi(catalog)
+        rc=ctypes.c_long();t=time.perf_counter();h=int(self.dll.NaviOpenCatalog(ctypes.byref(rc),encoded));self._check('NaviOpenCatalog',rc,str(catalog));self.catalog=h
+        return h,time.perf_counter()-t
+    def execute(self,h):
+        rc=ctypes.c_long();number=ctypes.c_long();reserve=ctypes.c_long();t=time.perf_counter();self.dll.NaviExecuteCatalog(h,ctypes.byref(rc),ctypes.byref(number),NAVI_DOWNLOADNOW,reserve);self._check('NaviExecuteCatalog',rc)
+        return int(number.value),time.perf_counter()-t
+    def dimensions(self,h):
+        rc=ctypes.c_long();rows=ctypes.c_long();cols=ctypes.c_long();self.dll.NaviGetRecordNumber(h,ctypes.byref(rc),ctypes.byref(rows));self._check('NaviGetRecordNumber',rc);self.dll.NaviGetFieldNumber(h,ctypes.byref(rc),ctypes.byref(cols));self._check('NaviGetFieldNumber',rc)
+        return int(rows.value),int(cols.value)
+    def save_data(self,h,path,ftype,repeat=NAVI_NONREPEAT):
+        rc=ctypes.c_long();t=time.perf_counter();self.dll.NaviSaveData(h,ctypes.byref(rc),_ansi(path),int(ftype),int(repeat));self._check('NaviSaveData',rc,str(path));return time.perf_counter()-t
+    def save_csv(self,h,path):
+        return self.save_data(h,path,NAVI_CSV,NAVI_NONREPEAT)
+    def save_txt(self,h,path):
+        return self.save_data(h,path,NAVI_TXT,NAVI_NONREPEAT)
+    def save_xlsx(self,h,path):
+        return self.save_data(h,path,NAVI_XLSX,NAVI_NONREPEAT)
+    def save_xls(self,h,path):
+        return self.save_data(h,path,NAVI_XLS,NAVI_NONREPEAT)
+    def supports_period_change(self):
+        # 相対期間（動的日付）変更に最低限必要なAPIが公開されているか。
+        return hasattr(self.dll,'NaviChangePeriod') and (hasattr(self.dll,'NaviGetControlPoint') or hasattr(self.dll,'NaviGetControlPointForTimeSpan'))
+    def get_time_control_point(self,h,label='',order=0):
+        # RNEに定義済みの時間型管理ポイントのハンドルを取得する。
+        # label指定時は 条件→表側→表頭 の順に探索。未指定時は時間フィールドの時間型管理ポイントを使う。
+        label=str(label or '').strip()
+        if label:
+            if not hasattr(self.dll,'NaviGetControlPoint'):
+                raise RuntimeError('このDLLはNaviGetControlPointを公開していません。管理ポイント名指定は使用できません')
+            last=None
+            for locate,locname in ((NAVI_COND,'条件'),(NAVI_SIDE,'表側'),(NAVI_HEAD,'表頭')):
+                rc=ctypes.c_long()
+                hcp=int(self.dll.NaviGetControlPoint(h,ctypes.byref(rc),_ansi(label),locate,order))
+                last=rc
+                if int(rc.value)==NAVI_OK and hcp:
+                    return hcp,locname
+            self._check('NaviGetControlPoint',last or ctypes.c_long(1),f'label={label} が見つかりません')
+        if hasattr(self.dll,'NaviGetControlPointForTimeSpan'):
+            rc=ctypes.c_long()
+            hcp=int(self.dll.NaviGetControlPointForTimeSpan(h,ctypes.byref(rc)))
+            if int(rc.value)==NAVI_OK and hcp:
+                return hcp,'時間フィールド'
+            self._check('NaviGetControlPointForTimeSpan',rc,'時間フィールドの時間型管理ポイントを取得できません。管理ポイント名を指定してください')
+        raise RuntimeError('時間型管理ポイントを特定できません。管理ポイント名を指定してください')
+    def change_period(self,h_cp,condition,from_time,to_time,beginning=''):
+        if not hasattr(self.dll,'NaviChangePeriod'):
+            raise RuntimeError('このDLLはNaviChangePeriodを公開していません。相対期間の変更は使用できません')
+        rc=ctypes.c_long();t=time.perf_counter()
+        self.dll.NaviChangePeriod(h_cp,ctypes.byref(rc),int(condition),_ansi(from_time),_ansi(to_time),_ansi(beginning))
+        self._check('NaviChangePeriod',rc,f'condition={condition} from={from_time} to={to_time}')
+        return time.perf_counter()-t
+    def apply_period(self,h,label,condition,from_time,to_time):
+        # RNEを開いたカタログハンドルhに対し、時間型管理ポイントの期間を差し替える。
+        h_cp,locname=self.get_time_control_point(h,label)
+        self.change_period(h_cp,condition,from_time,to_time)
+        return {'handle':h_cp,'locate':locname,'label':label or '(時間フィールド)'}
+    def get_name_cp(self,h_cp):
+        if not hasattr(self.dll,'NaviGetNameCP'):
+            return ''
+        try:
+            buf=ctypes.create_string_buffer(1024);rc=ctypes.c_long()
+            self.dll.NaviGetNameCP(h_cp,ctypes.byref(rc),NAVI_LABEL,buf)
+            if int(rc.value)==NAVI_OK:
+                return (buf.value or b'').decode('mbcs',errors='replace').strip()
+        except Exception:
+            return ''
+        return ''
+    def list_time_control_points(self,h):
+        # RNEに含まれる管理ポイントを列挙し、時間型（TIME/TEMPLATE）を抽出する。
+        # DLLが列挙APIを公開していない環境では明示的に失敗させる（手入力にフォールバックしてもらう）。
+        if not (hasattr(self.dll,'NaviGetControlPointNumber') and hasattr(self.dll,'NaviGetControlPoint2') and hasattr(self.dll,'NaviGetControlPointType')):
+            raise RuntimeError('このDLLは管理ポイント列挙API（NaviGetControlPointNumber/2/Type）を公開していません。管理ポイント名を手入力してください')
+        out=[]
+        for locate,locname in ((NAVI_COND,'条件'),(NAVI_SIDE,'表側'),(NAVI_HEAD,'表頭')):
+            rc=ctypes.c_long();num=ctypes.c_long()
+            try:
+                self.dll.NaviGetControlPointNumber(h,ctypes.byref(rc),locate,ctypes.byref(num))
+            except Exception:
+                continue
+            if int(rc.value)!=NAVI_OK:continue
+            for idx in range(int(num.value)):
+                rc2=ctypes.c_long()
+                hcp=int(self.dll.NaviGetControlPoint2(h,ctypes.byref(rc2),locate,idx))
+                if int(rc2.value)!=NAVI_OK or not hcp:continue
+                ctype=None
+                try:
+                    rc3=ctypes.c_long();tp=ctypes.c_long()
+                    self.dll.NaviGetControlPointType(hcp,ctypes.byref(rc3),ctypes.byref(tp))
+                    if int(rc3.value)==NAVI_OK:ctype=int(tp.value)
+                except Exception:ctype=None
+                name=self.get_name_cp(hcp)
+                is_time=ctype in (NAVI_CONTROLPOINT_TIME,NAVI_CONTROLPOINT_TEMPLATE)
+                out.append({'location':locname,'index':idx,'name':name or f'管理ポイント#{idx+1}','type':ctype,'type_name':CONTROLPOINT_TYPE_NAMES.get(ctype,'不明'),'is_time':is_time})
+        return out
+    def close_catalog(self):
+        if self.catalog:
+            self.dll.NaviCloseCatalog(self.catalog);self.catalog=0
+    def close(self):
+        try:self.close_catalog()
+        finally:
+            if self.opened:self.dll.NaviCloseSession();self.opened=False
