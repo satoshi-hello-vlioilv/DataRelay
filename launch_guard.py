@@ -12,6 +12,9 @@ from pathlib import Path
 
 BASE = Path(__file__).resolve().parent
 URL = 'http://127.0.0.1:5031'
+# VBSランチャーが起動待ちモーダル(loading.html)を開き、準備完了で自動的にアプリへ遷移する。
+# その場合はサーバー側でブラウザーを二重に開かない（NAVI_BROWSER_BY_VBS=1 で抑止）。
+BROWSER_BY_VBS = os.environ.get('NAVI_BROWSER_BY_VBS') == '1'
 LOCAL_ROOT = Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home()) / 'SymfoNaviDataHub'
 RUNTIME = LOCAL_ROOT / 'runtime'
 INFO = RUNTIME / 'app_instance.json'
@@ -75,7 +78,7 @@ def spawn_app() -> subprocess.Popen:
     env['NAVI_LOCAL_ROOT'] = str(LOCAL_ROOT)
     env['PYTHONPYCACHEPREFIX'] = str(LOCAL_ROOT / 'pycache')
     # 起動計測用: サーバープロセス(app.py)へ生成時刻(wall clock)を渡し、
-    # インタプリタ初期化＋モジュール取り込み＋app.pyコンパイルに要した時間を app.py 側で計測する。
+    # インタプリタ初期化＋モジュール取り込み＋app.pyコンパイルの所要時間を app.py 側で計測する。
     env['NAVI_APP_SPAWN_AT'] = repr(time.time())
     flags = CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS
     return subprocess.Popen(
@@ -105,7 +108,8 @@ def main() -> int:
             for _ in range(30):
                 if probe():
                     log('既存インスタンスを検出。新規起動せず既存画面を開きます。')
-                    open_browser_best_effort()
+                    if not BROWSER_BY_VBS:
+                        open_browser_best_effort()
                     return 0
                 time.sleep(0.25)
             log('多重起動ロックは存在しますが既存サーバーが応答しません。起動を中止します。')
@@ -113,7 +117,8 @@ def main() -> int:
             return 2
         if probe():
             log('既存サーバー応答あり。新規起動せず既存画面を開きます。')
-            open_browser_best_effort()
+            if not BROWSER_BY_VBS:
+                open_browser_best_effort()
             return 0
         write_info(os.getpid(), None)
         log(f'新規インスタンス起動 launcher_pid={os.getpid()}')
@@ -127,7 +132,8 @@ def main() -> int:
                 # サーバー起動完了までの実測秒。初回・アップデート時・BOX影響の切り分けに使用する。
                 log('アプリサーバー応答確認。ランチャーは終了し、サーバーは継続稼働します。'
                     f' server_ready_elapsed={time.perf_counter() - spawn_started:.2f}s')
-                open_browser_best_effort()
+                if not BROWSER_BY_VBS:
+                    open_browser_best_effort()
                 return 0
             if proc.poll() is not None:
                 log(f'アプリサーバーが起動前に終了 returncode={proc.returncode}')
