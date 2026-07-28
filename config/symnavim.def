@@ -1,0 +1,13 @@
+[Main]
+MartList=Mart_SIKALOTDEF Mart_SIKALOTNOW
+ConfDir=C:\NaviToSQLite
+
+[Mart_SIKALOTDEF]
+Connection=Connect_Shikakari
+CatalogFile=C:\NaviToSQLite\rne\SIKALOTDEF.RNE
+MartDBMS=SYMFOWARE/RDB
+
+[Mart_SIKALOTNOW]
+Connection=Connect_Shikakari
+CatalogFile=C:\NaviToSQLite\rne\SIKALOTNOW.RNE
+MartDBMS=SYMFOWARE/RDB
