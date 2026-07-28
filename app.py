@@ -4,14 +4,12 @@ from collections import deque
 from datetime import datetime, timedelta
 from pathlib import Path
 from flask import Flask, jsonify, render_template, request
-
 # 起動計測用: app.py の全モジュール取り込み完了時刻(wall clock)。
-# Python はファイル全体をコンパイルしてから実行するため、この時点までに
-# 「インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み」が完了している。
+# ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
 APP_VERSION='1.18.2'; APP_VERSION_TITLE='データビュワーの3タブ化とExcel互換の階層ピボット・グラフ'; APP_RELEASED_AT='2026-07-28'
-BUILD_VERSION=f'{APP_VERSION}-local-runtime-cleanup-launch-guard'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+BUILD_VERSION=f'{APP_VERSION}-local-runtime-cleanup-launch-guard'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
 {'version':'1.18.2','date':APP_RELEASED_AT,'title':'データビュワーの集計表・グラフのレイアウト崩れ修正','notes':[
@@ -184,6 +182,33 @@ def defer_com_reference(label,obj,limit=20):
    if len(_deferred_com_refs)>limit:del _deferred_com_refs[:len(_deferred_com_refs)-limit]
  except Exception:pass
 
+# ==== 設定DBのローカルキャッシュ＋書き戻し ==============================
+# BOX上の app_settings.sqlite3 を『マスター』、%LOCALAPPDATA%配下を『ローカル作業DB』とする。
+# 起動時にマスター→ローカルへ一度だけ取り込み、以降の読み書きは高速なローカルへ行う。
+# 設定変更(save)時のみローカル→マスターへ書き戻す（バックグラウンド、非ブロッキング）。
+# 運用データ(実行履歴・スケジュール状態)は都度BOXへ書かず、変更時と終了時にまとめて反映する。
+settings_sync_lock=threading.RLock(); _settings_initialized=False; _settings_dirty=False
+def _mark_settings_dirty():
+ global _settings_dirty; _settings_dirty=True
+def flush_local_to_master(reason=''):
+ # ローカル作業DB → BOX上マスター へ原子的に書き戻す。書き込み中のコピー破損を避けるためロックで保護する。
+ global _settings_dirty
+ with settings_sync_lock:
+  try:
+   if not SETTINGS_DB.is_file():return False
+   MASTER_SETTINGS_DB.parent.mkdir(parents=True,exist_ok=True)
+   _t=time.perf_counter(); tmp=MASTER_SETTINGS_DB.with_suffix('.wb.tmp'); shutil.copy2(SETTINGS_DB,tmp); os.replace(tmp,MASTER_SETTINGS_DB)
+   _settings_dirty=False; log.info('SETTINGS_FLUSH local->master reason=%s elapsed=%.2fs size=%s',reason,time.perf_counter()-_t,MASTER_SETTINGS_DB.stat().st_size); return True
+  except Exception:
+   log.exception('SETTINGS_FLUSH_FAILED reason=%s',reason); return False
+def flush_local_to_master_async(reason=''):
+ threading.Thread(target=flush_local_to_master,args=(reason,),daemon=True,name='settings-flush').start()
+def _flush_settings_on_exit(reason=''):
+ # 終了直前に、未反映の変更があるときだけBOXへ書き戻す（不要なBOX書き込みを避ける）。
+ try:
+  if _settings_dirty:flush_local_to_master(reason)
+ except Exception:pass
+# =====================================================================
 def settings_connection():
  c=sqlite3.connect(SETTINGS_DB,timeout=30)
  c.row_factory=sqlite3.Row
@@ -191,12 +216,27 @@ def settings_connection():
  return c
 
 def init_settings_db():
- CONFIG_DIR.mkdir(parents=True,exist_ok=True)
- if not SETTINGS_DB.exists() and OLD_SETTINGS_DB.is_file():
-  shutil.copy2(OLD_SETTINGS_DB,SETTINGS_DB)
-  log.info('設定DBを移行しました old=%s new=%s',OLD_SETTINGS_DB,SETTINGS_DB)
- with settings_connection() as c:
-  c.executescript("""
+ # 起動時に一度だけ: BOXマスター→ローカルへ取り込み、スキーマ整備はローカルに対して行う（BOXのfsync遅延を回避）。
+ global _settings_initialized
+ if _settings_initialized:return
+ with settings_sync_lock:
+  if _settings_initialized:return
+  CONFIG_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True)
+  # 旧配置(アプリ直下)のDBがあれば、一度だけBOXマスター(Config)へ引き上げる。
+  if not MASTER_SETTINGS_DB.exists() and OLD_SETTINGS_DB.is_file():
+   try:shutil.copy2(OLD_SETTINGS_DB,MASTER_SETTINGS_DB);log.info('設定DBを移行しました old=%s master=%s',OLD_SETTINGS_DB,MASTER_SETTINGS_DB)
+   except Exception:log.exception('SETTINGS_MASTER_SEED_FAILED')
+  # BOXマスター → ローカル作業DB（マスターが新しい、またはローカルが無いときだけ取り込む）。
+  _t=time.perf_counter()
+  try:
+   need=(not SETTINGS_DB.is_file()) or (MASTER_SETTINGS_DB.is_file() and MASTER_SETTINGS_DB.stat().st_mtime_ns>SETTINGS_DB.stat().st_mtime_ns)
+   if MASTER_SETTINGS_DB.is_file() and need:
+    tmp=SETTINGS_DB.with_suffix('.pull.tmp'); shutil.copy2(MASTER_SETTINGS_DB,tmp); os.replace(tmp,SETTINGS_DB); log.info('SETTINGS_PULL master->local elapsed=%.2fs size=%s',time.perf_counter()-_t,SETTINGS_DB.stat().st_size)
+   else:
+    log.info('SETTINGS_PULL skip(local up-to-date) elapsed=%.2fs',time.perf_counter()-_t)
+  except Exception:log.exception('SETTINGS_PULL_FAILED')
+  with settings_connection() as c:
+   c.executescript("""
   CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY,value TEXT NOT NULL,value_type TEXT NOT NULL DEFAULT 'text',updated_at TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY,display_order INTEGER NOT NULL DEFAULT 0,enabled INTEGER NOT NULL DEFAULT 1,name TEXT NOT NULL,rne TEXT NOT NULL,rne_path TEXT NOT NULL,output_folder TEXT NOT NULL,output_format TEXT NOT NULL,output_file TEXT NOT NULL,table_name TEXT NOT NULL,sheet_name TEXT NOT NULL,read_type TEXT NOT NULL,updated_at TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS schedules (id TEXT PRIMARY KEY,job_id TEXT NOT NULL,display_order INTEGER NOT NULL DEFAULT 0,enabled INTEGER NOT NULL DEFAULT 1,name TEXT NOT NULL,schedule_type TEXT NOT NULL,time_value TEXT,interval_minutes INTEGER,weekdays_json TEXT,month_days_json TEXT,dates_json TEXT,updated_at TEXT NOT NULL,FOREIGN KEY(job_id) REFERENCES jobs(id) ON DELETE CASCADE);
@@ -206,8 +246,12 @@ def init_settings_db():
   CREATE TABLE IF NOT EXISTS run_history (id INTEGER PRIMARY KEY AUTOINCREMENT,job_id TEXT,job_name TEXT,finished_at TEXT,status TEXT,trigger TEXT,detail TEXT,rows INTEGER,cols INTEGER,output_file TEXT);
   CREATE INDEX IF NOT EXISTS idx_run_history_finished ON run_history(finished_at);
   """)
-  c.execute("INSERT OR REPLACE INTO schema_info(key,value) VALUES('schema_version','2')")
- ensure_schema_upgrades()
+   c.execute("INSERT OR REPLACE INTO schema_info(key,value) VALUES('schema_version','2')")
+  ensure_schema_upgrades()
+  # マスターがまだ無ければ、初期状態のローカルをBOXへ書き戻して作成する。
+  if not MASTER_SETTINGS_DB.exists():flush_local_to_master('initial-seed')
+  _settings_initialized=True
+
 
 def ensure_schema_upgrades():
  # 既存DBへ後方互換で列を追加する。動的命名（naming_mode / output_pattern）・用途コメント（comment）用。
@@ -434,12 +478,12 @@ def record_job_run(job_id,job_name,status_value,trigger,detail='',rows=None,cols
  if not job_id:return
  now=datetime.now().isoformat(timespec='seconds')
  try:
-  with settings_connection() as c:
+  with settings_sync_lock, settings_connection() as c:
    c.execute('INSERT OR REPLACE INTO job_runs(job_id,job_name,finished_at,status,trigger,detail,rows,cols,output_file,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)',(job_id,job_name,now,status_value,trigger,detail,rows,cols,output_file,now))
    # カレンダーの実施履歴用に追記式でも保持する（job_runsは最新1件のみのため）。
    c.execute('INSERT INTO run_history(job_id,job_name,finished_at,status,trigger,detail,rows,cols,output_file) VALUES(?,?,?,?,?,?,?,?,?)',(job_id,job_name,now,status_value,trigger,detail,rows,cols,output_file))
    # 実施履歴は直近2000件へ制限し、肥大化を防ぐ。
-   c.execute('DELETE FROM run_history WHERE id NOT IN (SELECT id FROM run_history ORDER BY id DESC LIMIT 2000)')
+   c.execute('DELETE FROM run_history WHERE id NOT IN (SELECT id FROM run_history ORDER BY id DESC LIMIT 2000)'); _mark_settings_dirty()
  except Exception:
   log.exception('JOB_RUN_RECORD_FAILED job=%s',job_name)
 
@@ -483,7 +527,7 @@ def load():
   cfg['backup_folder']=str(LOCAL_BACKUP)
  return cfg
 
-def save(v):
+def _save_local(v):
  init_settings_db(); now=datetime.now().isoformat(timespec='seconds'); jobs=v.get('jobs',[]); top={k:x for k,x in v.items() if k not in ('jobs','credential_status')}
  with settings_connection() as c:
   c.execute('BEGIN IMMEDIATE'); c.execute('DELETE FROM app_settings')
@@ -499,6 +543,12 @@ def save(v):
   if keep:c.execute('DELETE FROM jobs WHERE id NOT IN ('+','.join('?' for _ in keep)+')',keep);c.execute('DELETE FROM job_runs WHERE job_id NOT IN ('+','.join('?' for _ in keep)+')',keep)
   else:c.execute('DELETE FROM jobs');c.execute('DELETE FROM job_runs')
 
+def save(v):
+ # ローカル作業DBへ保存し、設定変更時のみBOX上マスターへバックグラウンドで書き戻す。
+ with settings_sync_lock:
+  _save_local(v)
+ _mark_settings_dirty(); flush_local_to_master_async('config-save')
+
 def migrate_legacy_settings():
  init_settings_db()
  with settings_connection() as c:count=c.execute('SELECT COUNT(*) FROM app_settings').fetchone()[0]
@@ -512,7 +562,8 @@ def load_scheduler_state():
  with settings_connection() as c:return {r['state_key']:r['state_value'] for r in c.execute('SELECT * FROM scheduler_state')}
 
 def save_scheduler_state(key,value):
- with settings_connection() as c:c.execute('INSERT OR REPLACE INTO scheduler_state VALUES(?,?,?)',(key,value,datetime.now().isoformat(timespec='seconds')))
+ with settings_sync_lock, settings_connection() as c:c.execute('INSERT OR REPLACE INTO scheduler_state VALUES(?,?,?)',(key,value,datetime.now().isoformat(timespec='seconds')))
+ _mark_settings_dirty()
 
 def set_status(**v):
  with status_lock: status.update(v)
@@ -1695,7 +1746,7 @@ def heartbeat_watchdog():
     ids=','.join(cid for cid,_ in closing)
     log.info('APP_TABS_EMPTY_CONFIRMED closing_clients=%s active_app_tabs=0 grace=%ss action=python_exit',ids,CLOSE_GRACE_SECONDS)
     for h in log.handlers:h.flush()
-    stop_event.set();os._exit(0)
+    _flush_settings_on_exit('app-tabs-empty');stop_event.set();os._exit(0)
    # ハートビート途絶だけでは終了しない。ネットワーク断、スリープ、ブラウザー破棄との誤判定を避ける。
    if silence>HEARTBEAT_TIMEOUT_SECONDS:
     log.warning('HEARTBEAT_DEGRADED silence=%.0fs server_kept_alive=1',silence)
@@ -1995,10 +2046,7 @@ def navigator_api_status():
    cached=dict(cached);cached['cached']=True;cached['issues']=dll_diagnostic_issues(cached.get('attempts') or [],cached.get('python_bits'));return jsonify(cached)
  try:
   from navigator_api import NavigatorApi
-  started=time.perf_counter();api=NavigatorApi(resolve_path(c.get('symnavi_exe','')),log,resolve_path(c.get('navigator_api_dll')) if c.get('navigator_api_dll') else None,base_dir=BASE);info=api.info();api.close();info['elapsed']=round(time.perf_counter()-started,3);info['cached']=False;info['issues']=dll_diagnostic_issues(info.get('attempts') or [],info.get('python_bits'))
-  # 起動後API診断の実測。DLLロード(BOXフォールバック時は特に遅い)の所要時間を可視化する。
-  log.info('API_DIAG cache_hit=0 elapsed=%.3fs dll=%s dll_bits=%s attempts=%s selection=%s',info.get('elapsed'),info.get('dll'),info.get('dll_bits'),len(info.get('attempts') or []),info.get('selection_reason'))
-  _write_api_diag_cache(info);return jsonify(info)
+  started=time.perf_counter();api=NavigatorApi(resolve_path(c.get('symnavi_exe','')),log,resolve_path(c.get('navigator_api_dll')) if c.get('navigator_api_dll') else None,base_dir=BASE);info=api.info();api.close();info['elapsed']=round(time.perf_counter()-started,3);info['cached']=False;info['issues']=dll_diagnostic_issues(info.get('attempts') or [],info.get('python_bits'));log.info('API_DIAG cache_hit=0 elapsed=%.3fs dll=%s dll_bits=%s attempts=%s selection=%s',info.get('elapsed'),info.get('dll'),info.get('dll_bits'),len(info.get('attempts') or []),info.get('selection_reason'));_write_api_diag_cache(info);return jsonify(info)
  except Exception as e:
   try:
    from navigator_api import candidate_dlls,pe_bits
@@ -2303,7 +2351,9 @@ def validate():
 
 @app.get('/api/instance')
 def instance_info():
- return jsonify(app=APP_ID,instance_id=INSTANCE_ID,display_name='SymfoNavi Data Hub',build_version=BUILD_VERSION,pid=os.getpid(),port=PORT,path=str(BASE))
+ r=app.make_response(jsonify(app=APP_ID,instance_id=INSTANCE_ID,display_name='SymfoNavi Data Hub',build_version=BUILD_VERSION,pid=os.getpid(),port=PORT,path=str(BASE)))
+ # 起動待ちモーダル(loading.html)がfile://から状態を確認できるよう、ローカル情報に限りCORSを許可する。
+ r.headers['Access-Control-Allow-Origin']='*'; r.headers['Cache-Control']='no-store'; return r
 
 @app.get('/api/version')
 def version_info():
@@ -2346,15 +2396,10 @@ def browser_closing():
 @app.post('/api/shutdown-app')
 def shutdown_app():
  def stop():
-  time.sleep(.4); stop_event.set(); os._exit(0)
+  time.sleep(.4); _flush_settings_on_exit('shutdown-app'); stop_event.set(); os._exit(0)
  threading.Thread(target=stop,daemon=True).start(); return jsonify(ok=True)
 
-@atexit.register
-def shutdown():stop_event.set()
-
-# 起動計測用: Flaskが最初のHTTP要求を処理した時刻を1度だけ記録する。
-# ランチャーのprobe()が最初に成功した=サーバー実質稼働開始のタイミングであり、
-# 生成(spawn)からブラウザーに応答できるまでの総所要時間を可視化する。
+# 起動計測用: Flaskが最初のHTTP要求を処理した時刻を1度だけ記録する（＝サーバー実質稼働開始）。
 _first_request_logged=False
 @app.before_request
 def _log_first_request():
@@ -2366,19 +2411,18 @@ def _log_first_request():
  ready_since_spawn=(time.time()-spawn_at) if spawn_at else -1
  log.info('APP_FIRST_REQUEST path=%s ready_since_spawn=%.2fs ready_since_import=%.2fs',request.path,ready_since_spawn,time.time()-_APP_IMPORT_DONE_AT)
 
+@atexit.register
+def shutdown():
+ _flush_settings_on_exit('atexit'); stop_event.set()
 if __name__=='__main__':
  if os.environ.get('NAVI_LAUNCHED_BY_GUARD')!='1':
   raise SystemExit('start.vbsから起動してください。app.pyの直接起動はサポートされていません。')
- # 生成(spawn)からモジュール取り込み完了までの所要時間。初回/アップデート時のBOX読込＋コンパイル費用の主因を可視化する。
  try:_spawn_at=float(os.environ.get('NAVI_APP_SPAWN_AT') or 0)
  except Exception:_spawn_at=0
  if _spawn_at:log.info('APP_IMPORT_ELAPSED spawn_to_import=%.2fs note=interpreter_init+module_import+source_compile(BOX)',_APP_IMPORT_DONE_AT-_spawn_at)
  startup_clock=time.perf_counter();log.info('APP_START source=%s local_root=%s pycache=%s',BASE,LOCAL_ROOT,os.environ.get('PYTHONPYCACHEPREFIX',''))
- _t=time.perf_counter()
- shutil.rmtree(LOCAL_ROOT/'work',ignore_errors=True)
- (LOCAL_ROOT/'work').mkdir(parents=True,exist_ok=True)
- log.info('APP_START_WORKCLEAN elapsed=%.2fs',time.perf_counter()-_t)
- _t=time.perf_counter();migrate_legacy_settings();log.info('APP_START_MIGRATION elapsed=%.2fs',time.perf_counter()-_t)
- _t=time.perf_counter();threading.Thread(target=scheduler,daemon=True,name='scheduler').start(); threading.Thread(target=command_dispatcher,daemon=True,name='command-dispatcher').start(); threading.Thread(target=heartbeat_watchdog,daemon=True,name='heartbeat-watchdog').start();log.info('APP_START_THREADS elapsed=%.2fs',time.perf_counter()-_t)
+ _t=time.perf_counter(); shutil.rmtree(LOCAL_ROOT/'work',ignore_errors=True); (LOCAL_ROOT/'work').mkdir(parents=True,exist_ok=True); log.info('APP_START_WORKCLEAN elapsed=%.2fs',time.perf_counter()-_t)
+ _t=time.perf_counter(); migrate_legacy_settings(); log.info('APP_START_MIGRATION elapsed=%.2fs',time.perf_counter()-_t)
+ _t=time.perf_counter(); threading.Thread(target=scheduler,daemon=True,name='scheduler').start(); threading.Thread(target=command_dispatcher,daemon=True,name='command-dispatcher').start(); threading.Thread(target=heartbeat_watchdog,daemon=True,name='heartbeat-watchdog').start(); log.info('APP_START_THREADS elapsed=%.2fs',time.perf_counter()-_t)
  log.info('APP_START_TOTAL boot_to_run=%.2fs total_since_spawn=%.2fs',time.perf_counter()-startup_clock,(time.time()-_spawn_at) if _spawn_at else -1)
  app.run(host=HOST,port=PORT,debug=False,threaded=True)

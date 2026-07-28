@@ -13,6 +13,9 @@ Dim scriptDir, localAppData, localRoot, runtimeDir, logDir, pycacheDir
 Dim startupLog, vbsLog, target, requirementsFile
 Dim pythonCmd, commandLine, rc
 Dim tStart, tPhase
+Dim loadingShown, cacheFile
+Dim cachedPython, needVerify
+loadingShown = False
 
 Set shell = CreateObject("WScript.Shell")
 Set fso = CreateObject("Scripting.FileSystemObject")
@@ -49,6 +52,7 @@ EnsureFolder pycacheDir
 processEnv("NAVI_LOCAL_ROOT") = localRoot
 processEnv("PYTHONPYCACHEPREFIX") = pycacheDir
 processEnv("PYTHONDONTWRITEBYTECODE") = "0"
+processEnv("NAVI_BROWSER_BY_VBS") = "1"
 
 shell.CurrentDirectory = scriptDir
 
@@ -58,6 +62,8 @@ WriteLog "LOCAL_ROOT=" & localRoot
 WriteLog "PYTHONPYCACHEPREFIX=" & processEnv("PYTHONPYCACHEPREFIX")
 WriteLog "STARTUP_LOG=" & startupLog
 tStart = Timer()
+' èµ·å‹•ç›´å¾Œã«å¾…æ©Ÿãƒ¢ãƒ¼ãƒ€ãƒ«(loading.html)ã‚’ãƒ–ãƒ©ã‚¦ã‚¶ãƒ¼ã§è¡¨ç¤ºã—ã€æº–å‚™å®Œäº†ã§è‡ªå‹•é·ç§»ã•ã›ã‚‹ã€‚
+OpenLoading
 
 If Not fso.FileExists(target) Then
     Fail "start_app.py ‚ªŒ©‚Â‚©‚è‚Ü‚¹‚ñB", target
@@ -66,11 +72,22 @@ End If
 ' If the server is already running, do not create another Python process.
 If ApplicationReady() Then
     WriteLog "EXISTING_SERVER detected"
-    OpenBrowser
+    EnsureBrowser
     WScript.Quit 0
 End If
 
+' Startup cache: skip Python discovery and dependency check when a previous boot succeeded.
+cachedPython = ReadStartupCache()
+If cachedPython <> "" Then
+    pythonCmd = cachedPython
+    needVerify = False
+    WriteLog "STARTUP_CACHE hit python=" & pythonCmd & " (discovery and dependency check skipped)"
+Else
+    needVerify = True
+End If
+
 ' Match the successful batch file's Python selection order.
+If needVerify Then
 tPhase = Timer()
 pythonCmd = FindPython()
 If pythonCmd = "" Then
@@ -80,8 +97,10 @@ If pythonCmd = "" Then
 End If
 WriteLog "PYTHON command=" & pythonCmd
 WriteLog "TIMING python_discovery_seconds=" & FormatNumber(Timer() - tPhase, 2)
+End If
 
 ' Check the selected Python environment. Install only when imports fail.
+If needVerify Then
 tPhase = Timer()
 rc = RunHiddenWait(pythonCmd & " -c " & Quote("import flask,xlrd,win32ui,dde,openpyxl") & _
                    " >> " & Quote(startupLog) & " 2>&1")
@@ -104,6 +123,7 @@ If rc <> 0 Then
         Fail "PythonƒpƒbƒP[ƒW‚Ì“±“ü‚ÉŽ¸”s‚µ‚Ü‚µ‚½B", _
              "ƒƒO‚ðŠm”F‚µ‚Ä‚­‚¾‚³‚¢B" & vbCrLf & startupLog
     End If
+End If
 End If
 
 ' Start start_app.py without a console.
@@ -128,9 +148,11 @@ If WaitForApplication(STARTUP_TIMEOUT_SECONDS) Then
     WriteLog "TIMING launch_to_server_ready_seconds=" & FormatNumber(Timer() - tPhase, 2)
     WriteLog "TIMING total_startup_seconds=" & FormatNumber(Timer() - tStart, 2)
     WriteLog "SERVER_READY url=" & APP_URL
-    OpenBrowser
+    WriteStartupCache pythonCmd
+    EnsureBrowser
     WScript.Quit 0
 End If
+DeleteStartupCache
 
 Fail "ƒAƒvƒŠƒT[ƒo[‚Ì‹N“®‚ðŠm”F‚Å‚«‚Ü‚¹‚ñ‚Å‚µ‚½B", _
      "ŽŸ‚Ìƒ[ƒJƒ‹ƒƒO‚ðŠm”F‚µ‚Ä‚­‚¾‚³‚¢B" & vbCrLf & _
@@ -282,4 +304,96 @@ Sub FailEarly(title, detail)
     MsgBox title & vbCrLf & vbCrLf & detail, _
            vbCritical, "SymfoNavi Data Hub"
     WScript.Quit 1
+End Sub
+
+
+' ==== Startup helpers: loading modal, browser handoff, startup cache ====
+Sub OpenLoading()
+    Dim src, dst, appSh
+    On Error Resume Next
+    src = fso.BuildPath(scriptDir, "loading.html")
+    dst = fso.BuildPath(localRoot, "loading.html")
+    If fso.FileExists(src) Then
+        fso.CopyFile src, dst, True
+        If Err.Number = 0 And fso.FileExists(dst) Then
+            Set appSh = CreateObject("Shell.Application")
+            appSh.ShellExecute dst, "", "", "open", 1
+            If Err.Number = 0 Then
+                loadingShown = True
+                WriteLog "LOADING_MODAL shown path=" & dst
+            End If
+        End If
+    Else
+        WriteLog "LOADING_MODAL source-missing path=" & src
+    End If
+    Err.Clear
+    On Error GoTo 0
+End Sub
+
+Sub EnsureBrowser()
+    If loadingShown Then
+        WriteLog "BROWSER_HANDLED_BY loading-modal"
+    Else
+        OpenBrowser
+    End If
+End Sub
+
+Function ReqSig()
+    Dim f
+    ReqSig = "noreq"
+    On Error Resume Next
+    If fso.FileExists(requirementsFile) Then
+        Set f = fso.GetFile(requirementsFile)
+        ReqSig = CStr(f.Size) & "_" & CStr(f.DateLastModified)
+    End If
+    Err.Clear
+    On Error GoTo 0
+End Function
+
+Function ReadStartupCache()
+    Dim ts, line, py, sig
+    ReadStartupCache = ""
+    cacheFile = fso.BuildPath(runtimeDir, "startup_cache.txt")
+    py = "" : sig = ""
+    On Error Resume Next
+    If fso.FileExists(cacheFile) Then
+        Set ts = fso.OpenTextFile(cacheFile, 1, False, 0)
+        Do Until ts.AtEndOfStream
+            line = ts.ReadLine
+            If Left(line, 7) = "PYTHON=" Then py = Mid(line, 8)
+            If Left(line, 7) = "REQSIG=" Then sig = Mid(line, 8)
+        Loop
+        ts.Close
+    End If
+    Err.Clear
+    On Error GoTo 0
+    If py <> "" And sig = ReqSig() Then
+        ReadStartupCache = py
+    End If
+End Function
+
+Sub WriteStartupCache(py)
+    Dim ts
+    cacheFile = fso.BuildPath(runtimeDir, "startup_cache.txt")
+    On Error Resume Next
+    Set ts = fso.OpenTextFile(cacheFile, 2, True, 0)
+    If Err.Number = 0 Then
+        ts.WriteLine "PYTHON=" & py
+        ts.WriteLine "REQSIG=" & ReqSig()
+        ts.Close
+        WriteLog "STARTUP_CACHE write python=" & py
+    End If
+    Err.Clear
+    On Error GoTo 0
+End Sub
+
+Sub DeleteStartupCache()
+    cacheFile = fso.BuildPath(runtimeDir, "startup_cache.txt")
+    On Error Resume Next
+    If fso.FileExists(cacheFile) Then
+        fso.DeleteFile cacheFile, True
+        WriteLog "STARTUP_CACHE cleared (re-verify on next start)"
+    End If
+    Err.Clear
+    On Error GoTo 0
 End Sub
