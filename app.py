@@ -22,6 +22,7 @@ CHANGELOG=[
 'ブラウザーが強制終了された場合などに、存在しないタブを「接続中」と誤認して自動終了できなくなる問題を修正しました。あわせて内部の接続情報が際限なく蓄積しないようにしました。',
 '複数の処理が同時に動いた際、作業フォルダーの位置が誤った場所に固定されることがある問題を修正しました。',
 '並列ライン数の上限が、設定値に関わらず8で頭打ちになっていた不具合を修正し、設定値を唯一の基準にそろえました。',
+'旧版の上限8が保存されたままの環境を、初回起動時に一度だけ24へ引き上げます（移行済みを記録するため、以後に上限を変更しても再度上書きすることはありません）。',
 ]},
 {'version':'1.18.2','date':APP_RELEASED_AT,'title':'データビュワーの集計表・グラフのレイアウト崩れ修正','notes':[
 '集計表・グラフで、値・列・行のドロップゾーンが左側に縦積みになり、集計表やグラフの描画領域（メイン表示領域）が画面外へ回り込んでいた不具合を修正しました。',
@@ -181,6 +182,8 @@ cancel_requested=threading.Event(); active_workers_lock=threading.Lock(); active
 # 直列実行と管理ポイント自動検出などが重なると復元順序が入れ違い、cwdが誤った場所に固定される
 # （Windowsでは後続のDLL探索にも影響する）。chdirを伴う区間はこのロックで直列化する。
 chdir_lock=threading.RLock()
+# 並列ライン数として動作を確認している上限。既定値・移行・クランプはすべてこの値を基準にする。
+PARALLEL_LINES_SUPPORTED_MAX=24
 class RunCancelled(Exception):pass
 status={'build_version':BUILD_VERSION,'running':False,'current':'','current_job_id':'','current_job_name':'','current_index':0,'total_jobs':0,'step':'idle','step_label':'待機中','step_percent':0,'completed_jobs':0,'failed_jobs':0,'started_at':'','elapsed_seconds':0,'symnavi_window':'未起動','last_result':'未実行','last_finished_at':'','error_detail':'','activity_detail':'','activity_value':'','heartbeat_at':'','parallel_lines':[],'batch_job_ids':[],'queue_completed_ids':[],'queue_failed_ids':[],'queue_running_ids':[],'queue_waiting_ids':[],'job_errors':[]}
 log=logging.getLogger('navi'); log.setLevel(logging.INFO)
@@ -263,10 +266,33 @@ def init_settings_db():
   """)
    c.execute("INSERT OR REPLACE INTO schema_info(key,value) VALUES('schema_version','2')")
   ensure_schema_upgrades()
+  ensure_settings_migrations()
   # マスターがまだ無ければ、初期状態のローカルをBOXへ書き戻して作成する。
   if not MASTER_SETTINGS_DB.exists():flush_local_to_master('initial-seed')
   _settings_initialized=True
 
+
+def ensure_settings_migrations():
+ # 設定値そのものの移行。schema_infoへ実施済みを記録し、一度だけ適用する。
+ # 以後ユーザーが意図的に変更した値を、起動のたびに上書きし返さないための記録である。
+ try:
+  with settings_connection() as c:
+   done={r['key'] for r in c.execute("SELECT key FROM schema_info WHERE key LIKE 'migrated_%'")}
+   if 'migrated_parallel_max_lines_24' in done:return
+   row=c.execute("SELECT value,value_type FROM app_settings WHERE key='settings'").fetchone()
+   if row:
+    settings=_decode_setting(row) or {}
+    current=int(settings.get('api_parallel_max_lines',0) or 0)
+    # 旧版の上限8が保存されたままだと、対応済みの24を選んでも黙って8へ切り詰められる。
+    if 0<current<PARALLEL_LINES_SUPPORTED_MAX:
+     settings['api_parallel_max_lines']=PARALLEL_LINES_SUPPORTED_MAX
+     encoded,kind=_encode_setting(settings)
+     c.execute("UPDATE app_settings SET value=?,value_type=?,updated_at=? WHERE key='settings'",(encoded,kind,datetime.now().isoformat(timespec='seconds')))
+     log.info('SETTINGS_MIGRATION api_parallel_max_lines %s -> %s',current,PARALLEL_LINES_SUPPORTED_MAX)
+   c.execute("INSERT OR REPLACE INTO schema_info(key,value) VALUES('migrated_parallel_max_lines_24','1')")
+  _mark_settings_dirty()
+ except Exception:
+  log.exception('SETTINGS_MIGRATION_FAILED key=api_parallel_max_lines')
 
 def ensure_schema_upgrades():
  # 既存DBへ後方互換で列を追加する。動的命名（naming_mode / output_pattern）・用途コメント（comment）用。
@@ -528,7 +554,7 @@ def load():
     if x['dates_json']:q['dates']=json.loads(x['dates_json'])
     rules.append(q)
    fmt=normalize_output_format(r['output_format'],r['output_file']); jobs.append({'id':r['id'],'enabled':bool(r['enabled']),'name':r['name'],'rne':r['rne'],'rne_path':r['rne_path'],'output_folder':r['output_folder'],'output_format':fmt,'output_file':canonical_output_file(r['output_file'],fmt),'table':r['table_name'],'sheet':r['sheet_name'],'type':r['read_type'],'naming_mode':(r['naming_mode'] if 'naming_mode' in r.keys() else 'fixed'),'output_pattern':(r['output_pattern'] if 'output_pattern' in r.keys() else ''),'comment':(r['comment'] if 'comment' in r.keys() else ''),'period':_decode_period(r['period_json'] if 'period_json' in r.keys() else ''),'schedules':rules})
-  cfg['jobs']=jobs; cfg.setdefault('settings',{}); cfg['settings'].setdefault('extract_engine','api'); cfg['settings'].setdefault('api_parallel_max_lines',24); cfg['settings'].setdefault('api_parallel_model','process')
+  cfg['jobs']=jobs; cfg.setdefault('settings',{}); cfg['settings'].setdefault('extract_engine','api'); cfg['settings'].setdefault('api_parallel_max_lines',PARALLEL_LINES_SUPPORTED_MAX); cfg['settings'].setdefault('api_parallel_model','process')
   # 既定の並列ラインは6。旧テスト実装では stability_profile='stable_api_serial' の環境で読込のたびに api_parallel_lines を1へ強制していた（毎回1ラインへ戻る不具合の原因）。
   # その名残マーカーが残る環境（または初期状態）だけ一度2へ引き上げ、以降はユーザーが保存した値をそのまま尊重する。
   _prev_profile=cfg['settings'].get('stability_profile')
@@ -1619,9 +1645,9 @@ def parallel_lines_cap(cfg=None):
  # 設定できる最大値と実際に効く値がずれ、設定した数が黙って切り捨てられる。
  try:
   settings=(cfg or load()).get('settings',{})
-  return max(1,int(settings.get('api_parallel_max_lines',24) or 24))
+  return max(1,int(settings.get('api_parallel_max_lines',PARALLEL_LINES_SUPPORTED_MAX) or PARALLEL_LINES_SUPPORTED_MAX))
  except Exception:
-  return 24
+  return PARALLEL_LINES_SUPPORTED_MAX
 def clamp_parallel_lines(value,cfg=None,default=1):
  try:n=int(value if value is not None else default)
  except (TypeError,ValueError):n=default
