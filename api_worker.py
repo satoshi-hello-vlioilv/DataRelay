@@ -6,6 +6,8 @@ _local_root=Path(os.environ.get('NAVI_LOCAL_ROOT') or os.environ.get('LOCALAPPDA
 os.environ['NAVI_LOCAL_ROOT']=str(_local_root)
 os.environ['PYTHONPYCACHEPREFIX']=str(_local_root/'pycache')
 os.environ['PYTHONDONTWRITEBYTECODE']='0'
+# appの取り込み前に立てる必要がある。ワーカーは抽出処理だけを行うためHTTP層(Flask)を読み込まない。
+os.environ['NAVI_WORKER_MODE']='1'
 
 def atomic_json(path,data):
     p=Path(path);p.parent.mkdir(parents=True,exist_ok=True);tmp=p.with_suffix(p.suffix+'.tmp')
