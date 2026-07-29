@@ -8,10 +8,21 @@ from flask import Flask, jsonify, render_template, request
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.18.2'; APP_VERSION_TITLE='データビュワーの3タブ化とExcel互換の階層ピボット・グラフ'; APP_RELEASED_AT='2026-07-28'
-BUILD_VERSION=f'{APP_VERSION}-local-runtime-cleanup-launch-guard'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.18.5'; APP_VERSION_TITLE='自動実行の常駐修正と集計結果出力の実装'; APP_RELEASED_AT='2026-07-29'
+BUILD_VERSION=f'{APP_VERSION}-scheduler-watchdog-export-fixes'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
+{'version':'1.18.5','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'【重要】自動実行が「最初の1回」で止まっていた不具合を修正しました。スケジュール投入後にスケジューラー自身が終了しており、2回目以降の予定はアプリを再起動するまで一切実行されない状態でした。',
+'【重要】処理の実行中や自動実行の予定が残っている状態でも、最後のタブを閉じるとアプリが終了していた不具合を修正しました。実行中・予定ありの場合は常駐を継続します（並列実行中のワーカーが親を失って残留する問題も併せて解消）。',
+'集計表（ピボット）の「出力」が常に失敗していた不具合を修正しました。CSV・TXT・EXCEL(xlsx)への出力に対応する処理が未実装だったため追加しました。文字コード・区切りは通常の抽出出力と同じ規則です。',
+'自動実行も手動実行と同じ並列ライン設定で動くようにしました。これまで自動実行だけが常に1ライン（直列）で動作しており、まとめて実行される夜間バッチほど並列化の効果を受けられませんでした。',
+'Python 3.11以前でアプリが起動できなくなる記述を修正し、対応するPythonの範囲を広げました。',
+'ブラウザーのタブ表示アイコン（ファビコン）が表示されなかった不具合を修正しました。',
+'ブラウザーが強制終了された場合などに、存在しないタブを「接続中」と誤認して自動終了できなくなる問題を修正しました。あわせて内部の接続情報が際限なく蓄積しないようにしました。',
+'複数の処理が同時に動いた際、作業フォルダーの位置が誤った場所に固定されることがある問題を修正しました。',
+'並列ライン数の上限が、設定値に関わらず8で頭打ちになっていた不具合を修正し、設定値を唯一の基準にそろえました。',
+]},
 {'version':'1.18.2','date':APP_RELEASED_AT,'title':'データビュワーの集計表・グラフのレイアウト崩れ修正','notes':[
 '集計表・グラフで、値・列・行のドロップゾーンが左側に縦積みになり、集計表やグラフの描画領域（メイン表示領域）が画面外へ回り込んでいた不具合を修正しました。',
 '原因は、ページ全体のレイアウト用に定義していた素の main 要素のスタイル（grid-row:2 / overflow:hidden / 中央寄せ）が、分析パネルの描画領域（main要素）にも波及し、描画領域が左の狭い列（カラムリストの真下）へ押し込まれていたことです。',
@@ -166,6 +177,10 @@ HEARTBEAT_TIMEOUT_SECONDS=200; CLOSE_GRACE_SECONDS=12; heartbeat_lock=threading.
 # 実行中断（ユーザーによる明示キャンセル）。プロセス分離ワーカーはterminateで即時停止できるが、
 # 直列(DDE/API)実行中の1件はCOM/DDE操作の途中で安全に打ち切れないため、次のジョブ開始前でのみ打ち切る。
 cancel_requested=threading.Event(); active_workers_lock=threading.Lock(); active_workers={}
+# カレントディレクトリはプロセス全体で共有される。Flaskは threaded=True で動くため、
+# 直列実行と管理ポイント自動検出などが重なると復元順序が入れ違い、cwdが誤った場所に固定される
+# （Windowsでは後続のDLL探索にも影響する）。chdirを伴う区間はこのロックで直列化する。
+chdir_lock=threading.RLock()
 class RunCancelled(Exception):pass
 status={'build_version':BUILD_VERSION,'running':False,'current':'','current_job_id':'','current_job_name':'','current_index':0,'total_jobs':0,'step':'idle','step_label':'待機中','step_percent':0,'completed_jobs':0,'failed_jobs':0,'started_at':'','elapsed_seconds':0,'symnavi_window':'未起動','last_result':'未実行','last_finished_at':'','error_detail':'','activity_detail':'','activity_value':'','heartbeat_at':'','parallel_lines':[],'batch_job_ids':[],'queue_completed_ids':[],'queue_failed_ids':[],'queue_running_ids':[],'queue_waiting_ids':[],'job_errors':[]}
 log=logging.getLogger('navi'); log.setLevel(logging.INFO)
@@ -1286,12 +1301,14 @@ def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,
    source=profile.get('credential_source') or 'explicit_config'
    elapsed=api_client.connect_data_source(profile)
    log.info('APIデータソース接続完了 line=%s job=%s section=%s kind=%s credential_source=%s elapsed=%.2fs',line_name,j['name'],profile['section'],profile['kind'],source,elapsed)
-  api_rne=rp.resolve();rne_stat=api_rne.stat();previous_cwd=os.getcwd()
-  try:
-   os.chdir(api_rne.parent)
-   log.info('APIカタログ読込条件 line=%s dll=%s cwd=%s catalog_full=%s catalog_name=%s extension=%s size=%s mtime_ns=%s strategy=original_fullpath',line_name,api_client.dll_path,os.getcwd(),api_rne,api_rne.name,api_rne.suffix,rne_stat.st_size,rne_stat.st_mtime_ns)
-   t=phase_log('api_open_catalog',job=j['name'],line=line_name);handle,api_elapsed=api_client.open_catalog(api_rne);phase_log('api_open_catalog',t,job=j['name'],line=line_name,handle=handle,api_elapsed=f'{api_elapsed:.2f}s',strategy='original_fullpath')
-  finally:os.chdir(previous_cwd)
+  api_rne=rp.resolve();rne_stat=api_rne.stat()
+  with chdir_lock:
+   previous_cwd=os.getcwd()
+   try:
+    os.chdir(api_rne.parent)
+    log.info('APIカタログ読込条件 line=%s dll=%s cwd=%s catalog_full=%s catalog_name=%s extension=%s size=%s mtime_ns=%s strategy=original_fullpath',line_name,api_client.dll_path,os.getcwd(),api_rne,api_rne.name,api_rne.suffix,rne_stat.st_size,rne_stat.st_mtime_ns)
+    t=phase_log('api_open_catalog',job=j['name'],line=line_name);handle,api_elapsed=api_client.open_catalog(api_rne);phase_log('api_open_catalog',t,job=j['name'],line=line_name,handle=handle,api_elapsed=f'{api_elapsed:.2f}s',strategy='original_fullpath')
+   finally:os.chdir(previous_cwd)
   if (j.get('period') or {}).get('enabled'):update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='期間指定',percent=30,detail='相対期間を適用');apply_dynamic_period(api_client,handle,j,datetime.now(),line=line_name)
   update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='問い合わせ実行',percent=35,detail='API execute');t=phase_log('api_execute_catalog',job=j['name'],line=line_name);api_number,api_elapsed=api_client.execute(handle);phase_log('api_execute_catalog',t,job=j['name'],line=line_name,number=api_number,api_elapsed=f'{api_elapsed:.2f}s')
   t=phase_log('api_get_dimensions',job=j['name'],line=line_name);expected_rows,expected_cols=api_client.dimensions(handle);phase_log('api_get_dimensions',t,job=j['name'],line=line_name,rows=expected_rows,columns=expected_cols)
@@ -1470,7 +1487,9 @@ def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=No
      log.error('APIデータソース接続失敗 section=%s kind=%s credential_source=%s retry=False',profile['section'],profile['kind'],source)
      raise
   elif engine=='dde':
-   progress('launch','SymfoNaviを起動しています',8); proc=subprocess.Popen(f'"{str(resolve_path(cfg['symnavi_exe']))}" -d -u"{user}","{pw}","{server}"'); set_status(symnavi_window='起動済み'); progress('dde','SymfoNaviへのDDE接続を待っています',15); srv,conv=dde_connect(int(cfg['settings']['dde_timeout_seconds'])); hide_done=start_hidden_symnavi(proc,cfg['settings']); log.info('SymfoNavi定期監視を抽出中は停止 mode=pipeline-priority')
+   # f-string内で同じ引用符をネストするとPython 3.12以降でしか解釈できず、3.11以下では
+   # app.py全体がコンパイル不能になる。文字列連結で組み立て、旧バージョンでも起動できるようにする。
+   progress('launch','SymfoNaviを起動しています',8); _symnavi_cmd='"'+str(resolve_path(cfg['symnavi_exe']))+'" -d -u"'+user+'","'+pw+'","'+server+'"'; proc=subprocess.Popen(_symnavi_cmd); set_status(symnavi_window='起動済み'); progress('dde','SymfoNaviへのDDE接続を待っています',15); srv,conv=dde_connect(int(cfg['settings']['dde_timeout_seconds'])); hide_done=start_hidden_symnavi(proc,cfg['settings']); log.info('SymfoNavi定期監視を抽出中は停止 mode=pipeline-priority')
   else:raise ValueError('抽出エンジンが不正です: '+engine)
   progress('ready','処理の準備が完了しました',20); results=[]; completed_ids=[]
   for job_index,j in enumerate(jobs,1):
@@ -1492,13 +1511,14 @@ def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=No
      with api_rne.open('rb') as f:f.read(1)
     except OSError as e:raise PermissionError(f'API用RNEを読み取れません: {api_rne}: {e}') from e
     rne_stat=api_rne.stat()
-    previous_cwd=os.getcwd()
-    try:
-     # cwdも元RNEフォルダーへ合わせ、RNE内部の相対参照とAPI側の探索条件を両立する。
-     os.chdir(api_rne.parent)
-     log.info('APIカタログ読込条件 dll=%s cwd=%s catalog_full=%s catalog_name=%s extension=%s size=%s mtime_ns=%s strategy=original_fullpath',api_client.dll_path,os.getcwd(),api_rne,api_rne.name,api_rne.suffix,rne_stat.st_size,rne_stat.st_mtime_ns)
-     t=phase_log('api_open_catalog',job=j['name']); handle,api_elapsed=api_client.open_catalog(api_rne); phase_log('api_open_catalog',t,job=j['name'],handle=handle,api_elapsed=f'{api_elapsed:.2f}s',strategy='original_fullpath')
-    finally:os.chdir(previous_cwd)
+    with chdir_lock:
+     previous_cwd=os.getcwd()
+     try:
+      # cwdも元RNEフォルダーへ合わせ、RNE内部の相対参照とAPI側の探索条件を両立する。
+      os.chdir(api_rne.parent)
+      log.info('APIカタログ読込条件 dll=%s cwd=%s catalog_full=%s catalog_name=%s extension=%s size=%s mtime_ns=%s strategy=original_fullpath',api_client.dll_path,os.getcwd(),api_rne,api_rne.name,api_rne.suffix,rne_stat.st_size,rne_stat.st_mtime_ns)
+      t=phase_log('api_open_catalog',job=j['name']); handle,api_elapsed=api_client.open_catalog(api_rne); phase_log('api_open_catalog',t,job=j['name'],handle=handle,api_elapsed=f'{api_elapsed:.2f}s',strategy='original_fullpath')
+     finally:os.chdir(previous_cwd)
     if (j.get('period') or {}).get('enabled'):
      progress('open',f'{j["name"]}: 相対期間を適用しています',34,activity_detail='Navigator API 期間指定',activity_value=(compute_period(j.get('period'),datetime.now()) or {}).get('summary',''));applied=apply_dynamic_period(api_client,handle,j,datetime.now())
      if applied:log.info('実行設定 job=%s dynamic_period=%s',j['name'],applied.get('summary'))
@@ -1594,10 +1614,23 @@ def queue_snapshot():
    x=dict(item);x['state']='waiting';x['position']=i;items.append(x)
   return {'items':items,'active_id':active_command.get('id') if active_command else None,'waiting_count':len(command_queue),'total_count':len(items)}
 
+def parallel_lines_cap(cfg=None):
+ # 上限は設定値(api_parallel_max_lines)を単一の基準とする。ここを固定値で書くと、
+ # 設定できる最大値と実際に効く値がずれ、設定した数が黙って切り捨てられる。
+ try:
+  settings=(cfg or load()).get('settings',{})
+  return max(1,int(settings.get('api_parallel_max_lines',24) or 24))
+ except Exception:
+  return 24
+def clamp_parallel_lines(value,cfg=None,default=1):
+ try:n=int(value if value is not None else default)
+ except (TypeError,ValueError):n=default
+ return max(1,min(parallel_lines_cap(cfg),n))
+
 def enqueue_command(job_ids,trigger,parallel_lines):
  cfg=load(); selected=[j for j in cfg['jobs'] if j.get('enabled') and (not job_ids or j['id'] in job_ids)]
  if not selected:raise ValueError('実行対象がありません')
- item={'id':uuid.uuid4().hex,'job_ids':[j['id'] for j in selected],'job_names':[j['name'] for j in selected],'trigger':trigger,'parallel_lines':max(1,min(8,int(parallel_lines or 1))),'enqueued_at':datetime.now().isoformat(timespec='seconds'),'count':len(selected)}
+ item={'id':uuid.uuid4().hex,'job_ids':[j['id'] for j in selected],'job_names':[j['name'] for j in selected],'trigger':trigger,'parallel_lines':clamp_parallel_lines(parallel_lines,cfg),'enqueued_at':datetime.now().isoformat(timespec='seconds'),'count':len(selected)}
  with command_queue_lock:
   command_queue.append(item);position=len(command_queue)+(1 if active_command else 0)
  command_queue_event.set();log.info('COMMAND_QUEUE_ENQUEUE id=%s position=%s jobs=%s lines=%s trigger=%s',item['id'],position,item['job_names'],item['parallel_lines'],trigger)
@@ -1741,9 +1774,17 @@ def heartbeat_watchdog():
     clients={k:dict(v) for k,v in heartbeat_clients.items()}
    # pagehide通知後も同じclient_idのハートビートが猶予時間内に戻れば、再読込・戻る/進む・BFCache復帰として終了を取り消す。
    closing=[(cid,v) for cid,v in clients.items() if v.get('closing_at') and now-float(v.get('closing_at') or 0)>=CLOSE_GRACE_SECONDS]
-   active=[(cid,v) for cid,v in clients.items() if not v.get('closing_at')]
+   # 明示的な終了通知が無いまま消えたタブ(ブラウザー強制終了・通信断など)を「常時接続中」と誤認すると、
+   # 二度と自動終了できなくなる。最後の受信からの経過でも生存を判定する。
+   active=[(cid,v) for cid,v in clients.items() if not v.get('closing_at') and now-float(v.get('last_seen') or 0)<HEARTBEAT_TIMEOUT_SECONDS]
    if closing and not active:
     ids=','.join(cid for cid,_ in closing)
+    # 実行中・自動実行の予定ありの場合は終了しない。ここで落とすと処理が中途半端に打ち切られ、
+    # 並列実行中の各ラインのワーカープロセスが親を失って孤児化する。
+    if status.get('running'):
+     log.info('APP_TABS_EMPTY_DEFERRED closing_clients=%s reason=job_running action=keep_alive',ids);continue
+    if any_enabled_schedule_exists():
+     log.info('APP_TABS_EMPTY_DEFERRED closing_clients=%s reason=enabled_schedule_exists action=keep_alive',ids);continue
     log.info('APP_TABS_EMPTY_CONFIRMED closing_clients=%s active_app_tabs=0 grace=%ss action=python_exit',ids,CLOSE_GRACE_SECONDS)
     for h in log.handlers:h.flush()
     _flush_settings_on_exit('app-tabs-empty');stop_event.set();os._exit(0)
@@ -1768,19 +1809,26 @@ def scheduler():
      if key and st.get(state_key)!=key:
       st[state_key]=key; save_scheduler_state(state_key,key); due_ids.append(j['id']); due_rules.append(r.get('name',r['type'])); break
    if due_ids:
-    log.info('SCHEDULE_BATCH_READY jobs=%s count=%s rules=%s',due_ids,len(due_ids),due_rules)
-    enqueue_command(due_ids,f'schedule-batch:{len(due_ids)}',1); return
+    # 自動実行も手動実行と同じ並列ライン設定で動かす。ここを1固定にすると、
+    # 対象がまとまって走る夜間バッチほど並列化の効果を受けられない。
+    lines=clamp_parallel_lines(cfg['settings'].get('api_parallel_lines',1),cfg)
+    log.info('SCHEDULE_BATCH_READY jobs=%s count=%s rules=%s parallel_lines=%s',due_ids,len(due_ids),due_rules,lines)
+    # 投入後もスケジューラーは常駐し続ける。ここでreturnするとスレッドが終了し、
+    # 以降の自動実行がアプリ再起動まで一切発火しなくなる。
+    enqueue_command(due_ids,f'schedule-batch:{len(due_ids)}',lines)
   except:log.exception('スケジュール判定エラー')
+ log.info('SCHEDULER_STOPPED reason=stop_event')
 
 @app.get('/')
 def index():
  response=app.make_response(render_template('index.html'));response.headers['Cache-Control']='no-store, no-cache, must-revalidate, max-age=0';response.headers['Pragma']='no-cache';return response
 @app.get('/favicon.ico')
 def favicon():
- # favicon.icoの中身はSVG。拡張子と実体の食い違いでブラウザーが弾かないよう、明示的にimage/svg+xmlで返す。
- f=BASE/'favicon.ico'
- if not f.is_file():return ('',404)
- response=app.make_response(f.read_bytes());response.headers['Content-Type']='image/svg+xml';response.headers['Cache-Control']='public, max-age=86400';return response
+ # アイコン実体は static/ にある。ICOを優先し、無い環境ではSVGへフォールバックする。
+ for f,ctype in ((BASE/'static'/'favicon.ico','image/x-icon'),(BASE/'static'/'favicon.svg','image/svg+xml'),(BASE/'favicon.ico','image/x-icon')):
+  if f.is_file():
+   response=app.make_response(f.read_bytes());response.headers['Content-Type']=ctype;response.headers['Cache-Control']='public, max-age=86400';return response
+ return ('',404)
 @app.get('/api/config')
 def get_config():
  c=load()
@@ -1811,9 +1859,8 @@ def put_config():save(request.get_json(force=True));return jsonify(ok=True)
 def set_parallel_lines():
  # 並列ライン数だけを即時に保存する軽量エンドポイント。ユーザーが変更したら他の未保存編集に触れずその値を確定し、次回起動以降も保持する。
  data=request.get_json(silent=True) or {}
- try:lines=max(1,min(8,int(data.get('lines',2) or 2)))
- except Exception:lines=2
- c=load(); c['settings']['api_parallel_lines']=lines; c['settings']['stability_profile']='balanced_api_parallel'; save(c)
+ c=load(); lines=clamp_parallel_lines(data.get('lines',2),c,default=2)
+ c['settings']['api_parallel_lines']=lines; c['settings']['stability_profile']='balanced_api_parallel'; save(c)
  log.info('設定保存 job=(共通) 並列ライン数を保存 api_parallel_lines=%s',lines)
  return jsonify(ok=True,api_parallel_lines=lines)
 @app.get('/api/schedule-preview')
@@ -1942,10 +1989,11 @@ def period_control_points():
   if not any(p.get('kind')=='oracle' for p in profiles):
    profiles.insert(0,{'section':'NavigatorCredentialFallback','kind':'oracle','user':user,'password':pw,'server':'','option':'','resource':'','resource_kind':'0'})
   for profile in profiles:api.connect_data_source(profile)
-  prev=os.getcwd()
-  try:
-   os.chdir(Path(rp).parent); handle,_=api.open_catalog(Path(rp).resolve())
-  finally:os.chdir(prev)
+  with chdir_lock:
+   prev=os.getcwd()
+   try:
+    os.chdir(Path(rp).parent); handle,_=api.open_catalog(Path(rp).resolve())
+   finally:os.chdir(prev)
   points=api.list_time_control_points(handle); api.close_catalog()
   time_points=[p for p in points if p.get('is_time')]
   log.info('PERIOD_CP_DETECT rne=%s total=%s time=%s',rp,len(points),len(time_points))
@@ -1960,7 +2008,7 @@ def period_control_points():
 @app.post('/api/run')
 def run_all():
  try:
-  data=request.get_json(silent=True) or {};requested=max(1,min(8,int(data.get('parallel_lines',1) or 1)))
+  data=request.get_json(silent=True) or {};requested=clamp_parallel_lines(data.get('parallel_lines',1))
   item,position=enqueue_command(data.get('job_ids'),'manual',requested)
   return jsonify(ok=True,queued=True,queue_id=item['id'],position=position,parallel_lines=requested,job_names=item['job_names'])
  except Exception as e:return jsonify(error=str(e)),400
@@ -2286,6 +2334,45 @@ def data_viewer_jobs():
   path=_viewer_output_path(job,c);items.append({'id':job['id'],'name':job['name'],'format':normalize_output_format(job.get('output_format'),path.name),'exists':path.is_file()})
  return jsonify(items=items)
 
+@app.post('/api/data-viewer/export-pivot')
+def data_viewer_export_pivot():
+ # 集計表(ピボット)の表示内容をそのままファイルへ書き出す。matrixは1行目がヘッダーの2次元配列。
+ # 出力の区切り・文字コードは通常の抽出出力(export_data)と同じ規則へそろえる。
+ data=request.get_json(silent=True) or {}
+ fmt=normalize_output_format(data.get('format') or 'csv')
+ if fmt not in ('csv','txt','xlsx'):return jsonify(ok=False,error=f'集計結果の出力に未対応の形式です: {fmt}'),400
+ matrix=data.get('matrix')
+ if not isinstance(matrix,list) or not matrix:return jsonify(ok=False,error='出力する集計結果がありません'),400
+ if len(matrix)>1048576:return jsonify(ok=False,error=f'行数が多すぎます（{len(matrix):,}行）。絞り込んでから出力してください'),400
+ rows=[['' if v is None else str(v) for v in (r if isinstance(r,list) else [r])] for r in matrix]
+ width=max(len(r) for r in rows); rows=[r+['']*(width-len(r)) for r in rows]
+ headers,body=rows[0],rows[1:]
+ stem=re.sub(r'[\\/:*?"<>|]','_',str(data.get('name') or '集計結果')).strip() or '集計結果'
+ filename=f'{stem}_{datetime.now().strftime("%Y%m%d_%H%M%S")}{output_extension(fmt)}'
+ tmp=LOCAL_RUNTIME/f'pivot_export_{uuid.uuid4().hex}{output_extension(fmt)}'
+ try:
+  if fmt=='xlsx':
+   write_xlsx_direct(tmp,'集計結果',headers,body)
+   ctype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  else:
+   delimiter=',' if fmt=='csv' else '\t'
+   with tmp.open('w',encoding='utf-8-sig',newline='') as f:
+    w=csv.writer(f,delimiter=delimiter,quoting=csv.QUOTE_MINIMAL);w.writerow(headers);w.writerows(body)
+   ctype='text/csv; charset=utf-8' if fmt=='csv' else 'text/plain; charset=utf-8'
+  payload=tmp.read_bytes()
+ except Exception as e:
+  log.exception('PIVOT_EXPORT_FAILED format=%s rows=%s',fmt,len(rows));return jsonify(ok=False,error=str(e)),500
+ finally:
+  try:tmp.unlink()
+  except OSError:pass
+ from urllib.parse import quote
+ log.info('PIVOT_EXPORT format=%s rows=%s columns=%s size=%s file=%s',fmt,len(body),width,len(payload),filename)
+ response=app.make_response(payload)
+ response.headers['Content-Type']=ctype
+ response.headers['Content-Disposition']="attachment; filename*=UTF-8''"+quote(filename)
+ response.headers['Cache-Control']='no-store'
+ return response
+
 @app.get('/api/data-viewer/<job_id>')
 def data_viewer(job_id):
  c=load();job=next((x for x in c['jobs'] if x['id']==job_id),None)
@@ -2369,8 +2456,13 @@ def heartbeat():
   last_heartbeat_at=now;browser_closed_explicit=False;browser_closing_at=0.0;heartbeat_total+=1
   previous=heartbeat_clients.get(client_id,{})
   heartbeat_clients[client_id]={'app_id':APP_ID,'instance_id':INSTANCE_ID,'last_seen':now,'user_agent':request.headers.get('User-Agent','')[:160],'closing_at':0.0,'recovered_count':int(previous.get('recovered_count') or 0)+(1 if previous.get('closing_at') else 0)}
-  stale=[k for k,v in heartbeat_clients.items() if v.get('closing_at') and now-v.get('closing_at',0)>86400]
+  # 終了通知後に戻らなかったタブに加え、通知なく消えたタブ(強制終了・通信断)も回収する。
+  # 放置すると client_id はページ読込ごとに増え、辞書が際限なく肥大化する。
+  stale=[k for k,v in heartbeat_clients.items()
+         if (v.get('closing_at') and now-float(v.get('closing_at') or 0)>86400)
+         or (not v.get('closing_at') and now-float(v.get('last_seen') or 0)>HEARTBEAT_TIMEOUT_SECONDS*3)]
   for k in stale:heartbeat_clients.pop(k,None)
+  if stale:log.info('HEARTBEAT_CLIENTS_PRUNED count=%s remaining=%s',len(stale),len(heartbeat_clients))
  return jsonify(ok=True,app_id=APP_ID,instance_id=INSTANCE_ID,server_time=datetime.now().isoformat(timespec='milliseconds'),received_at=now,timeout_seconds=HEARTBEAT_TIMEOUT_SECONDS,total=heartbeat_total)
 
 @app.get('/api/heartbeat-status')
