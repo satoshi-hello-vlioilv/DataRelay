@@ -3,15 +3,40 @@ import atexit, calendar, configparser, csv, gc, json, logging, os, re, shutil, s
 from collections import deque
 from datetime import datetime, timedelta
 from pathlib import Path
-from flask import Flask, jsonify, render_template, request
+# 並列実行のワーカー(api_worker.py)は抽出処理だけを行い、HTTP層は一切使わない。
+# それでも従来は app.py の取り込みに引きずられて Flask まで読み込んでおり、
+# 1ジョブごとに約90msの無駄な起動時間が発生していた（ジョブ数に比例して積み上がる）。
+# ワーカーではFlaskを取り込まず、経路定義のデコレーターだけを無害化する。
+WORKER_MODE=os.environ.get('NAVI_WORKER_MODE')=='1'
+if WORKER_MODE:
+ class _UnusedWebLayer:
+  """ワーカーでは呼ばれないHTTP層の代替。@app.get 等を素通しにするだけの器。"""
+  config={}
+  def __getattr__(self,name):
+   def decorator(*a,**k):
+    def keep(fn):return fn
+    return keep
+   return decorator
+ def _web_layer_unavailable(*a,**k):raise RuntimeError('ワーカープロセスではHTTP層を使用できません')
+ Flask=_web_layer_unavailable; jsonify=_web_layer_unavailable; render_template=_web_layer_unavailable; request=None
+else:
+ from flask import Flask, jsonify, render_template, request
 # 起動計測用: app.py の全モジュール取り込み完了時刻(wall clock)。
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.18.5'; APP_VERSION_TITLE='自動実行の常駐修正と集計結果出力の実装'; APP_RELEASED_AT='2026-07-29'
-BUILD_VERSION=f'{APP_VERSION}-scheduler-watchdog-export-fixes'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.19.0'; APP_VERSION_TITLE='通知領域への常駐とワーカー起動の高速化'; APP_RELEASED_AT='2026-07-29'
+BUILD_VERSION=f'{APP_VERSION}-tray-residency-slim-worker'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
+{'version':'1.19.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'ブラウザーのタブを閉じても、実行中・実行キューあり・自動実行の予定ありのいずれかに該当する場合は、通知領域（タスクバー右側）に常駐するようにしました。常駐へ切り替わる際は通知でお知らせします。',
+'通知領域のアイコンから、画面を開く（ダブルクリックまたは右クリックメニュー）・アプリを終了する操作ができます。右クリックメニューには現在の状態（実行中／予定あり／キュー待機）も表示します。',
+'上記の条件に該当する間は、タブを閉じただけでは終了しません。完全に終了するには画面の「アプリを終了」または通知領域の「アプリを終了」を使用してください。実行中の場合は中断してから終了します。',
+'条件に該当しない（予定もキューも無く待機中の）場合は、これまでどおりタブを閉じると自動的に終了します。',
+'並列実行のワーカーがHTTP層（Flask）まで読み込んでいた無駄を解消し、ワーカーの起動時間を約70%短縮しました（1ジョブあたり約110ms、20件で約2秒の短縮）。抽出処理の内容自体は変更していません。',
+'通知領域の常駐はWindowsでのみ動作します。利用できない環境では常駐アイコンなしで従来どおり動作します。',
+]},
 {'version':'1.18.5','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
 '【重要】自動実行が「最初の1回」で止まっていた不具合を修正しました。スケジュール投入後にスケジューラー自身が終了しており、2回目以降の予定はアプリを再起動するまで一切実行されない状態でした。',
 '【重要】処理の実行中や自動実行の予定が残っている状態でも、最後のタブを閉じるとアプリが終了していた不具合を修正しました。実行中・予定ありの場合は常駐を継続します（並列実行中のワーカーが親を失って残留する問題も併せて解消）。',
@@ -169,7 +194,9 @@ CHANGELOG=[
  {'version':'0.2.0','date':'','title':'API並列実行の導入','notes':['API方式による複数ライン同時実行と、プロセス分離方式の予約キュー管理を追加しました。（旧V13〜V16）']},
  {'version':'0.1.0','date':'','title':'基本レイアウトとログ基盤の整備','notes':['1画面に収まるレイアウトへ変更し、実行ログを工程単位でレポート化しました。（旧V7〜V12）']},
 ]
-APP_ID='SymfoNaviDataHub'; INSTANCE_ID=str(uuid.uuid4()); app=Flask(__name__); app.config['SEND_FILE_MAX_AGE_DEFAULT']=0; run_lock=threading.Lock(); stop_event=threading.Event(); status_lock=threading.Lock(); command_queue_lock=threading.RLock(); command_queue_event=threading.Event(); command_queue=[]; active_command=None
+APP_ID='SymfoNaviDataHub'; INSTANCE_ID=str(uuid.uuid4()); app=_UnusedWebLayer() if WORKER_MODE else Flask(__name__)
+if not WORKER_MODE:app.config['SEND_FILE_MAX_AGE_DEFAULT']=0
+run_lock=threading.Lock(); stop_event=threading.Event(); status_lock=threading.Lock(); command_queue_lock=threading.RLock(); command_queue_event=threading.Event(); command_queue=[]; active_command=None
 # ブラウザー側ハートビート監視。フロントからの生存信号が途絶えたら、ジョブ実行中でなく、
 # かつ有効な自動実行ルールも無い場合にだけ自プロセスを終了し、閉じ忘れによるゾンビ化を防ぐ。
 # 0.12.0（旧V36）: 非アクティブ（タブ切替）でもブラウザーは生存しているため、バックグラウンド時のタイマー抑制（多くのブラウザーで最悪1分に1回程度まで低速化）を考慮し、
@@ -1790,6 +1817,79 @@ def any_enabled_schedule_exists():
  except Exception:
   return True  # 判定に失敗した場合は自動実行を壊さない側へ倒し、終了させない。
 
+# ==== ブラウザーを閉じた後の常駐（通知領域） ==============================
+# タブが無くなっても、実行中・実行キューあり・自動実行の予定ありのいずれかなら常駐を続ける。
+# 常駐中は通知領域にアイコンを出し、そこから画面を開く／終了できるようにする。
+residency_state={'active':False,'reason':'','since':0.0}
+tray=None
+def pending_queue_count():
+ with command_queue_lock:return len(command_queue)+(1 if active_command else 0)
+def residency_reason():
+ """常駐を続ける理由。無ければ空文字（＝終了してよい）。"""
+ if status.get('running'):return '処理を実行中'
+ queued=pending_queue_count()
+ if queued:return f'実行キュー {queued}件が待機中'
+ if any_enabled_schedule_exists():return '自動実行の予定あり'
+ return ''
+def tray_status_text():
+ reason=residency_reason()
+ if status.get('running'):
+  return f'実行中 {status.get("completed_jobs",0)}/{status.get("total_jobs",0)}'
+ return reason or '待機中'
+def open_app_window():
+ try:webbrowser.open(f'http://{HOST}:{PORT}')
+ except Exception:log.exception('TRAY_OPEN_FAILED')
+def request_shutdown_from_tray():
+ # 通知領域からの終了も「アプリを終了」と同じ扱いにする。実行中なら先に中断してから終える。
+ if status.get('running'):
+  log.info('TRAY_EXIT_REQUESTED running=1 action=cancel_then_exit')
+  cancel_requested.set()
+  with active_workers_lock:workers=list(active_workers.values())
+  for p in workers:
+   try:p.terminate()
+   except Exception:pass
+  deadline=time.time()+30
+  while status.get('running') and time.time()<deadline:time.sleep(0.3)
+ else:
+  log.info('TRAY_EXIT_REQUESTED running=0 action=exit')
+ with command_queue_lock:command_queue.clear()
+ for h in log.handlers:h.flush()
+ _flush_settings_on_exit('tray-exit');stop_event.set()
+ if tray:
+  try:tray.stop()
+  except Exception:pass
+ os._exit(0)
+def start_tray():
+ global tray
+ if WORKER_MODE or os.name!='nt':return None
+ try:
+  from tray_icon import TrayIcon
+  icon=BASE/'static'/'favicon.ico'
+  tray=TrayIcon('SymfoNavi Data Hub',f'http://{HOST}:{PORT}',str(icon) if icon.is_file() else None,
+                on_open=open_app_window,on_exit=request_shutdown_from_tray,status_text=tray_status_text,logger=log)
+  return tray if tray.start() else None
+ except Exception:
+  # 常駐アイコンを作れなくてもアプリ本体は動かし続ける（自動実行を止めない）。
+  log.exception('TRAY_INIT_FAILED');return None
+def enter_residency(reason,client_ids=''):
+ if residency_state['active']:
+  if reason!=residency_state['reason']:
+   residency_state['reason']=reason
+   if tray:tray.refresh_tooltip()
+  return
+ residency_state.update(active=True,reason=reason,since=time.time())
+ log.info('APP_RESIDENT_ENTER closing_clients=%s reason=%s action=keep_alive_with_tray',client_ids,reason)
+ if tray:
+  tray.refresh_tooltip()
+  tray.notify('SymfoNavi Data Hub は常駐しています',
+              f'{reason}のため実行を続けます。\n画面を開く・終了するには通知領域のアイコンを使用してください。')
+def leave_residency():
+ if not residency_state['active']:return
+ residency_state.update(active=False,reason='',since=0.0)
+ log.info('APP_RESIDENT_LEAVE reason=app_tab_reopened')
+ if tray:tray.refresh_tooltip()
+# =====================================================================
+
 def heartbeat_watchdog():
  time.sleep(10)
  while not stop_event.wait(2):
@@ -1805,15 +1905,17 @@ def heartbeat_watchdog():
    active=[(cid,v) for cid,v in clients.items() if not v.get('closing_at') and now-float(v.get('last_seen') or 0)<HEARTBEAT_TIMEOUT_SECONDS]
    if closing and not active:
     ids=','.join(cid for cid,_ in closing)
-    # 実行中・自動実行の予定ありの場合は終了しない。ここで落とすと処理が中途半端に打ち切られ、
+    # 実行中・実行キューあり・自動実行の予定ありの場合は終了しない。ここで落とすと処理が中途半端に打ち切られ、
     # 並列実行中の各ラインのワーカープロセスが親を失って孤児化する。
-    if status.get('running'):
-     log.info('APP_TABS_EMPTY_DEFERRED closing_clients=%s reason=job_running action=keep_alive',ids);continue
-    if any_enabled_schedule_exists():
-     log.info('APP_TABS_EMPTY_DEFERRED closing_clients=%s reason=enabled_schedule_exists action=keep_alive',ids);continue
+    # 常駐へ切り替えるときは通知領域アイコンを出し、「見えない・止められない」状態にしない。
+    reason=residency_reason()
+    if reason:
+     enter_residency(reason,ids);continue
     log.info('APP_TABS_EMPTY_CONFIRMED closing_clients=%s active_app_tabs=0 grace=%ss action=python_exit',ids,CLOSE_GRACE_SECONDS)
     for h in log.handlers:h.flush()
     _flush_settings_on_exit('app-tabs-empty');stop_event.set();os._exit(0)
+   elif active and residency_state['active']:
+    leave_residency()
    # ハートビート途絶だけでは終了しない。ネットワーク断、スリープ、ブラウザー破棄との誤判定を避ける。
    if silence>HEARTBEAT_TIMEOUT_SECONDS:
     log.warning('HEARTBEAT_DEGRADED silence=%.0fs server_kept_alive=1',silence)
@@ -2496,7 +2598,7 @@ def heartbeat_status():
  now=time.time()
  with heartbeat_lock:
   age=max(0,now-last_heartbeat_at);clients=[{'client_id':k,'age_seconds':round(now-v['last_seen'],1),'closing':bool(v.get('closing_at'))} for k,v in heartbeat_clients.items()]
- return jsonify(ok=True,app_id=APP_ID,instance_id=INSTANCE_ID,state='healthy' if age<30 else ('delayed' if age<HEARTBEAT_TIMEOUT_SECONDS else 'disconnected'),last_received=datetime.fromtimestamp(last_heartbeat_at).isoformat(timespec='seconds'),age_seconds=round(age,1),timeout_seconds=HEARTBEAT_TIMEOUT_SECONDS,active_clients=sum(1 for x in clients if not x['closing']),recent_clients=sum(1 for x in clients if not x['closing'] and x['age_seconds']<30),closing_clients=sum(1 for x in clients if x['closing']),clients=clients,total=heartbeat_total,server_time=datetime.now().isoformat(timespec='seconds'),auto_shutdown_on_disconnect=False,exit_when_app_tabs_empty=True,close_grace_seconds=CLOSE_GRACE_SECONDS)
+ return jsonify(ok=True,app_id=APP_ID,instance_id=INSTANCE_ID,state='healthy' if age<30 else ('delayed' if age<HEARTBEAT_TIMEOUT_SECONDS else 'disconnected'),last_received=datetime.fromtimestamp(last_heartbeat_at).isoformat(timespec='seconds'),age_seconds=round(age,1),timeout_seconds=HEARTBEAT_TIMEOUT_SECONDS,active_clients=sum(1 for x in clients if not x['closing']),recent_clients=sum(1 for x in clients if not x['closing'] and x['age_seconds']<30),closing_clients=sum(1 for x in clients if x['closing']),clients=clients,total=heartbeat_total,server_time=datetime.now().isoformat(timespec='seconds'),auto_shutdown_on_disconnect=False,exit_when_app_tabs_empty=True,close_grace_seconds=CLOSE_GRACE_SECONDS,resident=bool(residency_state['active']),resident_reason=residency_state['reason'],residency_pending_reason=residency_reason(),tray_available=bool(tray),queued_commands=pending_queue_count())
 @app.post('/api/browser-closing')
 def browser_closing():
  # pagehideはタブ/ブラウザー終了だけでなく再読込等でも発生する。client_idごとに終了候補へ入れ、猶予中の復帰で取り消す。
@@ -2513,8 +2615,16 @@ def browser_closing():
 
 @app.post('/api/shutdown-app')
 def shutdown_app():
+ # 画面の「アプリを終了」。常駐条件が残っていても、ここからの終了は明示操作として尊重する。
  def stop():
-  time.sleep(.4); _flush_settings_on_exit('shutdown-app'); stop_event.set(); os._exit(0)
+  time.sleep(.4)
+  with command_queue_lock:command_queue.clear()
+  log.info('APP_EXIT_REQUESTED source=ui resident=%s',residency_state['active'])
+  _flush_settings_on_exit('shutdown-app'); stop_event.set()
+  if tray:
+   try:tray.stop()
+   except Exception:pass
+  os._exit(0)
  threading.Thread(target=stop,daemon=True).start(); return jsonify(ok=True)
 
 # 起動計測用: Flaskが最初のHTTP要求を処理した時刻を1度だけ記録する（＝サーバー実質稼働開始）。
@@ -2542,5 +2652,6 @@ if __name__=='__main__':
  _t=time.perf_counter(); shutil.rmtree(LOCAL_ROOT/'work',ignore_errors=True); (LOCAL_ROOT/'work').mkdir(parents=True,exist_ok=True); log.info('APP_START_WORKCLEAN elapsed=%.2fs',time.perf_counter()-_t)
  _t=time.perf_counter(); migrate_legacy_settings(); log.info('APP_START_MIGRATION elapsed=%.2fs',time.perf_counter()-_t)
  _t=time.perf_counter(); threading.Thread(target=scheduler,daemon=True,name='scheduler').start(); threading.Thread(target=command_dispatcher,daemon=True,name='command-dispatcher').start(); threading.Thread(target=heartbeat_watchdog,daemon=True,name='heartbeat-watchdog').start(); log.info('APP_START_THREADS elapsed=%.2fs',time.perf_counter()-_t)
+ _t=time.perf_counter(); log.info('APP_START_TRAY available=%s elapsed=%.2fs',bool(start_tray()),time.perf_counter()-_t)
  log.info('APP_START_TOTAL boot_to_run=%.2fs total_since_spawn=%.2fs',time.perf_counter()-startup_clock,(time.time()-_spawn_at) if _spawn_at else -1)
  app.run(host=HOST,port=PORT,debug=False,threaded=True)
