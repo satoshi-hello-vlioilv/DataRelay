@@ -234,6 +234,9 @@ class NavigatorApi:
     def _bind(self):
         L=ctypes.c_long; P=ctypes.POINTER(L); S=ctypes.c_char_p
         d=self.dll
+        # hasattr(WinDLL,'Navi...') はエクスポートされていれば何でもTrueになるので、
+        # 「アプリが実際に使っている関数」の判定には使えない。ここで明示的に記録する。
+        self.bound=set()
         d.NaviOpenSession.argtypes=[P,S,S,S];d.NaviOpenSession.restype=None
         d.NaviCloseSession.argtypes=[];d.NaviCloseSession.restype=None
         d.NaviIsSessionOpened.argtypes=[];d.NaviIsSessionOpened.restype=L
@@ -271,6 +274,14 @@ class NavigatorApi:
             d.NaviGetControlPointType.argtypes=[L,P,P];d.NaviGetControlPointType.restype=None
         if hasattr(d,'NaviGetNameCP'):
             d.NaviGetNameCP.argtypes=[L,P,L,S];d.NaviGetNameCP.restype=None
+        # データ項目（列）の読み取り。管理ポイント側と同じ呼び出し規約に合わせている。
+        if hasattr(d,'NaviGetDataItemNumber'):
+            d.NaviGetDataItemNumber.argtypes=[L,P,L,P];d.NaviGetDataItemNumber.restype=None
+        if hasattr(d,'NaviGetDataItem2'):
+            d.NaviGetDataItem2.argtypes=[L,P,L,L];d.NaviGetDataItem2.restype=L
+        if hasattr(d,'NaviGetNameDI'):
+            d.NaviGetNameDI.argtypes=[L,P,L,S];d.NaviGetNameDI.restype=None
+        self.bound={n for n in dir(d) if n.startswith('Navi') and getattr(getattr(d,n,None),'argtypes',None) is not None}
     def info(self):
         pybits=struct.calcsize('P')*8;dllbits=pe_bits(self.dll_path);norm=os.path.normcase(os.path.normpath(str(self.dll_path)));local=os.path.normcase(os.path.normpath(r'C:\NAVIAP'))
         if norm==local or norm.startswith(local+os.sep):reason='ローカルのC:\\NAVIAP配下に、Pythonと同じ%d bitの利用可能なDLLがあるため最優先で選択しました。'%pybits
@@ -278,7 +289,8 @@ class NavigatorApi:
         else:reason='ローカル標準配置に利用可能なDLLがないため、互換候補の中からPythonと同じ%d bitのDLLを選択しました。'%pybits
         exports=pe_exports(self.dll_path)
         navi=[x for x in exports if x.lower().startswith('navi')]
-        return {'ok':True,'dll':self.dll_path,'dll_bits':dllbits,'python_bits':pybits,'mode':'Navigator API','attempts':self.attempts,'deploy_report':self.deploy_report,'selection_reason':reason,'exports':navi,'exports_total':len(exports),'exports_bound':sorted(n for n in navi if hasattr(self.dll,n)),'bit_diagnosis':f'Python {pybits} bit / DLL {dllbits or "不明"} bit / '+('一致' if dllbits==pybits else '不一致')}
+        bound=sorted(getattr(self,'bound',set()))
+        return {'ok':True,'dll':self.dll_path,'dll_bits':dllbits,'python_bits':pybits,'mode':'Navigator API','attempts':self.attempts,'deploy_report':self.deploy_report,'selection_reason':reason,'exports':navi,'exports_total':len(exports),'exports_bound':bound,'bit_diagnosis':f'Python {pybits} bit / DLL {dllbits or "不明"} bit / '+('一致' if dllbits==pybits else '不一致')}
     def error_code(self):
         code=ctypes.c_long()
         try:self.dll.NaviGetErrorCode(ctypes.byref(code));return int(code.value)
@@ -424,6 +436,39 @@ class NavigatorApi:
                 is_time=ctype in (NAVI_CONTROLPOINT_TIME,NAVI_CONTROLPOINT_TEMPLATE)
                 out.append({'location':locname,'index':idx,'name':name or f'管理ポイント#{idx+1}','type':ctype,'type_name':CONTROLPOINT_TYPE_NAMES.get(ctype,'不明'),'is_time':is_time})
         return out
+    def supports_column_split(self):
+        """列（データ項目）を読み取り・削除できるDLLか。列分割の可否判定に使う。"""
+        return all(hasattr(self.dll,n) for n in ('NaviGetDataItemNumber','NaviGetDataItem2','NaviGetNameDI','NaviRemoveDataItem'))
+
+    def list_data_items(self,h):
+        """RNEに含まれるデータ項目（列）を列挙する。読み取りのみでカタログは変更しない。
+
+        呼び出し規約は管理ポイント側（NaviGetControlPointNumber/2/NaviGetNameCP）と同型と仮定している。
+        実機で列数が NaviGetFieldNumber と一致すれば仮定が正しいと確認できる。
+        """
+        if not all(hasattr(self.dll,n) for n in ('NaviGetDataItemNumber','NaviGetDataItem2','NaviGetNameDI')):
+            raise RuntimeError('このDLLはデータ項目の列挙API（NaviGetDataItemNumber/2/NaviGetNameDI）を公開していません')
+        out=[]
+        for locate,locname in ((NAVI_SIDE,'表側'),(NAVI_HEAD,'表頭'),(NAVI_DATA,'データ'),(NAVI_COND,'条件')):
+            rc=ctypes.c_long();num=ctypes.c_long()
+            try:
+                self.dll.NaviGetDataItemNumber(h,ctypes.byref(rc),locate,ctypes.byref(num))
+            except Exception:
+                continue
+            if int(rc.value)!=NAVI_OK:continue
+            for idx in range(int(num.value)):
+                rc2=ctypes.c_long()
+                hdi=int(self.dll.NaviGetDataItem2(h,ctypes.byref(rc2),locate,idx))
+                if int(rc2.value)!=NAVI_OK or not hdi:continue
+                name=''
+                try:
+                    buf=ctypes.create_string_buffer(1024);rc3=ctypes.c_long()
+                    self.dll.NaviGetNameDI(hdi,ctypes.byref(rc3),NAVI_LABEL,buf)
+                    if int(rc3.value)==NAVI_OK:name=(buf.value or b'').decode('mbcs',errors='replace').strip()
+                except Exception:pass
+                out.append({'location':locname,'index':idx,'handle':hdi,'name':name or f'データ項目#{idx+1}'})
+        return out
+
     def close_catalog(self):
         if self.catalog:
             self.dll.NaviCloseCatalog(self.catalog);self.catalog=0
