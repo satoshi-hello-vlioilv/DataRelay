@@ -25,10 +25,18 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.21.0'; APP_VERSION_TITLE='列定義のキャッシュと分割可否の判定'; APP_RELEASED_AT='2026-08-07'
-BUILD_VERSION=f'{APP_VERSION}-column-plan'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.21.1'; APP_VERSION_TITLE='正式な関数宣言に合わせて列の読み取りを修正'; APP_RELEASED_AT='2026-08-07'
+BUILD_VERSION=f'{APP_VERSION}-bas-decl'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
+{'version':'1.21.1','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'列名がすべて空（データ項目#1…）で返っていた不具合を修正しました。NaviGetNameDI の引数は3つ（hDItem, rc, name）で、管理ポイント側の NaviGetNameCP と違い master を取りません。4つで呼んでいたのが原因です。',
+'この修正により、RNEを開くだけで列を数えられるようになりました。【列の分割可否を調べる】は問い合わせを実行しません。出力ファイルも不要です。',
+'条件欄のデータ項目は絞り込み用で出力の列にはならないため、分割できる列としては数えないようにしました。',
+'エラーコードの対応表を正式な定義に差し替えました。NAVI_ERROR_USEDDATAITEM（項目間演算に使用中・0x68）など、列操作で出るコードが名前で表示されます。',
+'NAVI_EOD の値を 0x2 に修正しました（0x1 としていました）。NAVI_DOWNLOADLATER=0x1 は推定どおりで変更ありません。',
+'NaviGetPeriod を正式な書式で定義しました。RNEに設定済みの期間を読み取れます。',
+]},
 {'version':'1.21.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
 'RNEごとに列定義（列名と順序）を保存するようにしました。通常実行の副産物として自動で貯まります。RNEを書き換えると自動で無効化され、次の実行で取り直します。対象IDではなくRNE単位なので、同じRNEを使う対象どうしで共有されます。',
 '【列の分割可否を調べる】ボタンを追加しました。出力される列を「分割して取得できる列」と「全パートに必ず残る列」に分け、分割で効果が出るかどうかを実装前に判断できます。',
@@ -2547,7 +2555,9 @@ def column_plan():
  data=request.get_json(force=True) or {};c=load()
  job=next((x for x in c['jobs'] if x['id']==data.get('job_id')),None) if data.get('job_id') else None
  if not job:return jsonify(ok=False,error='保存済みの対象を選んでください'),200
- force=bool(data.get('force'));allow_probe=bool(data.get('allow_probe',True))
+ # 分割できるかどうかはRNEを開くだけで分かるので、問い合わせは既定では行わない。
+ # 1行だけの問い合わせは、結合に必要な「出力列の並び順」がどうしても要るときだけ明示的に許可する。
+ force=bool(data.get('force'));allow_probe=bool(data.get('allow_probe',False))
  try:rp=resolve_rne_path(job,c)
  except Exception as e:return jsonify(ok=False,error=f'RNEパスの解決に失敗しました: {e}'),200
  if not Path(rp).is_file():return jsonify(ok=False,error=f'RNEが見つかりません: {rp}'),200
@@ -2563,12 +2573,24 @@ def column_plan():
     columns=read_header_names(op,job)
     if columns:source='output';notes.append(f'直近の出力ファイルから読み取りました（{op.name}）')
   except Exception as e:notes.append(f'出力ファイルから読めませんでした: {e}')
- api=None;handle=None;classify=[];classify_error=''
+ api=None;handle=None;classify=[];classify_error='';layout={}
  need_classify=force or not (cached and cached.get('classify') and not cached['stale'])
  need_probe=not columns and allow_probe
  try:
   if need_probe or need_classify:
    api,handle=open_api_catalog(c,rp)
+   # RNEを開くだけで分割できる列と必ず残る列が数えられる。出力ファイルも問い合わせも要らない。
+   try:
+    lay=api.column_layout(handle)
+    layout={'removable':[x['name'] for x in lay['removable']],'fixed':[x['name'] for x in lay['fixed']],
+            'condition':[x['name'] for x in lay['condition_items']],
+            'data_item_count':len(lay['data_items']),'control_point_count':len(lay['control_points'])}
+    log.info('COLUMN_LAYOUT rne=%s removable=%s fixed=%s condition=%s data_items=%s control_points=%s detail=%s',
+             rp,len(layout['removable']),len(layout['fixed']),len(layout['condition']),
+             layout['data_item_count'],layout['control_point_count'],getattr(api,'di_diag',''))
+    log.info('COLUMN_LAYOUT_NAMES removable=%s',' | '.join(layout['removable'][:40]))
+   except Exception as le:
+    log.warning('COLUMN_LAYOUT_FAILED rne=%s error=%s',rp,le);notes.append(f'列の数え上げに失敗しました: {le}')
    if need_probe:
     # 1行だけ受け取って打ち切る。見出し行のためだけに全件を転送しない。
     if not api.supports_header_probe():
@@ -2604,14 +2626,18 @@ def column_plan():
  if columns and source!='cache':save_column_cache(rp,columns,source=source or 'unknown',job=job)
  if classify:save_column_classification(rp,classify)
  elif cached and cached.get('classify') and not cached['stale']:classify=cached['classify']
- removable=[x['name'] for x in classify if x.get('removable')]
- fixed=[x['name'] for x in classify if not x.get('removable')]
+ # 数え上げが成功していればそれを使う。RNEだけで分かる確かな値なので、名前の突き合わせより優先する。
+ if layout.get('removable') or layout.get('fixed'):
+  removable=layout['removable'];fixed=layout['fixed'];basis='layout'
+ else:
+  removable=[x['name'] for x in classify if x.get('removable')]
+  fixed=[x['name'] for x in classify if not x.get('removable')];basis='classify'
  elapsed=time.perf_counter()-started
- log.info('COLUMN_PLAN rne=%s job=%s source=%s columns=%s removable=%s fixed=%s elapsed=%.2fs',rp,job['name'],source,len(columns),len(removable),len(fixed),elapsed)
+ log.info('COLUMN_PLAN rne=%s job=%s source=%s basis=%s columns=%s removable=%s fixed=%s elapsed=%.2fs',rp,job['name'],source,basis,len(columns),len(removable),len(fixed),elapsed)
  return jsonify(ok=True,rne=str(rp),job=job['name'],source=source,cache_state=state,columns=columns,column_count=len(columns),
                 classify=classify,removable=removable,fixed=fixed,removable_count=len(removable),fixed_count=len(fixed),
-                classify_error=classify_error,captured_at=(cached or {}).get('captured_at',''),notes=notes,probe=probe_info,
-                elapsed=round(elapsed,2))
+                basis=basis,layout=layout,classify_error=classify_error,captured_at=(cached or {}).get('captured_at',''),
+                notes=notes,probe=probe_info,elapsed=round(elapsed,2))
 
 @app.post('/api/run')
 def run_all():
