@@ -10,7 +10,7 @@ Const LOCAL_APP_FOLDER = "SymfoNaviDataHub"
 
 Dim shell, fso, processEnv
 Dim scriptDir, localAppData, localRoot, runtimeDir, logDir, pycacheDir
-Dim startupLog, vbsLog, target, requirementsFile
+Dim startupLog, vbsLog, target, requirementsFile, requirementsAlt
 Dim pythonCmd, commandLine, rc
 Dim tStart, tPhase
 Dim loadingShown, cacheFile
@@ -40,7 +40,13 @@ pycacheDir = fso.BuildPath(localRoot, "pycache")
 startupLog = fso.BuildPath(logDir, "startup.log")
 vbsLog = fso.BuildPath(logDir, "vbs_launcher.log")
 target = fso.BuildPath(scriptDir, "start_app.py")
-requirementsFile = fso.BuildPath(scriptDir, "requirements.txt")
+' requirements.txt lives under config\. Older layouts kept it beside start.vbs,
+' so fall back to that location instead of reporting the file as missing.
+requirementsAlt = fso.BuildPath(scriptDir, "requirements.txt")
+requirementsFile = fso.BuildPath(fso.BuildPath(scriptDir, "config"), "requirements.txt")
+If Not fso.FileExists(requirementsFile) Then
+    If fso.FileExists(requirementsAlt) Then requirementsFile = requirementsAlt
+End If
 
 EnsureFolder localRoot
 EnsureFolder runtimeDir
@@ -57,6 +63,7 @@ processEnv("NAVI_BROWSER_BY_VBS") = "1"
 shell.CurrentDirectory = scriptDir
 
 WriteLog "START script=" & WScript.ScriptFullName
+WriteLog "REQUIREMENTS resolved=" & requirementsFile & " exists=" & CStr(fso.FileExists(requirementsFile))
 WriteLog "APP_SOURCE=" & scriptDir
 WriteLog "LOCAL_ROOT=" & localRoot
 WriteLog "PYTHONPYCACHEPREFIX=" & processEnv("PYTHONPYCACHEPREFIX")
@@ -111,7 +118,7 @@ If rc <> 0 Then
     If Not fso.FileExists(requirementsFile) Then
         Fail "必要なPythonパッケージが不足しています。", _
              "requirements.txt が見つかりません。" & vbCrLf & _
-             "確認先: " & requirementsFile
+             "確認先: " & requirementsFile & vbCrLf & requirementsAlt
     End If
 
     tPhase = Timer()

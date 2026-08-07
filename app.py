@@ -25,11 +25,18 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.20.5'; APP_VERSION_TITLE='並列実行の起動順と起動間隔の最適化'; APP_RELEASED_AT='2026-08-07'
-BUILD_VERSION=f'{APP_VERSION}-batch-scheduling'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.20.6'; APP_VERSION_TITLE='起動時のrequirements.txt検出の修正'; APP_RELEASED_AT='2026-08-07'
+BUILD_VERSION=f'{APP_VERSION}-launcher-requirements'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
-{'version':'1.20.5','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+{'version':'1.20.6','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'別のPCで「必要なPythonパッケージが不足しています / requirements.txt が見つかりません」と表示され起動できない不具合を修正しました。',
+'原因は起動スクリプト(start.vbs)の探し先です。requirements.txt はもともと config フォルダーにありますが、アプリ直下を探していました。ファイル構成の違いではありません。',
+'必要なパッケージが既に入っているPCではこの確認処理に到達しないため、これまで表面化していませんでした。パッケージが不足しているPCでのみ発生します。',
+'config フォルダーを優先して探し、見つからない場合はアプリ直下も確認します（旧い配置のまま運用している場合の互換）。どちらにも無い場合は両方のパスをエラーに表示します。',
+'起動ログ(vbs_launcher.log)へ REQUIREMENTS の行を追加し、どのパスを使ったかを記録します。',
+]},
+{'version':'1.20.5','date':APP_RELEASED_AT,'title':'並列実行の起動順と起動間隔の最適化','notes':[
 '並列実行で、重い対象から先に流すようにしました。バッチ全体の所要は一番重い対象で決まるため、それが後ろに回るとその分だけ全体が延びます。規模は前回実績の行数×列数を目安にします（実績が無い対象は大きさが読めないため先に流します）。',
 'ラインの起動を少しずつずらすようにしました。一斉に起動するとNavigator APIのセッション接続が競合し、1本あたりの接続時間が数倍に伸びるためです（実測: 単独 約1.0秒 / 6本同時 2.3〜7.2秒。3回の測定で再現）。',
 '設定「抽出方式 → 並列処理」に「ライン起動の間隔」を追加しました。既定は700ミリ秒です。0にすると従来どおり一斉に起動します。',
