@@ -25,10 +25,17 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.23.1'; APP_VERSION_TITLE='全体進捗バーの表示と、調査中のアプリ停止を修正'; APP_RELEASED_AT='2026-08-07'
-BUILD_VERSION=f'{APP_VERSION}-crashguard'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.23.2'; APP_VERSION_TITLE='ヒープ破壊による調査の異常終了を修正'; APP_RELEASED_AT='2026-08-07'
+BUILD_VERSION=f'{APP_VERSION}-heapfix'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
+{'version':'1.23.2','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'「調べる」が異常終了する不具合を修正しました。終了コード 3221226356（0xC0000374）はヒープ破壊です。名前を受け取るバッファを番兵で埋めていたため、NUL文字が1つも無い状態でDLLへ渡していました。DLLが文字列の長さを測ろうとするとバッファの外まで走査し、ヒープを壊していました。',
+'バッファをゼロ埋めに戻しました（1.21.1と同じ渡し方です）。大きさも1024バイトに戻しています。',
+'列の判定に列名の読み取りを使わないようにしました。直近の出力ファイルの列名を渡し、NaviGetDataItemで引いて判定します。DLLから文字列を受け取らないため、名前の受け渡しに起因する事故が起きません。',
+'それでも読み取りプロセスが落ちた場合は、名前の読み取りを止めて一度だけやり直します。件数と分割の判定は名前が無くても出せます。',
+'全体進捗バーの文字列が折り返さないよう、幅を広げて表記を短くしました（「実行キュー全体 0 / 7 完了（実行中 6）」→「全体 0 / 7 完了 ・ 実行中 6」）。',
+]},
 {'version':'1.23.1','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
 '実行キュー全体の進捗バーが表示されない不具合を修正しました。割合の数値だけが出て棒が見えなかったのは、別のCSS指定（.queue-head>div）が詳細度で勝って横並びになり、棒の幅が0に潰れていたためです。',
 '進捗バー用のクラス名が実行キューのバッジと重複していたので、別名にしました。',
@@ -1799,13 +1806,15 @@ def process_catalog_inspect(j,cfg,user,pw,server,want=None):
  """
  started=time.perf_counter();api=None;out={'ok':False}
  want=want or ['points','items']
+ read_names=bool(j.get('_read_names',True))
+ known=list(j.get('_known_columns') or [])
  try:
   api,handle=open_api_catalog(cfg,resolve_rne_path(j,cfg))
   if 'points' in want:
-   pts=api.list_time_control_points(handle)
+   pts=api.list_time_control_points(handle,read_names=read_names)
    out['points']=pts;out['time_points']=[p for p in pts if p.get('is_time')]
   if 'items' in want:
-   lay=api.column_layout(handle)
+   lay=api.column_layout(handle,columns=known,read_names=read_names)
    out['layout']={'removable':[x['name'] for x in lay['removable']],'fixed':[x['name'] for x in lay['fixed']],
                   'condition':[x['name'] for x in lay['condition_items']],
                   'data_item_count':len(lay['data_items']),'control_point_count':len(lay['control_points'])}
@@ -1840,11 +1849,16 @@ def run_inspect_worker(job,cfg,user,pw,server,want,timeout=180):
    proc.kill();log.warning('INSPECT_WORKER_TIMEOUT job=%s timeout=%ss',job.get('name'),timeout)
    return {'ok':False,'error':f'読み取りが{timeout}秒を超えたため中止しました'}
   res=_read_worker_json(rp,None)
-  log.info('INSPECT_WORKER job=%s returncode=%s ok=%s elapsed=%.2fs',job.get('name'),rc,bool(res and res.get('ok')),time.perf_counter()-t)
+  log.info('INSPECT_WORKER job=%s returncode=%s ok=%s read_names=%s elapsed=%.2fs',job.get('name'),rc,bool(res and res.get('ok')),job.get('_read_names',True),time.perf_counter()-t)
   if res is None:
-   # 結果を書く前に落ちた＝DLL側での異常終了。何が起きたかを利用者に伝える。
+   # 結果を書く前に落ちた＝DLL側での異常終了。名前の読み取りが原因のことがあるので、
+   # 一度だけ名前なしでやり直す。件数と分割の判定は名前が無くても出せる。
+   if job.get('_read_names',True):
+    log.warning('INSPECT_WORKER_RETRY_WITHOUT_NAMES job=%s returncode=%s',job.get('name'),rc)
+    return run_inspect_worker(dict(job,_read_names=False),cfg,user,pw,server,want,timeout)
    return {'ok':False,'error':f'RNEの読み取り中に読み取りプロセスが異常終了しました（終了コード {rc}）。'
                              'このRNEでは読み取りを行えません。通常の実行には影響しません。','crashed':True,'returncode':rc}
+  if not job.get('_read_names',True):res['names_skipped']=True
   return res
  finally:
   try:shutil.rmtree(work,ignore_errors=True)
@@ -2737,7 +2751,8 @@ def period_control_points():
  if not Path(rp).is_file():return jsonify(ok=False,error=f'RNEが見つかりません: {rp}'),200
  try:
   user,pw,server,_=creds(resolve_path(c['symnavim_conf']))
-  ins=run_inspect_worker(dict(tmp,id=(job or {}).get('id',''),name=(job or {}).get('name','')),c,user,pw,server,['points','items'])
+  known=(load_column_cache(rp) or {}).get('columns') or []
+  ins=run_inspect_worker(dict(tmp,id=(job or {}).get('id',''),name=(job or {}).get('name',''),_known_columns=known),c,user,pw,server,['points','items'])
  except Exception as e:
   log.exception('PERIOD_CP_DETECT_FAILED rne=%s',rp);return jsonify(ok=False,error=str(e)),200
  if not ins.get('ok'):
@@ -2820,7 +2835,7 @@ def column_plan():
   if need_probe or need_classify:
    # 列挙は独立プロセスで行う。DLL側の異常終了でアプリごと落ちないようにするため。
    user,pw,server,_=creds(resolve_path(c['symnavim_conf']))
-   ins=run_inspect_worker(job,c,user,pw,server,['items'])
+   ins=run_inspect_worker(dict(job,_known_columns=columns),c,user,pw,server,['items'])
    if not ins.get('ok'):
     return jsonify(ok=False,error=ins.get('error') or 'RNEを読み取れませんでした',crashed=bool(ins.get('crashed'))),200
    layout=ins.get('layout') or {}

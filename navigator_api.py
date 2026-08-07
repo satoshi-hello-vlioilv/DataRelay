@@ -467,8 +467,6 @@ class NavigatorApi:
         h_cp,locname=self.get_time_control_point(h,label)
         self.change_period(h_cp,condition,from_time,to_time)
         return {'handle':h_cp,'locate':locname,'label':label or '(時間フィールド)'}
-    _SENTINEL=b'\xfe'
-
     @staticmethod
     def _readable_span(addr,limit=4096):
         """addr から安全に読める最大バイト数を返す。読めないなら0。
@@ -504,34 +502,52 @@ class NavigatorApi:
         base=int(mbi.BaseAddress or 0)
         return max(0,min(limit,base+int(mbi.RegionSize)-addr))
 
-    def _out_string(self,invoke,size=4096):
+    def _out_string(self,invoke,size=1024):
         """`name As String` のような文字列出力パラメタを安全に読む。
 
         VBの宣言では ByRef String だが、このDLLは自前バッファのアドレスを書き込む方式である
         （NaviGetErrorMessage が char** で正しく読めていることから分かる）。渡したバッファへ
-        直接書く実装もあり得るため、どちらか分からないまま解釈するとポインタ値を文字列として
-        読んでしまう。番兵で埋めたバッファを渡し、書き換わり方から方式を見分ける。
-        ポインタとしての形（上位バイトが0で、それ以外は番兵のまま）が揃ったときだけ参照する。
+        直接書く実装もあり得るため、形だけでは見分けられない。短い項目名はアドレスと同じ形に
+        見えてしまうので、「文字として意味が通るか」で決める。
+        アドレスとして参照するのは、その番地が実際に読めて、中身が名前として通る場合だけ。
         """
-        psize=ctypes.sizeof(ctypes.c_void_p);sent=self._SENTINEL
-        buf=ctypes.create_string_buffer(sent*size,size);rc=ctypes.c_long(-1)
+        psize=ctypes.sizeof(ctypes.c_void_p)
+        # バッファは必ずゼロ埋めで渡す。番兵で埋めるとNULが1つも無くなり、DLLが入出力文字列として
+        # 長さを測ろうとした場合にバッファの外まで走査してヒープを壊す（終了コード0xC0000374）。
+        buf=ctypes.create_string_buffer(size);rc=ctypes.c_long(-1)
         invoke(buf,rc)
         if int(rc.value)!=NAVI_OK:return '',f'rc={int(rc.value)}'
         raw=bytes(buf.raw)
+        if not any(raw[:psize+32]):return '','unwritten'
         head,tail=raw[:psize],raw[psize:psize+32]
-        if tail==sent*32 and head[-2:]==b'\x00\x00' and head[:psize-2]!=sent*(psize-2):
+        # ポインタらしき形なら、まず参照してみる。読めて名前として通ればそれが答え。
+        if not any(tail) and head[-2:]==b'\x00\x00' and any(head[:psize-2]):
             addr=int.from_bytes(head,'little')
             if 0x10000<addr<0x7fffffffffff:
                 span=self._readable_span(addr)
-                if not span:return '','ptr_unreadable'
-                try:
-                    raw=ctypes.string_at(addr,span).split(b'\x00',1)[0]
-                except Exception:
-                    return '','ptr_bad'
-                return raw.decode('mbcs',errors='replace').strip(),'ptr'
-        body=raw.split(b'\x00',1)[0]
-        if not body or body.startswith(sent):return '','unwritten'
-        return body.decode('mbcs',errors='replace').strip(),'buf'
+                if span:
+                    try:text=self._plausible(ctypes.string_at(addr,span).split(b'\x00',1)[0])
+                    except Exception:text=''
+                    if text:return text,'ptr'
+        # 参照できなかった場合、バッファの中身はアドレスの数値そのものかもしれない。
+        # 名前として通るときだけ採用する。通らなければ空を返す（以前の文字化けを再現させない）。
+        text=self._plausible(raw.split(b'\x00',1)[0])
+        return (text,'buf') if text else ('','unreadable')
+
+    @staticmethod
+    def _plausible(body):
+        """名前として通る文字列なら返す。通らなければ空文字。
+
+        アドレスの数値をそのまま文字として読むと制御文字が混じる。これを弾くことで、
+        ポインタ値を項目名として表示してしまう事故を防ぐ。
+        """
+        if not body:return ''
+        try:text=body.decode('mbcs')
+        except (UnicodeDecodeError,LookupError):return ''
+        text=text.strip()
+        if not text:return ''
+        if any(ord(ch)<0x20 or ord(ch)==0x7f for ch in text):return ''
+        return text
 
     def get_name_cp(self,h_cp):
         if not hasattr(self.dll,'NaviGetNameCP'):
@@ -541,7 +557,7 @@ class NavigatorApi:
             return name
         except Exception:
             return ''
-    def list_time_control_points(self,h):
+    def list_time_control_points(self,h,read_names=True):
         # RNEに含まれる管理ポイントを列挙し、時間型（TIME/TEMPLATE）を抽出する。
         # DLLが列挙APIを公開していない環境では明示的に失敗させる（手入力にフォールバックしてもらう）。
         if not (hasattr(self.dll,'NaviGetControlPointNumber') and hasattr(self.dll,'NaviGetControlPoint2') and hasattr(self.dll,'NaviGetControlPointType')):
@@ -564,7 +580,7 @@ class NavigatorApi:
                     self.dll.NaviGetControlPointType(hcp,ctypes.byref(rc3),ctypes.byref(tp))
                     if int(rc3.value)==NAVI_OK:ctype=int(tp.value)
                 except Exception:ctype=None
-                name=self.get_name_cp(hcp)
+                name=self.get_name_cp(hcp) if read_names else ''
                 is_time=ctype in (NAVI_CONTROLPOINT_TIME,NAVI_CONTROLPOINT_TEMPLATE)
                 out.append({'location':locname,'index':idx,'name':name or f'管理ポイント#{idx+1}','type':ctype,'type_name':CONTROLPOINT_TYPE_NAMES.get(ctype,'不明'),'is_time':is_time})
         return out
@@ -623,19 +639,25 @@ class NavigatorApi:
         self._check('NaviGetDataItem',rc)
         return h
 
-    def column_layout(self,h_catalog):
-        """RNEを開くだけで、分割できる列と必ず残る列を数える。実行も出力も不要。
+    def column_layout(self,h_catalog,columns=None,read_names=True):
+        """分割できる列と必ず残る列を求める。
 
-        分割できる列 = データ項目（NaviRemoveDataItem で削除できる）
-        必ず残る列   = 表側・表頭の管理ポイント（削除できないので全パートに現れ、そのまま結合キーになる）
+        columns（直近の出力ファイルの列名）を渡した場合は、その名前で NaviGetDataItem を引いて
+        判定する。この経路はDLLから文字列を受け取らないので、名前の受け渡しに起因する事故が起きない。
+        列名が無い場合だけ、列挙APIで名前を読む。
         """
-        items=self.list_data_items(h_catalog) if self.supports_data_item_enum() else []
-        points=self.list_time_control_points(h_catalog) if hasattr(self.dll,'NaviGetControlPointNumber') else []
-        # 条件欄は絞り込みに使うだけで出力の列にはならないため、分割できる列としては数えない。
-        removable=[x for x in items if x['location']=='データ']
-        fixed=[x for x in points if x['location'] in ('表側','表頭')]
+        items=self.list_data_items(h_catalog,read_names=read_names) if self.supports_data_item_enum() else []
+        points=self.list_time_control_points(h_catalog,read_names=read_names) if hasattr(self.dll,'NaviGetControlPointNumber') else []
+        cond=[x for x in items if x['location']=='条件']
+        if columns:
+            cls=self.classify_columns(h_catalog,columns)
+            removable=[{'name':x['name'],'location':'データ'} for x in cls if x['removable']]
+            fixed=[{'name':x['name'],'location':'表側など'} for x in cls if not x['removable']]
+        else:
+            removable=[x for x in items if x['location']=='データ']
+            fixed=[x for x in points if x['location'] in ('表側','表頭')]
         return {'removable':removable,'fixed':fixed,'data_items':items,'control_points':points,
-                'condition_items':[x for x in items if x['location']=='条件']}
+                'condition_items':cond}
 
     def classify_columns(self,h_catalog,names):
         """列名ごとに、削除できる列（データ項目）か、必ず残る列（管理ポイント由来）かを判定する。
@@ -692,7 +714,7 @@ class NavigatorApi:
         self.dll.NaviRemoveDataItem(h_catalog,h_di,ctypes.byref(rc))
         self._check('NaviRemoveDataItem',rc)
 
-    def list_data_items(self,h):
+    def list_data_items(self,h,read_names=True):
         """RNEに含まれるデータ項目（列）を列挙する。読み取りのみでカタログは変更しない。
 
         呼び出し規約は管理ポイント側（NaviGetControlPointNumber/2/NaviGetNameCP）と同型と仮定している。
@@ -718,7 +740,7 @@ class NavigatorApi:
                 if int(rc2.value)!=NAVI_OK or not hdi:
                     reasons[f'item_rc={int(rc2.value)}']=reasons.get(f'item_rc={int(rc2.value)}',0)+1;continue
                 handles+=1
-                name,why=self.get_name_di(hdi)
+                name,why=self.get_name_di(hdi) if read_names else ('','skipped')
                 if name:named+=1
                 else:reasons[f'name_{why}']=reasons.get(f'name_{why}',0)+1
                 out.append({'location':locname,'index':idx,'handle':hdi,'name':name or f'データ項目#{idx+1}','named':bool(name)})

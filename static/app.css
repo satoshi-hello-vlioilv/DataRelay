@@ -1132,7 +1132,10 @@ body > main{max-width:1620px;padding-left:12px;padding-right:12px}
    完了件数だけだと重い対象を並列処理している間ずっと0%で止まって見えるため。 */
 /* .queue-head>div (詳細度0,1,1) が .cq-overall (0,1,0) に勝って display:flex になり、
    トラックが幅0に潰れて棒が一切見えていなかった。ID指定で確実に grid を維持する。 */
-#cq-overall{display:grid;grid-template-columns:170px;gap:3px;margin-left:auto}
+/* 文字列が折り返さない幅を確保する。折り返すとバーとの間隔が崩れて読みにくい。 */
+#cq-overall{display:grid;grid-template-columns:minmax(210px,auto);gap:3px;margin-left:auto}
+#cq-overall>div:first-child{gap:10px;white-space:nowrap}
+#cq-progress-label{white-space:nowrap}
 #cq-overall[hidden]{display:none}
 .cq-progress-track{display:flex;width:100%;background:#dfe8ec}
 .cq-progress-track i{display:block;height:100%;flex:none}
