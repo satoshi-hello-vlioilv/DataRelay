@@ -1,4 +1,4 @@
-<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SymfoNavi Data Hub</title><link rel="icon" href="/favicon.ico" sizes="any"><link rel="icon" href="/static/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/static/app.css?v=1.21.2-outstr"></head><body>
+<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SymfoNavi Data Hub</title><link rel="icon" href="/favicon.ico" sizes="any"><link rel="icon" href="/static/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/static/app.css?v=1.22.0-editor-tabs"></head><body>
 <header class="appbar"><div class="brand"><small>SYMFO NAVI DATA HUB</small><div class="brand-title"><h1>SymfoNavi Data Hub</h1><button id="version-badge" class="version-badge" type="button" title="バージョン情報を表示">確認中</button></div></div><div class="runtime"><i id="dot"></i><div><b id="st">読込中</b><span id="sub">状態確認中</span></div></div><div class="appbar-actions"><button id="app-exit" class="exit-btn" title="アプリを終了します">アプリを終了</button><span class="appbar-sep" aria-hidden="true"></span><button id="run-selected" class="ghost">選択実行</button><button id="run-all">有効対象を全件実行</button></div></header>
 <main><nav><button class="on" data-p="jobs">対象ファイル</button><button data-p="calendar">カレンダー</button><button data-p="viewer">データビュワー</button><button data-p="paths">共通設定</button><button data-p="logs">ログ・診断</button></nav>
 <section id="jobs" class="on"><div class="commandbar"><div class="searchbox"><span>検索</span><input id="search" placeholder="名称、RNE、出力先、ファイル名"></div><select id="filter-enabled"><option value="all">状態: すべて</option><option value="enabled">有効</option><option value="disabled">無効</option></select><select id="filter-schedule"><option value="all">予定: すべて</option><option value="scheduled">自動実行あり</option><option value="manual">手動のみ</option></select><select id="sort"><option value="order">登録順</option><option value="name">名称順</option><option value="rne">RNE名順</option><option value="output">出力先順</option><option value="schedule">予定数順</option></select><button id="add" class="secondary">新規追加</button></div><div class="listmeta"><span id="summary"></span><div><button id="select-visible" class="textbtn">表示対象を選択</button><button id="clear-selection" class="textbtn">選択解除</button></div></div><aside id="command-queue" class="command-queue"><div class="queue-head"><div><b>実行キュー</b><span id="cq-summary">待機なし</span></div><div id="cq-overall" class="cq-overall" hidden><div><span id="cq-progress-label">全体 0 / 0</span><b id="cq-progress-percent">0%</b></div><div class="cq-progress-track"><i id="cq-progress-bar"></i></div></div><button id="cq-toggle" class="secondary" type="button">一覧</button></div><div id="cq-list" class="cq-list" hidden></div></aside><div class="tablebox"><table class="jobs-table"><thead><tr><th class="c-check"></th><th class="c-state">状態</th><th class="sortable" data-sort="name">管理名称</th><th class="sortable" data-sort="rne">RNEファイル</th><th>出力ファイル</th><th class="sortable" data-sort="output">出力先</th><th class="c-progress">進捗・次回実行</th><th class="c-action">操作</th></tr></thead><tbody id="jobs-body"></tbody></table><div id="empty" class="empty" hidden>条件に一致する対象はありません。</div></div></section>
@@ -60,13 +60,34 @@
 <div id="job-context-menu" class="job-context-menu" hidden role="menu"><button data-action="edit">編集</button><button data-action="run">この対象を実行</button><button data-action="open-output">出力先を開く</button><button data-action="viewer">ビュワーで表示</button><hr><button data-action="copy-rne">RNEパスをコピー</button><button data-action="copy-output">出力先をコピー</button><button data-action="duplicate">複製</button><button data-action="toggle">有効・無効を切替</button><hr><button data-action="delete" class="danger">削除</button></div><footer><span id="dirty">設定読込中</span><button id="save">設定を保存</button></footer><div id="toast"></div><dialog id="diagnostic-dialog"><div class="diagnostic-modal"><div class="modalhead"><div><small>PRE-FLIGHT DIAGNOSTICS</small><h2>事前診断結果</h2></div><button id="diagnostic-close" class="iconbtn" aria-label="閉じる">×</button></div><div class="diagnostic-summary"><div id="diagnostic-state" class="diag-state">確認中</div><div id="diagnostic-counts" class="diag-counts"></div><p id="check-scope"></p></div><div id="checks" class="diagnostic-results"></div><div class="modalfoot"><button id="diagnostic-close-foot" class="secondary">閉じる</button></div></div></dialog><dialog id="waiting-dialog"><div class="waiting-card"><div class="waiting-spinner"></div><span id="waiting-engine" class="waiting-engine">共通処理</span><strong id="waiting-title">確認中</strong><span id="waiting-detail">処理を開始しています...</span><small id="waiting-elapsed">経過 00:00</small></div></dialog><dialog id="path-suggestion"><div class="suggest-modal"><div class="modalhead"><h2>パス確認結果</h2><button id="suggest-close" class="iconbtn">×</button></div><div id="suggest-content" class="modalbody"></div></div></dialog><dialog id="version-dialog"><div class="version-modal"><div class="modalhead"><div><small>バージョン情報</small><h2 id="version-current">確認中</h2></div><button id="version-close" class="iconbtn" aria-label="閉じる">×</button></div><div class="modalbody"><p id="version-meta" class="hint"></p><div id="version-changelog" class="changelog"></div></div></div></dialog><dialog id="server-lost-overlay" class="server-lost-dialog"><div class="server-lost-card"><i class="server-lost-icon">!</i><h2>サーバーとの接続が切れました</h2><p>SymfoNavi Data Hubのバックグラウンド処理が終了したか、応答していません。実行中だった処理の状態はこの画面では確認できません。</p><small id="server-lost-detail">再接続を試みています…</small><button id="server-lost-reload" class="secondary">再読み込みして確認</button></div></dialog><dialog id="progress-dialog"><div class="progress-modal"><div class="progress-head"><div><small>ファイル作成処理</small><h2 id="p-title">処理を開始しています</h2></div><span id="p-state" class="progress-state">実行中</span></div><div id="queue-summary" class="queue-summary" hidden></div><div class="overall"><div class="progress-meta"><span id="p-count">全体 0 / 0</span><b id="p-percent">0%</b></div><div class="progress-track"><div id="p-bar"></div></div></div><div class="current-box"><span>現在の対象</span><strong id="p-job">準備中</strong><small id="p-output"></small><div id="p-activity" class="activity-line"><i></i><span>処理を準備しています</span></div></div><ol id="p-steps" class="steps"><li data-step="prepare">設定確認</li><li data-step="launch" data-api="API初期化" data-dde="SymfoNavi起動">API初期化</li><li data-step="dde" data-api="APIセッション接続" data-dde="DDE接続">APIセッション接続</li><li data-step="open" data-api="RNE読込み" data-dde="RNEを開く">RNE読込み</li><li data-step="save" data-api="問い合わせ実行" data-dde="データ抽出・XLS書出し">問い合わせ実行</li><li data-step="close" data-api="カタログ解放" data-dde="抽出画面を閉じる">カタログ解放</li><li data-step="wait" data-api="API結果保存・検証" data-dde="ファイル生成・安定確認">API結果保存・検証</li><li data-step="export">出力ファイル作成</li><li data-step="publish">検査・公開</li><li data-step="complete">完了</li></ol><div id="p-error" class="progress-error" hidden></div><div class="progress-foot"><span id="p-elapsed">経過時間 00:00:00</span><span id="p-engine">抽出方式: API確認中</span><button id="p-background" class="secondary">バックグラウンドへ</button><button id="p-close" hidden>閉じる</button></div></div></dialog>
 <dialog id="editor"><form method="dialog" class="modal"><div class="modalhead"><div><small>対象ファイル設定</small><h2 id="modal-title">対象を編集</h2></div><button value="cancel" class="iconbtn" aria-label="閉じる">×</button></div><div class="modalbody"><input id="m-id" type="hidden">
 <div class="editor-tabs" role="tablist">
-<button type="button" class="editor-tab on" data-etab="io" role="tab"><i class="etab-badge eb-io">1</i><span class="etab-text"><b>基本・入出力</b><small>名称・形式・入力・出力先</small></span></button>
-<button type="button" class="editor-tab" data-etab="schedule" role="tab"><i class="etab-badge eb-sched">2</i><span class="etab-text"><b>自動実行</b><small>スケジュールのルール</small></span><span id="etab-rule-count" class="etab-count" hidden>0</span></button>
+<button type="button" class="editor-tab on" data-etab="basic" role="tab"><i class="etab-badge eb-io">1</i><span class="etab-text"><b>基本と入出力</b><small>名称・RNE・出力先</small></span></button>
+<button type="button" class="editor-tab" data-etab="naming" role="tab"><i class="etab-badge eb-name">2</i><span class="etab-text"><b>ファイル名</b><small>形式・命名パターン</small></span></button>
+<button type="button" class="editor-tab" data-etab="period" role="tab"><i class="etab-badge eb-period">3</i><span class="etab-text"><b>抽出期間</b><small>動的な日付指定</small></span><span id="etab-period-on" class="etab-count" hidden>ON</span></button>
+<button type="button" class="editor-tab" data-etab="schedule" role="tab"><i class="etab-badge eb-sched">4</i><span class="etab-text"><b>自動実行</b><small>スケジュール</small></span><span id="etab-rule-count" class="etab-count" hidden>0</span></button>
+<span class="editor-tabsep" aria-hidden="true"></span>
+<button type="button" class="editor-tab etab-tool" data-etab="inspect" role="tab"><i class="etab-badge eb-tool">調</i><span class="etab-text"><b>RNEを調べる</b><small>列と管理ポイント</small></span></button>
 </div>
-<div class="editor-pane on" data-etab="io">
+<div class="editor-pane on" data-etab="basic">
 <div class="sectiontitle sect-basic"><i class="sect-badge sb-basic">基</i>基本情報</div>
 <div class="fieldgrid"><label>管理名称<input id="m-name" list="suggest-names"></label><label class="switch"><input id="m-enabled" type="checkbox"><span>処理対象として有効</span></label></div>
 <label class="comment-field"><span class="comment-label"><i class="comment-badge">用途</i>コメント（用途・メモ）<small>この出力の目的や注意点を記録できます。一覧にも表示され、検索の対象になります。</small></span><textarea id="m-comment" rows="2" placeholder="例: 生産管理課への日次共有用。月末は手動で再実行する。"></textarea></label>
+<div class="io-columns">
+<div class="io-col">
+<div class="sectiontitle sect-input"><i class="sect-badge sb-input">入</i>入力データ</div>
+<div class="path-help compact-help"><span>相対パスの基準はアプリフォルダーです。例: <code>.\rne\SIKALOTNOW.RNE</code></span></div>
+<div class="fieldgrid one"><label>RNEファイル<div class="browse"><input id="m-rne-path" list="suggest-rne"><div class="path-actions"><button id="m-rne-check" type="button" class="verify-btn">確認</button><button id="m-rne-pick" type="button" class="browse-btn">参照</button></div></div></label></div>
+<div class="fieldgrid"><label>読込シート<input id="m-sheet" list="suggest-sheet"></label><label>読込形式<select id="m-type"><option>詳細データ</option><option>集計表</option></select></label></div>
+
+</div>
+<div class="io-col">
+<div class="sectiontitle sect-output"><i class="sect-badge sb-output">出</i>出力データ</div>
+<div class="fieldgrid one"><label>出力フォルダー<div class="browse"><input id="m-output" list="suggest-output"><button id="m-output-pick" type="button" class="secondary">参照</button></div></label></div>
+<div class="fieldgrid one"><label>テーブル名<input id="m-table" list="suggest-table"></label></div>
+<p class="hint">出力形式（拡張子）とファイル名は、タブ<b>「2 ファイル名」</b>でまとめて設定します。</p>
+</div>
+</div>
+</div>
+<div class="editor-pane" data-etab="naming">
 <div class="naming-sub"><b>出力ファイル名と形式</b><small>ファイル名と拡張子（出力形式）はここでまとめて設定します</small></div>
 <div class="naming-box">
 <div class="naming-format-row"><label class="naming-format-field">出力形式（＝拡張子）<select id="m-format"><option value="sqlite3">SQLite3 (.sqlite3)</option><option value="txt">TXT (.txt)</option><option value="csv">CSV (.csv)</option><option value="xlsx">EXCEL (.xlsx)</option><option value="accdb">ACCESS (.accdb)</option></select></label><small id="m-format-note" class="format-note"></small></div>
@@ -120,22 +141,8 @@
 </details>
 </div>
 </div>
-<div class="io-columns">
-<div class="io-col">
-<div class="sectiontitle sect-input"><i class="sect-badge sb-input">入</i>入力データ</div>
-<div class="path-help compact-help"><span>相対パスの基準はアプリフォルダーです。例: <code>.\rne\SIKALOTNOW.RNE</code></span></div>
-<div class="fieldgrid one"><label>RNEファイル<div class="browse"><input id="m-rne-path" list="suggest-rne"><div class="path-actions"><button id="m-rne-check" type="button" class="verify-btn">確認</button><button id="m-rne-pick" type="button" class="browse-btn">参照</button></div></div></label></div>
-<div class="fieldgrid"><label>読込シート<input id="m-sheet" list="suggest-sheet"></label><label>読込形式<select id="m-type"><option>詳細データ</option><option>集計表</option></select></label></div>
-<div class="rne-inspect"><div class="rne-inspect-head"><button id="m-rne-inspect" type="button" class="secondary">RNEの中身を調べる</button><small>SymfoNaviに接続してRNEを開き、<b>管理ポイント</b>（絞り込みの軸）と<b>データ項目</b>（出力される列）を読み取ります。RNEファイルは変更しません。</small></div><div id="m-rne-inspect-result" class="rne-inspect-result" hidden></div>
-<div class="rne-inspect-head"><button id="m-column-plan" type="button" class="secondary">列の分割可否を調べる</button><small>列を「分割して取得できる列」と「全パートに必ず残る列」に分けます。<b>RNEを開いて数えるだけ</b>なので、問い合わせは実行しません。RNEも出力ファイルも変更しません。</small></div><div id="m-column-plan-result" class="rne-inspect-result" hidden></div></div>
 </div>
-<div class="io-col">
-<div class="sectiontitle sect-output"><i class="sect-badge sb-output">出</i>出力データ</div>
-<div class="fieldgrid one"><label>出力フォルダー<div class="browse"><input id="m-output" list="suggest-output"><button id="m-output-pick" type="button" class="secondary">参照</button></div></label></div>
-<div class="fieldgrid one"><label>テーブル名<input id="m-table" list="suggest-table"></label></div>
-<p class="hint">出力形式と拡張子は上の「基本情報」でまとめて設定します。</p>
-</div>
-</div>
+<div class="editor-pane" data-etab="period">
 <div class="period-section">
 <div class="sectiontitle sect-period"><i class="sect-badge sb-period">期</i>抽出期間（動的日付）<span class="period-optional">任意</span></div>
 <label class="period-enable"><input id="m-period-enabled" type="checkbox"><span class="period-enable-text"><b>処理日時を基準に抽出期間を自動指定する</b><small>RNEに定義済みの時間管理ポイントへ、実行のたびに相対的な期間を適用します。RNEやカラム指定は変更しません（定期実行での日付更新に最適）。</small></span></label>
@@ -157,10 +164,15 @@
 <div class="period-cp"><label class="period-cpfield"><span class="period-cplabel">対象の時間管理ポイント<small>空欄なら「時間フィールドの時間型」を自動選択します</small></span><div class="period-cprow"><input id="m-period-cp" list="suggest-period-cp" placeholder="例: 月度 / 日（空欄=自動）"><button id="m-period-detect" type="button" class="secondary">時間管理ポイントを探す</button></div></label><div id="m-period-cp-result" class="period-cpresult" hidden></div></div>
 <div class="period-preview"><span class="pp-label">抽出範囲プレビュー</span><b id="m-period-preview">—</b><small id="m-period-preview-meta">処理日時を基準に試算します</small></div>
 </div>
-</div>
-</div>
+</div></div>
 <div class="editor-pane" data-etab="schedule">
-<div class="sectiontitle schedule-title"><div><span>自動実行ルール</span><small>複数条件を組み合わせて登録できます。実行時刻・曜日・間隔などを個別に設定できます。</small></div><button id="add-rule" type="button" class="secondary">ルール追加</button></div><div id="m-rules" class="rules"></div></div></div><div class="modalfoot"><button value="cancel" class="secondary">キャンセル</button><button id="apply" value="default">設定を反映</button></div></form></dialog>
+<div class="sectiontitle schedule-title"><div><span>自動実行ルール</span><small>複数条件を組み合わせて登録できます。実行時刻・曜日・間隔などを個別に設定できます。</small></div><button id="add-rule" type="button" class="secondary">ルール追加</button></div><div id="m-rules" class="rules"></div></div>
+<div class="editor-pane" data-etab="inspect">
+<div class="sectiontitle sect-inspect"><i class="sect-badge sb-inspect">調</i>RNEを調べる<span class="period-optional">読み取りのみ</span></div>
+<p class="inspect-lead">SymfoNaviに接続してRNEを開き、中身を読み取ります。<b>RNEファイルも出力ファイルも変更しません。</b></p>
+<div class="inspect-grid"><div class="rne-inspect-head"><button id="m-rne-inspect" type="button" class="secondary">RNEの中身を調べる</button><small>SymfoNaviに接続してRNEを開き、<b>管理ポイント</b>（絞り込みの軸）と<b>データ項目</b>（出力される列）を読み取ります。RNEファイルは変更しません。</small></div><div id="m-rne-inspect-result" class="rne-inspect-result" hidden></div>
+<div class="rne-inspect-head"><button id="m-column-plan" type="button" class="secondary">列の分割可否を調べる</button><small>列を「分割して取得できる列」と「全パートに必ず残る列」に分けます。<b>RNEを開いて数えるだけ</b>なので、問い合わせは実行しません。RNEも出力ファイルも変更しません。</small></div><div id="m-column-plan-result" class="rne-inspect-result" hidden></div></div>
+</div></div><div class="modalfoot"><button value="cancel" class="secondary">キャンセル</button><button id="apply" value="default">設定を反映</button></div></form></dialog>
 <dialog id="rule-editor"><form method="dialog" class="modal rulemodal"><div class="modalhead"><div><small>自動実行スケジュール</small><h2>実行ルール</h2></div><button value="cancel" class="iconbtn" aria-label="閉じる">×</button></div><div class="modalbody">
 <input id="r-id" type="hidden">
 <div class="rule-basics"><label class="rule-namefield">ルール名称<input id="r-name" list="suggest-rule-names" placeholder="例: 始業前更新"></label><label class="rule-enable"><input id="r-enabled" type="checkbox"><span>このルールを有効化</span></label></div>
@@ -182,4 +194,4 @@
 <div class="rule-live"><span class="rl-ic">確認</span><div class="rl-text"><small>このルールの実行タイミング</small><b id="r-live-summary">—</b></div></div></div><div class="modalfoot"><button value="cancel" class="secondary">キャンセル</button><button id="rule-apply" value="default">ルールを反映</button></div></form></dialog>
 <dialog id="cal-day-dialog"><div class="modal calday-modal"><div class="modalhead"><div><small>カレンダー</small><h2 id="cal-day-title">—</h2></div><button id="cal-day-close" class="iconbtn" aria-label="閉じる">×</button></div><div class="modalbody"><div id="cal-day-body" class="calday-body"></div><div class="calday-quickadd"><b>この日に単発の自動実行を追加</b><p class="hint">選択した対象へ、この日付の1回きりの実行ルール（特定日指定）を追加します。</p><div class="quickadd-row"><select id="cal-quick-job"></select><input id="cal-quick-time" type="time" value="06:00"><button id="cal-quick-add" type="button">追加</button></div></div></div></div></dialog>
 <datalist id="suggest-names"></datalist><datalist id="suggest-rne"></datalist><datalist id="suggest-output"></datalist><datalist id="suggest-output-file"></datalist><datalist id="suggest-table"></datalist><datalist id="suggest-sheet"></datalist><datalist id="suggest-period-cp"><option value="月度"><option value="日"><option value="年度"><option value="四半期"><option value="半期"></datalist><datalist id="suggest-rule-names"><option value="始業前更新"><option value="昼休み更新"><option value="夜間更新"><option value="月初更新"><option value="臨時更新"></datalist>
-<script src="/static/app.js?v=1.21.2-outstr"></script></body></html>
+<script src="/static/app.js?v=1.22.0-editor-tabs"></script></body></html>
