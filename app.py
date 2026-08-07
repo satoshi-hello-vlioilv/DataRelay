@@ -392,6 +392,7 @@ def init_settings_db():
   CREATE TABLE IF NOT EXISTS schema_info (key TEXT PRIMARY KEY,value TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS job_runs (job_id TEXT PRIMARY KEY,job_name TEXT,finished_at TEXT,status TEXT,trigger TEXT,detail TEXT,rows INTEGER,cols INTEGER,output_file TEXT,updated_at TEXT NOT NULL DEFAULT '');
   CREATE TABLE IF NOT EXISTS run_history (id INTEGER PRIMARY KEY AUTOINCREMENT,job_id TEXT,job_name TEXT,finished_at TEXT,status TEXT,trigger TEXT,detail TEXT,rows INTEGER,cols INTEGER,output_file TEXT);
+  CREATE TABLE IF NOT EXISTS rne_columns (rne_key TEXT PRIMARY KEY,rne_path TEXT NOT NULL,rne_mtime_ns TEXT NOT NULL DEFAULT '',rne_size INTEGER NOT NULL DEFAULT 0,columns_json TEXT NOT NULL,column_count INTEGER NOT NULL DEFAULT 0,row_count INTEGER,source TEXT NOT NULL DEFAULT '',job_id TEXT NOT NULL DEFAULT '',job_name TEXT NOT NULL DEFAULT '',captured_at TEXT NOT NULL);
   CREATE INDEX IF NOT EXISTS idx_run_history_finished ON run_history(finished_at);
   """)
    c.execute("INSERT OR REPLACE INTO schema_info(key,value) VALUES('schema_version','2')")
@@ -664,6 +665,88 @@ def load_job_runs():
    return {r['job_id']:{'finished_at':r['finished_at'],'status':r['status'],'trigger':r['trigger'],'detail':r['detail'],'rows':r['rows'],'cols':r['cols'],'output_file':r['output_file']} for r in c.execute('SELECT * FROM job_runs')}
  except Exception:
   return {}
+
+# ---- RNEの列定義キャッシュ ------------------------------------------------
+# 列名はRNEを開いただけでは取れない（公式APIに列を列挙する関数が無い）。実行結果からしか分からないので、
+# 一度得た列名をRNE単位で保存し、次からはそれを使う。RNEが更新されたら作り直す。
+# 同じRNEを複数の対象が使うことがあるため、キーは対象IDではなくRNEのパスにしている。
+
+def rne_signature(path):
+ """RNEの版を表す指紋。更新されたかどうかの判定にだけ使う。"""
+ try:
+  st=Path(path).stat();return str(st.st_mtime_ns),int(st.st_size)
+ except OSError:
+  return '',0
+
+def _rne_key(path):
+ try:return os.path.normcase(os.path.normpath(str(Path(path).resolve())))
+ except Exception:return os.path.normcase(os.path.normpath(str(path)))
+
+def load_column_cache(rne_path):
+ """RNEの列定義キャッシュを返す。RNEが更新されていれば stale=True を付けて返す。"""
+ key=_rne_key(rne_path)
+ try:
+  with settings_connection() as c:
+   row=c.execute('SELECT * FROM rne_columns WHERE rne_key=?',(key,)).fetchone()
+ except Exception:
+  return None
+ if not row:return None
+ mtime,size=rne_signature(rne_path)
+ stale=bool(mtime) and (mtime!=row['rne_mtime_ns'] or size!=row['rne_size'])
+ try:columns=json.loads(row['columns_json'])
+ except Exception:columns=[]
+ return {'rne_path':row['rne_path'],'columns':columns,'column_count':row['column_count'],'row_count':row['row_count'],
+         'source':row['source'],'job_id':row['job_id'],'job_name':row['job_name'],'captured_at':row['captured_at'],'stale':stale}
+
+def save_column_cache(rne_path,columns,rows=None,source='run',job=None):
+ """列定義をRNE単位で保存する。列名が取れなかったときは何もしない（空で上書きしない）。"""
+ columns=[str(x) for x in (columns or []) if str(x).strip()!='']
+ if not columns:return None
+ key=_rne_key(rne_path);mtime,size=rne_signature(rne_path);now=datetime.now().isoformat(timespec='seconds')
+ job=job or {}
+ try:
+  with settings_sync_lock, settings_connection() as c:
+   c.execute('INSERT OR REPLACE INTO rne_columns(rne_key,rne_path,rne_mtime_ns,rne_size,columns_json,column_count,row_count,source,job_id,job_name,captured_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)',
+             (key,str(rne_path),mtime,size,json.dumps(columns,ensure_ascii=False),len(columns),rows,source,str(job.get('id') or ''),str(job.get('name') or ''),now))
+   _mark_settings_dirty()
+ except Exception:
+  log.exception('COLUMN_CACHE_SAVE_FAILED rne=%s',rne_path);return None
+ log.info('COLUMN_CACHE_SAVE rne=%s columns=%s rows=%s source=%s mtime_ns=%s size=%s',rne_path,len(columns),rows,source,mtime,size)
+ return columns
+
+def column_cache_state(rne_path):
+ """キャッシュの状態を hit / stale / miss の3値で返す。ログとUIの表示に使う。"""
+ hit=load_column_cache(rne_path)
+ if not hit:return 'miss',None
+ return ('stale' if hit['stale'] else 'hit'),hit
+
+def read_header_names(path,job):
+ """出力ファイルの見出し行だけを読む。中身は読まないので大きなファイルでも軽い。"""
+ path=Path(path);fmt=normalize_output_format(job.get('output_format'),path.name)
+ if fmt=='sqlite3':
+  with sqlite3.connect(path) as conn:
+   table=str(job.get('table') or '')
+   names=[r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE '_更新情報' ORDER BY name")]
+   if table not in names:table=names[0] if names else ''
+   if not table:return []
+   return [x[1] for x in conn.execute(f'PRAGMA table_info({qi(table)})')]
+ if fmt in ('csv','txt'):
+  delimiter=',' if fmt=='csv' else '\t'
+  for enc in ('utf-8-sig','cp932','utf-8'):
+   try:
+    with path.open('r',encoding=enc,newline='') as h:
+     return next(csv.reader(h,delimiter=delimiter),[])
+   except UnicodeDecodeError:continue
+  return []
+ if fmt=='xlsx':
+  from openpyxl import load_workbook
+  wb=load_workbook(path,read_only=True,data_only=True)
+  try:
+   ws=wb[job.get('sheet')] if job.get('sheet') in wb.sheetnames else wb[wb.sheetnames[0]]
+   return [x for x in next(ws.iter_rows(values_only=True),()) if x is not None]
+  finally:wb.close()
+ # ACCDBはCOM経由で開くコストが高いので、列定義の取得元には使わない。
+ return []
 
 def last_run_info(run):
  if not run:return {'last_run':None,'last_status':'','last_trigger':'','last_output':''}
@@ -1592,7 +1675,18 @@ def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,
   update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='完了',percent=100,detail=f'{nr}件/{nc}列',elapsed=round(total,1));log.info('PARALLEL_JOB_RESULT line=%s job=%s format=%s rows=%s columns=%s elapsed=%.2fs target=%s published=%s',line_name,j['name'],fmt,nr,nc,total,target,pub['published'])
   log.info('JOB_PROFILE line=%s job=%s rows=%s columns=%s %s',line_name,j['name'],nr,nc,phase_profile_summary())
   result=f'{j["name"]}: {nr}件/{nc}列 / {total:.1f}秒'+('' if pub['published'] else f' / 更新保留: {pub["pending"]}')
-  return {'ok':True,'job':j['name'],'format':fmt,'rows':nr,'columns':nc,'elapsed':total,'target':str(target),'result':result}
+  # 列名はここでしか分からないので、作業ファイルの見出しだけ読んで持ち帰る。書き込みは親プロセスが行う
+  # （ワーカーが同時に設定DBへ書くと競合するため）。失敗しても抽出結果には影響させない。
+  column_names=[]
+  try:
+   state,_cached=column_cache_state(rp)
+   if state!='hit':
+    read_started=time.perf_counter();column_names=read_header_names(db,j)
+    log.info('COLUMN_CACHE_READ line=%s job=%s state=%s columns=%s file=%s elapsed=%.2fs',line_name,j['name'],state,len(column_names),db.name,time.perf_counter()-read_started)
+  except Exception as ce:
+   log.warning('COLUMN_CACHE_READ_FAILED line=%s job=%s error=%s',line_name,j['name'],ce)
+  return {'ok':True,'job':j['name'],'format':fmt,'rows':nr,'columns':nc,'elapsed':total,'target':str(target),'result':result,
+          'column_names':column_names,'rne_path':str(rp)}
  except Exception as e:
   total=time.perf_counter()-job_started
   update_parallel_line(line_name,job=j.get('name',''),job_id=j.get('id',''),state='失敗',percent=100,detail=str(e),elapsed=round(total,1));log.error('PARALLEL_JOB_ERROR line=%s job=%s elapsed=%.2fs error=%s\n%s',line_name,j.get('name'),total,e,traceback.format_exc())
@@ -1689,6 +1783,9 @@ def run_api_process_batch(jobs,cfg,user,pw,server,dde_work,backup,max_lines,trig
    (completed_ids if result.get('ok') else failed_ids).append(item['job']['id'])
    log.info('WORKER_END batch_id=%s line=%s pid=%s job=%s returncode=%s ok=%s elapsed=%.2fs',batch_id,item['line'],item['proc'].pid,item['job']['name'],rc,result.get('ok'),result.get('elapsed',0))
    record_job_run(item['job']['id'],item['job']['name'],'ok' if result.get('ok') else 'failed',trigger,detail=(result.get('result') or result.get('error') or ''),rows=result.get('rows'),cols=result.get('columns'),output_file=Path(result.get('target') or '').name)
+   # ワーカーが持ち帰った列名をここで保存する。設定DBへの書き込みを親1本に集約して競合を避ける。
+   if result.get('ok') and result.get('column_names'):
+    save_column_cache(result.get('rne_path') or '',result['column_names'],rows=result.get('rows'),source='run',job=item['job'])
    with active_workers_lock:active_workers.pop(slot,None)
    del active[slot]
    if queue and not cancel_requested.is_set():start_one(slot)
@@ -1844,6 +1941,9 @@ def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=No
    progress('publish',f'{j["name"]}: 検査済みファイルを公開しています',90,activity_detail='公開工程',activity_value=str(target))
    t=phase_log('publish',job=j['name']); pub=publish(db,target,backup,int(cfg['settings']['backup_generations']),backup_enabled=bool(cfg['settings'].get('backup_enabled',True)),retention_days=int(cfg['settings'].get('backup_retention_days',30)),generation_limit_enabled=bool(cfg['settings'].get('backup_generation_limit_enabled',True)),backup_mode=str(cfg['settings'].get('backup_mode','generations'))); phase_log('publish',t,job=j['name'],published=pub['published'])
    total=time.perf_counter()-job_started; results.append(f'{j["name"]}: {nr}件/{nc}列 / {total:.1f}秒'+('' if pub['published'] else f' / 更新保留: {pub["pending"]}')); completed_ids.append(j['id']); set_status(completed_jobs=job_index,queue_completed_ids=list(completed_ids)); log.info('JOB_RESULT job=%s format=%s rows=%s columns=%s elapsed=%.2fs target=%s',j['name'],fmt,nr,nc,total,target); log.info('JOB_PROFILE job=%s rows=%s columns=%s %s',j['name'],nr,nc,phase_profile_summary()); record_job_run(j['id'],j['name'],'ok',trigger,detail=f'{nr}件/{nc}列 / {total:.1f}秒',rows=nr,cols=nc,output_file=j['output_file'])
+   try:
+    if column_cache_state(rp)[0]!='hit':save_column_cache(rp,read_header_names(db,j),rows=nr,source='run',job=j)
+   except Exception as ce:log.warning('COLUMN_CACHE_READ_FAILED job=%s error=%s',j['name'],ce)
    # 元RNEはAPIが直接参照するため削除対象に含めない。生成物だけを後片付けする。
    for p in (xls,locals().get('api_csv'),db):
     try:
