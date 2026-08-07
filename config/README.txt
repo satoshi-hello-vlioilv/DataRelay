@@ -167,7 +167,13 @@ NaviToSQLite Minimal
                           （実測: 6ライン同時=約4.4〜5.4秒 / 単独=約1.0秒）。
       api_execute_catalog= サーバー側の問い合わせ実行。RNEの内容とサーバー負荷で決まります。
       api_save_csv=       APIのCSV書き出し。列構成によって速度が10倍近く変わります。
+      pending_apply=      更新保留ファイルの確認・適用。公開先がネットワーク共有の場合、
+                          並列ライン数だけ同時にフォルダーを列挙するため待ちが出ることがあります。
+      job_preflight=      出力先・RNEの確認。
       other=              内訳に入らなかった時間。ここが大きい場合はご連絡ください。
+  - PENDING_SCAN … 更新保留ファイルを探すための公開先フォルダーの列挙。
+      matched=            見つかった保留ファイルの件数（通常は0）。
+      elapsed=            列挙にかかった時間。共有が重いとここが伸びます。
       例: total=271.86s api_save_csv=243.49s(89.6%) api_execute_catalog=23.47s(8.6%) ...
       どの工程が支配的かが一目で分かります。
   - STEP_END phase=api_save_csv の throughput_kb_s / ms_per_row … CSV書き出しの実効速度。
