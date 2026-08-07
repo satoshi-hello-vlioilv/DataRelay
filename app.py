@@ -25,11 +25,16 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.20.9'; APP_VERSION_TITLE='実行キュー一覧に全体進捗のデータバーを追加'; APP_RELEASED_AT='2026-08-07'
-BUILD_VERSION=f'{APP_VERSION}-queue-databar'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.20.10'; APP_VERSION_TITLE='DLLが公開しているAPI関数を診断に表示'; APP_RELEASED_AT='2026-08-07'
+BUILD_VERSION=f'{APP_VERSION}-dll-exports'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
-{'version':'1.20.9','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+{'version':'1.20.10','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'DLL診断に「DLLが公開しているNavigator API関数」を追加しました。SymNaviA.dllのエクスポート表を解析し、このアプリが使用中の関数と未使用の関数を一覧表示します。',
+'DLLを読み込まずにファイルを解析するため、読み込みに失敗する環境でも確認できます。',
+'アプリが使っている関数だけでは、そのDLLに何ができるのか分かりませんでした。分割問い合わせなど新しい高速化を検討する際の判断材料になります。',
+]},
+{'version':'1.20.9','date':APP_RELEASED_AT,'title':'実行キュー一覧に全体進捗のデータバーを追加','notes':[
 '進捗画面の実行キュー一覧（予約総数・実行中・待機・完了の帯）へ、全体進捗のデータバーを追加しました。',
 '「実行キュー全体 6 / 7 完了（実行中 1） 86%」のように、残りがどれくらいかを数値と帯の長さの両方で確認できます。',
 'マウスを乗せると 完了 / 実行中 / 待機 / 全体 の内訳が表示されます。',
@@ -2385,7 +2390,7 @@ def move_execution_queue(queue_id):
 @app.get('/api/status')
 def get_status():
  response=jsonify(status);response.headers['Cache-Control']='no-store, no-cache, must-revalidate, max-age=0';return response
-def dll_diagnostic_issues(attempts,python_bits=None):
+def dll_diagnostic_issues(attempts,python_bits=None,exports=None,bound=None):
  issues=[];existing=[x for x in attempts if x.get('exists')]
  if not existing:issues.append({'level':'error','title':'DLLが見つかりません','detail':'設定パスとC:\\NAVIAP配下の検索候補にSymNaviA.dllがありません。','action':'参照ボタンでDLLを指定するか、配置場所を確認してください。'})
  mismatches=[x for x in existing if x.get('dll_bits') and python_bits and int(x['dll_bits'])!=int(python_bits)]
@@ -2394,6 +2399,10 @@ def dll_diagnostic_issues(attempts,python_bits=None):
  if errors:issues.append({'level':'error','title':'DLLは存在しますが読み込めません','detail':str(errors[0].get('error') or 'WindowsがDLLをロードできませんでした。'),'action':'同一フォルダーの依存DLL、Visual C++ランタイム、アクセス権を確認してください。'})
  loaded=[x for x in attempts if x.get('result')=='loaded']
  if loaded:issues.append({'level':'ok','title':'DLLを正常に読み込みました','detail':str(loaded[0].get('path') or ''),'action':'Navigator APIを利用できます。'})
+ # このDLLで何ができるかは、アプリが使っている関数だけでは分からない。公開されている関数も提示する。
+ if exports:
+  unused=[x for x in exports if x not in set(bound or [])]
+  issues.append({'level':'ok','title':'DLLが公開しているNavigator API関数 %d件'%len(exports),'detail':'このアプリが使用中 %d件 / 未使用 %d件'%(len(bound or []),len(unused)),'action':('未使用: '+', '.join(unused)) if unused else 'すべて使用しています。'})
  return issues
 
 def _api_diag_cache_path():return LOCAL_RUNTIME/'api_diagnostic_cache.json'
@@ -2420,10 +2429,10 @@ def navigator_api_status():
   cached=_read_api_diag_cache()
   if cached:
    log.info('API_DIAG cache_hit=1 dll=%s dll_bits=%s',cached.get('dll'),cached.get('dll_bits'))
-   cached=dict(cached);cached['cached']=True;cached['issues']=dll_diagnostic_issues(cached.get('attempts') or [],cached.get('python_bits'));return jsonify(cached)
+   cached=dict(cached);cached['cached']=True;cached['issues']=dll_diagnostic_issues(cached.get('attempts') or [],cached.get('python_bits'),cached.get('exports'),cached.get('exports_bound'));return jsonify(cached)
  try:
   from navigator_api import NavigatorApi
-  started=time.perf_counter();api=NavigatorApi(resolve_path(c.get('symnavi_exe','')),log,resolve_path(c.get('navigator_api_dll')) if c.get('navigator_api_dll') else None,base_dir=BASE);info=api.info();api.close();info['elapsed']=round(time.perf_counter()-started,3);info['cached']=False;info['issues']=dll_diagnostic_issues(info.get('attempts') or [],info.get('python_bits'));log.info('API_DIAG cache_hit=0 elapsed=%.3fs dll=%s dll_bits=%s attempts=%s selection=%s',info.get('elapsed'),info.get('dll'),info.get('dll_bits'),len(info.get('attempts') or []),info.get('selection_reason'));_write_api_diag_cache(info);return jsonify(info)
+  started=time.perf_counter();api=NavigatorApi(resolve_path(c.get('symnavi_exe','')),log,resolve_path(c.get('navigator_api_dll')) if c.get('navigator_api_dll') else None,base_dir=BASE);info=api.info();api.close();info['elapsed']=round(time.perf_counter()-started,3);info['cached']=False;info['issues']=dll_diagnostic_issues(info.get('attempts') or [],info.get('python_bits'),info.get('exports'),info.get('exports_bound'));log.info('API_DIAG cache_hit=0 elapsed=%.3fs dll=%s dll_bits=%s attempts=%s selection=%s',info.get('elapsed'),info.get('dll'),info.get('dll_bits'),len(info.get('attempts') or []),info.get('selection_reason'));_write_api_diag_cache(info);return jsonify(info)
  except Exception as e:
   try:
    from navigator_api import candidate_dlls,pe_bits
