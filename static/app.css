@@ -1127,3 +1127,16 @@ body > main{max-width:1620px;padding-left:12px;padding-right:12px}
 /* hidden属性は display:none を意味するが、クラス側の display 指定に負けて表示され続けていた。
    バッジや結果パネルが空のまま出ていた原因。属性がある間は必ず隠す。 */
 .etab-count[hidden],.rne-inspect-result[hidden],.period-cpresult[hidden]{display:none!important}
+
+/* 全体進捗バー: 完了ぶんは実線、実行中ぶんは縞で継ぎ足す。
+   完了件数だけだと重い対象を並列処理している間ずっと0%で止まって見えるため。 */
+.cq-progress-track{display:flex;background:#dfe8ec}
+.cq-progress-track i{display:block;height:100%}
+.cq-run{background-image:repeating-linear-gradient(115deg,#7fc6d4 0 6px,#a8dbe4 6px 12px);animation:cq-run-move 1.1s linear infinite;background-size:200% 100%}
+@keyframes cq-run-move{from{background-position:0 0}to{background-position:-24px 0}}
+.cq-run[hidden]{display:none}
+
+.trial-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.trial-parts{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:800;color:#43616b}
+.trial-parts select{width:auto;height:31px;padding:3px 8px;font-size:12px}
+#m-split-trial-result[hidden]{display:none!important}
