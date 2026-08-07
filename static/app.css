@@ -764,6 +764,26 @@ tr:has(.rowprogress.is-running) td{background:#f6fcfd}tr:has(.rowprogress.is-err
 .period-cp-pick{display:inline-flex;align-items:center;gap:7px;background:#eaf6f8;border-color:#bfe1e6;color:#0b6570}
 .period-cp-pick em{font-style:normal;font-size:10px;color:#5f7c84;background:#fff;border-radius:4px;padding:1px 5px}
 .period-cp-pick:hover{background:#d8eef1;border-color:#a4d3dc}
+/* RNEの中身を調べる（入力データ欄） */
+.rne-inspect{display:grid;gap:8px;margin-top:2px}
+.rne-inspect-head{display:grid;grid-template-columns:auto minmax(0,1fr);gap:9px;align-items:start}
+.rne-inspect-head button{white-space:nowrap}
+.rne-inspect-head small{font-size:10.5px;color:#7a8b91;line-height:1.5}
+.rne-inspect-head small b{color:#43616b}
+.rne-inspect-result{border:1px solid #dbe7ea;border-radius:8px;background:#f4f9fa;padding:9px 11px;display:grid;gap:8px}
+.ri-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));gap:7px}
+.ri-card{background:#fff;border:1px solid #dbe7ea;border-radius:7px;padding:7px 9px;display:grid;gap:1px}
+.ri-card span{font-size:10px;font-weight:800;color:#7a8b91}
+.ri-card b{font:16px Consolas,"Yu Gothic UI";font-weight:800;color:#0b6570}
+.ri-card small{font-size:10px;color:#8497a0}
+.ri-ng{margin:0;font-size:11.5px;font-weight:800;color:#b23a30}
+.ri-note{margin:0;font-size:10.5px;color:#7a8b91;word-break:break-word}
+.ri-list summary{font-size:11px;font-weight:800;color:#43616b;cursor:pointer;padding:2px 0}
+.ri-chips{display:flex;flex-wrap:wrap;gap:5px;max-height:190px;overflow:auto;padding:6px 2px 2px}
+.ri-chip{display:inline-flex;align-items:center;gap:6px;background:#fff;border:1px solid #cadfe6;border-radius:12px;padding:3px 9px;font-size:11px;font-weight:700;color:#1f5568}
+.ri-chip em{font-style:normal;font-size:9.5px;font-weight:700;color:#7a8b91}
+.ri-chip.istime{background:#eaf6f8;border-color:#a4d3dc;color:#0b6570}
+.ri-chip.unnamed{background:#fff6ee;border-color:#e8cdb2;color:#8a5a24}
 .period-preview{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px;background:#0f2b33;color:#e7f5f7;border-radius:8px;padding:9px 12px}
 .period-preview .pp-label{font-size:10px;font-weight:800;letter-spacing:.08em;color:#7fd4dd}
 #m-period-preview{font:14px Consolas,"Yu Gothic UI";font-weight:800;color:#fff}

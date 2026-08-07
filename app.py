@@ -25,10 +25,19 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.20.12'; APP_VERSION_TITLE='列（データ項目）の読み取りに対応'; APP_RELEASED_AT='2026-08-07'
-BUILD_VERSION=f'{APP_VERSION}-data-items'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.20.13'; APP_VERSION_TITLE='「RNEの中身を調べる」ボタンを新設'; APP_RELEASED_AT='2026-08-07'
+BUILD_VERSION=f'{APP_VERSION}-rne-inspect'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
+{'version':'1.20.13','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'RNEの内容を確認するボタンを「入力データ」欄に新設しました。ボタン名は「RNEの中身を調べる」で、管理ポイント（絞り込みの軸）とデータ項目（出力される列）の件数と一覧をその場に表示します。RNEファイルは変更しません。',
+'これまでは「抽出期間」欄の「候補を取得」が列の読み取りも兼ねていて、押した目的と表示内容が食い違っていました。分離しています。',
+'「抽出期間」欄のボタン名を「時間管理ポイントを探す」に変更しました。0件だったときは、失敗ではなくRNE側に日付の軸が無いという意味である旨を表示します。',
+'列名が空で返る場合に原因を切り分けられるよう、位置ごとの取得件数・名前が取れた件数・戻り値をログ（CATALOG_DATA_ITEMS）に記録するようにしました。',
+'公式マニュアル（Navigator API 使用手引書）に合わせて、データ項目の扱いを全面的に見直しました。NaviGetDataItem（項目名で引く）と NaviRemoveDataItem（削除する）が記載どおりの書式で定義済みです。',
+'マニュアルではデータ項目が置かれる場所は「条件」と「データ」のみです。表側・表頭にあるのは管理ポイントなので、列の数え上げ対象から外しました。',
+'列を索引で列挙する関数（NaviGetDataItemNumber など）はマニュアルに記載がありません。そのため列名は、直近の出力ファイルの見出しから読み取る方式を正規の手段としました。推測が入りません。',
+]},
 {'version':'1.20.12','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
 'DLLが公開しているAPI関数の集計が「未使用 0件」と誤って表示される不具合を修正しました。ctypesはエクスポートされている関数を要求時に自動解決するため、有無の判定に使えていませんでした。実際にこのアプリが使っているのは53件中25件です。',
 'RNEに含まれる列（データ項目）を読み取れるようにしました。「候補を取得」で管理ポイントと一緒に列の一覧も取得します。',
@@ -2343,16 +2352,41 @@ def period_control_points():
    finally:os.chdir(prev)
   points=api.list_time_control_points(handle)
   # 列（データ項目）も同じカタログハンドルのうちに読む。列分割が使えるRNEかの判断材料になる。
-  items=[];item_error=''
+  items=[];item_error='';di_diag='';fields=None;field_why=''
   try:
-   if api.supports_column_split():items=api.list_data_items(handle)
-   else:item_error='このDLLはデータ項目の操作APIを公開していません'
+   if api.supports_data_item_enum():
+    items=api.list_data_items(handle)
+    di_diag=getattr(api,'di_diag','')
+    fields,field_why=api.field_number(handle)
+   else:item_error='このDLLには列を索引で列挙する関数がありません（公式マニュアルにも記載のない関数です）'
   except Exception as ie:item_error=str(ie)
+  can_split=api.supports_column_split()
   api.close_catalog()
   time_points=[p for p in points if p.get('is_time')]
-  log.info('PERIOD_CP_DETECT rne=%s total=%s time=%s',rp,len(points),len(time_points))
-  log.info('CATALOG_DATA_ITEMS rne=%s count=%s error=%s names=%s',rp,len(items),item_error,'|'.join(x.get('name','') for x in items[:40]))
-  return jsonify(ok=True,points=points,time_points=time_points,count=len(points),time_count=len(time_points),data_items=items,data_item_count=len(items),data_item_error=item_error)
+  cp_named=sum(1 for p in points if not str(p.get('name','')).startswith('管理ポイント#'))
+  di_named=sum(1 for x in items if x.get('named'))
+  log.info('PERIOD_CP_DETECT rne=%s total=%s time=%s named=%s',rp,len(points),len(time_points),cp_named)
+  # 名前が取れた件数と位置ごとの戻り値を必ず残す。列名が空で返るのが「呼び出し規約の誤り」なのか
+  # 「その項目に表示名が無い」のかを、次の実行1回で切り分けられるようにするため。
+  log.info('CATALOG_DATA_ITEMS rne=%s count=%s named=%s fields=%s(%s) error=%s detail=%s',
+           rp,len(items),di_named,fields,field_why,item_error,di_diag)
+  log.info('CATALOG_DATA_ITEM_NAMES %s',' | '.join(f"{x.get('location')}:{x.get('name')}" for x in items[:40]))
+  # 直近の出力ファイルのヘッダーは、推測なしで確実に取れる列名の一覧。列分割の割り当てはこれを使う。
+  out_cols=[];out_from='';out_error=''
+  if job:
+   try:
+    op=_viewer_output_path(job,c)
+    if op.is_file():
+     _f,out_cols,_r,_t=read_preview_data(op,job,limit=1);out_from=str(op)
+    else:out_error='まだ出力ファイルがありません（1回実行すると列名が読めます）'
+   except Exception as oe:out_error=str(oe)
+  else:out_error='保存済みの対象を編集すると、直近の出力から列名を読み取れます'
+  log.info('CATALOG_OUTPUT_COLUMNS file=%s count=%s error=%s',out_from,len(out_cols),out_error)
+  return jsonify(ok=True,points=points,time_points=time_points,count=len(points),time_count=len(time_points),
+                 data_items=items,data_item_count=len(items),data_item_named=di_named,data_item_error=item_error,
+                 data_item_detail=di_diag,field_count=fields,control_point_named=cp_named,
+                 output_columns=out_cols,output_column_source=out_from,output_column_error=out_error,
+                 column_split_ready=bool(can_split))
  except Exception as e:
   log.exception('PERIOD_CP_DETECT_FAILED rne=%s',rp)
   return jsonify(ok=False,error=str(e)),200

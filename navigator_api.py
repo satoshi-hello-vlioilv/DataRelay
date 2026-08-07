@@ -281,6 +281,15 @@ class NavigatorApi:
             d.NaviGetDataItem2.argtypes=[L,P,L,L];d.NaviGetDataItem2.restype=L
         if hasattr(d,'NaviGetNameDI'):
             d.NaviGetNameDI.argtypes=[L,P,L,S];d.NaviGetNameDI.restype=None
+        # ここから下はマニュアル記載の書式そのまま。
+        # NaviGetDataItem(hCatalog, rc, locate, label, order, reserve) -> hDItem（5.5.1）
+        if hasattr(d,'NaviGetDataItem'):
+            d.NaviGetDataItem.argtypes=[L,P,L,S,L,L];d.NaviGetDataItem.restype=L
+        # NaviRemoveDataItem(hCatalog, hDItem, rc)（5.5.2）。管理ポイント系と違い rc が最後にくる。
+        if hasattr(d,'NaviRemoveDataItem'):
+            d.NaviRemoveDataItem.argtypes=[L,L,P];d.NaviRemoveDataItem.restype=None
+        # NaviInvalidateExecution は実行後に列を変える場合のみ必要。並びは未確認なので、
+        # マニュアルで裏が取れるまで呼び出さない（列の削除は実行前に行えば不要）。
         self.bound={n for n in dir(d) if n.startswith('Navi') and getattr(getattr(d,n,None),'argtypes',None) is not None}
     def info(self):
         pybits=struct.calcsize('P')*8;dllbits=pe_bits(self.dll_path);norm=os.path.normcase(os.path.normpath(str(self.dll_path)));local=os.path.normcase(os.path.normpath(r'C:\NAVIAP'))
@@ -437,36 +446,110 @@ class NavigatorApi:
                 out.append({'location':locname,'index':idx,'name':name or f'管理ポイント#{idx+1}','type':ctype,'type_name':CONTROLPOINT_TYPE_NAMES.get(ctype,'不明'),'is_time':is_time})
         return out
     def supports_column_split(self):
-        """列（データ項目）を読み取り・削除できるDLLか。列分割の可否判定に使う。"""
-        return all(hasattr(self.dll,n) for n in ('NaviGetDataItemNumber','NaviGetDataItem2','NaviGetNameDI','NaviRemoveDataItem'))
+        """列分割ができるDLLか。マニュアルに載っている2関数だけで成立する。
+
+        列名は直近の出力ファイルのヘッダーから取るので、未文書化の列挙APIは必須ではない。
+        """
+        return all(hasattr(self.dll,n) for n in ('NaviGetDataItem','NaviRemoveDataItem'))
+
+    def supports_data_item_enum(self):
+        """列を索引で列挙できるか。公式マニュアルに記載が無い関数群なので、参考情報の取得にのみ使う。"""
+        return all(hasattr(self.dll,n) for n in ('NaviGetDataItemNumber','NaviGetDataItem2','NaviGetNameDI'))
+
+    def get_name_di(self,h_di):
+        """データ項目名を取得する。取れた名前と、判定に使った戻り値をあわせて返す。
+
+        呼び出し規約は管理ポイント側（NaviGetNameCP）と同型と仮定している。名前が空で返るのが
+        「仮定違い」なのか「この項目に表示名が無い」のかを切り分けたいので rc も一緒に返す。
+        """
+        if not hasattr(self.dll,'NaviGetNameDI'):
+            return '','no_export'
+        try:
+            buf=ctypes.create_string_buffer(1024);rc=ctypes.c_long(-1)
+            self.dll.NaviGetNameDI(h_di,ctypes.byref(rc),NAVI_LABEL,buf)
+            raw=buf.value or b''
+            if int(rc.value)!=NAVI_OK:
+                return '',f'rc={int(rc.value)}'
+            return raw.decode('mbcs',errors='replace').strip(),('ok' if raw else 'empty')
+        except Exception as e:
+            return '',f'exc={type(e).__name__}'
+
+    def field_number(self,h):
+        """出力される列数（NaviGetFieldNumber）。データ項目の列挙結果と突き合わせる基準に使う。
+
+        呼び出し規約は抽出後の行数・列数取得で実績があるものと同じ。ただし本来は実行後に呼ぶ関数なので、
+        実行前のカタログでは 0 やエラーが返る可能性がある。取れなければ None を返すだけで先へ進む。
+        """
+        if not hasattr(self.dll,'NaviGetFieldNumber'):
+            return None,'no_export'
+        rc=ctypes.c_long(-1);num=ctypes.c_long(-1)
+        try:
+            self.dll.NaviGetFieldNumber(h,ctypes.byref(rc),ctypes.byref(num))
+        except Exception as e:
+            return None,f'exc={type(e).__name__}'
+        if int(rc.value)!=NAVI_OK:
+            return None,f'rc={int(rc.value)}'
+        return int(num.value),'ok'
+
+    def get_data_item(self,h_catalog,label,locate=NAVI_DATA,order=0):
+        """項目名からデータ項目のハンドルを取得する（マニュアル 5.5.1）。
+
+        列の列挙APIは公式マニュアルに無いため、列分割ではこの「名前で引く」経路を正規の手段とする。
+        列名は直近の出力ファイルのヘッダーから得られるので、推測に頼らずに済む。
+        locate は条件（NAVI_COND）かデータ（NAVI_DATA）のみ。同名の項目が複数ある場合は order で指定する。
+        """
+        if not hasattr(self.dll,'NaviGetDataItem'):
+            raise RuntimeError('このDLLは NaviGetDataItem を公開していません')
+        rc=ctypes.c_long(-1)
+        h=int(self.dll.NaviGetDataItem(h_catalog,ctypes.byref(rc),locate,label.encode('mbcs'),order,0))
+        self._check('NaviGetDataItem',rc)
+        return h
+
+    def remove_data_item(self,h_catalog,h_di):
+        """カタログ上のデータ項目を1つ削除する（マニュアル 5.5.2）。
+
+        NaviSaveCatalog を呼ばない限りRNEファイル自体は変更されない。実行前にのみ使うこと。
+        項目間演算に使われている項目は削除できず NAVI_ERROR_USEDDATAITEM になる。
+        """
+        if not hasattr(self.dll,'NaviRemoveDataItem'):
+            raise RuntimeError('このDLLは NaviRemoveDataItem を公開していません')
+        rc=ctypes.c_long(-1)
+        self.dll.NaviRemoveDataItem(h_catalog,h_di,ctypes.byref(rc))
+        self._check('NaviRemoveDataItem',rc)
 
     def list_data_items(self,h):
         """RNEに含まれるデータ項目（列）を列挙する。読み取りのみでカタログは変更しない。
 
         呼び出し規約は管理ポイント側（NaviGetControlPointNumber/2/NaviGetNameCP）と同型と仮定している。
-        実機で列数が NaviGetFieldNumber と一致すれば仮定が正しいと確認できる。
+        仮定が合っているかを実機ログだけで判定できるよう、位置ごとの戻り値を self.di_diag に残す。
         """
         if not all(hasattr(self.dll,n) for n in ('NaviGetDataItemNumber','NaviGetDataItem2','NaviGetNameDI')):
             raise RuntimeError('このDLLはデータ項目の列挙API（NaviGetDataItemNumber/2/NaviGetNameDI）を公開していません')
-        out=[]
-        for locate,locname in ((NAVI_SIDE,'表側'),(NAVI_HEAD,'表頭'),(NAVI_DATA,'データ'),(NAVI_COND,'条件')):
-            rc=ctypes.c_long();num=ctypes.c_long()
+        out=[];diag=[]
+        # マニュアル 5.5.1 のとおり、データ項目が置かれるのは条件フィールドとデータフィールドだけ。
+        # 表側・表頭にあるのは管理ポイントなので、ここでは対象にしない。
+        for locate,locname in ((NAVI_DATA,'データ'),(NAVI_COND,'条件')):
+            rc=ctypes.c_long(-1);num=ctypes.c_long(-1)
             try:
                 self.dll.NaviGetDataItemNumber(h,ctypes.byref(rc),locate,ctypes.byref(num))
-            except Exception:
-                continue
-            if int(rc.value)!=NAVI_OK:continue
+            except Exception as e:
+                diag.append(f'{locname}:num_exc={type(e).__name__}');continue
+            if int(rc.value)!=NAVI_OK:
+                diag.append(f'{locname}:num_rc={int(rc.value)}');continue
+            named=0;handles=0;reasons={}
             for idx in range(int(num.value)):
-                rc2=ctypes.c_long()
+                rc2=ctypes.c_long(-1)
                 hdi=int(self.dll.NaviGetDataItem2(h,ctypes.byref(rc2),locate,idx))
-                if int(rc2.value)!=NAVI_OK or not hdi:continue
-                name=''
-                try:
-                    buf=ctypes.create_string_buffer(1024);rc3=ctypes.c_long()
-                    self.dll.NaviGetNameDI(hdi,ctypes.byref(rc3),NAVI_LABEL,buf)
-                    if int(rc3.value)==NAVI_OK:name=(buf.value or b'').decode('mbcs',errors='replace').strip()
-                except Exception:pass
-                out.append({'location':locname,'index':idx,'handle':hdi,'name':name or f'データ項目#{idx+1}'})
+                if int(rc2.value)!=NAVI_OK or not hdi:
+                    reasons[f'item_rc={int(rc2.value)}']=reasons.get(f'item_rc={int(rc2.value)}',0)+1;continue
+                handles+=1
+                name,why=self.get_name_di(hdi)
+                if name:named+=1
+                else:reasons[f'name_{why}']=reasons.get(f'name_{why}',0)+1
+                out.append({'location':locname,'index':idx,'handle':hdi,'name':name or f'データ項目#{idx+1}','named':bool(name)})
+            detail=','.join(f'{k}x{v}' for k,v in sorted(reasons.items()))
+            diag.append(f'{locname}:num={int(num.value)} handle={handles} named={named}'+(f' [{detail}]' if detail else ''))
+        self.di_diag='; '.join(diag)
         return out
 
     def close_catalog(self):
