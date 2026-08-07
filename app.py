@@ -25,11 +25,16 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.20.8'; APP_VERSION_TITLE='SymNaviA.dll読み込み失敗の原因表示を改善'; APP_RELEASED_AT='2026-08-07'
-BUILD_VERSION=f'{APP_VERSION}-dll-diagnostics'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.20.9'; APP_VERSION_TITLE='実行キュー一覧に全体進捗のデータバーを追加'; APP_RELEASED_AT='2026-08-07'
+BUILD_VERSION=f'{APP_VERSION}-queue-databar'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
-{'version':'1.20.8','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+{'version':'1.20.9','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'進捗画面の実行キュー一覧（予約総数・実行中・待機・完了の帯）へ、全体進捗のデータバーを追加しました。',
+'「実行キュー全体 6 / 7 完了（実行中 1） 86%」のように、残りがどれくらいかを数値と帯の長さの両方で確認できます。',
+'マウスを乗せると 完了 / 実行中 / 待機 / 全体 の内訳が表示されます。',
+]},
+{'version':'1.20.8','date':APP_RELEASED_AT,'title':'SymNaviA.dll読み込み失敗の原因表示を改善','notes':[
 'SymNaviA.dll を読み込めないときのエラーで、「ファイルが無い」のか「DLLはあるが依存DLLが無い」のかを区別して表示するようにしました。',
 'Windowsの元のメッセージ「Could not find module (or one of its dependencies)」は、ファイル不在と依存不足のどちらでも同じ文言のため、原因を取り違えやすい状態でした。',
 'DLLは存在するのに読み込めない場合、Visual C++ 再頒布可能パッケージ（実行中のPythonと同じbit数）の有無を確認し、不足していればその旨を表示します。SymfoNaviクライアントは32bitのため、64bit側のランタイムだけ入っていない端末で発生します。',
