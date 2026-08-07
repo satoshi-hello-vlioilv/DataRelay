@@ -25,10 +25,17 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.20.13'; APP_VERSION_TITLE='「RNEの中身を調べる」ボタンを新設'; APP_RELEASED_AT='2026-08-07'
-BUILD_VERSION=f'{APP_VERSION}-rne-inspect'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.21.0'; APP_VERSION_TITLE='列定義のキャッシュと分割可否の判定'; APP_RELEASED_AT='2026-08-07'
+BUILD_VERSION=f'{APP_VERSION}-column-plan'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
+{'version':'1.21.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'RNEごとに列定義（列名と順序）を保存するようにしました。通常実行の副産物として自動で貯まります。RNEを書き換えると自動で無効化され、次の実行で取り直します。対象IDではなくRNE単位なので、同じRNEを使う対象どうしで共有されます。',
+'【列の分割可否を調べる】ボタンを追加しました。出力される列を「分割して取得できる列」と「全パートに必ず残る列」に分け、分割で効果が出るかどうかを実装前に判断できます。',
+'列名の取得は安い順に3段階です。保存済みの列定義 → 直近の出力ファイルの見出し → 1行だけの問い合わせ。既に運用中の対象は、出力ファイルがあるので接続すら不要です。',
+'1行だけの問い合わせは NAVI_DOWNLOADLATER で実行し、1行だけ受け取って NaviTerminateDL で打ち切ります。マニュアル 5.3.6 のとおり、保存されるのはダウンロードした分だけなので、全件を転送せずに見出しが手に入ります。',
+'列の分類は NaviGetDataItem を試すだけの読み取り判定です。削除も実行も行わず、RNEファイルも出力ファイルも変更しません。',
+]},
 {'version':'1.20.13','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
 'RNEの内容を確認するボタンを「入力データ」欄に新設しました。ボタン名は「RNEの中身を調べる」で、管理ポイント（絞り込みの軸）とデータ項目（出力される列）の件数と一覧をその場に表示します。RNEファイルは変更しません。',
 'これまでは「抽出期間」欄の「候補を取得」が列の読み取りも兼ねていて、押した目的と表示内容が食い違っていました。分離しています。',
@@ -433,6 +440,8 @@ def ensure_schema_upgrades():
   if 'output_pattern' not in cols:c.execute("ALTER TABLE jobs ADD COLUMN output_pattern TEXT NOT NULL DEFAULT ''")
   if 'comment' not in cols:c.execute("ALTER TABLE jobs ADD COLUMN comment TEXT NOT NULL DEFAULT ''")
   if 'period_json' not in cols:c.execute("ALTER TABLE jobs ADD COLUMN period_json TEXT NOT NULL DEFAULT ''")
+  rc=[r['name'] for r in c.execute('PRAGMA table_info(rne_columns)')]
+  if rc and 'classify_json' not in rc:c.execute("ALTER TABLE rne_columns ADD COLUMN classify_json TEXT NOT NULL DEFAULT ''")
 
 def _decode_setting(row):
  v=row['value']; t=row['value_type']
@@ -695,8 +704,23 @@ def load_column_cache(rne_path):
  stale=bool(mtime) and (mtime!=row['rne_mtime_ns'] or size!=row['rne_size'])
  try:columns=json.loads(row['columns_json'])
  except Exception:columns=[]
+ try:classify=json.loads(row['classify_json'] or '[]')
+ except Exception:classify=[]
  return {'rne_path':row['rne_path'],'columns':columns,'column_count':row['column_count'],'row_count':row['row_count'],
-         'source':row['source'],'job_id':row['job_id'],'job_name':row['job_name'],'captured_at':row['captured_at'],'stale':stale}
+         'source':row['source'],'job_id':row['job_id'],'job_name':row['job_name'],'captured_at':row['captured_at'],
+         'stale':stale,'classify':classify}
+
+def save_column_classification(rne_path,classify):
+ """列の分類結果（削除できる / 必ず残る）をキャッシュへ書き足す。列名の一覧は触らない。"""
+ key=_rne_key(rne_path)
+ try:
+  with settings_sync_lock, settings_connection() as c:
+   c.execute('UPDATE rne_columns SET classify_json=? WHERE rne_key=?',(json.dumps(classify,ensure_ascii=False),key));_mark_settings_dirty()
+ except Exception:
+  log.exception('COLUMN_CLASSIFY_SAVE_FAILED rne=%s',rne_path);return False
+ removable=sum(1 for x in classify if x.get('removable'))
+ log.info('COLUMN_CLASSIFY_SAVE rne=%s total=%s removable=%s fixed=%s',rne_path,len(classify),removable,len(classify)-removable)
+ return True
 
 def save_column_cache(rne_path,columns,rows=None,source='run',job=None):
  """列定義をRNE単位で保存する。列名が取れなかったときは何もしない（空で上書きしない）。"""
@@ -2477,7 +2501,8 @@ def period_control_points():
    try:
     op=_viewer_output_path(job,c)
     if op.is_file():
-     _f,out_cols,_r,_t=read_preview_data(op,job,limit=1);out_from=str(op)
+     out_cols=read_header_names(op,job);out_from=str(op)
+     if out_cols:save_column_cache(rp,out_cols,source='output',job=job)
     else:out_error='まだ出力ファイルがありません（1回実行すると列名が読めます）'
    except Exception as oe:out_error=str(oe)
   else:out_error='保存済みの対象を編集すると、直近の出力から列名を読み取れます'
@@ -2494,6 +2519,100 @@ def period_control_points():
   if api:
    try:api.close()
    except Exception:pass
+
+def open_api_catalog(c,rne_path):
+ """セッションを開き、データソースへ接続し、RNEを読み込んで (api, handle) を返す。呼び出し側で api.close() すること。"""
+ from navigator_api import NavigatorApi
+ user,pw,server,_=creds(resolve_path(c['symnavim_conf']))
+ api=NavigatorApi(resolve_path(c.get('symnavi_exe','')),log,resolve_path(c.get('navigator_api_dll')) if c.get('navigator_api_dll') else None,base_dir=BASE)
+ api.open_session(user,pw,server)
+ profiles=api_data_source_profiles(resolve_path(c['symnavim_conf']))
+ if not any(p.get('kind')=='oracle' for p in profiles):
+  profiles.insert(0,{'section':'NavigatorCredentialFallback','kind':'oracle','user':user,'password':pw,'server':'','option':'','resource':'','resource_kind':'0'})
+ for profile in profiles:api.connect_data_source(profile)
+ with chdir_lock:
+  prev=os.getcwd()
+  try:
+   os.chdir(Path(rne_path).parent);handle,_=api.open_catalog(Path(rne_path).resolve())
+  finally:os.chdir(prev)
+ return api,handle
+
+@app.post('/api/column-plan')
+def column_plan():
+ """列分割の下調べ。RNEの列定義を用意し、削除できる列と必ず残る列に分ける。
+
+ 列名の入手は安いものから順に試す: キャッシュ → 直近の出力ファイル → 1行だけの問い合わせ。
+ いずれも読み取りのみで、RNEファイルも出力ファイルも変更しない。
+ """
+ data=request.get_json(force=True) or {};c=load()
+ job=next((x for x in c['jobs'] if x['id']==data.get('job_id')),None) if data.get('job_id') else None
+ if not job:return jsonify(ok=False,error='保存済みの対象を選んでください'),200
+ force=bool(data.get('force'));allow_probe=bool(data.get('allow_probe',True))
+ try:rp=resolve_rne_path(job,c)
+ except Exception as e:return jsonify(ok=False,error=f'RNEパスの解決に失敗しました: {e}'),200
+ if not Path(rp).is_file():return jsonify(ok=False,error=f'RNEが見つかりません: {rp}'),200
+ started=time.perf_counter();state,cached=column_cache_state(rp)
+ columns=[];source='';notes=[];probe_info={}
+ if cached and not cached['stale'] and not force:
+  columns=cached['columns'];source='cache'
+ else:
+  if cached and cached['stale']:notes.append('RNEが更新されていたため取り直しました')
+  try:
+   op=_viewer_output_path(job,c)
+   if op.is_file():
+    columns=read_header_names(op,job)
+    if columns:source='output';notes.append(f'直近の出力ファイルから読み取りました（{op.name}）')
+  except Exception as e:notes.append(f'出力ファイルから読めませんでした: {e}')
+ api=None;handle=None;classify=[];classify_error=''
+ need_classify=force or not (cached and cached.get('classify') and not cached['stale'])
+ need_probe=not columns and allow_probe
+ try:
+  if need_probe or need_classify:
+   api,handle=open_api_catalog(c,rp)
+   if need_probe:
+    # 1行だけ受け取って打ち切る。見出し行のためだけに全件を転送しない。
+    if not api.supports_header_probe():
+     notes.append('このDLLは1行だけの取得に対応していません（NaviDownLoadData / NaviTerminateDL が未公開）')
+    else:
+     sample=LOCAL_RUNTIME/f'colprobe_{uuid.uuid4().hex[:8]}.csv'
+     try:
+      elapsed,downloaded,total_rows=api.execute_header_only(handle,sample)
+      columns=read_header_names(sample,{'output_format':'csv'})
+      source='probe';probe_info={'elapsed':round(elapsed,2),'downloaded_rows':downloaded,'total_rows':total_rows,'size':sample.stat().st_size if sample.is_file() else 0}
+      log.info('COLUMN_PROBE rne=%s columns=%s downloaded_rows=%s total_rows=%s size=%s elapsed=%.2fs',rp,len(columns),downloaded,total_rows,probe_info['size'],elapsed)
+      notes.append(f'1行だけの問い合わせで取得しました（{downloaded}行・{probe_info["size"]}バイト・{elapsed:.1f}秒）')
+     except Exception as pe:
+      log.warning('COLUMN_PROBE_FAILED rne=%s error=%s',rp,pe);notes.append(f'1行だけの取得に失敗しました: {pe}')
+     finally:
+      try:sample.unlink(missing_ok=True)
+      except Exception:pass
+   if columns and need_classify:
+    t=time.perf_counter()
+    try:
+     classify=api.classify_columns(handle,columns)
+     log.info('COLUMN_CLASSIFY rne=%s total=%s removable=%s elapsed=%.2fs',rp,len(classify),sum(1 for x in classify if x['removable']),time.perf_counter()-t)
+    except Exception as ce:classify_error=str(ce);log.warning('COLUMN_CLASSIFY_FAILED rne=%s error=%s',rp,ce)
+   try:api.close_catalog()
+   except Exception:pass
+ except Exception as e:
+  log.exception('COLUMN_PLAN_FAILED rne=%s',rp)
+  return jsonify(ok=False,error=str(e)),200
+ finally:
+  if api:
+   try:api.close()
+   except Exception:pass
+ if columns and source!='cache':save_column_cache(rp,columns,source=source or 'unknown',job=job)
+ if classify:save_column_classification(rp,classify)
+ elif cached and cached.get('classify') and not cached['stale']:classify=cached['classify']
+ removable=[x['name'] for x in classify if x.get('removable')]
+ fixed=[x['name'] for x in classify if not x.get('removable')]
+ elapsed=time.perf_counter()-started
+ log.info('COLUMN_PLAN rne=%s job=%s source=%s columns=%s removable=%s fixed=%s elapsed=%.2fs',rp,job['name'],source,len(columns),len(removable),len(fixed),elapsed)
+ return jsonify(ok=True,rne=str(rp),job=job['name'],source=source,cache_state=state,columns=columns,column_count=len(columns),
+                classify=classify,removable=removable,fixed=fixed,removable_count=len(removable),fixed_count=len(fixed),
+                classify_error=classify_error,captured_at=(cached or {}).get('captured_at',''),notes=notes,probe=probe_info,
+                elapsed=round(elapsed,2))
+
 @app.post('/api/run')
 def run_all():
  try:
