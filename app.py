@@ -25,11 +25,20 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.20.0'; APP_VERSION_TITLE='重い抽出の大幅高速化と公開処理の不具合修正'; APP_RELEASED_AT='2026-08-07'
-BUILD_VERSION=f'{APP_VERSION}-isolated-api-run'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.20.1'; APP_VERSION_TITLE='処理速度を分析するための計測ログの追加'; APP_RELEASED_AT='2026-08-07'
+BUILD_VERSION=f'{APP_VERSION}-run-diagnostics'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
-{'version':'1.20.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+{'version':'1.20.1','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'処理が遅いときの原因を切り分けられるよう、実行ログへ計測項目を追加しました。ログを見るだけで「APIが遅い」のか「この端末・置き場所が遅い」のかを判断できます。',
+'すべてのログ行にプロセスID（[pid NNNN]）を付けました。並列実行では複数プロセスが同じログへ書き込むため、これまではどの行がどのラインの出来事か追えませんでした。',
+'対象1件ごとに JOB_PROFILE を出力します。どの工程が何秒・全体の何%を占めたかを1行にまとめるため、遅い対象の原因箇所がすぐ分かります。',
+'実行開始時に RUN_ENVIRONMENT を出力します。CPU数、メモリ使用率と空き、中間ファイル書き出し先の実測書き込み速度（MB/s）、RNE置き場の応答時間を記録します。',
+'ワーカーの起動時間を WORKER_READY として記録します。アプリ本体がBOX上にあるため、環境によってはワーカー1本の起動だけで数秒かかることがあり、その実測値を残します。',
+'問い合わせ実行（api_execute_catalog）に rows_per_sec を追加し、サーバー側の応答速度の変化を追えるようにしました。',
+'ログの「要約コピー」に上記の計測行を含めるようにしました。速度について相談する際は要約コピーをそのままお使いください。',
+]},
+{'version':'1.20.0','date':APP_RELEASED_AT,'title':'重い抽出の大幅高速化と公開処理の不具合修正','notes':[
 '重いファイルの処理時間を大幅に短縮しました。API方式の抽出は、対象が1件でも必ず独立プロセスで実行するようになります。',
 'これまでは対象が1件だけ、または並列ライン数が1のときはアプリ内で直接抽出しており、この経路ではAPIのCSV書き出しが約45KB/sしか出ていませんでした（独立プロセス経由では0.5〜4MB/s）。重い抽出ほど差が開き、14,357件×177列の実測では書き出しだけで243秒かかっていました。',
 '実測ログからの見込みでは、上記の抽出は約272秒から約51秒（およそ5倍）に短縮されます。',
@@ -225,7 +234,9 @@ class RunCancelled(Exception):pass
 status={'build_version':BUILD_VERSION,'running':False,'current':'','current_job_id':'','current_job_name':'','current_index':0,'total_jobs':0,'step':'idle','step_label':'待機中','step_percent':0,'completed_jobs':0,'failed_jobs':0,'started_at':'','elapsed_seconds':0,'symnavi_window':'未起動','last_result':'未実行','last_finished_at':'','error_detail':'','activity_detail':'','activity_value':'','heartbeat_at':'','parallel_lines':[],'batch_job_ids':[],'queue_completed_ids':[],'queue_failed_ids':[],'queue_running_ids':[],'queue_waiting_ids':[],'job_errors':[]}
 log=logging.getLogger('navi'); log.setLevel(logging.INFO)
 if not log.handlers:
- h=logging.FileHandler(LOCAL_LOGS/'app.log',encoding='utf-8'); h.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')); log.addHandler(h)
+ # 並列実行では複数プロセスが同じログへ追記するため、行だけを見るとどのプロセスの出来事か分からない。
+ # プロセスIDを常に出して、後からライン単位で追跡できるようにする（先頭の日時と[LEVEL]の位置は画面側の解析に合わせて維持）。
+ h=logging.FileHandler(LOCAL_LOGS/'app.log',encoding='utf-8'); h.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] [pid %(process)d] %(message)s')); log.addHandler(h)
 # COMオブジェクトの明示解放が正常経路で数秒停止する環境があるため、
 # Quit済みAccess.Applicationの参照だけをプロセス内に遅延保持する。
 # データ作成・件数検査・Quit完了後なので、出力精度には影響させない。
@@ -852,13 +863,33 @@ def start_window_watcher(proc,settings):
   log.info('SymfoNavi定期監視なし profile=%s',profile); return None,None
  flag=threading.Event(); thread=threading.Thread(target=hide_window_watcher,args=(proc,flag,settings),daemon=True); thread.start(); return flag,thread
 
+# 1対象ぶんの工程内訳。STEP_START/ENDは並列実行だと他プロセスの行と混ざって追いにくいので、
+# 完了時に「どの工程が何秒・何%だったか」を1行へまとめ、対象ごとの傾向を後から比較できるようにする。
+_phase_profile={'started':0.0,'depth':0,'phases':{}}
+
+def phase_profile_reset():
+ _phase_profile['started']=time.perf_counter();_phase_profile['depth']=0;_phase_profile['phases']={}
+
+def phase_profile_summary():
+ total=time.perf_counter()-_phase_profile['started']
+ if total<=0:return 'total=0.00s'
+ ranked=sorted(_phase_profile['phases'].items(),key=lambda kv:-kv[1])
+ measured=sum(_phase_profile['phases'].values())
+ parts=['%s=%.2fs(%.1f%%)'%(k,v,100*v/total) for k,v in ranked]
+ parts.append('other=%.2fs(%.1f%%)'%(max(0.0,total-measured),100*max(0.0,total-measured)/total))
+ return 'total=%.2fs '%total+' '.join(parts)
+
 def phase_log(phase,started=None,**values):
  parts=' '.join(f'{k}={v}' for k,v in values.items())
  if started is None:
+  _phase_profile['depth']+=1
   log.info('STEP_START phase=%s %s',phase,parts)
   for h in log.handlers:h.flush()
   return time.perf_counter()
  elapsed=time.perf_counter()-started
+ _phase_profile['depth']=max(0,_phase_profile['depth']-1)
+ # 入れ子の工程（format_conversion内のintermediate_parseなど）は二重計上しない。
+ if _phase_profile['depth']==0:_phase_profile['phases'][phase]=_phase_profile['phases'].get(phase,0.0)+elapsed
  log.info('STEP_END phase=%s elapsed=%.2fs %s',phase,elapsed,parts)
  for h in log.handlers:h.flush()
  return elapsed
@@ -867,6 +898,42 @@ def save_metrics(path,elapsed,rows):
  """NaviSaveDataの実効速度。経路や環境ごとの差を実機ログだけで比較できるようにする。"""
  size=path.stat().st_size if path.exists() else 0
  return {'size':size,'throughput_kb_s':f'{size/1024/elapsed:.1f}' if elapsed>0 else '0','ms_per_row':f'{elapsed*1000/int(rows):.2f}' if rows else '0'}
+
+def _memory_status():
+ if os.name!='nt':return ''
+ try:
+  import ctypes
+  class _MS(ctypes.Structure):
+   _fields_=[('dwLength',ctypes.c_ulong),('dwMemoryLoad',ctypes.c_ulong),('ullTotalPhys',ctypes.c_ulonglong),('ullAvailPhys',ctypes.c_ulonglong),('ullTotalPageFile',ctypes.c_ulonglong),('ullAvailPageFile',ctypes.c_ulonglong),('ullTotalVirtual',ctypes.c_ulonglong),('ullAvailVirtual',ctypes.c_ulonglong),('ullAvailExtendedVirtual',ctypes.c_ulonglong)]
+  s=_MS();s.dwLength=ctypes.sizeof(_MS);ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(s))
+  return ' mem_load=%d%% mem_avail_mb=%d'%(s.dwMemoryLoad,s.ullAvailPhys//(1024*1024))
+ except Exception:return ''
+
+def log_run_environment(work_dir,rne_root):
+ """実行環境の実測値。抽出が遅いとき「APIが遅い」のか「この端末が遅い」のかを切り分けるために残す。
+
+ work_write_mb_s は中間CSVの書き出し先そのものの速度。
+ rne_scan_ms はRNE置き場（BOX等）の応答。起動が極端に遅い日はここが伸びる。
+ """
+ try:
+  write_mb_s=0.0;probe=Path(work_dir)/f'.probe_{os.getpid()}.bin'
+  try:
+   chunk=b'0'*(1024*1024);t=time.perf_counter()
+   with probe.open('wb') as f:
+    for _ in range(4):f.write(chunk)
+    f.flush();os.fsync(f.fileno())
+   d=time.perf_counter()-t;write_mb_s=4/d if d>0 else 0
+  except OSError as e:log.warning('RUN_ENVIRONMENT_WRITE_PROBE_SKIP error=%s',e)
+  finally:
+   try:probe.unlink()
+   except OSError:pass
+  scan_ms=0.0;files=0
+  try:
+   t=time.perf_counter();files=sum(1 for p in Path(rne_root).iterdir() if p.is_file());scan_ms=(time.perf_counter()-t)*1000
+  except OSError as e:log.warning('RUN_ENVIRONMENT_SCAN_SKIP error=%s',e)
+  log.info('RUN_ENVIRONMENT cpu=%s%s work_write_mb_s=%.1f rne_scan_ms=%.0f rne_files=%s work=%s base=%s',os.cpu_count() or 0,_memory_status(),write_mb_s,scan_ms,files,work_dir,BASE)
+ except Exception as e:
+  log.warning('RUN_ENVIRONMENT_FAILED error=%s',e)
 
 def progress(step,label,percent,**extra):
  set_status(step=step,step_label=label,step_percent=percent,current=label,elapsed_seconds=max(0,int(time.time()-getattr(progress,'started',time.time()))),heartbeat_at=datetime.now().isoformat(timespec='seconds'),**extra)
@@ -1351,6 +1418,11 @@ def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,
  from navigator_api import NavigatorApi
  line_name=os.environ.get('NAVI_WORKER_LINE') or threading.current_thread().name
  job_started=time.perf_counter();api_client=None;api_csv=None;xls=None;db=None
+ phase_profile_reset()
+ # ワーカー1本ぶんの起動代。app.pyはBOX上にあるため、環境によってはここだけで数秒かかる。
+ try:_worker_spawn_at=float(os.environ.get('NAVI_WORKER_SPAWN_AT') or 0)
+ except Exception:_worker_spawn_at=0
+ if _worker_spawn_at:log.info('WORKER_READY line=%s job=%s spawn_to_import=%.2fs import_to_job=%.2fs note=interpreter_init+module_import(BOX)',line_name,j.get('name'),_APP_IMPORT_DONE_AT-_worker_spawn_at,time.time()-_APP_IMPORT_DONE_AT)
  try:
   j['output_file']=resolve_output_filename(j,cfg); log.info('OUTPUT_NAME line=%s job=%s mode=%s pattern=%s resolved_file=%s',line_name,j.get('name'),j.get('naming_mode','fixed'),j.get('output_pattern',''),j['output_file'])
   fmt=validate_output_contract(j,'before-extraction')
@@ -1384,7 +1456,7 @@ def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,
     t=phase_log('api_open_catalog',job=j['name'],line=line_name);handle,api_elapsed=api_client.open_catalog(api_rne);phase_log('api_open_catalog',t,job=j['name'],line=line_name,handle=handle,api_elapsed=f'{api_elapsed:.2f}s',strategy='original_fullpath')
    finally:os.chdir(previous_cwd)
   if (j.get('period') or {}).get('enabled'):update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='期間指定',percent=30,detail='相対期間を適用');apply_dynamic_period(api_client,handle,j,datetime.now(),line=line_name)
-  update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='問い合わせ実行',percent=35,detail='API execute');t=phase_log('api_execute_catalog',job=j['name'],line=line_name);api_number,api_elapsed=api_client.execute(handle);phase_log('api_execute_catalog',t,job=j['name'],line=line_name,number=api_number,api_elapsed=f'{api_elapsed:.2f}s')
+  update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='問い合わせ実行',percent=35,detail='API execute');t=phase_log('api_execute_catalog',job=j['name'],line=line_name);api_number,api_elapsed=api_client.execute(handle);phase_log('api_execute_catalog',t,job=j['name'],line=line_name,number=api_number,api_elapsed=f'{api_elapsed:.2f}s',rows_per_sec=f'{api_number/api_elapsed:.0f}' if api_elapsed>0 else '0')
   t=phase_log('api_get_dimensions',job=j['name'],line=line_name);expected_rows,expected_cols=api_client.dimensions(handle);phase_log('api_get_dimensions',t,job=j['name'],line=line_name,rows=expected_rows,columns=expected_cols)
   api_direct_output=False
   if fmt=='xlsx':
@@ -1418,6 +1490,7 @@ def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,
   update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='公開',percent=90,detail=str(target));t=phase_log('publish',job=j['name'],line=line_name);pub=publish(db,target,backup,int(cfg['settings']['backup_generations']),backup_enabled=bool(cfg['settings'].get('backup_enabled',True)),retention_days=int(cfg['settings'].get('backup_retention_days',30)),generation_limit_enabled=bool(cfg['settings'].get('backup_generation_limit_enabled',True)),backup_mode=str(cfg['settings'].get('backup_mode','generations')));phase_log('publish',t,job=j['name'],line=line_name,published=pub['published'])
   total=time.perf_counter()-job_started
   update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='完了',percent=100,detail=f'{nr}件/{nc}列',elapsed=round(total,1));log.info('PARALLEL_JOB_RESULT line=%s job=%s format=%s rows=%s columns=%s elapsed=%.2fs target=%s published=%s',line_name,j['name'],fmt,nr,nc,total,target,pub['published'])
+  log.info('JOB_PROFILE line=%s job=%s rows=%s columns=%s %s',line_name,j['name'],nr,nc,phase_profile_summary())
   result=f'{j["name"]}: {nr}件/{nc}列 / {total:.1f}秒'+('' if pub['published'] else f' / 更新保留: {pub["pending"]}')
   return {'ok':True,'job':j['name'],'format':fmt,'rows':nr,'columns':nc,'elapsed':total,'target':str(target),'result':result}
  except Exception as e:
@@ -1458,7 +1531,7 @@ def run_api_process_batch(jobs,cfg,user,pw,server,dde_work,backup,max_lines,trig
   Path(payload['dde_work']).mkdir(parents=True,exist_ok=True)
   payload_path=job_dir/'payload.json';result_path=job_dir/'result.json';status_path=job_dir/'status.json'
   payload_path.write_text(json.dumps(payload,ensure_ascii=False),encoding='utf-8')
-  env=os.environ.copy();env['NAVI_WORKER_LINE']=line;env['NAVI_WORKER_STATUS']=str(status_path);env['NAVI_WORKER_RESULT']=str(result_path)
+  env=os.environ.copy();env['NAVI_WORKER_LINE']=line;env['NAVI_WORKER_STATUS']=str(status_path);env['NAVI_WORKER_RESULT']=str(result_path);env['NAVI_WORKER_SPAWN_AT']=repr(time.time())
   flags=getattr(subprocess,'CREATE_NO_WINDOW',0)
   proc=subprocess.Popen([sys.executable,str(BASE/'api_worker.py'),str(payload_path)],cwd=str(BASE),env=env,creationflags=flags)
   active[slot]={'proc':proc,'job':job,'index':index,'line':line,'status':status_path,'result':result_path,'started':time.perf_counter()}
@@ -1526,6 +1599,7 @@ def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=No
   for k in ('symnavi_exe','symnavim_conf','symnavim_def'):
    if not resolve_path(cfg[k]).is_file():raise FileNotFoundError(f'{k}がありません: {cfg[k]}')
   cred_started=time.perf_counter();user,pw,server,_=creds(resolve_path(cfg['symnavim_conf']));log.info('STARTUP_PHASE phase=credential_load elapsed=%.2fs',time.perf_counter()-cred_started);path_started=time.perf_counter();rne_root=resolve_path(cfg['rne_folder']);backup=resolve_path(cfg['backup_folder']);dde_work=dde_staging_folder();log.info('STARTUP_PHASE phase=path_prepare elapsed=%.2fs total=%.2fs',time.perf_counter()-path_started,time.perf_counter()-startup_started);log.info('共通一時保存先: %s',dde_work)
+  log_run_environment(dde_work,rne_root)
   engine=str(cfg['settings'].get('extract_engine') or 'api').lower(); set_status(extract_engine=engine); log.info('抽出エンジン engine=%s stability_profile=%s',engine,cfg['settings'].get('stability_profile','stable_api_serial'))
   if any(normalize_output_format(j.get('output_format'),j.get('output_file'))=='accdb' for j in jobs):
    access_prewarm_thread=prewarm_access_async('process_contains_accdb')
@@ -1575,7 +1649,7 @@ def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=No
    if cancel_requested.is_set():raise RunCancelled(f'{job_index-1}/{len(jobs)}件完了後に中断されました')
    j['output_file']=resolve_output_filename(j,cfg); log.info('OUTPUT_NAME job=%s mode=%s pattern=%s resolved_file=%s',j['name'],j.get('naming_mode','fixed'),j.get('output_pattern',''),j['output_file'])
    set_status(current_index=job_index,current_job_id=j['id'],current_job_name=j['name'],output_format=normalize_output_format(j.get('output_format'),j.get('output_file')),output_file=canonical_output_file(j.get('output_file'),normalize_output_format(j.get('output_format'),j.get('output_file'))))
-   preflight_started=phase_log('job_preflight',job=j['name']); progress('open',f'{j["name"]}: 入出力先を確認しています',22,activity_detail='事前確認',activity_value='出力先・保留ファイル・RNEを確認'); rp=resolve_rne_path(j,cfg); out_dir=resolve_path(j.get('output_folder') or cfg['default_output_folder']); fmt=validate_output_contract(j,'before-extraction'); j['_accdb_template']=str(resolve_path(cfg.get('accdb_template','.\\assets\\empty.accdb'))); target=out_dir/j['output_file']; set_status(output_target=str(target)); log.info('実行設定 job=%s format=%s output_file=%s target=%s',j['name'],fmt,j['output_file'],target); apply_pending(target,backup,int(cfg['settings']['backup_generations']),backup_enabled=bool(cfg['settings'].get('backup_enabled',True)),retention_days=int(cfg['settings'].get('backup_retention_days',30)),generation_limit_enabled=bool(cfg['settings'].get('backup_generation_limit_enabled',True)),backup_mode=str(cfg['settings'].get('backup_mode','generations'))); phase_log('job_preflight',preflight_started,job=j['name'],rne=rp,target=target)
+   phase_profile_reset(); preflight_started=phase_log('job_preflight',job=j['name']); progress('open',f'{j["name"]}: 入出力先を確認しています',22,activity_detail='事前確認',activity_value='出力先・保留ファイル・RNEを確認'); rp=resolve_rne_path(j,cfg); out_dir=resolve_path(j.get('output_folder') or cfg['default_output_folder']); fmt=validate_output_contract(j,'before-extraction'); j['_accdb_template']=str(resolve_path(cfg.get('accdb_template','.\\assets\\empty.accdb'))); target=out_dir/j['output_file']; set_status(output_target=str(target)); log.info('実行設定 job=%s format=%s output_file=%s target=%s',j['name'],fmt,j['output_file'],target); apply_pending(target,backup,int(cfg['settings']['backup_generations']),backup_enabled=bool(cfg['settings'].get('backup_enabled',True)),retention_days=int(cfg['settings'].get('backup_retention_days',30)),generation_limit_enabled=bool(cfg['settings'].get('backup_generation_limit_enabled',True)),backup_mode=str(cfg['settings'].get('backup_mode','generations'))); phase_log('job_preflight',preflight_started,job=j['name'],rne=rp,target=target)
    if not rp.is_file():raise FileNotFoundError('RNEがありません: '+str(rp))
    stamp=datetime.now().strftime('%Y%m%d_%H%M%S_%f'); xls=dde_work/f'navi_{job_index}_{stamp}.xls'; local_export=dde_work/'export'; local_export.mkdir(parents=True,exist_ok=True); db=local_export/f'{Path(j["output_file"]).stem}_{stamp}{Path(j["output_file"]).suffix}'; log.info('変換作業先 local=%s',db); esc=lambda x:str(x).replace('"','""')
    api_planned=(db if engine=='api' and fmt=='xlsx' else (dde_work/f'navi_{job_index}_{stamp}.csv' if engine=='api' else xls));common_intermediate=('API_DIRECT_XLSX' if engine=='api' and fmt=='xlsx' else ('CSV' if engine=='api' else 'XLS'))
@@ -1602,7 +1676,7 @@ def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=No
      progress('open',f'{j["name"]}: 相対期間を適用しています',34,activity_detail='Navigator API 期間指定',activity_value=(compute_period(j.get('period'),datetime.now()) or {}).get('summary',''));applied=apply_dynamic_period(api_client,handle,j,datetime.now())
      if applied:log.info('実行設定 job=%s dynamic_period=%s',j['name'],applied.get('summary'))
     progress('save',f'{j["name"]}: APIで問い合わせを実行しています',38,activity_detail='Navigator API 2/3',activity_value='問い合わせ実行・ダウンロード')
-    t=phase_log('api_execute_catalog',job=j['name']); api_number,api_elapsed=api_client.execute(handle); phase_log('api_execute_catalog',t,job=j['name'],number=api_number,api_elapsed=f'{api_elapsed:.2f}s')
+    t=phase_log('api_execute_catalog',job=j['name']); api_number,api_elapsed=api_client.execute(handle); phase_log('api_execute_catalog',t,job=j['name'],number=api_number,api_elapsed=f'{api_elapsed:.2f}s',rows_per_sec=f'{api_number/api_elapsed:.0f}' if api_elapsed>0 else '0')
     t=phase_log('api_get_dimensions',job=j['name']);expected_rows,expected_cols=api_client.dimensions(handle);phase_log('api_get_dimensions',t,job=j['name'],rows=expected_rows,columns=expected_cols)
     api_direct_output=False;api_csv=None
     if fmt=='xlsx':
@@ -1648,7 +1722,7 @@ def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=No
     t=phase_log('format_conversion',job=j['name'],format=fmt); nr,nc=export_data(intermediate,db,j,bool(cfg['settings']['reject_zero_rows']),expected_rows,expected_cols); phase_log('format_conversion',t,job=j['name'],format=fmt,rows=nr,columns=nc)
    progress('publish',f'{j["name"]}: 検査済みファイルを公開しています',90,activity_detail='公開工程',activity_value=str(target))
    t=phase_log('publish',job=j['name']); pub=publish(db,target,backup,int(cfg['settings']['backup_generations']),backup_enabled=bool(cfg['settings'].get('backup_enabled',True)),retention_days=int(cfg['settings'].get('backup_retention_days',30)),generation_limit_enabled=bool(cfg['settings'].get('backup_generation_limit_enabled',True)),backup_mode=str(cfg['settings'].get('backup_mode','generations'))); phase_log('publish',t,job=j['name'],published=pub['published'])
-   total=time.perf_counter()-job_started; results.append(f'{j["name"]}: {nr}件/{nc}列 / {total:.1f}秒'+('' if pub['published'] else f' / 更新保留: {pub["pending"]}')); completed_ids.append(j['id']); set_status(completed_jobs=job_index,queue_completed_ids=list(completed_ids)); log.info('JOB_RESULT job=%s format=%s rows=%s columns=%s elapsed=%.2fs target=%s',j['name'],fmt,nr,nc,total,target); record_job_run(j['id'],j['name'],'ok',trigger,detail=f'{nr}件/{nc}列 / {total:.1f}秒',rows=nr,cols=nc,output_file=j['output_file'])
+   total=time.perf_counter()-job_started; results.append(f'{j["name"]}: {nr}件/{nc}列 / {total:.1f}秒'+('' if pub['published'] else f' / 更新保留: {pub["pending"]}')); completed_ids.append(j['id']); set_status(completed_jobs=job_index,queue_completed_ids=list(completed_ids)); log.info('JOB_RESULT job=%s format=%s rows=%s columns=%s elapsed=%.2fs target=%s',j['name'],fmt,nr,nc,total,target); log.info('JOB_PROFILE job=%s rows=%s columns=%s %s',j['name'],nr,nc,phase_profile_summary()); record_job_run(j['id'],j['name'],'ok',trigger,detail=f'{nr}件/{nc}列 / {total:.1f}秒',rows=nr,cols=nc,output_file=j['output_file'])
    # 元RNEはAPIが直接参照するため削除対象に含めない。生成物だけを後片付けする。
    for p in (xls,locals().get('api_csv'),db):
     try:
