@@ -156,8 +156,18 @@ NaviToSQLite Minimal
   - requirements.txt は config フォルダーにあります。アプリ直下にはありません。
   - 起動時のパッケージ確認は、不足しているPCでのみ実行されます。必要なパッケージが既に入っている
     PCではこの処理に到達しないため、同じ構成でも一方でだけエラーが出ることがあります。
+  - 必要なパッケージは次の4つだけです（全ソースのimportから確認済み）。
+        Flask     … 画面・API（app.py）
+        pywin32   … win32ui / dde / win32com / pythoncom / win32gui など（app.py, tray_icon.py）
+        xlrd      … XLS読み込み（app.py）
+        openpyxl  … XLSX読み書き（app.py）
   - pip の実行に失敗する場合（社内プロキシ・オフラインなど）は、手動で導入してください:
         pip install --user Flask pywin32 xlrd openpyxl
+  - pywin32 を入れても win32ui / dde だけ読み込めない場合は、後処理が必要です:
+        python -m pywin32_postinstall -install
+    （win32ui と dde は site-packages\pythonwin\ に入るため、win32api だけ成功して
+      この2つが失敗することがあります。不足表示が win32ui / dde のときはこれを試してください）
+  - 1.20.6 以降は、エラー画面に「不足: 」として不足しているパッケージ名が表示されます。
   - どのパスを使ったかは logs\vbs_launcher.log の REQUIREMENTS 行で確認できます。
 
 並列実行の起動順と起動間隔（1.20.5）:

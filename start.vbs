@@ -10,7 +10,7 @@ Const LOCAL_APP_FOLDER = "SymfoNaviDataHub"
 
 Dim shell, fso, processEnv
 Dim scriptDir, localAppData, localRoot, runtimeDir, logDir, pycacheDir
-Dim startupLog, vbsLog, target, requirementsFile, requirementsAlt
+Dim startupLog, vbsLog, target, requirementsFile, requirementsAlt, missingList, depName
 Dim pythonCmd, commandLine, rc
 Dim tStart, tPhase
 Dim loadingShown, cacheFile
@@ -109,16 +109,28 @@ End If
 ' Check the selected Python environment. Install only when imports fail.
 If needVerify Then
 tPhase = Timer()
-rc = RunHiddenWait(pythonCmd & " -c " & Quote("import flask,xlrd,win32ui,dde,openpyxl") & _
-                   " >> " & Quote(startupLog) & " 2>&1")
+' Check each package separately. A combined import stops at the first failure,
+' so the dialog could not say which package was actually missing.
+' This runs only on a startup-cache miss, not on every launch.
+missingList = ""
+For Each depName In Array("flask", "xlrd", "win32ui", "dde", "openpyxl")
+    If RunHiddenWait(pythonCmd & " -c " & Quote("import " & depName) & _
+                     " >> " & Quote(startupLog) & " 2>&1") <> 0 Then
+        If missingList <> "" Then missingList = missingList & ", "
+        missingList = missingList & depName
+    End If
+Next
+rc = 0
+If missingList <> "" Then rc = 1
 WriteLog "TIMING dependency_check_seconds=" & FormatNumber(Timer() - tPhase, 2) & " rc=" & rc
 If rc <> 0 Then
-    WriteLog "DEPENDENCY_CHECK failed rc=" & rc
+    WriteLog "DEPENDENCY_CHECK failed rc=" & rc & " missing=" & missingList
 
     If Not fso.FileExists(requirementsFile) Then
         Fail "必要なPythonパッケージが不足しています。", _
              "requirements.txt が見つかりません。" & vbCrLf & _
-             "確認先: " & requirementsFile & vbCrLf & requirementsAlt
+             "確認先: " & requirementsFile & vbCrLf & requirementsAlt & _
+             vbCrLf & "不足: " & missingList
     End If
 
     tPhase = Timer()
@@ -128,7 +140,8 @@ If rc <> 0 Then
     WriteLog "TIMING pip_install_seconds=" & FormatNumber(Timer() - tPhase, 2) & " rc=" & rc
     If rc <> 0 Then
         Fail "Pythonパッケージの導入に失敗しました。", _
-             "ログを確認してください。" & vbCrLf & startupLog
+             "ログを確認してください。" & vbCrLf & startupLog & _
+             vbCrLf & "不足: " & missingList
     End If
 End If
 End If
