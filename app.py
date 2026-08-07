@@ -25,11 +25,18 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.20.4'; APP_VERSION_TITLE='自動実行の取りこぼし対策（遅延実行の猶予）'; APP_RELEASED_AT='2026-08-07'
-BUILD_VERSION=f'{APP_VERSION}-schedule-catchup'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.20.5'; APP_VERSION_TITLE='並列実行の起動順と起動間隔の最適化'; APP_RELEASED_AT='2026-08-07'
+BUILD_VERSION=f'{APP_VERSION}-batch-scheduling'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
-{'version':'1.20.4','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+{'version':'1.20.5','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'並列実行で、重い対象から先に流すようにしました。バッチ全体の所要は一番重い対象で決まるため、それが後ろに回るとその分だけ全体が延びます。規模は前回実績の行数×列数を目安にします（実績が無い対象は大きさが読めないため先に流します）。',
+'ラインの起動を少しずつずらすようにしました。一斉に起動するとNavigator APIのセッション接続が競合し、1本あたりの接続時間が数倍に伸びるためです（実測: 単独 約1.0秒 / 6本同時 2.3〜7.2秒。3回の測定で再現）。',
+'設定「抽出方式 → 並列処理」に「ライン起動の間隔」を追加しました。既定は700ミリ秒です。0にすると従来どおり一斉に起動します。',
+'一番重い対象が先頭になるため、遅れて起動する軽い対象は全体所要に影響しません（実測では最後の対象が終わってから一番重い対象が終わるまで約30秒の余裕があります）。',
+'見込みの短縮は7対象のバッチで約5秒（53.8秒→約48.7秒）です。実行後のログの api_open_session で効果を確認できます。',
+]},
+{'version':'1.20.4','date':APP_RELEASED_AT,'title':'自動実行の取りこぼし対策（遅延実行の猶予）','notes':[
 '時刻を指定した予定（毎日・曜日・毎月・特定日）が、その時刻に別の処理が実行中だとその日は一度も実行されなかった問題に対応しました。予定時刻の1分間しか判定していなかったためです。',
 '設定「安全性とバックアップ」に「自動実行の取りこぼし対策 / 遅延実行の猶予」を追加しました。既定は30分です。予定時刻から猶予時間内であれば、手が空いた時点で遅れて実行します。',
 '猶予中に何度判定しても発火は1日1回です。日をまたぐ猶予は行わないため、翌日に前日ぶんが走ることはありません。',
@@ -627,7 +634,7 @@ def load():
   _prev_profile=cfg['settings'].get('stability_profile')
   if _prev_profile in (None,'stable_api_serial'):
    cfg['settings']['api_parallel_lines']=6; cfg['settings']['stability_profile']='balanced_api_parallel'
-  cfg['settings'].setdefault('api_parallel_lines',6); cfg['settings'].setdefault('stability_profile','balanced_api_parallel'); cfg['settings'].setdefault('backup_enabled',True); _backup_mode_missing='backup_mode' not in cfg['settings']; cfg['settings'].setdefault('backup_mode','generations'); cfg['settings'].setdefault('backup_retention_days',30); cfg['settings'].setdefault('backup_generation_limit_enabled',True); cfg['settings'].setdefault('backup_generations',3); cfg['settings'].setdefault('schedule_catchup_minutes',30)
+  cfg['settings'].setdefault('api_parallel_lines',6); cfg['settings'].setdefault('stability_profile','balanced_api_parallel'); cfg['settings'].setdefault('backup_enabled',True); _backup_mode_missing='backup_mode' not in cfg['settings']; cfg['settings'].setdefault('backup_mode','generations'); cfg['settings'].setdefault('backup_retention_days',30); cfg['settings'].setdefault('backup_generation_limit_enabled',True); cfg['settings'].setdefault('backup_generations',3); cfg['settings'].setdefault('schedule_catchup_minutes',30); cfg['settings'].setdefault('api_worker_stagger_ms',700)
   if _backup_mode_missing:cfg['settings']['backup_generations']=3
   if int(cfg['settings'].get('api_parallel_lines',6) or 6)==2:cfg['settings']['api_parallel_lines']=6
   cfg.setdefault('navigator_api_dll',r'.\Config\NAVIAP\debugdllVC14x64\SymNaviA.dll'); cfg.setdefault('accdb_template','.\\assets\\empty.accdb');
@@ -1554,6 +1561,18 @@ def run_api_process_batch(jobs,cfg,user,pw,server,dde_work,backup,max_lines,trig
  """
  batch_id=datetime.now().strftime('%Y%m%d_%H%M%S_')+uuid.uuid4().hex[:8]
  runtime=dde_work/'parallel_runtime'/('parallel_'+batch_id);runtime.mkdir(parents=True,exist_ok=True)
+ # 重い対象から先に流す。バッチ全体の所要は一番重い対象で決まるため、それを最初に走らせないと
+ # 後ろに回った分だけ全体が延びる。規模は前回実績の 行数×列数 を目安にする（実績が無い対象は
+ # 大きさが読めないので先に始める）。並列実行では対象の順序自体に意味は無い。
+ if len(jobs)>1:
+  runs=load_job_runs()
+  def _estimated_cells(job):
+   run=runs.get(job.get('id')) or {}
+   try:cells=int(run.get('rows') or 0)*int(run.get('cols') or 0)
+   except Exception:cells=0
+   return cells if cells>0 else float('inf')
+  jobs=sorted(jobs,key=_estimated_cells,reverse=True)
+  log.info('BATCH_ORDER strategy=heaviest_first order=%s',[(j['name'],'不明' if _estimated_cells(j)==float('inf') else int(_estimated_cells(j))) for j in jobs])
  queue=deque(enumerate(jobs,1));active={};results=[];failures=[];completed=0
  # 各対象(ジョブ)の実状態を job_id 単位で保持し、完了後に「待機」へ戻る不具合を防ぐ。
  completed_ids=[];failed_ids=[];all_job_ids=[j['id'] for j in jobs]
@@ -1575,8 +1594,14 @@ def run_api_process_batch(jobs,cfg,user,pw,server,dde_work,backup,max_lines,trig
   with active_workers_lock:active_workers[slot]=proc
   update_parallel_line(line,job=job['name'],job_id=job['id'],state='起動',percent=2,detail=f'予約 {index}/{total} / PID {proc.pid}',queue_index=index,slot=slot,started_at=datetime.now().isoformat(timespec='seconds'))
   log.info('WORKER_START batch_id=%s line=%s pid=%s job=%s queue_index=%s/%s',batch_id,line,proc.pid,job['name'],index,total)
+ # ワーカーを一斉に起動すると、Navigator APIのセッション接続が競合して1本あたりの接続時間が
+ # 数倍に伸びる（実測: 単独 約1.0秒 / 6本同時 2.3〜7.2秒）。少しずつずらして接続を重ねない。
+ # 一番重い対象が先頭なので、遅れて起動する軽い対象は全体所要に影響しない。
+ stagger=max(0,int(cfg['settings'].get('api_worker_stagger_ms',700) or 0))/1000.0
  for slot in range(1,max_lines+1):
-  if queue:start_one(slot)
+  if not queue:break
+  if slot>1 and stagger>0 and cancel_requested.wait(stagger):break
+  start_one(slot)
  while active:
   if cancel_requested.is_set():
    log.info('PARALLEL_BATCH_CANCELLED batch_id=%s active=%s queued=%s',batch_id,len(active),len(queue))
