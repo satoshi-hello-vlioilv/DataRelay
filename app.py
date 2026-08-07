@@ -25,11 +25,17 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.20.1'; APP_VERSION_TITLE='処理速度を分析するための計測ログの追加'; APP_RELEASED_AT='2026-08-07'
-BUILD_VERSION=f'{APP_VERSION}-run-diagnostics'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.20.2'; APP_VERSION_TITLE='工程内訳の精度向上（API接続時間の可視化）'; APP_RELEASED_AT='2026-08-07'
+BUILD_VERSION=f'{APP_VERSION}-profile-accuracy'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
-{'version':'1.20.1','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+{'version':'1.20.2','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'JOB_PROFILE の内訳に、Navigator APIのセッション接続・データソース接続・DLL読込の実測時間を追加しました。これまでこれらは内訳不明（other）に入っており、小さい対象では処理時間の8割以上が理由の分からないまま残っていました。',
+'実測ログでの確認例: SIKAHIKINOW（7.0秒）の内訳不明が 5.87秒(83.9%) から 0.22秒(3.1%) になり、APIセッション接続が 5.06秒(72.3%) を占めていたことが1行で分かるようになりました。',
+'RUN_ENVIRONMENT のRNE置き場の応答時間が常に0のまま記録されていた問題を修正しました。設定の「RNEフォルダー」ではなく、対象が実際に参照しているRNEの場所を計測します。',
+'RUN_ENVIRONMENT に計測対象のRNEフォルダーのパス（rne=）を追加しました。',
+]},
+{'version':'1.20.1','date':APP_RELEASED_AT,'title':'処理速度を分析するための計測ログの追加','notes':[
 '処理が遅いときの原因を切り分けられるよう、実行ログへ計測項目を追加しました。ログを見るだけで「APIが遅い」のか「この端末・置き場所が遅い」のかを判断できます。',
 'すべてのログ行にプロセスID（[pid NNNN]）を付けました。並列実行では複数プロセスが同じログへ書き込むため、これまではどの行がどのラインの出来事か追えませんでした。',
 '対象1件ごとに JOB_PROFILE を出力します。どの工程が何秒・全体の何%を占めたかを1行にまとめるため、遅い対象の原因箇所がすぐ分かります。',
@@ -870,6 +876,14 @@ _phase_profile={'started':0.0,'depth':0,'phases':{}}
 def phase_profile_reset():
  _phase_profile['started']=time.perf_counter();_phase_profile['depth']=0;_phase_profile['phases']={}
 
+def phase_profile_add(phase,elapsed):
+ """phase_logを通さない実測値（APIセッション接続など）も内訳へ含める。
+
+ これを入れないとJOB_PROFILEのother=が膨らみ、小さい対象では時間の8割が
+ 内訳不明のまま残ってしまう。
+ """
+ _phase_profile['phases'][phase]=_phase_profile['phases'].get(phase,0.0)+float(elapsed)
+
 def phase_profile_summary():
  total=time.perf_counter()-_phase_profile['started']
  if total<=0:return 'total=0.00s'
@@ -931,7 +945,7 @@ def log_run_environment(work_dir,rne_root):
   try:
    t=time.perf_counter();files=sum(1 for p in Path(rne_root).iterdir() if p.is_file());scan_ms=(time.perf_counter()-t)*1000
   except OSError as e:log.warning('RUN_ENVIRONMENT_SCAN_SKIP error=%s',e)
-  log.info('RUN_ENVIRONMENT cpu=%s%s work_write_mb_s=%.1f rne_scan_ms=%.0f rne_files=%s work=%s base=%s',os.cpu_count() or 0,_memory_status(),write_mb_s,scan_ms,files,work_dir,BASE)
+  log.info('RUN_ENVIRONMENT cpu=%s%s work_write_mb_s=%.1f rne_scan_ms=%.0f rne_files=%s work=%s rne=%s base=%s',os.cpu_count() or 0,_memory_status(),write_mb_s,scan_ms,files,work_dir,rne_root,BASE)
  except Exception as e:
   log.warning('RUN_ENVIRONMENT_FAILED error=%s',e)
 
@@ -1437,15 +1451,15 @@ def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,
   planned=db if fmt=='xlsx' else dde_work/f'navi_{job_index}_{stamp}.csv'
   update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='開始',percent=5,detail=fmt);log.info('PARALLEL_JOB_START line=%s job=%s index=%s/%s format=%s target=%s',line_name,j['name'],job_index,total_jobs,fmt,target)
   log.info('PIPELINE job=%s engine=api parallel_line=%s common_intermediate=%s format=%s planned_intermediate=%s converted=%s target=%s',j['name'],line_name,common_intermediate,fmt,planned,db,target)
-  api_client=NavigatorApi(resolve_path(cfg['symnavi_exe']),log,resolve_path(cfg.get('navigator_api_dll')) if cfg.get('navigator_api_dll') else None,base_dir=BASE)
-  update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='API接続',percent=10,detail='セッション接続');session_started=time.perf_counter();session_elapsed=api_client.open_session(user,pw,server);log.info('PARALLEL_API_SESSION line=%s job=%s dll=%s elapsed=%.2fs is_opened=1',line_name,j['name'],api_client.dll_path,session_elapsed)
+  _dll_started=time.perf_counter();api_client=NavigatorApi(resolve_path(cfg['symnavi_exe']),log,resolve_path(cfg.get('navigator_api_dll')) if cfg.get('navigator_api_dll') else None,base_dir=BASE);phase_profile_add('api_load_dll',time.perf_counter()-_dll_started)
+  update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='API接続',percent=10,detail='セッション接続');session_started=time.perf_counter();session_elapsed=api_client.open_session(user,pw,server);phase_profile_add('api_open_session',session_elapsed);log.info('PARALLEL_API_SESSION line=%s job=%s dll=%s elapsed=%.2fs is_opened=1',line_name,j['name'],api_client.dll_path,session_elapsed)
   profiles=api_data_source_profiles(resolve_path(cfg['symnavim_conf']))
   if not any(p.get('kind')=='oracle' for p in profiles):
    profiles.insert(0,{'section':'NavigatorCredentialFallback','kind':'oracle','user':user,'password':pw,'server':'','option':'','resource':'','resource_kind':'0','credential_source':'navigator_session'})
    log.info('API Oracle接続設定未指定。Navigator認証を1回だけ流用 line=%s job=%s credential_source=navigator_session user_configured=%s password_configured=%s',line_name,j['name'],bool(user),bool(pw))
   for profile in profiles:
    source=profile.get('credential_source') or 'explicit_config'
-   elapsed=api_client.connect_data_source(profile)
+   elapsed=api_client.connect_data_source(profile);phase_profile_add('api_connect_source',elapsed)
    log.info('APIデータソース接続完了 line=%s job=%s section=%s kind=%s credential_source=%s elapsed=%.2fs',line_name,j['name'],profile['section'],profile['kind'],source,elapsed)
   api_rne=rp.resolve();rne_stat=api_rne.stat()
   with chdir_lock:
@@ -1599,7 +1613,10 @@ def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=No
   for k in ('symnavi_exe','symnavim_conf','symnavim_def'):
    if not resolve_path(cfg[k]).is_file():raise FileNotFoundError(f'{k}がありません: {cfg[k]}')
   cred_started=time.perf_counter();user,pw,server,_=creds(resolve_path(cfg['symnavim_conf']));log.info('STARTUP_PHASE phase=credential_load elapsed=%.2fs',time.perf_counter()-cred_started);path_started=time.perf_counter();rne_root=resolve_path(cfg['rne_folder']);backup=resolve_path(cfg['backup_folder']);dde_work=dde_staging_folder();log.info('STARTUP_PHASE phase=path_prepare elapsed=%.2fs total=%.2fs',time.perf_counter()-path_started,time.perf_counter()-startup_started);log.info('共通一時保存先: %s',dde_work)
-  log_run_environment(dde_work,rne_root)
+  # rne_folder設定は使われていない場合がある（対象ごとのrne_pathが優先）。実際にRNEがある場所を測る。
+  try:probe_rne_dir=resolve_rne_path(jobs[0],cfg).parent
+  except Exception:probe_rne_dir=rne_root
+  log_run_environment(dde_work,probe_rne_dir)
   engine=str(cfg['settings'].get('extract_engine') or 'api').lower(); set_status(extract_engine=engine); log.info('抽出エンジン engine=%s stability_profile=%s',engine,cfg['settings'].get('stability_profile','stable_api_serial'))
   if any(normalize_output_format(j.get('output_format'),j.get('output_file'))=='accdb' for j in jobs):
    access_prewarm_thread=prewarm_access_async('process_contains_accdb')

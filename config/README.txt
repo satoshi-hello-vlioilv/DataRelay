@@ -163,6 +163,11 @@ NaviToSQLite Minimal
       spawn_to_import=  Python起動＋app.py読込。BOX上のため環境により数秒かかることがあります。
       import_to_job=    読込完了から抽出開始まで。
   - JOB_PROFILE … 対象1件の工程内訳を1行に集約。時間の長い順に並びます。
+      api_open_session=   Navigator APIのセッション接続。複数ラインが同時に接続すると伸びます
+                          （実測: 6ライン同時=約4.4〜5.4秒 / 単独=約1.0秒）。
+      api_execute_catalog= サーバー側の問い合わせ実行。RNEの内容とサーバー負荷で決まります。
+      api_save_csv=       APIのCSV書き出し。列構成によって速度が10倍近く変わります。
+      other=              内訳に入らなかった時間。ここが大きい場合はご連絡ください。
       例: total=271.86s api_save_csv=243.49s(89.6%) api_execute_catalog=23.47s(8.6%) ...
       どの工程が支配的かが一目で分かります。
   - STEP_END phase=api_save_csv の throughput_kb_s / ms_per_row … CSV書き出しの実効速度。
