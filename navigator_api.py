@@ -464,17 +464,40 @@ class NavigatorApi:
         h_cp,locname=self.get_time_control_point(h,label)
         self.change_period(h_cp,condition,from_time,to_time)
         return {'handle':h_cp,'locate':locname,'label':label or '(時間フィールド)'}
+    _SENTINEL=b'\xfe'
+
+    def _out_string(self,invoke,size=4096):
+        """`name As String` のような文字列出力パラメタを安全に読む。
+
+        VBの宣言では ByRef String だが、このDLLは自前バッファのアドレスを書き込む方式である
+        （NaviGetErrorMessage が char** で正しく読めていることから分かる）。渡したバッファへ
+        直接書く実装もあり得るため、どちらか分からないまま解釈するとポインタ値を文字列として
+        読んでしまう。番兵で埋めたバッファを渡し、書き換わり方から方式を見分ける。
+        ポインタとしての形（上位バイトが0で、それ以外は番兵のまま）が揃ったときだけ参照する。
+        """
+        psize=ctypes.sizeof(ctypes.c_void_p);sent=self._SENTINEL
+        buf=ctypes.create_string_buffer(sent*size,size);rc=ctypes.c_long(-1)
+        invoke(buf,rc)
+        if int(rc.value)!=NAVI_OK:return '',f'rc={int(rc.value)}'
+        raw=bytes(buf.raw)
+        head,tail=raw[:psize],raw[psize:psize+32]
+        if tail==sent*32 and head[-2:]==b'\x00\x00' and head[:psize-2]!=sent*(psize-2):
+            addr=int.from_bytes(head,'little')
+            if 0x10000<addr<0x7fffffffffff:
+                try:return ctypes.string_at(addr).decode('mbcs',errors='replace').strip(),'ptr'
+                except Exception:return '','ptr_bad'
+        body=raw.split(b'\x00',1)[0]
+        if not body or body.startswith(sent):return '','unwritten'
+        return body.decode('mbcs',errors='replace').strip(),'buf'
+
     def get_name_cp(self,h_cp):
         if not hasattr(self.dll,'NaviGetNameCP'):
             return ''
         try:
-            buf=ctypes.create_string_buffer(1024);rc=ctypes.c_long()
-            self.dll.NaviGetNameCP(h_cp,ctypes.byref(rc),NAVI_LABEL,buf)
-            if int(rc.value)==NAVI_OK:
-                return (buf.value or b'').decode('mbcs',errors='replace').strip()
+            name,_why=self._out_string(lambda buf,rc:self.dll.NaviGetNameCP(h_cp,ctypes.byref(rc),NAVI_LABEL,buf))
+            return name
         except Exception:
             return ''
-        return ''
     def list_time_control_points(self,h):
         # RNEに含まれる管理ポイントを列挙し、時間型（TIME/TEMPLATE）を抽出する。
         # DLLが列挙APIを公開していない環境では明示的に失敗させる（手入力にフォールバックしてもらう）。
@@ -522,12 +545,7 @@ class NavigatorApi:
         if not hasattr(self.dll,'NaviGetNameDI'):
             return '','no_export'
         try:
-            buf=ctypes.create_string_buffer(1024);rc=ctypes.c_long(-1)
-            self.dll.NaviGetNameDI(h_di,ctypes.byref(rc),buf)
-            raw=buf.value or b''
-            if int(rc.value)!=NAVI_OK:
-                return '',f'rc={int(rc.value)}'
-            return raw.decode('mbcs',errors='replace').strip(),('ok' if raw else 'empty')
+            return self._out_string(lambda buf,rc:self.dll.NaviGetNameDI(h_di,ctypes.byref(rc),buf))
         except Exception as e:
             return '',f'exc={type(e).__name__}'
 
@@ -585,13 +603,13 @@ class NavigatorApi:
         out=[]
         for name in names:
             found=None
-            for locate,locname in ((NAVI_DATA,'データ'),(NAVI_COND,'条件')):
-                try:
-                    h=self.get_data_item(h_catalog,name,locate=locate)
-                except Exception:
-                    continue
-                if h:
-                    found={'name':name,'removable':True,'locate':locname,'handle':h};break
+            # データ欄のみを対象にする。条件欄のデータ項目は絞り込み用で出力の列にはならないため、
+            # ここに含めると分割できる列を1件多く数えてしまう。
+            try:
+                h=self.get_data_item(h_catalog,name,locate=NAVI_DATA)
+            except Exception:
+                h=0
+            if h:found={'name':name,'removable':True,'locate':'データ','handle':h}
             out.append(found or {'name':name,'removable':False,'locate':'表側など','handle':0})
         return out
 
