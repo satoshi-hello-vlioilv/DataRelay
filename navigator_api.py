@@ -79,10 +79,13 @@ def sync_naviap_runtime(base_dir,source_root=None):
         except Exception as e:report['errors'].append(f'{sf}: {e}')
     return report
 
-def candidate_dlls(symnavi_exe=None,configured_path=None,extra_roots=None,local_only=False):
-    """C:\\NAVIAPを最優先し、利用可能なローカルDLLがなければ共有側を返す。"""
+def candidate_dlls(symnavi_exe=None,configured_path=None,extra_roots=None,local_only=False,local_root=None):
+    """C:\\NAVIAPを最優先し、利用可能なローカルDLLがなければ共有側を返す。
+
+    local_rootは検証用の差し替え口。省略時は従来どおり C:\\NAVIAP を見る。
+    """
     pybits=struct.calcsize('P')*8
-    local_root=Path(r'C:\NAVIAP')
+    local_root=Path(local_root) if local_root else Path(r'C:\NAVIAP')
     rx=re.compile(r'(debugdll|dll)vc(\d+)(x64)?$',re.I)
     local=[]
     for name in NAVIAP_DEPLOY_FOLDERS:
@@ -127,6 +130,24 @@ def candidate_dlls(symnavi_exe=None,configured_path=None,extra_roots=None,local_
     fallback.append(Path('SymNaviA.dll'))
     return local+unique(fallback)
 
+VC_RUNTIME_DLLS=('vcruntime140.dll','msvcp140.dll','vcruntime140_1.dll')
+
+def missing_vc_runtime():
+    """このプロセスと同じbit数で読み込めないVisual C++ランタイムを返す。
+
+    SymNaviA.dllは存在するのに読み込めない場合、原因の多くはここ。
+    SymfoNaviクライアントは32bitのため、64bit側のランタイムだけ入っていない端末がある。
+    vcruntime140_1.dllは64bitにしか無いので32bitでは対象にしない。
+    """
+    if os.name!='nt':return []
+    pybits=struct.calcsize('P')*8
+    out=[]
+    for name in VC_RUNTIME_DLLS:
+        if name=='vcruntime140_1.dll' and pybits!=64:continue
+        try:ctypes.WinDLL(name)
+        except OSError:out.append(name)
+    return out
+
 class NavigatorApiError(RuntimeError):
     def __init__(self,operation,rc,detail=''):
         self.operation=operation;self.rc=int(rc);self.name=ERROR_NAMES.get(int(rc),'NAVI_ERROR_UNKNOWN')
@@ -144,13 +165,21 @@ class NavigatorApi:
             bits=pe_bits(candidate) if Path(candidate).is_file() else None
             if bits and bits!=pybits:
                 msg=f'{candidate}: DLL={bits}bit / Python={pybits}bit のため対象外';errors.append(msg);self.attempts.append({'path':str(candidate),'exists':True,'dll_bits':bits,'python_bits':pybits,'result':'bit_mismatch'});continue
+            cp=Path(candidate)
+            # 実在しない絶対パスは読み込みを試さない。WinDLLの「Could not find module
+            # (or one of its dependencies)」は不在と依存不足を区別できず、原因を誤らせる。
+            if cp.is_absolute() and not cp.is_file():
+                errors.append(f'{candidate}: ファイルがありません');self.attempts.append({'path':str(cp),'exists':False,'dll_bits':None,'python_bits':pybits,'result':'not_found'});continue
             try:
-                cp=Path(candidate)
                 if cp.is_absolute() and cp.parent.is_dir() and hasattr(os,'add_dll_directory'):
                     self.dll_dirs.append(os.add_dll_directory(str(cp.parent)))
                 self.dll=ctypes.WinDLL(str(cp));self.dll_path=str(cp);self.attempts.append({'path':str(cp),'exists':cp.is_file(),'dll_bits':bits,'python_bits':pybits,'result':'loaded'});break
             except OSError as e:
-                errors.append(f'{candidate}: {e}');self.attempts.append({'path':str(candidate),'exists':Path(candidate).is_file(),'dll_bits':bits,'python_bits':pybits,'result':'load_error','error':str(e)})
+                detail=str(e)
+                if cp.is_file():
+                    vc=missing_vc_runtime()
+                    detail+=(f' / DLL自体は存在します。Visual C++ 再頒布可能パッケージ({pybits}bit)が見つかりません: '+', '.join(vc)) if vc else ' / DLL自体は存在します。同一フォルダー内の依存DLLを確認してください'
+                errors.append(f'{candidate}: {detail}');self.attempts.append({'path':str(candidate),'exists':cp.is_file(),'dll_bits':bits,'python_bits':pybits,'result':'load_error','error':detail})
         if not self.dll:raise RuntimeError('SymNaviA.dllを読み込めません。設定したDLLパスと同一フォルダー内の依存DLLを確認してください。'+' | '.join(errors))
         self._bind();self.opened=False;self.catalog=0
     def _bind(self):
