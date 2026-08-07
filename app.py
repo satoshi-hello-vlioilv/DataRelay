@@ -25,11 +25,21 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.19.0'; APP_VERSION_TITLE='通知領域への常駐とワーカー起動の高速化'; APP_RELEASED_AT='2026-07-29'
-BUILD_VERSION=f'{APP_VERSION}-tray-residency-slim-worker'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.20.0'; APP_VERSION_TITLE='重い抽出の大幅高速化と公開処理の不具合修正'; APP_RELEASED_AT='2026-08-07'
+BUILD_VERSION=f'{APP_VERSION}-isolated-api-run'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
-{'version':'1.19.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+{'version':'1.20.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'重いファイルの処理時間を大幅に短縮しました。API方式の抽出は、対象が1件でも必ず独立プロセスで実行するようになります。',
+'これまでは対象が1件だけ、または並列ライン数が1のときはアプリ内で直接抽出しており、この経路ではAPIのCSV書き出しが約45KB/sしか出ていませんでした（独立プロセス経由では0.5〜4MB/s）。重い抽出ほど差が開き、14,357件×177列の実測では書き出しだけで243秒かかっていました。',
+'実測ログからの見込みでは、上記の抽出は約272秒から約51秒（およそ5倍）に短縮されます。',
+'抽出ログに実効速度（throughput_kb_s・ms_per_row）を追加しました。環境ごとの速度差を実機のログだけで比較できます。',
+'更新保留ファイル（*.pending_*）の適用が必ず失敗していた不具合を修正しました。公開自体は成功しているのに直後の照合でファイルが見つからず、7件同時実行のうち6件が成功していてもバッチ全体が異常終了していました。',
+'公開先が他のPCで使用中のとき、再試行のたびに同じバックアップをネットワーク越しにコピーし直していた無駄を解消しました（実測で12回→1回）。',
+'更新保留ファイルの適用に失敗しても、これから行う抽出は止めずに続行するようにしました。保留ファイルは残るため次回あらためて適用されます。',
+'対象が1件のときも実行状況は「ライン 1」として並列実行と同じ表示になります。',
+]},
+{'version':'1.19.0','date':'2026-07-29','title':'通知領域への常駐とワーカー起動の高速化','notes':[
 'ブラウザーのタブを閉じても、実行中・実行キューあり・自動実行の予定ありのいずれかに該当する場合は、通知領域（タスクバー右側）に常駐するようにしました。常駐へ切り替わる際は通知でお知らせします。',
 '通知領域のアイコンから、画面を開く（ダブルクリックまたは右クリックメニュー）・アプリを終了する操作ができます。右クリックメニューには現在の状態（実行中／予定あり／キュー待機）も表示します。',
 '上記の条件に該当する間は、タブを閉じただけでは終了しません。完全に終了するには画面の「アプリを終了」または通知領域の「アプリを終了」を使用してください。実行中の場合は中断してから終了します。',
@@ -37,7 +47,7 @@ CHANGELOG=[
 '並列実行のワーカーがHTTP層（Flask）まで読み込んでいた無駄を解消し、ワーカーの起動時間を約70%短縮しました（1ジョブあたり約110ms、20件で約2秒の短縮）。抽出処理の内容自体は変更していません。',
 '通知領域の常駐はWindowsでのみ動作します。利用できない環境では常駐アイコンなしで従来どおり動作します。',
 ]},
-{'version':'1.18.5','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+{'version':'1.18.5','date':APP_RELEASED_AT,'title':'自動実行・常駐判定の信頼性修正とスケジュール実行の並列化','notes':[
 '【重要】自動実行が「最初の1回」で止まっていた不具合を修正しました。スケジュール投入後にスケジューラー自身が終了しており、2回目以降の予定はアプリを再起動するまで一切実行されない状態でした。',
 '【重要】処理の実行中や自動実行の予定が残っている状態でも、最後のタブを閉じるとアプリが終了していた不具合を修正しました。実行中・予定ありの場合は常駐を継続します（並列実行中のワーカーが親を失って残留する問題も併せて解消）。',
 '集計表（ピボット）の「出力」が常に失敗していた不具合を修正しました。CSV・TXT・EXCEL(xlsx)への出力に対応する処理が未実装だったため追加しました。文字コード・区切りは通常の抽出出力と同じ規則です。',
@@ -67,18 +77,18 @@ CHANGELOG=[
 'グラフは縦棒・横棒・折れ線に対応し、列フィールドを配置した場合は系列として色分け表示します。',
 '認知心理学(タブによるモードの明確な分離・近接・即時フィードバック) / 情報アーキテクチャ(一覧→集計→可視化の段階、カラムリスト→行列値ゾーン) / 色彩調和(既存ティール基調・行/列/値と小計/総計の階調)。',
 ]},
-{'version':'1.15.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':['ハートビート状態をリアルタイム表示し、最終受信・通信遅延・連続失敗・再接続回数を確認できるようにしました。','一時的なWeb接続断ではFlask/Pythonを自動終了しない方式へ変更し、接続復旧後に同じ画面から自動再接続します。','設定DBをConfig\\app_settings.sqlite3へ移動し、旧配置から初回起動時に安全に移行します。','バックアップのON/OFFと保存期間を追加しました。既定はON、30日です。'],},
- {'version':'1.14.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':['対象一覧は出力先リンクだけでフォルダーを開き、それ以外の行ダブルクリックは編集へ統一。右クリックメニューを追加しました。','データビュワーのスライサーと表示列設定を廃止し、標準リストとドラッグ＆ドロップ式2軸集計を切替可能にしました。','DLL診断にPython/DLLのbit数と選定理由を表示。API並列の既定値を6、最大値を24へ拡張しました。']},
- {'version':'1.13.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':['ビュワー上部を一段のコンパクト操作バーへ統合し、データ表示行数を最大化しました。','スライサーを、選択カラムに含まれる値で絞り込む機能へ変更し、列の表示・非表示は専用モーダルへ分離しました。','C:\\NAVIAPのローカルDLLを最優先し、利用可能なDLLがない場合だけConfig\\NAVIAPを使用します。自動コピーは行いません。']},
- {'version':'1.12.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':['製品側C:\\NAVIAPの4フォルダーをConfig\\NAVIAPへ依存DLLごと同期し、そこから利用する方式へ変更しました。','データビュワーを高密度化し、最大10万行の読込、カラムスライサー、列見出しクリックによる並べ替えに対応しました。','進捗画面と処理結果へ対象別の詳しい失敗理由を表示します。']},
- {'version':'1.11.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':['DLL診断へ問題分類と対処方法を追加しました。','公開済みの抽出データを読み取り専用で確認できるデータビュワーを追加しました。SQLite3、CSV、TXT、XLSX、ACCDBに対応します。','検索、50行単位のページ切替、固定ヘッダーおよび行番号に対応しました。']},
- {'version':'1.10.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+{'version':'1.15.0','date':APP_RELEASED_AT,'title':'ハートビート状態のリアルタイム表示','notes':['ハートビート状態をリアルタイム表示し、最終受信・通信遅延・連続失敗・再接続回数を確認できるようにしました。','一時的なWeb接続断ではFlask/Pythonを自動終了しない方式へ変更し、接続復旧後に同じ画面から自動再接続します。','設定DBをConfig\\app_settings.sqlite3へ移動し、旧配置から初回起動時に安全に移行します。','バックアップのON/OFFと保存期間を追加しました。既定はON、30日です。'],},
+ {'version':'1.14.0','date':APP_RELEASED_AT,'title':'対象一覧の操作統一と右クリックメニューの整理','notes':['対象一覧は出力先リンクだけでフォルダーを開き、それ以外の行ダブルクリックは編集へ統一。右クリックメニューを追加しました。','データビュワーのスライサーと表示列設定を廃止し、標準リストとドラッグ＆ドロップ式2軸集計を切替可能にしました。','DLL診断にPython/DLLのbit数と選定理由を表示。API並列の既定値を6、最大値を24へ拡張しました。']},
+ {'version':'1.13.0','date':APP_RELEASED_AT,'title':'ビュワー操作バーのコンパクト化とスライサーの刷新','notes':['ビュワー上部を一段のコンパクト操作バーへ統合し、データ表示行数を最大化しました。','スライサーを、選択カラムに含まれる値で絞り込む機能へ変更し、列の表示・非表示は専用モーダルへ分離しました。','C:\\NAVIAPのローカルDLLを最優先し、利用可能なDLLがない場合だけConfig\\NAVIAPを使用します。自動コピーは行いません。']},
+ {'version':'1.12.0','date':APP_RELEASED_AT,'title':'NAVIAPランタイムのConfigへの同期方式へ変更','notes':['製品側C:\\NAVIAPの4フォルダーをConfig\\NAVIAPへ依存DLLごと同期し、そこから利用する方式へ変更しました。','データビュワーを高密度化し、最大10万行の読込、カラムスライサー、列見出しクリックによる並べ替えに対応しました。','進捗画面と処理結果へ対象別の詳しい失敗理由を表示します。']},
+ {'version':'1.11.0','date':APP_RELEASED_AT,'title':'DLL診断の問題分類とデータビュワーの追加','notes':['DLL診断へ問題分類と対処方法を追加しました。','公開済みの抽出データを読み取り専用で確認できるデータビュワーを追加しました。SQLite3、CSV、TXT、XLSX、ACCDBに対応します。','検索、50行単位のページ切替、固定ヘッダーおよび行番号に対応しました。']},
+ {'version':'1.10.0','date':APP_RELEASED_AT,'title':'SymNaviA.dllの自動検出拡張とNavigator API設定の再設計','notes':[
   'SymNaviA.dllの自動検出をC:\\NAVIAP配下のdebugdllVC*/dllVC*へ拡張し、VC10～VC14および将来のVC番号、x64あり・なしの両方を検索対象にしました。',
   '設定したDLLパスを最優先しつつ、存在・DLL bit数・Python bit数を評価して利用可能な候補を選びます。',
   'Navigator APIの設定内へDLLパス、確認、参照、診断結果を集約し、共通診断にも候補探索結果を反映しました。',
   '情報の近接、一貫した状態色、設定から診断までの一本道を重視してUIを再設計しました。',
  ]},
- {'version':'1.9.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+ {'version':'1.9.0','date':APP_RELEASED_AT,'title':'変数タグの桁数拡張・管理単位の並べ替え/削除・実績削除','notes':[
   'ファイル名の変数タグを高度化しました。時（H）・分（I）・秒（S）にも桁数「1桁」を追加し、時刻に関するタグも1桁で指定できるようにしました（例: h→9、hh→09）。年・月・日と同様に、使う部分ごとに1桁/2桁（年は2桁/4桁）を選んで直感的に桁を調整できます（要望1）。',
   'ファイル出力管理単位の一覧を、ドラッグ&ドロップで並べ替えできるようにしました。並び順はそのまま問い合わせ（実行）順に反映され、変更は即時保存されます。並べ替えは「登録順」表示かつ検索・絞り込みを解除している状態で有効になり、各行のドラッグハンドルから操作します（要望2-①）。',
   '一覧の各管理単位に「削除」を追加しました。確認のうえ、その管理単位の登録内容と自動実行ルールを削除し、即時保存します（要望2-②）。',
@@ -853,6 +863,11 @@ def phase_log(phase,started=None,**values):
  for h in log.handlers:h.flush()
  return elapsed
 
+def save_metrics(path,elapsed,rows):
+ """NaviSaveDataの実効速度。経路や環境ごとの差を実機ログだけで比較できるようにする。"""
+ size=path.stat().st_size if path.exists() else 0
+ return {'size':size,'throughput_kb_s':f'{size/1024/elapsed:.1f}' if elapsed>0 else '0','ms_per_row':f'{elapsed*1000/int(rows):.2f}' if rows else '0'}
+
 def progress(step,label,percent,**extra):
  set_status(step=step,step_label=label,step_percent=percent,current=label,elapsed_seconds=max(0,int(time.time()-getattr(progress,'started',time.time()))),heartbeat_at=datetime.now().isoformat(timespec='seconds'),**extra)
 
@@ -1270,7 +1285,9 @@ def apply_pending(dst,backup_root,generations,backup_enabled=True,retention_days
    except OSError:pass
   log.info('保留ファイル適用完了 %s -> %s',newest,dst)
   return newest
- except PermissionError:
+ except (PermissionError,OSError) as e:
+  # 保留ファイルの適用は最善努力。ここで失敗しても保留は残るので、これから行う抽出は止めない。
+  log.warning('PENDING_APPLY_DEFERRED pending=%s target=%s error=%s',newest,dst,e)
   return None
 
 def publish(src,dst,backup_root,generations,from_pending=False,backup_enabled=True,retention_days=30,generation_limit_enabled=True,backup_mode='generations'):
@@ -1288,13 +1305,17 @@ def publish(src,dst,backup_root,generations,from_pending=False,backup_enabled=Tr
   else:
    copy_started=time.perf_counter();shutil.copy2(src,incoming);log.info('PUBLISH_INCOMING_COPY src=%s incoming=%s size=%s elapsed=%.2fs',src,incoming,incoming.stat().st_size,time.perf_counter()-copy_started)
    if incoming.stat().st_size!=src.stat().st_size:raise IOError('公開先へのコピーサイズが一致しません')
-  deadline=time.time()+3.0; last=None
+  # 照合用サイズはincomingを動かす前に確定させる。
+  # from_pending時のincomingはsrcそのもののため、os.replace後にsrc.stat()はできない。
+  expected_size=incoming.stat().st_size
+  deadline=time.time()+3.0; last=None; backed_up=False
   while time.time()<deadline:
    try:
-    if dst.exists() and backup_enabled:
+    if dst.exists() and backup_enabled and not backed_up:
      backup=bdir/f'{dst.stem}_{stamp}{dst.suffix}'
      try:
-      backup_started=time.perf_counter();shutil.copy2(dst,backup);log.info('PUBLISH_BACKUP_COPY src=%s backup=%s elapsed=%.2fs',dst,backup,time.perf_counter()-backup_started)
+      # 成功したバックアップは取り直さない。公開先ロック時のリトライで同じコピーを繰り返さないため。
+      backup_started=time.perf_counter();shutil.copy2(dst,backup);backed_up=True;log.info('PUBLISH_BACKUP_COPY src=%s backup=%s elapsed=%.2fs',dst,backup,time.perf_counter()-backup_started)
      except (PermissionError,OSError) as e:log.warning('PUBLISH_BACKUP_SKIP error=%s',e)
     replace_started=time.perf_counter();os.replace(incoming,dst);log.info('PUBLISH_ATOMIC_REPLACE target=%s elapsed=%.2fs',dst,time.perf_counter()-replace_started)
     cleanup_started=time.perf_counter();old=sorted(bdir.glob(f'{dst.stem}_*{dst.suffix}'),key=lambda p:p.stat().st_mtime,reverse=True) if backup_enabled else [];removed=0
@@ -1309,7 +1330,7 @@ def publish(src,dst,backup_root,generations,from_pending=False,backup_enabled=Tr
      except OSError:pass
     log.info('PUBLISH_BACKUP_CLEANUP candidates=%s removed=%s elapsed=%.2fs',len(old),removed,time.perf_counter()-cleanup_started)
     verify_started=time.perf_counter();published_size=dst.stat().st_size
-    if published_size!=src.stat().st_size:raise IOError(f'公開後サイズ不一致 source={src.stat().st_size} target={published_size}')
+    if published_size!=expected_size:raise IOError(f'公開後サイズ不一致 source={expected_size} target={published_size}')
     log.info('PUBLISH_FINAL_VERIFY target=%s size=%s elapsed=%.2fs',dst,published_size,time.perf_counter()-verify_started)
     return {'published':True,'path':str(dst)}
    except PermissionError as e:last=e;time.sleep(.25)
@@ -1385,7 +1406,7 @@ def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,
   if not api_direct_output:
    update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='CSV保存',percent=58,detail='API保存')
    api_csv=dde_work/f'navi_{job_index}_{stamp}.csv'
-   t=phase_log('api_save_csv',job=j['name'],line=line_name);save_elapsed=api_client.save_csv(handle,api_csv);phase_log('api_save_csv',t,job=j['name'],line=line_name,api_elapsed=f'{save_elapsed:.2f}s',size=api_csv.stat().st_size if api_csv.exists() else 0)
+   t=phase_log('api_save_csv',job=j['name'],line=line_name);save_elapsed=api_client.save_csv(handle,api_csv);phase_log('api_save_csv',t,job=j['name'],line=line_name,api_elapsed=f'{save_elapsed:.2f}s',**save_metrics(api_csv,save_elapsed,expected_rows))
    if not api_csv.is_file() or api_csv.stat().st_size<=0:raise RuntimeError(f'API中間CSVが作成されませんでした: {api_csv}')
    intermediate=api_csv
   t=phase_log('api_close_catalog',job=j['name'],line=line_name);api_client.close_catalog();phase_log('api_close_catalog',t,job=j['name'],line=line_name)
@@ -1501,7 +1522,7 @@ def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=No
  try:
   startup_started=time.perf_counter();cfg_started=time.perf_counter();cfg=load();log.info('STARTUP_PHASE phase=config_load elapsed=%.2fs',time.perf_counter()-cfg_started);jobs=[j for j in cfg['jobs'] if j.get('enabled') and (not job_ids or j['id'] in job_ids)]
   if not jobs:raise ValueError('実行対象がありません')
-  selection_elapsed=time.perf_counter()-cfg_started;first_job=jobs[0]; first_fmt=normalize_output_format(first_job.get('output_format'),first_job.get('output_file')); first_target=resolve_path(first_job.get('output_folder') or cfg['default_output_folder'])/canonical_output_file(first_job.get('output_file'),first_fmt); progress.started=time.time(); requested_lines=max(1,int(parallel_lines_override or 1)); execution_mode='parallel' if str(cfg['settings'].get('extract_engine') or 'api').lower()=='api' and len(jobs)>1 and requested_lines>1 else 'serial'; set_status(run_id=run_id or uuid.uuid4().hex,execution_mode=execution_mode,requested_lines=requested_lines,parallel_mode=(execution_mode=='parallel'),parallel_lines=[],queue_total=0,queue_waiting=0,queue_active=0,queue_completed=0,queue_completed_ids=[],queue_failed_ids=[],queue_running_ids=[],queue_waiting_ids=[j['id'] for j in jobs],parallel_max_lines=(requested_lines if execution_mode=='parallel' else 0),parallel_speedup=0,batch_job_ids=[j['id'] for j in jobs]); set_status(running=True,current='準備中',current_job_id=first_job['id'],current_job_name=first_job['name'],current_index=1,total_jobs=len(jobs),completed_jobs=0,failed_jobs=0,output_format=first_fmt,output_file=canonical_output_file(first_job.get('output_file'),first_fmt),output_target=str(first_target),started_at=datetime.now().isoformat(timespec='seconds'),elapsed_seconds=0,symnavi_window='起動待ち',step='prepare',step_label='設定を確認しています',step_percent=3,last_result='実行中',error_detail='',job_errors=[]); log.info('BUILD_VERSION=%s',BUILD_VERSION); log.info('処理開始 trigger=%s jobs=%s',trigger,[j['rne'] for j in jobs]);log.info('STARTUP_PHASE phase=config_and_job_selection elapsed=%.2fs',selection_elapsed)
+  selection_elapsed=time.perf_counter()-cfg_started;first_job=jobs[0]; first_fmt=normalize_output_format(first_job.get('output_format'),first_job.get('output_file')); first_target=resolve_path(first_job.get('output_folder') or cfg['default_output_folder'])/canonical_output_file(first_job.get('output_file'),first_fmt); progress.started=time.time(); requested_lines=max(1,min(int(parallel_lines_override or 1),len(jobs))); execution_mode='parallel' if str(cfg['settings'].get('extract_engine') or 'api').lower()=='api' else 'serial'; set_status(run_id=run_id or uuid.uuid4().hex,execution_mode=execution_mode,requested_lines=requested_lines,parallel_mode=(execution_mode=='parallel'),parallel_lines=[],queue_total=0,queue_waiting=0,queue_active=0,queue_completed=0,queue_completed_ids=[],queue_failed_ids=[],queue_running_ids=[],queue_waiting_ids=[j['id'] for j in jobs],parallel_max_lines=(requested_lines if execution_mode=='parallel' else 0),parallel_speedup=0,batch_job_ids=[j['id'] for j in jobs]); set_status(running=True,current='準備中',current_job_id=first_job['id'],current_job_name=first_job['name'],current_index=1,total_jobs=len(jobs),completed_jobs=0,failed_jobs=0,output_format=first_fmt,output_file=canonical_output_file(first_job.get('output_file'),first_fmt),output_target=str(first_target),started_at=datetime.now().isoformat(timespec='seconds'),elapsed_seconds=0,symnavi_window='起動待ち',step='prepare',step_label='設定を確認しています',step_percent=3,last_result='実行中',error_detail='',job_errors=[]); log.info('BUILD_VERSION=%s',BUILD_VERSION); log.info('処理開始 trigger=%s jobs=%s',trigger,[j['rne'] for j in jobs]);log.info('STARTUP_PHASE phase=config_and_job_selection elapsed=%.2fs',selection_elapsed)
   for k in ('symnavi_exe','symnavim_conf','symnavim_def'):
    if not resolve_path(cfg[k]).is_file():raise FileNotFoundError(f'{k}がありません: {cfg[k]}')
   cred_started=time.perf_counter();user,pw,server,_=creds(resolve_path(cfg['symnavim_conf']));log.info('STARTUP_PHASE phase=credential_load elapsed=%.2fs',time.perf_counter()-cred_started);path_started=time.perf_counter();rne_root=resolve_path(cfg['rne_folder']);backup=resolve_path(cfg['backup_folder']);dde_work=dde_staging_folder();log.info('STARTUP_PHASE phase=path_prepare elapsed=%.2fs total=%.2fs',time.perf_counter()-path_started,time.perf_counter()-startup_started);log.info('共通一時保存先: %s',dde_work)
@@ -1509,17 +1530,22 @@ def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=No
   if any(normalize_output_format(j.get('output_format'),j.get('output_file'))=='accdb' for j in jobs):
    access_prewarm_thread=prewarm_access_async('process_contains_accdb')
   api_parallel_lines=max(1,min(int(cfg['settings'].get('api_parallel_max_lines',24) or 24),int(parallel_lines_override if parallel_lines_override is not None else cfg['settings'].get('api_parallel_lines',1) or 1)))
-  log.info('PARALLEL_DECISION engine=%s selected_jobs=%s configured_lines=%s eligible=%s model=process-isolated',engine,len(jobs),api_parallel_lines,engine=='api' and len(jobs)>1 and api_parallel_lines>1)
-  log.info('EXECUTION_MODE mode=%s requested_lines=%s selected_jobs=%s',('parallel-process' if engine=='api' and len(jobs)>1 and api_parallel_lines>1 else 'serial'),api_parallel_lines,len(jobs))
-  if engine=='api' and len(jobs)>1 and api_parallel_lines>1:
+  # API方式は対象が1件でも独立プロセスで実行する。アプリ内で直接DLLを呼ぶとNaviSaveDataが
+  # 一桁遅くなる（実測 約45KB/s に対しワーカー経由は 0.5〜4MB/s）ため、重い抽出ほど差が開く。
+  isolated=engine=='api'
+  log.info('PARALLEL_DECISION engine=%s selected_jobs=%s configured_lines=%s eligible=%s model=process-isolated',engine,len(jobs),api_parallel_lines,isolated)
+  log.info('EXECUTION_MODE mode=%s requested_lines=%s selected_jobs=%s',('parallel-process' if isolated else 'serial'),api_parallel_lines,len(jobs))
+  if isolated:
    results,failures,batch_elapsed=run_api_process_batch(jobs,cfg,user,pw,server,dde_work,backup,api_parallel_lines,trigger)
    if cancel_requested.is_set():raise RunCancelled(f'{len(results)}/{len(jobs)}件完了後に中断されました')
    if failures:
     set_status(job_errors=[{'job':r.get('job'),'error':str(r.get('error') or '')} for r in failures],failed_jobs=len(failures))
-    raise RuntimeError('API並列実行で%d件失敗しました\n'%len(failures)+'\n'.join('・%s: %s'%(r.get('job'),r.get('error')) for r in failures))
-   msg='正常終了 | 全件%sファイル / %.1f秒 | '%(len(results),batch_elapsed)+' | '.join(r['result'] for r in results)
+    raise RuntimeError('API実行で%d件失敗しました\n'%len(failures)+'\n'.join('・%s: %s'%(r.get('job'),r.get('error')) for r in failures))
+   msg='正常終了 | '+(''.join(r['result'] for r in results) if len(results)==1 else '全件%sファイル / %.1f秒 | '%(len(results),batch_elapsed)+' | '.join(r['result'] for r in results))
    progress('complete','すべての処理が完了しました',100);set_status(last_result=msg,last_finished_at=datetime.now().isoformat(timespec='seconds'),elapsed_seconds=int(time.time()-progress.started));log.info(msg)
    return
+  # ここから下はDDE方式（engine='dde'）専用の直列経路。API方式は上のisolatedブロックで必ずreturnする。
+  # engine=='api'の分岐は、DLLを直接読み込む設定に戻せるよう残してあるが通常は通らない。
   if engine=='api':
    from navigator_api import NavigatorApi
    progress('launch','Navigator APIを初期化しています',8); api_client=NavigatorApi(resolve_path(cfg['symnavi_exe']),log,resolve_path(cfg.get('navigator_api_dll')) if cfg.get('navigator_api_dll') else None,base_dir=BASE); set_status(symnavi_window='APIモード')
@@ -1598,7 +1624,7 @@ def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=No
     if not api_direct_output:
      api_csv=dde_work/f'navi_{job_index}_{stamp}.csv'
      progress('wait',f'{j["name"]}: API結果を高速CSVへ保存しています',50,activity_detail='Navigator API 3/3',activity_value=str(api_csv))
-     t=phase_log('api_save_csv',job=j['name']);save_elapsed=api_client.save_csv(handle,api_csv);phase_log('api_save_csv',t,job=j['name'],api_elapsed=f'{save_elapsed:.2f}s',size=api_csv.stat().st_size if api_csv.exists() else 0)
+     t=phase_log('api_save_csv',job=j['name']);save_elapsed=api_client.save_csv(handle,api_csv);phase_log('api_save_csv',t,job=j['name'],api_elapsed=f'{save_elapsed:.2f}s',**save_metrics(api_csv,save_elapsed,expected_rows))
      if not api_csv.is_file() or api_csv.stat().st_size<=0:raise RuntimeError(f'API中間CSVが作成されませんでした: {api_csv}')
      intermediate=api_csv
     progress('close',f'{j["name"]}: APIカタログを解放しています',62,activity_detail='API抽出完了',activity_value=f'期待値 {expected_rows}行 x {expected_cols}列');t=phase_log('api_close_catalog',job=j['name']);api_client.close_catalog();phase_log('api_close_catalog',t,job=j['name'])
