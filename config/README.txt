@@ -156,6 +156,14 @@ NaviToSQLite Minimal
   - requirements.txt は config フォルダーにあります。アプリ直下にはありません。
   - 起動時のパッケージ確認は、不足しているPCでのみ実行されます。必要なパッケージが既に入っている
     PCではこの処理に到達しないため、同じ構成でも一方でだけエラーが出ることがあります。
+  - 1.20.7 以降、起動に必須なのは Flask だけです。他の3つが無くても起動します
+    （不足している機能を使ったときに初めてエラーになります）。
+      API方式でのSQLite3/CSV/TXT出力 … pywin32・xlrd は不要です
+      通知領域のアイコン             … pywin32 が必要（無い場合はアイコンなしで動作）
+      XLSX出力・ビュワーのXLSX表示   … openpyxl が必要
+      ACCDB出力                      … pywin32 が必要
+      DDE方式での抽出                … pywin32(win32ui, dde) と xlrd が必要
+    社内プロキシ等でpipが使えない環境（407認証エラーなど）でも、まず起動できます。
   - 必要なパッケージは次の4つだけです（全ソースのimportから確認済み）。
         Flask     … 画面・API（app.py）
         pywin32   … win32ui / dde / win32com / pythoncom / win32gui など（app.py, tray_icon.py）

@@ -10,7 +10,7 @@ Const LOCAL_APP_FOLDER = "SymfoNaviDataHub"
 
 Dim shell, fso, processEnv
 Dim scriptDir, localAppData, localRoot, runtimeDir, logDir, pycacheDir
-Dim startupLog, vbsLog, target, requirementsFile, requirementsAlt, missingList, depName
+Dim startupLog, vbsLog, target, requirementsFile, requirementsAlt, missingList, depName, requiredMissing
 Dim pythonCmd, commandLine, rc
 Dim tStart, tPhase
 Dim loadingShown, cacheFile
@@ -109,39 +109,43 @@ End If
 ' Check the selected Python environment. Install only when imports fail.
 If needVerify Then
 tPhase = Timer()
-' Check each package separately. A combined import stops at the first failure,
-' so the dialog could not say which package was actually missing.
-' This runs only on a startup-cache miss, not on every launch.
-missingList = ""
-For Each depName In Array("flask", "xlrd", "win32ui", "dde", "openpyxl")
-    If RunHiddenWait(pythonCmd & " -c " & Quote("import " & depName) & _
-                     " >> " & Quote(startupLog) & " 2>&1") <> 0 Then
-        If missingList <> "" Then missingList = missingList & ", "
-        missingList = missingList & depName
-    End If
-Next
+' Only Flask is needed for the app to start. xlrd / win32ui / dde back DDE
+' extraction and XLS reading, openpyxl backs XLSX; each reports at the point of
+' use, so a site that cannot reach PyPI can still run everything else.
+missingList = MissingPackages()
+requiredMissing = ""
+If InStr(missingList, "flask") > 0 Then requiredMissing = "flask"
 rc = 0
 If missingList <> "" Then rc = 1
 WriteLog "TIMING dependency_check_seconds=" & FormatNumber(Timer() - tPhase, 2) & " rc=" & rc
 If rc <> 0 Then
-    WriteLog "DEPENDENCY_CHECK failed rc=" & rc & " missing=" & missingList
+    WriteLog "DEPENDENCY_CHECK failed rc=" & rc & " missing=" & missingList & " required=" & requiredMissing
 
-    If Not fso.FileExists(requirementsFile) Then
-        Fail "必要なPythonパッケージが不足しています。", _
-             "requirements.txt が見つかりません。" & vbCrLf & _
-             "確認先: " & requirementsFile & vbCrLf & requirementsAlt & _
-             vbCrLf & "不足: " & missingList
+    If fso.FileExists(requirementsFile) Then
+        tPhase = Timer()
+        rc = RunHiddenWait(pythonCmd & " -m pip install --user -r " & _
+                           Quote(requirementsFile) & _
+                           " >> " & Quote(startupLog) & " 2>&1")
+        WriteLog "TIMING pip_install_seconds=" & FormatNumber(Timer() - tPhase, 2) & " rc=" & rc
+        ' pip can report success while an import still fails, so ask again.
+        missingList = MissingPackages()
+        requiredMissing = ""
+        If InStr(missingList, "flask") > 0 Then requiredMissing = "flask"
+        WriteLog "DEPENDENCY_RECHECK missing=" & missingList
+    Else
+        WriteLog "REQUIREMENTS missing file=" & requirementsFile & " alt=" & requirementsAlt
     End If
 
-    tPhase = Timer()
-    rc = RunHiddenWait(pythonCmd & " -m pip install --user -r " & _
-                       Quote(requirementsFile) & _
-                       " >> " & Quote(startupLog) & " 2>&1")
-    WriteLog "TIMING pip_install_seconds=" & FormatNumber(Timer() - tPhase, 2) & " rc=" & rc
-    If rc <> 0 Then
-        Fail "Pythonパッケージの導入に失敗しました。", _
-             "ログを確認してください。" & vbCrLf & startupLog & _
-             vbCrLf & "不足: " & missingList
+    If requiredMissing <> "" Then
+        Fail "必要なPythonパッケージが不足しています。", _
+             "不足: " & missingList & vbCrLf & _
+             "requirements.txt: " & requirementsFile & vbCrLf & _
+             "ログ: " & startupLog
+    End If
+
+    If missingList <> "" Then
+        ' Missing optional packages only disable their own feature.
+        WriteLog "DEPENDENCY_OPTIONAL_MISSING continue missing=" & missingList
     End If
 End If
 End If
@@ -168,7 +172,8 @@ If WaitForApplication(STARTUP_TIMEOUT_SECONDS) Then
     WriteLog "TIMING launch_to_server_ready_seconds=" & FormatNumber(Timer() - tPhase, 2)
     WriteLog "TIMING total_startup_seconds=" & FormatNumber(Timer() - tStart, 2)
     WriteLog "SERVER_READY url=" & APP_URL
-    WriteStartupCache pythonCmd
+    ' Cache only a fully satisfied environment, so a later manual install is noticed.
+    If missingList = "" Then WriteStartupCache pythonCmd
     EnsureBrowser
     WScript.Quit 0
 End If
@@ -357,6 +362,20 @@ Sub EnsureBrowser()
         OpenBrowser
     End If
 End Sub
+
+Function MissingPackages()
+    ' Import each package on its own; a combined import stops at the first failure.
+    Dim n, out
+    out = ""
+    For Each n In Array("flask", "xlrd", "win32ui", "dde", "openpyxl")
+        If RunHiddenWait(pythonCmd & " -c " & Quote("import " & n) & _
+                         " >> " & Quote(startupLog) & " 2>&1") <> 0 Then
+            If out <> "" Then out = out & ", "
+            out = out & n
+        End If
+    Next
+    MissingPackages = out
+End Function
 
 Function ReqSig()
     Dim f
