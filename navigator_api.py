@@ -53,6 +53,55 @@ def pe_bits(path):
         return {0x14c:32,0x8664:64,0xaa64:64}.get(machine)
     except OSError:return None
 
+def pe_exports(path):
+    """DLLがエクスポートしている関数名を返す（読み込まずにPEのエクスポート表を解析する）。
+
+    アプリがバインドしている関数だけでは、DLLに何ができるのか分からない。
+    列の選択・並べ替えなど未使用の機能が公開されているかを、実機で確かめるために使う。
+    """
+    try:
+        with open(path,'rb') as f:data=f.read()
+    except OSError:return []
+    try:
+        if data[:2]!=b'MZ':return []
+        pe=int.from_bytes(data[0x3c:0x40],'little')
+        if data[pe:pe+4]!=b'PE\0\0':return []
+        sections=int.from_bytes(data[pe+6:pe+8],'little')
+        opt_size=int.from_bytes(data[pe+20:pe+22],'little')
+        opt=pe+24
+        magic=int.from_bytes(data[opt:opt+2],'little')
+        dd=opt+(96 if magic==0x10b else 112)          # DataDirectory[0] = エクスポート表
+        exp_rva=int.from_bytes(data[dd:dd+4],'little')
+        if not exp_rva:return []
+        secs=[]
+        base=pe+24+opt_size
+        for i in range(sections):
+            h=base+i*40
+            secs.append((int.from_bytes(data[h+12:h+16],'little'),      # VirtualAddress
+                         int.from_bytes(data[h+8:h+12],'little'),       # VirtualSize
+                         int.from_bytes(data[h+16:h+20],'little'),      # SizeOfRawData
+                         int.from_bytes(data[h+20:h+24],'little')))     # PointerToRawData
+        def off(rva):
+            for va,vs,rs,pr in secs:
+                if va<=rva<va+max(vs,rs):return rva-va+pr
+            return None
+        e=off(exp_rva)
+        if e is None:return []
+        count=int.from_bytes(data[e+24:e+28],'little')                  # NumberOfNames
+        names_rva=int.from_bytes(data[e+32:e+36],'little')              # AddressOfNames
+        table=off(names_rva)
+        if table is None:return []
+        out=[]
+        for i in range(count):
+            r=int.from_bytes(data[table+i*4:table+i*4+4],'little')
+            o=off(r)
+            if o is None:continue
+            end=data.index(b'\0',o)
+            out.append(data[o:end].decode('ascii','replace'))
+        return sorted(out)
+    except Exception:
+        return []
+
 NAVIAP_DEPLOY_FOLDERS=('debugdllVC14','debugdllVC14x64','dllVC14','dllVC14x64')
 
 def sync_naviap_runtime(base_dir,source_root=None):
@@ -227,7 +276,9 @@ class NavigatorApi:
         if norm==local or norm.startswith(local+os.sep):reason='ローカルのC:\\NAVIAP配下に、Pythonと同じ%d bitの利用可能なDLLがあるため最優先で選択しました。'%pybits
         elif 'config'+os.sep+'naviap' in norm.lower():reason='ローカルのC:\\NAVIAP配下に利用可能な%d bit DLLがなかったため、アプリ側Config\\NAVIAPのDLLをフォールバック選択しました。'%pybits
         else:reason='ローカル標準配置に利用可能なDLLがないため、互換候補の中からPythonと同じ%d bitのDLLを選択しました。'%pybits
-        return {'ok':True,'dll':self.dll_path,'dll_bits':dllbits,'python_bits':pybits,'mode':'Navigator API','attempts':self.attempts,'deploy_report':self.deploy_report,'selection_reason':reason,'bit_diagnosis':f'Python {pybits} bit / DLL {dllbits or "不明"} bit / '+('一致' if dllbits==pybits else '不一致')}
+        exports=pe_exports(self.dll_path)
+        navi=[x for x in exports if x.lower().startswith('navi')]
+        return {'ok':True,'dll':self.dll_path,'dll_bits':dllbits,'python_bits':pybits,'mode':'Navigator API','attempts':self.attempts,'deploy_report':self.deploy_report,'selection_reason':reason,'exports':navi,'exports_total':len(exports),'exports_bound':sorted(n for n in navi if hasattr(self.dll,n)),'bit_diagnosis':f'Python {pybits} bit / DLL {dllbits or "不明"} bit / '+('一致' if dllbits==pybits else '不一致')}
     def error_code(self):
         code=ctypes.c_long()
         try:self.dll.NaviGetErrorCode(ctypes.byref(code));return int(code.value)
