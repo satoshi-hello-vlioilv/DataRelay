@@ -25,11 +25,18 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.20.3'; APP_VERSION_TITLE='抽出開始前の待ち時間の計測'; APP_RELEASED_AT='2026-08-07'
-BUILD_VERSION=f'{APP_VERSION}-preflight-timing'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.20.4'; APP_VERSION_TITLE='自動実行の取りこぼし対策（遅延実行の猶予）'; APP_RELEASED_AT='2026-08-07'
+BUILD_VERSION=f'{APP_VERSION}-schedule-catchup'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
-{'version':'1.20.3','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+{'version':'1.20.4','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'時刻を指定した予定（毎日・曜日・毎月・特定日）が、その時刻に別の処理が実行中だとその日は一度も実行されなかった問題に対応しました。予定時刻の1分間しか判定していなかったためです。',
+'設定「安全性とバックアップ」に「自動実行の取りこぼし対策 / 遅延実行の猶予」を追加しました。既定は30分です。予定時刻から猶予時間内であれば、手が空いた時点で遅れて実行します。',
+'猶予中に何度判定しても発火は1日1回です。日をまたぐ猶予は行わないため、翌日に前日ぶんが走ることはありません。',
+'0分に設定すると従来どおり予定時刻の1分間だけを見ます。',
+'「N分ごと」の間隔指定の予定は従来どおりで、影響はありません。',
+]},
+{'version':'1.20.3','date':APP_RELEASED_AT,'title':'抽出開始前の待ち時間の計測','notes':[
 '抽出が始まる前の待ち時間を計測できるようにしました。実測ログで、6ライン同時起動時に対象ごと約3.8秒の理由不明な待ちが残っていたためです（単独起動の7件目では0.2秒）。',
 'JOB_PROFILE に pending_apply（更新保留ファイルの確認・適用）と job_preflight（出力先やRNEの確認）を追加しました。',
 'PENDING_SCAN を追加しました。更新保留ファイルを探すために公開先フォルダーを列挙した時間と該当件数を記録します。公開先がネットワーク共有の場合、並列ライン数だけ同時に列挙するため、共有が重い環境では待ち時間になり得ます。',
@@ -620,7 +627,7 @@ def load():
   _prev_profile=cfg['settings'].get('stability_profile')
   if _prev_profile in (None,'stable_api_serial'):
    cfg['settings']['api_parallel_lines']=6; cfg['settings']['stability_profile']='balanced_api_parallel'
-  cfg['settings'].setdefault('api_parallel_lines',6); cfg['settings'].setdefault('stability_profile','balanced_api_parallel'); cfg['settings'].setdefault('backup_enabled',True); _backup_mode_missing='backup_mode' not in cfg['settings']; cfg['settings'].setdefault('backup_mode','generations'); cfg['settings'].setdefault('backup_retention_days',30); cfg['settings'].setdefault('backup_generation_limit_enabled',True); cfg['settings'].setdefault('backup_generations',3)
+  cfg['settings'].setdefault('api_parallel_lines',6); cfg['settings'].setdefault('stability_profile','balanced_api_parallel'); cfg['settings'].setdefault('backup_enabled',True); _backup_mode_missing='backup_mode' not in cfg['settings']; cfg['settings'].setdefault('backup_mode','generations'); cfg['settings'].setdefault('backup_retention_days',30); cfg['settings'].setdefault('backup_generation_limit_enabled',True); cfg['settings'].setdefault('backup_generations',3); cfg['settings'].setdefault('schedule_catchup_minutes',30)
   if _backup_mode_missing:cfg['settings']['backup_generations']=3
   if int(cfg['settings'].get('api_parallel_lines',6) or 6)==2:cfg['settings']['api_parallel_lines']=6
   cfg.setdefault('navigator_api_dll',r'.\Config\NAVIAP\debugdllVC14x64\SymNaviA.dll'); cfg.setdefault('accdb_template','.\\assets\\empty.accdb');
@@ -1840,11 +1847,17 @@ def command_dispatcher():
    log.info('COMMAND_QUEUE_END id=%s remaining=%s',item['id'],len(command_queue))
    command_queue_event.set()
 
-def schedule_key(job,rule,now):
+def schedule_key(job,rule,now,grace_minutes=0):
  kind=rule.get('type','daily'); tm=rule.get('time','06:00'); hh,mm=map(int,tm.split(':')) if ':' in tm else (6,0)
  if kind=='interval':
   mins=max(1,int(rule.get('interval_minutes',60))); return str(int(now.timestamp()//(mins*60))) if rule.get('enabled') else None
- if now.hour!=hh or now.minute!=mm:return None
+ # 予定時刻ちょうどの1分間だけを見ていると、その1分が他の処理と重なっただけで
+ # その日の実行が丸ごと飛ぶ。猶予時間内なら同じ鍵を返し、手が空いた時点で実行させる。
+ # 鍵は日付＋時刻なので、猶予中に何度判定しても1日1回しか発火しない。
+ # 日をまたぐ猶予は行わない（翌日に前日ぶんが走る事故を避ける）。
+ scheduled=now.replace(hour=hh,minute=mm,second=0,microsecond=0)
+ delay=(now-scheduled).total_seconds()
+ if delay<0 or delay>=max(60,int(grace_minutes or 0)*60):return None
  if kind=='daily':return now.strftime('%Y-%m-%d')+tm
  if kind=='weekdays' and now.weekday() in rule.get('weekdays',[]):return now.strftime('%Y-%m-%d')+tm
  if kind=='monthly' and now.day in rule.get('month_days',[1]):return now.strftime('%Y-%m-%d')+tm
@@ -2061,12 +2074,13 @@ def scheduler():
   try:
    if status['running']:continue
    cfg=load(); now=datetime.now(); st=load_scheduler_state()
+   catchup=int(cfg['settings'].get('schedule_catchup_minutes',30) or 0)
    due_ids=[]; due_rules=[]
    for j in cfg['jobs']:
     if not j.get('enabled'):continue
     for r in j.get('schedules',[]):
      if not r.get('enabled'):continue
-     key=schedule_key(j,r,now); state_key=f'{j["id"]}:{r["id"]}'
+     key=schedule_key(j,r,now,catchup); state_key=f'{j["id"]}:{r["id"]}'
      if key and st.get(state_key)!=key:
       st[state_key]=key; save_scheduler_state(state_key,key); due_ids.append(j['id']); due_rules.append(r.get('name',r['type'])); break
    if due_ids:
