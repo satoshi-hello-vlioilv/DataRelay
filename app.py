@@ -25,11 +25,17 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.20.2'; APP_VERSION_TITLE='工程内訳の精度向上（API接続時間の可視化）'; APP_RELEASED_AT='2026-08-07'
-BUILD_VERSION=f'{APP_VERSION}-profile-accuracy'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.20.3'; APP_VERSION_TITLE='抽出開始前の待ち時間の計測'; APP_RELEASED_AT='2026-08-07'
+BUILD_VERSION=f'{APP_VERSION}-preflight-timing'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
-{'version':'1.20.2','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+{'version':'1.20.3','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'抽出が始まる前の待ち時間を計測できるようにしました。実測ログで、6ライン同時起動時に対象ごと約3.8秒の理由不明な待ちが残っていたためです（単独起動の7件目では0.2秒）。',
+'JOB_PROFILE に pending_apply（更新保留ファイルの確認・適用）と job_preflight（出力先やRNEの確認）を追加しました。',
+'PENDING_SCAN を追加しました。更新保留ファイルを探すために公開先フォルダーを列挙した時間と該当件数を記録します。公開先がネットワーク共有の場合、並列ライン数だけ同時に列挙するため、共有が重い環境では待ち時間になり得ます。',
+'次回の実行ログで、この待ちが公開先フォルダーの列挙によるものかどうかが確定します。',
+]},
+{'version':'1.20.2','date':APP_RELEASED_AT,'title':'工程内訳の精度向上（API接続時間の可視化）','notes':[
 'JOB_PROFILE の内訳に、Navigator APIのセッション接続・データソース接続・DLL読込の実測時間を追加しました。これまでこれらは内訳不明（other）に入っており、小さい対象では処理時間の8割以上が理由の分からないまま残っていました。',
 '実測ログでの確認例: SIKAHIKINOW（7.0秒）の内訳不明が 5.87秒(83.9%) から 0.22秒(3.1%) になり、APIセッション接続が 5.06秒(72.3%) を占めていたことが1行で分かるようになりました。',
 'RUN_ENVIRONMENT のRNE置き場の応答時間が常に0のまま記録されていた問題を修正しました。設定の「RNEフォルダー」ではなく、対象が実際に参照しているRNEの場所を計測します。',
@@ -1356,7 +1362,12 @@ def _pending_pattern(dst):
 
 def apply_pending(dst,backup_root,generations,backup_enabled=True,retention_days=30,generation_limit_enabled=True,backup_mode='generations'):
  """Apply the newest deferred output before the next extraction, if the target is no longer locked."""
+ # globは公開先フォルダー（多くはネットワーク共有）を丸ごと列挙する。並列ラインの数だけ
+ # 同時に走るため、共有が重い環境では抽出開始前の待ち時間になり得る。実測を必ず残す。
+ _scan_started=time.perf_counter()
  pending=sorted(dst.parent.glob(_pending_pattern(dst)),key=lambda p:p.stat().st_mtime,reverse=True)
+ scan_elapsed=time.perf_counter()-_scan_started
+ log.info('PENDING_SCAN dir=%s pattern=%s matched=%s elapsed=%.2fs',dst.parent,_pending_pattern(dst),len(pending),scan_elapsed)
  if not pending:return None
  newest=pending[0]
  try:
@@ -1438,17 +1449,22 @@ def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,
  except Exception:_worker_spawn_at=0
  if _worker_spawn_at:log.info('WORKER_READY line=%s job=%s spawn_to_import=%.2fs import_to_job=%.2fs note=interpreter_init+module_import(BOX)',line_name,j.get('name'),_APP_IMPORT_DONE_AT-_worker_spawn_at,time.time()-_APP_IMPORT_DONE_AT)
  try:
+  _preflight_started=time.perf_counter()
   j['output_file']=resolve_output_filename(j,cfg); log.info('OUTPUT_NAME line=%s job=%s mode=%s pattern=%s resolved_file=%s',line_name,j.get('name'),j.get('naming_mode','fixed'),j.get('output_pattern',''),j['output_file'])
   fmt=validate_output_contract(j,'before-extraction')
   j['_accdb_template']=str(resolve_path(cfg.get('accdb_template','.\\assets\\empty.accdb')))
   rp=resolve_rne_path(j,cfg);out_dir=resolve_path(j.get('output_folder') or cfg['default_output_folder']);target=out_dir/j['output_file']
+  # 保留ファイルの確認・適用は公開先(ネットワーク共有)への操作。抽出前の待ちとして別枠で計上する。
+  _pending_started=time.perf_counter()
   apply_pending(target,backup,int(cfg['settings']['backup_generations']),backup_enabled=bool(cfg['settings'].get('backup_enabled',True)),retention_days=int(cfg['settings'].get('backup_retention_days',30)),generation_limit_enabled=bool(cfg['settings'].get('backup_generation_limit_enabled',True)),backup_mode=str(cfg['settings'].get('backup_mode','generations')))
+  _pending_elapsed=time.perf_counter()-_pending_started;phase_profile_add('pending_apply',_pending_elapsed)
   if not rp.is_file():raise FileNotFoundError('RNEがありません: '+str(rp))
   stamp=datetime.now().strftime('%Y%m%d_%H%M%S_%f')+f'_L{job_index}'
   xls=dde_work/f'navi_{job_index}_{stamp}.xls';local_export=dde_work/'export';local_export.mkdir(parents=True,exist_ok=True)
   db=local_export/f'{Path(j["output_file"]).stem}_{stamp}{Path(j["output_file"]).suffix}'
   common_intermediate='API_DIRECT_XLSX' if fmt=='xlsx' else 'CSV'
   planned=db if fmt=='xlsx' else dde_work/f'navi_{job_index}_{stamp}.csv'
+  phase_profile_add('job_preflight',max(0.0,time.perf_counter()-_preflight_started-_pending_elapsed))
   update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='開始',percent=5,detail=fmt);log.info('PARALLEL_JOB_START line=%s job=%s index=%s/%s format=%s target=%s',line_name,j['name'],job_index,total_jobs,fmt,target)
   log.info('PIPELINE job=%s engine=api parallel_line=%s common_intermediate=%s format=%s planned_intermediate=%s converted=%s target=%s',j['name'],line_name,common_intermediate,fmt,planned,db,target)
   _dll_started=time.perf_counter();api_client=NavigatorApi(resolve_path(cfg['symnavi_exe']),log,resolve_path(cfg.get('navigator_api_dll')) if cfg.get('navigator_api_dll') else None,base_dir=BASE);phase_profile_add('api_load_dll',time.perf_counter()-_dll_started)
