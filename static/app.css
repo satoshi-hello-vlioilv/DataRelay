@@ -285,16 +285,28 @@ tr:has(.rowprogress.is-running) td{background:#f6fcfd}tr:has(.rowprogress.is-err
    ============================================================ */
 /* --- editor tabs --- */
 .editor-tabs{display:flex;gap:8px;padding:4px;background:#eef3f5;border:1px solid #d7e0e5;border-radius:10px;margin-bottom:14px}
-.editor-tab{flex:1;display:flex;align-items:center;gap:9px;background:transparent;color:#4a6270;border:1px solid transparent;border-radius:8px;padding:9px 12px;text-align:left;cursor:pointer;position:relative;min-width:0}
+.editor-tab{flex:1 1 0;display:flex;align-items:center;gap:9px;background:transparent;color:#4a6270;border:1px solid transparent;border-radius:8px;padding:9px 12px;text-align:left;cursor:pointer;position:relative;min-width:0}
 .editor-tab:hover{background:#e2ecef}
 .editor-tab.on{background:#fff;border-color:#bfe1e6;box-shadow:0 1px 5px #15384d1a}
 .etab-badge{flex:none;width:26px;height:26px;border-radius:8px;display:grid;place-items:center;font-size:12px;font-weight:900;font-style:normal;background:#dbe7eb;color:#4a6270}
 .editor-tab.on .eb-io{background:#e6f3f6;color:#0b6d86}
 .editor-tab.on .eb-sched{background:#f1eaf9;color:#5c3f96}
+.editor-tab.on .eb-name{background:#eaf1fb;color:#2a5699}
+.editor-tab.on .eb-period{background:#e9f6ef;color:#0a6b4d}
+.editor-tab.on .eb-tool{background:#fdf0e3;color:#8a5a24}
+/* ツールは手順ではないので、区切りを入れて番号を持たせない。手順との階層差を見た目で示す。 */
+.editor-tabsep{flex:none;width:1px;align-self:stretch;margin:4px 2px;background:#cfdce1}
+.editor-tab.etab-tool{flex:0 1 auto}
+.editor-tab.etab-tool .etab-badge{font-size:11px}
 .etab-text{display:grid;gap:1px;min-width:0}
 .etab-text b{font-size:13px;font-weight:800;color:#31505d;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .editor-tab[data-etab="io"].on .etab-text b{color:#0b6d86}
 .editor-tab[data-etab="schedule"].on .etab-text b{color:#5c3f96}
+.editor-tab[data-etab="basic"].on .etab-text b{color:#0b6d86}
+.editor-tab[data-etab="naming"].on .etab-text b{color:#2a5699}
+.editor-tab[data-etab="period"].on .etab-text b{color:#0a6b4d}
+.editor-tab[data-etab="inspect"].on .etab-text b{color:#8a5a24}
+#etab-period-on{background:#0a6b4d}
 .etab-text small{font-size:10.5px;color:#748790;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .etab-count{position:absolute;top:7px;right:9px;min-width:20px;height:18px;padding:0 6px;border-radius:9px;background:#5c3f96;color:#fff;font-size:10.5px;font-weight:800;display:inline-flex;align-items:center;justify-content:center}
 .editor-pane{display:none;animation:etab-fade .18s ease}
@@ -334,8 +346,9 @@ tr:has(.rowprogress.is-running) td{background:#f6fcfd}tr:has(.rowprogress.is-err
    - 認知心理学(近接・一貫性) / 情報アーキテクチャ(入力→結果→部品) / 色彩調和(既存パレット踏襲)
    ============================================================ */
 /* --- 要望1: エディタ本文の高さを固定し、タブ間で寸法を一定に保つ --- */
-#editor .modalbody{height:min(72vh,600px)}
-@media(max-height:760px){#editor .modalbody{height:min(82vh,520px)}}
+#editor .modal{width:min(1280px,96vw)}
+#editor .modalbody{height:min(78vh,720px)}
+@media(max-height:860px){#editor .modalbody{height:min(84vh,620px)}}
 @media(max-height:520px){#editor .modalbody{height:auto;max-height:78vh}}
 /* --- 要望2: プレビューを命名パターン直下へ。入力の結果が近接して見えるよう強調 --- */
 #naming-template .naming-field{margin-bottom:8px}
@@ -1080,3 +1093,37 @@ body > main{max-width:1620px;padding-left:12px;padding-right:12px}
 .viewer-v118 .agg-export select{height:31px}
 .viewer-v118 #pivot-export{height:30px;padding:5px 9px;font-size:11px;background:#0d8191;color:#fff;border:1px solid #0b6d86}
 .viewer-v118 #pivot-export:hover{background:#0b6d86;filter:none}
+
+/* ============================================================
+   v1.22.0: 対象ファイル設定を5つのタブへ分割
+   手順（1基本と入出力 → 2ファイル名 → 3抽出期間 → 4自動実行）とツール（RNEを調べる）を
+   区切りで分け、階層と順序を見た目で示す。1タブ＝1目的にして縦スクロールを不要にした。
+   ============================================================ */
+.editor-pane{align-content:start}
+.editor-pane.on{display:grid;gap:2px}
+/* 各ペインは本文領域いっぱいを使い、あふれる場合だけそのペイン内で送る */
+#editor .modalbody{overflow:hidden}
+#editor .editor-pane.on{overflow:auto;min-height:0}
+#editor .modalbody{display:grid;grid-template-rows:auto minmax(0,1fr)}
+
+/* 1: 基本と入出力 —— 名称と用途を上に、入力・出力を左右に並べる */
+.editor-pane[data-etab="basic"] .io-columns{margin-top:10px}
+
+/* 5: RNEを調べる —— 2つの調査を左右に並べ、結果が縦に伸びても片側で完結させる */
+.inspect-lead{margin:0 0 10px;font-size:11.5px;color:#5b6f79;line-height:1.6}
+.inspect-lead b{color:#31505d}
+.inspect-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px 18px;align-items:start}
+.inspect-grid>.rne-inspect-head{margin:0}
+.inspect-grid>.rne-inspect-head:nth-of-type(1){grid-column:1;grid-row:1}
+.inspect-grid>#m-rne-inspect-result{grid-column:1;grid-row:2}
+.inspect-grid>.rne-inspect-head:nth-of-type(2){grid-column:2;grid-row:1}
+.inspect-grid>#m-column-plan-result{grid-column:2;grid-row:2}
+.inspect-grid .rne-inspect-head{display:grid;grid-template-columns:1fr;gap:6px;align-content:start;background:#f6f9fa;border:1px solid #e0e9ed;border-radius:8px;padding:10px 12px}
+.inspect-grid .rne-inspect-head button{justify-self:start}
+.inspect-grid .ri-chips{max-height:260px}
+@media(max-width:1080px){.inspect-grid{grid-template-columns:1fr}
+ .inspect-grid>*{grid-column:1!important;grid-row:auto!important}}
+
+/* hidden属性は display:none を意味するが、クラス側の display 指定に負けて表示され続けていた。
+   バッジや結果パネルが空のまま出ていた原因。属性がある間は必ず隠す。 */
+.etab-count[hidden],.rne-inspect-result[hidden],.period-cpresult[hidden]{display:none!important}

@@ -25,10 +25,18 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.21.2'; APP_VERSION_TITLE='列名の文字化けを修正'; APP_RELEASED_AT='2026-08-07'
-BUILD_VERSION=f'{APP_VERSION}-outstr'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.22.0'; APP_VERSION_TITLE='対象ファイル設定を5つのタブへ再編'; APP_RELEASED_AT='2026-08-07'
+BUILD_VERSION=f'{APP_VERSION}-editor-tabs'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
+{'version':'1.22.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'「対象を編集」の画面を5つのタブへ分けました。1つのタブに1つの目的だけを置き、縦スクロールなしで全体が見えるようにしています。',
+'手順は ①基本と入出力 → ②ファイル名 → ③抽出期間 → ④自動実行 の順です。番号付きで並べ、実際の設定順序と画面の並びを一致させました。',
+'「RNEを調べる」は手順ではなく道具なので、区切り線の右側へ独立させました。番号を持たせず色も分けて、手順との違いが見た目で分かるようにしています。',
+'調査ボタンは以前、入力データ欄の下端に押し込まれていて見つけにくく、結果の表示幅も足りませんでした。専用タブで左右2列に配置し、列の一覧を広く表示します。',
+'モーダルの幅を1280pxまで、本文の高さを720pxまで広げました。タブを切り替えても大きさは変わりません。',
+'抽出期間を有効にしているとタブに「ON」、自動実行ルールがあるとタブに件数が出ます。開かなくても設定済みのタブが分かります。',
+]},
 {'version':'1.21.2','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
 'APIから読み取った名前が文字化けする不具合を修正しました。このDLLは名前を返すとき、渡したバッファへ書くのではなく自前バッファのアドレスを書き込みます。アドレスの値をそのまま文字として読んでいたため、意味のない記号列になっていました。管理ポイント名・データ項目名の両方が対象です。',
 '方式を見分けてから読むようにしました。番兵で埋めたバッファを渡し、書き換わり方がアドレスの形に一致したときだけ参照します。一致しなければ書き込まれた文字列として読みます。判別できない値を参照することはありません。',

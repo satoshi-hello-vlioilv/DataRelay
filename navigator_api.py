@@ -247,7 +247,9 @@ class NavigatorApi:
         if not self.dll:raise RuntimeError('SymNaviA.dllを読み込めません。設定したDLLパスと同一フォルダー内の依存DLLを確認してください。'+' | '.join(errors))
         self._bind();self.opened=False;self.catalog=0
     def _bind(self):
-        L=ctypes.c_long; P=ctypes.POINTER(L); S=ctypes.c_char_p
+        # Navigator APIのInteger/Longは32bit。Windowsではc_longも32bitだが、幅の前提を残さないため
+        # c_int32を明示する（仕様書の推奨に合わせた）。
+        L=ctypes.c_int32; P=ctypes.POINTER(L); S=ctypes.c_char_p
         d=self.dll
         # hasattr(WinDLL,'Navi...') はエクスポートされていれば何でもTrueになるので、
         # 「アプリが実際に使っている関数」の判定には使えない。ここで明示的に記録する。
