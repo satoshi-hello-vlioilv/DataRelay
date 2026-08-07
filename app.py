@@ -25,11 +25,17 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.20.11'; APP_VERSION_TITLE='API診断の結果をログへ記録'; APP_RELEASED_AT='2026-08-07'
-BUILD_VERSION=f'{APP_VERSION}-diag-logging'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.20.12'; APP_VERSION_TITLE='列（データ項目）の読み取りに対応'; APP_RELEASED_AT='2026-08-07'
+BUILD_VERSION=f'{APP_VERSION}-data-items'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
-{'version':'1.20.11','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+{'version':'1.20.12','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'DLLが公開しているAPI関数の集計が「未使用 0件」と誤って表示される不具合を修正しました。ctypesはエクスポートされている関数を要求時に自動解決するため、有無の判定に使えていませんでした。実際にこのアプリが使っているのは53件中25件です。',
+'RNEに含まれる列（データ項目）を読み取れるようにしました。「候補を取得」で管理ポイントと一緒に列の一覧も取得します。',
+'列の読み取りは NaviGetDataItemNumber / NaviGetDataItem2 / NaviGetNameDI を使用します。カタログは変更しません（読み取りのみ）。',
+'列分割による高速化の下調べです。取得した列数が実際の出力列数と一致すれば、列を指定した分割問い合わせが実装できます。',
+]},
+{'version':'1.20.11','date':APP_RELEASED_AT,'title':'API診断の結果をログへ記録','notes':[
 'API診断の結果をログへ記録するようにしました。画面から転記しなくても、ログをそのまま送れます。',
 'DLLが公開している関数の一覧を API_DIAG_EXPORTS_ALL、このアプリが使っていない関数を API_DIAG_EXPORTS_UNUSED として記録します。',
 'DLLを読み込めない場合でもエクスポート一覧を取得するようにしました。エクスポート表はファイルを読むだけで分かるためです。読み込みに失敗する端末こそ、そのDLLに何ができるのかを確認したいという理由です。',
@@ -2335,10 +2341,18 @@ def period_control_points():
    try:
     os.chdir(Path(rp).parent); handle,_=api.open_catalog(Path(rp).resolve())
    finally:os.chdir(prev)
-  points=api.list_time_control_points(handle); api.close_catalog()
+  points=api.list_time_control_points(handle)
+  # 列（データ項目）も同じカタログハンドルのうちに読む。列分割が使えるRNEかの判断材料になる。
+  items=[];item_error=''
+  try:
+   if api.supports_column_split():items=api.list_data_items(handle)
+   else:item_error='このDLLはデータ項目の操作APIを公開していません'
+  except Exception as ie:item_error=str(ie)
+  api.close_catalog()
   time_points=[p for p in points if p.get('is_time')]
   log.info('PERIOD_CP_DETECT rne=%s total=%s time=%s',rp,len(points),len(time_points))
-  return jsonify(ok=True,points=points,time_points=time_points,count=len(points),time_count=len(time_points))
+  log.info('CATALOG_DATA_ITEMS rne=%s count=%s error=%s names=%s',rp,len(items),item_error,'|'.join(x.get('name','') for x in items[:40]))
+  return jsonify(ok=True,points=points,time_points=time_points,count=len(points),time_count=len(time_points),data_items=items,data_item_count=len(items),data_item_error=item_error)
  except Exception as e:
   log.exception('PERIOD_CP_DETECT_FAILED rne=%s',rp)
   return jsonify(ok=False,error=str(e)),200
