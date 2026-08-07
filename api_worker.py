@@ -15,6 +15,14 @@ def atomic_json(path,data):
 
 def main():
     payload=json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
+    if payload.get('split_part'):
+        # 列分割の1パート。担当外の列を外して問い合わせ、CSVへ保存するだけを行う。
+        from app import process_split_part
+        sp=payload['split_part']
+        result=process_split_part(payload['job'],payload['cfg'],payload['user'],payload['password'],payload['server'],
+                                  Path(sp['out_csv']),sp.get('drop') or [],sp.get('label') or '')
+        atomic_json(os.environ['NAVI_WORKER_RESULT'],result)
+        return 0 if result.get('ok') else 2
     from app import process_api_parallel_job
     result=process_api_parallel_job(payload['job'],payload['job_index'],payload['total_jobs'],payload['cfg'],payload['user'],payload['password'],payload['server'],Path(payload['dde_work']),Path(payload['backup']))
     atomic_json(os.environ['NAVI_WORKER_RESULT'],result)

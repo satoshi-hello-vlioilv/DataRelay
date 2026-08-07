@@ -3,6 +3,7 @@ import ctypes, os, re, shutil, struct, time
 from pathlib import Path
 
 NAVI_OK=0
+NAVI_ERROR=0x1
 NAVI_DOWNLOADNOW=0
 NAVI_DOWNLOADLATER=0x1
 NAVI_EOD=0x2
@@ -614,6 +615,30 @@ class NavigatorApi:
             if h:found={'name':name,'removable':True,'locate':'データ','handle':h}
             out.append(found or {'name':name,'removable':False,'locate':'表側など','handle':0})
         return out
+
+    def apply_column_split(self,h_catalog,drop_names):
+        """担当外の列をカタログから外す。実行前に呼ぶこと。
+
+        1件でも外せなければ、その時点で例外にする（部分的に外れた状態で問い合わせると、
+        結合したときに列が食い違うため）。RNEファイルは変更しない。
+        """
+        removed=[];order={}
+        for name in drop_names:
+            # 同名の列が複数ある場合に備え、同じ名前の何番目かを数えながら指定する。
+            k=order.get(name,0);order[name]=k+1
+            try:
+                h=self.get_data_item(h_catalog,name,locate=NAVI_DATA,order=k)
+            except NavigatorApiError as e:
+                raise NavigatorApiError('列分割:列の取得',e.rc,f'列「{name}」(order={k}) を取得できません: {e}')
+            if not h:
+                raise NavigatorApiError('列分割:列の取得',NAVI_ERROR,f'列「{name}」(order={k}) のハンドルが0です')
+            try:
+                self.remove_data_item(h_catalog,h)
+            except NavigatorApiError as e:
+                hint=ERROR_HINTS.get(e.rc,'')
+                raise NavigatorApiError('列分割:列の削除',e.rc,f'列「{name}」を外せません{("・"+hint) if hint else ""}: {e}')
+            removed.append(name)
+        return removed
 
     def remove_data_item(self,h_catalog,h_di):
         """カタログ上のデータ項目を1つ削除する（マニュアル 5.5.2）。
