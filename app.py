@@ -25,10 +25,15 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.21.1'; APP_VERSION_TITLE='正式な関数宣言に合わせて列の読み取りを修正'; APP_RELEASED_AT='2026-08-07'
-BUILD_VERSION=f'{APP_VERSION}-bas-decl'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.21.2'; APP_VERSION_TITLE='列名の文字化けを修正'; APP_RELEASED_AT='2026-08-07'
+BUILD_VERSION=f'{APP_VERSION}-outstr'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
+{'version':'1.21.2','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'APIから読み取った名前が文字化けする不具合を修正しました。このDLLは名前を返すとき、渡したバッファへ書くのではなく自前バッファのアドレスを書き込みます。アドレスの値をそのまま文字として読んでいたため、意味のない記号列になっていました。管理ポイント名・データ項目名の両方が対象です。',
+'方式を見分けてから読むようにしました。番兵で埋めたバッファを渡し、書き換わり方がアドレスの形に一致したときだけ参照します。一致しなければ書き込まれた文字列として読みます。判別できない値を参照することはありません。',
+'列の分類でデータ欄だけを対象にしました。条件欄のデータ項目は絞り込み用で出力の列にはならないため、分割できる列を1件多く数えていました（69→68。RNEから直接数えた値と一致します）。',
+]},
 {'version':'1.21.1','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
 '列名がすべて空（データ項目#1…）で返っていた不具合を修正しました。NaviGetNameDI の引数は3つ（hDItem, rc, name）で、管理ポイント側の NaviGetNameCP と違い master を取りません。4つで呼んでいたのが原因です。',
 'この修正により、RNEを開くだけで列を数えられるようになりました。【列の分割可否を調べる】は問い合わせを実行しません。出力ファイルも不要です。',
