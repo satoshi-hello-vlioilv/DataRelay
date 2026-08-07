@@ -776,6 +776,7 @@ tr:has(.rowprogress.is-running) td{background:#f6fcfd}tr:has(.rowprogress.is-err
 .ri-card span{font-size:10px;font-weight:800;color:#7a8b91}
 .ri-card b{font:16px Consolas,"Yu Gothic UI";font-weight:800;color:#0b6570}
 .ri-card small{font-size:10px;color:#8497a0}
+.ri-ok{margin:0;font-size:11.5px;font-weight:800;color:#0a7a54}
 .ri-ng{margin:0;font-size:11.5px;font-weight:800;color:#b23a30}
 .ri-note{margin:0;font-size:10.5px;color:#7a8b91;word-break:break-word}
 .ri-list summary{font-size:11px;font-weight:800;color:#43616b;cursor:pointer;padding:2px 0}

@@ -4,6 +4,10 @@ from pathlib import Path
 
 NAVI_OK=0
 NAVI_DOWNLOADNOW=0
+# NAVI_DOWNLOADLATER はマニュアルに数値の記載がなく、NAVI_DOWNLOADNOW=0 との対で1と判断している。
+# 誤っていれば NaviExecuteCatalog が NAVI_ERROR を返すだけなので、見出し取得側で検知して通常実行に戻す。
+NAVI_DOWNLOADLATER=1
+NAVI_EOD=1
 NAVI_CSV=1
 NAVI_TXT=2
 NAVI_XLSX=5
@@ -246,6 +250,12 @@ class NavigatorApi:
         d.NaviSaveData.argtypes=[L,P,S,L,L];d.NaviSaveData.restype=None
         d.NaviGetFieldNumber.argtypes=[L,P,P];d.NaviGetFieldNumber.restype=None
         d.NaviGetRecordNumber.argtypes=[L,P,P];d.NaviGetRecordNumber.restype=None
+        # 見出しだけを取りに行くための2関数（5.3.6 / 5.3.7）。1行だけ受け取って打ち切ると、
+        # NaviSaveData はその分しか書き出さない。列名の取得が全件転送なしで済む。
+        if hasattr(d,'NaviDownLoadData'):
+            d.NaviDownLoadData.argtypes=[L,P,L,P];d.NaviDownLoadData.restype=None
+        if hasattr(d,'NaviTerminateDL'):
+            d.NaviTerminateDL.argtypes=[L,P];d.NaviTerminateDL.restype=None
         d.NaviGetErrorCode.argtypes=[P];d.NaviGetErrorCode.restype=None
         d.NaviGetErrorMessage.argtypes=[P,ctypes.POINTER(ctypes.c_char_p)];d.NaviGetErrorMessage.restype=None
         d.NaviConnectOracle.argtypes=[P,S,S];d.NaviConnectOracle.restype=None
@@ -357,6 +367,37 @@ class NavigatorApi:
     def execute(self,h):
         rc=ctypes.c_long();number=ctypes.c_long();reserve=ctypes.c_long();t=time.perf_counter();self.dll.NaviExecuteCatalog(h,ctypes.byref(rc),ctypes.byref(number),NAVI_DOWNLOADNOW,reserve);self._check('NaviExecuteCatalog',rc)
         return int(number.value),time.perf_counter()-t
+    def supports_header_probe(self):
+        """1行だけ受け取って見出しを得る方式が使えるDLLか。"""
+        return hasattr(self.dll,'NaviDownLoadData') and hasattr(self.dll,'NaviTerminateDL')
+
+    def execute_header_only(self,h,path,sample_rows=1):
+        """列名だけを取りに行く。全件は転送しない。
+
+        NAVI_DOWNLOADLATER で実行し、sample_rows 行だけダウンロードして打ち切る。マニュアル 5.3.6 の
+        とおり NaviSaveData はダウンロード済みの分しか書き出さないので、見出し＋数行のファイルができる。
+        戻り値は (保存にかかった秒数, ダウンロード行数, 問い合わせ結果の総行数)。
+        """
+        if not self.supports_header_probe():
+            raise RuntimeError('このDLLは NaviDownLoadData / NaviTerminateDL を公開していません')
+        rc=ctypes.c_long();number=ctypes.c_long();t=time.perf_counter()
+        self.dll.NaviExecuteCatalog(h,ctypes.byref(rc),ctypes.byref(number),NAVI_DOWNLOADLATER,0)
+        self._check('NaviExecuteCatalog(DOWNLOADLATER)',rc)
+        execute_elapsed=time.perf_counter()-t
+        got=ctypes.c_long();rc2=ctypes.c_long()
+        self.dll.NaviDownLoadData(h,ctypes.byref(rc2),int(sample_rows),ctypes.byref(got))
+        # 全件ダウンロード済みならNAVI_EODが返る。少数行の想定なので、そのどちらも正常扱いにする。
+        if int(rc2.value) not in (NAVI_OK,NAVI_EOD):
+            self._check('NaviDownLoadData',rc2)
+        downloaded=int(got.value)
+        rc3=ctypes.c_long()
+        try:
+            self.dll.NaviTerminateDL(h,ctypes.byref(rc3))
+        except Exception:
+            pass
+        save_elapsed=self.save_csv(h,path)
+        return execute_elapsed+save_elapsed,downloaded,int(number.value)
+
     def dimensions(self,h):
         rc=ctypes.c_long();rows=ctypes.c_long();cols=ctypes.c_long();self.dll.NaviGetRecordNumber(h,ctypes.byref(rc),ctypes.byref(rows));self._check('NaviGetRecordNumber',rc);self.dll.NaviGetFieldNumber(h,ctypes.byref(rc),ctypes.byref(cols));self._check('NaviGetFieldNumber',rc)
         return int(rows.value),int(cols.value)
@@ -504,6 +545,25 @@ class NavigatorApi:
         h=int(self.dll.NaviGetDataItem(h_catalog,ctypes.byref(rc),locate,label.encode('mbcs'),order,0))
         self._check('NaviGetDataItem',rc)
         return h
+
+    def classify_columns(self,h_catalog,names):
+        """列名ごとに、削除できる列（データ項目）か、必ず残る列（管理ポイント由来）かを判定する。
+
+        NaviGetDataItem をデータ欄・条件欄の順に試すだけで、削除も実行も行わない読み取り判定。
+        必ず残る列は全パートに現れるので、そのまま横結合のキーになる。
+        """
+        out=[]
+        for name in names:
+            found=None
+            for locate,locname in ((NAVI_DATA,'データ'),(NAVI_COND,'条件')):
+                try:
+                    h=self.get_data_item(h_catalog,name,locate=locate)
+                except Exception:
+                    continue
+                if h:
+                    found={'name':name,'removable':True,'locate':locname,'handle':h};break
+            out.append(found or {'name':name,'removable':False,'locate':'表側など','handle':0})
+        return out
 
     def remove_data_item(self,h_catalog,h_di):
         """カタログ上のデータ項目を1つ削除する（マニュアル 5.5.2）。
