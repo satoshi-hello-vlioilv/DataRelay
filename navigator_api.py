@@ -469,6 +469,41 @@ class NavigatorApi:
         return {'handle':h_cp,'locate':locname,'label':label or '(時間フィールド)'}
     _SENTINEL=b'\xfe'
 
+    @staticmethod
+    def _readable_span(addr,limit=4096):
+        """addr から安全に読める最大バイト数を返す。読めないなら0。
+
+        ポインタらしき値でも、実際に読めるとは限らない。ctypes.string_at はNULが見つかるまで
+        際限なく読むため、未割り当てページに入るとアクセス違反でプロセスごと落ちる（Pythonの
+        例外にならないので捕まえられない）。VirtualQueryで実際にコミット済みで読める範囲を
+        先に確かめ、その範囲内だけを読む。
+        """
+        if os.name!='nt':
+            # 検証用（LinuxのCI/テスト）。実運用はWindowsだが、判定の分岐まで動かして確かめたい。
+            try:
+                with open('/proc/self/maps','r') as f:
+                    for line in f:
+                        rng,perm=line.split()[0],line.split()[1]
+                        a,b=(int(x,16) for x in rng.split('-'))
+                        if a<=addr<b:return max(0,min(limit,b-addr)) if 'r' in perm else 0
+            except OSError:pass
+            return 0
+        class MBI(ctypes.Structure):
+            _fields_=[('BaseAddress',ctypes.c_void_p),('AllocationBase',ctypes.c_void_p),
+                      ('AllocationProtect',ctypes.c_uint32),('__align',ctypes.c_uint32),
+                      ('RegionSize',ctypes.c_size_t),('State',ctypes.c_uint32),
+                      ('Protect',ctypes.c_uint32),('Type',ctypes.c_uint32),('__align2',ctypes.c_uint32)]
+        MEM_COMMIT=0x1000
+        READABLE=0x02|0x04|0x08|0x20|0x40|0x80    # READONLY/READWRITE/WRITECOPY/EXECUTE_READ/…
+        PAGE_GUARD=0x100;PAGE_NOACCESS=0x01
+        mbi=MBI();k=ctypes.windll.kernel32
+        if not k.VirtualQuery(ctypes.c_void_p(addr),ctypes.byref(mbi),ctypes.sizeof(mbi)):return 0
+        if mbi.State!=MEM_COMMIT:return 0
+        prot=mbi.Protect
+        if prot & (PAGE_GUARD|PAGE_NOACCESS) or not (prot & READABLE):return 0
+        base=int(mbi.BaseAddress or 0)
+        return max(0,min(limit,base+int(mbi.RegionSize)-addr))
+
     def _out_string(self,invoke,size=4096):
         """`name As String` のような文字列出力パラメタを安全に読む。
 
@@ -487,8 +522,13 @@ class NavigatorApi:
         if tail==sent*32 and head[-2:]==b'\x00\x00' and head[:psize-2]!=sent*(psize-2):
             addr=int.from_bytes(head,'little')
             if 0x10000<addr<0x7fffffffffff:
-                try:return ctypes.string_at(addr).decode('mbcs',errors='replace').strip(),'ptr'
-                except Exception:return '','ptr_bad'
+                span=self._readable_span(addr)
+                if not span:return '','ptr_unreadable'
+                try:
+                    raw=ctypes.string_at(addr,span).split(b'\x00',1)[0]
+                except Exception:
+                    return '','ptr_bad'
+                return raw.decode('mbcs',errors='replace').strip(),'ptr'
         body=raw.split(b'\x00',1)[0]
         if not body or body.startswith(sent):return '','unwritten'
         return body.decode('mbcs',errors='replace').strip(),'buf'

@@ -25,10 +25,17 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.23.0'; APP_VERSION_TITLE='列分割の実装と影実行での比較'; APP_RELEASED_AT='2026-08-07'
-BUILD_VERSION=f'{APP_VERSION}-column-split'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.23.1'; APP_VERSION_TITLE='全体進捗バーの表示と、調査中のアプリ停止を修正'; APP_RELEASED_AT='2026-08-07'
+BUILD_VERSION=f'{APP_VERSION}-crashguard'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
+{'version':'1.23.1','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'実行キュー全体の進捗バーが表示されない不具合を修正しました。割合の数値だけが出て棒が見えなかったのは、別のCSS指定（.queue-head>div）が詳細度で勝って横並びになり、棒の幅が0に潰れていたためです。',
+'進捗バー用のクラス名が実行キューのバッジと重複していたので、別名にしました。',
+'「RNEを調べる」「列の分割可否を調べる」でアプリごと停止する不具合を修正しました。DLLが返す文字列のアドレスを、読める範囲か確かめずに参照していたのが原因です。アクセス違反はPythonの例外にならないため、そのままプロセスが終了していました。',
+'アドレスを参照する前に、実際に読める領域かどうかを確認するようにしました（WindowsではVirtualQuery）。読めない場合は参照せず空を返します。',
+'RNEの読み取りを独立プロセスへ移しました。DLL側で異常終了しても本体は生き残り、理由を画面に表示します。応答が無い場合も一定時間で打ち切ります。通常の実行には影響しません。',
+]},
 {'version':'1.23.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
 '列分割を実装しました。1つのRNEを複数プロセスで開き、各プロセスが担当外の列を外して問い合わせ、結果を結合キーで横に結合します。RNEファイルは変更しません（NaviSaveCatalogは呼びません）。',
 '【分割の効果を試す（影実行）】を追加しました。分割なしと分割ありを続けて実行し、結合結果をバイト単位で比較して所要時間を並べます。出力ファイルは更新しません。',
@@ -1784,6 +1791,65 @@ def publish(src,dst,backup_root,generations,from_pending=False,backup_enabled=Tr
    try:incoming.unlink()
    except OSError:pass
 
+def process_catalog_inspect(j,cfg,user,pw,server,want=None):
+ """RNEを開いて中身を読み取る。ワーカープロセスから呼ばれる。
+
+ DLLは外部のネイティブコードで、読み取り中の異常はPythonの例外にならずプロセスごと落ちる。
+ 本体のFlaskと同じプロセスで動かすと画面まで巻き添えになるため、ここを独立プロセスに閉じ込める。
+ """
+ started=time.perf_counter();api=None;out={'ok':False}
+ want=want or ['points','items']
+ try:
+  api,handle=open_api_catalog(cfg,resolve_rne_path(j,cfg))
+  if 'points' in want:
+   pts=api.list_time_control_points(handle)
+   out['points']=pts;out['time_points']=[p for p in pts if p.get('is_time')]
+  if 'items' in want:
+   lay=api.column_layout(handle)
+   out['layout']={'removable':[x['name'] for x in lay['removable']],'fixed':[x['name'] for x in lay['fixed']],
+                  'condition':[x['name'] for x in lay['condition_items']],
+                  'data_item_count':len(lay['data_items']),'control_point_count':len(lay['control_points'])}
+   out['data_items']=lay['data_items'];out['di_diag']=getattr(api,'di_diag','')
+   fields,why=api.field_number(handle);out['field_count']=fields;out['field_why']=why
+  out['column_split_ready']=api.supports_column_split()
+  try:api.close_catalog()
+  except Exception:pass
+  out['ok']=True;out['elapsed']=round(time.perf_counter()-started,2)
+  return out
+ except Exception as e:
+  return {'ok':False,'error':str(e),'elapsed':round(time.perf_counter()-started,2)}
+ finally:
+  if api:
+   try:api.close()
+   except Exception:pass
+
+def run_inspect_worker(job,cfg,user,pw,server,want,timeout=180):
+ """RNEの読み取りを独立プロセスで行う。落ちても本体は生き残る。"""
+ work=LOCAL_RUNTIME/('inspect_'+uuid.uuid4().hex[:8]);work.mkdir(parents=True,exist_ok=True)
+ try:
+  payload={'job':job,'cfg':cfg,'user':user,'password':pw,'server':server,'inspect':{'want':want}}
+  pp=work/'payload.json';pp.write_text(json.dumps(payload,ensure_ascii=False),encoding='utf-8')
+  rp=work/'result.json'
+  env=os.environ.copy();env['NAVI_WORKER_RESULT']=str(rp);env['NAVI_WORKER_LINE']='調査'
+  env['NAVI_WORKER_SPAWN_AT']=repr(time.time())
+  flags=getattr(subprocess,'CREATE_NO_WINDOW',0)
+  t=time.perf_counter()
+  proc=subprocess.Popen([sys.executable,str(BASE/'api_worker.py'),str(pp)],cwd=str(BASE),env=env,creationflags=flags)
+  try:rc=proc.wait(timeout=timeout)
+  except subprocess.TimeoutExpired:
+   proc.kill();log.warning('INSPECT_WORKER_TIMEOUT job=%s timeout=%ss',job.get('name'),timeout)
+   return {'ok':False,'error':f'読み取りが{timeout}秒を超えたため中止しました'}
+  res=_read_worker_json(rp,None)
+  log.info('INSPECT_WORKER job=%s returncode=%s ok=%s elapsed=%.2fs',job.get('name'),rc,bool(res and res.get('ok')),time.perf_counter()-t)
+  if res is None:
+   # 結果を書く前に落ちた＝DLL側での異常終了。何が起きたかを利用者に伝える。
+   return {'ok':False,'error':f'RNEの読み取り中に読み取りプロセスが異常終了しました（終了コード {rc}）。'
+                             'このRNEでは読み取りを行えません。通常の実行には影響しません。','crashed':True,'returncode':rc}
+  return res
+ finally:
+  try:shutil.rmtree(work,ignore_errors=True)
+  except Exception:pass
+
 def process_split_part(j,cfg,user,pw,server,out_csv,drop_columns,part_label=''):
  """列分割の1パートを実行してCSVへ保存する。drop_columns が空なら分割なしの実行。
 
@@ -2657,7 +2723,8 @@ def period_preview():
  return jsonify(ok=True,now=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),control_point=period['control_point'],**spec)
 @app.post('/api/period-control-points')
 def period_control_points():
- # 対象RNEを開いて時間型管理ポイントを自動検出する（Navigator API方式で接続可能な場合の補助機能）。
+ # 対象RNEを開いて時間型管理ポイントとデータ項目を読み取る。
+ # 読み取りは独立プロセスで行う。DLL側で異常終了してもアプリ本体は落ちない。
  data=request.get_json(force=True) or {}; c=load()
  if str(c['settings'].get('extract_engine') or 'api').lower()!='api':
   return jsonify(ok=False,error='この自動検出はNavigator API方式のときに使用できます。DDE方式では管理ポイント名を手入力してください'),200
@@ -2668,68 +2735,38 @@ def period_control_points():
  try:rp=resolve_rne_path(tmp,c)
  except Exception as e:return jsonify(ok=False,error=f'RNEパスの解決に失敗しました: {e}'),200
  if not Path(rp).is_file():return jsonify(ok=False,error=f'RNEが見つかりません: {rp}'),200
- from navigator_api import NavigatorApi
- api=None
  try:
   user,pw,server,_=creds(resolve_path(c['symnavim_conf']))
-  api=NavigatorApi(resolve_path(c.get('symnavi_exe','')),log,resolve_path(c.get('navigator_api_dll')) if c.get('navigator_api_dll') else None,base_dir=BASE)
-  if not api.supports_period_change():
-   return jsonify(ok=False,error='このDLLは管理ポイント操作APIを公開していません。管理ポイント名を手入力してください'),200
-  api.open_session(user,pw,server)
-  profiles=api_data_source_profiles(resolve_path(c['symnavim_conf']))
-  if not any(p.get('kind')=='oracle' for p in profiles):
-   profiles.insert(0,{'section':'NavigatorCredentialFallback','kind':'oracle','user':user,'password':pw,'server':'','option':'','resource':'','resource_kind':'0'})
-  for profile in profiles:api.connect_data_source(profile)
-  with chdir_lock:
-   prev=os.getcwd()
-   try:
-    os.chdir(Path(rp).parent); handle,_=api.open_catalog(Path(rp).resolve())
-   finally:os.chdir(prev)
-  points=api.list_time_control_points(handle)
-  # 列（データ項目）も同じカタログハンドルのうちに読む。列分割が使えるRNEかの判断材料になる。
-  items=[];item_error='';di_diag='';fields=None;field_why=''
-  try:
-   if api.supports_data_item_enum():
-    items=api.list_data_items(handle)
-    di_diag=getattr(api,'di_diag','')
-    fields,field_why=api.field_number(handle)
-   else:item_error='このDLLには列を索引で列挙する関数がありません（公式マニュアルにも記載のない関数です）'
-  except Exception as ie:item_error=str(ie)
-  can_split=api.supports_column_split()
-  api.close_catalog()
-  time_points=[p for p in points if p.get('is_time')]
-  cp_named=sum(1 for p in points if not str(p.get('name','')).startswith('管理ポイント#'))
-  di_named=sum(1 for x in items if x.get('named'))
-  log.info('PERIOD_CP_DETECT rne=%s total=%s time=%s named=%s',rp,len(points),len(time_points),cp_named)
-  # 名前が取れた件数と位置ごとの戻り値を必ず残す。列名が空で返るのが「呼び出し規約の誤り」なのか
-  # 「その項目に表示名が無い」のかを、次の実行1回で切り分けられるようにするため。
-  log.info('CATALOG_DATA_ITEMS rne=%s count=%s named=%s fields=%s(%s) error=%s detail=%s',
-           rp,len(items),di_named,fields,field_why,item_error,di_diag)
-  log.info('CATALOG_DATA_ITEM_NAMES %s',' | '.join(f"{x.get('location')}:{x.get('name')}" for x in items[:40]))
-  # 直近の出力ファイルのヘッダーは、推測なしで確実に取れる列名の一覧。列分割の割り当てはこれを使う。
-  out_cols=[];out_from='';out_error=''
-  if job:
-   try:
-    op=_viewer_output_path(job,c)
-    if op.is_file():
-     out_cols=read_header_names(op,job);out_from=str(op)
-     if out_cols:save_column_cache(rp,out_cols,source='output',job=job)
-    else:out_error='まだ出力ファイルがありません（1回実行すると列名が読めます）'
-   except Exception as oe:out_error=str(oe)
-  else:out_error='保存済みの対象を編集すると、直近の出力から列名を読み取れます'
-  log.info('CATALOG_OUTPUT_COLUMNS file=%s count=%s error=%s',out_from,len(out_cols),out_error)
-  return jsonify(ok=True,points=points,time_points=time_points,count=len(points),time_count=len(time_points),
-                 data_items=items,data_item_count=len(items),data_item_named=di_named,data_item_error=item_error,
-                 data_item_detail=di_diag,field_count=fields,control_point_named=cp_named,
-                 output_columns=out_cols,output_column_source=out_from,output_column_error=out_error,
-                 column_split_ready=bool(can_split))
+  ins=run_inspect_worker(dict(tmp,id=(job or {}).get('id',''),name=(job or {}).get('name','')),c,user,pw,server,['points','items'])
  except Exception as e:
-  log.exception('PERIOD_CP_DETECT_FAILED rne=%s',rp)
-  return jsonify(ok=False,error=str(e)),200
- finally:
-  if api:
-   try:api.close()
-   except Exception:pass
+  log.exception('PERIOD_CP_DETECT_FAILED rne=%s',rp);return jsonify(ok=False,error=str(e)),200
+ if not ins.get('ok'):
+  return jsonify(ok=False,error=ins.get('error') or 'RNEを読み取れませんでした',crashed=bool(ins.get('crashed'))),200
+ points=ins.get('points') or [];time_points=ins.get('time_points') or []
+ items=ins.get('data_items') or [];layout=ins.get('layout') or {}
+ cp_named=sum(1 for p in points if not str(p.get('name','')).startswith('管理ポイント#'))
+ di_named=sum(1 for x in items if x.get('named'))
+ log.info('PERIOD_CP_DETECT rne=%s total=%s time=%s named=%s',rp,len(points),len(time_points),cp_named)
+ log.info('CATALOG_DATA_ITEMS rne=%s count=%s named=%s fields=%s(%s) detail=%s',
+          rp,len(items),di_named,ins.get('field_count'),ins.get('field_why'),ins.get('di_diag',''))
+ log.info('CATALOG_DATA_ITEM_NAMES %s',' | '.join(f"{x.get('location')}:{x.get('name')}" for x in items[:40]))
+ # 直近の出力ファイルのヘッダーは、推測なしで確実に取れる列名の一覧。列分割の割り当てはこれを使う。
+ out_cols=[];out_from='';out_error=''
+ if job:
+  try:
+   op=_viewer_output_path(job,c)
+   if op.is_file():
+    out_cols=read_header_names(op,job);out_from=str(op)
+    if out_cols:save_column_cache(rp,out_cols,source='output',job=job)
+   else:out_error='まだ出力ファイルがありません（1回実行すると列名が読めます）'
+  except Exception as oe:out_error=str(oe)
+ else:out_error='保存済みの対象を編集すると、直近の出力から列名を読み取れます'
+ log.info('CATALOG_OUTPUT_COLUMNS file=%s count=%s error=%s',out_from,len(out_cols),out_error)
+ return jsonify(ok=True,points=points,time_points=time_points,count=len(points),time_count=len(time_points),
+                data_items=items,data_item_count=len(items),data_item_named=di_named,data_item_error='',
+                data_item_detail=ins.get('di_diag',''),field_count=ins.get('field_count'),control_point_named=cp_named,
+                output_columns=out_cols,output_column_source=out_from,output_column_error=out_error,
+                layout=layout,column_split_ready=bool(ins.get('column_split_ready')))
 
 def open_api_catalog(c,rne_path):
  """セッションを開き、データソースへ接続し、RNEを読み込んで (api, handle) を返す。呼び出し側で api.close() すること。"""
@@ -2776,56 +2813,28 @@ def column_plan():
     columns=read_header_names(op,job)
     if columns:source='output';notes.append(f'直近の出力ファイルから読み取りました（{op.name}）')
   except Exception as e:notes.append(f'出力ファイルから読めませんでした: {e}')
- api=None;handle=None;classify=[];classify_error='';layout={}
+ classify=[];classify_error='';layout={}
  need_classify=force or not (cached and cached.get('classify') and not cached['stale'])
  need_probe=not columns and allow_probe
  try:
   if need_probe or need_classify:
-   api,handle=open_api_catalog(c,rp)
-   # RNEを開くだけで分割できる列と必ず残る列が数えられる。出力ファイルも問い合わせも要らない。
-   try:
-    lay=api.column_layout(handle)
-    layout={'removable':[x['name'] for x in lay['removable']],'fixed':[x['name'] for x in lay['fixed']],
-            'condition':[x['name'] for x in lay['condition_items']],
-            'data_item_count':len(lay['data_items']),'control_point_count':len(lay['control_points'])}
-    log.info('COLUMN_LAYOUT rne=%s removable=%s fixed=%s condition=%s data_items=%s control_points=%s detail=%s',
-             rp,len(layout['removable']),len(layout['fixed']),len(layout['condition']),
-             layout['data_item_count'],layout['control_point_count'],getattr(api,'di_diag',''))
-    log.info('COLUMN_LAYOUT_NAMES removable=%s',' | '.join(layout['removable'][:40]))
-   except Exception as le:
-    log.warning('COLUMN_LAYOUT_FAILED rne=%s error=%s',rp,le);notes.append(f'列の数え上げに失敗しました: {le}')
-   if need_probe:
-    # 1行だけ受け取って打ち切る。見出し行のためだけに全件を転送しない。
-    if not api.supports_header_probe():
-     notes.append('このDLLは1行だけの取得に対応していません（NaviDownLoadData / NaviTerminateDL が未公開）')
-    else:
-     sample=LOCAL_RUNTIME/f'colprobe_{uuid.uuid4().hex[:8]}.csv'
-     try:
-      elapsed,downloaded,total_rows=api.execute_header_only(handle,sample)
-      columns=read_header_names(sample,{'output_format':'csv'})
-      source='probe';probe_info={'elapsed':round(elapsed,2),'downloaded_rows':downloaded,'total_rows':total_rows,'size':sample.stat().st_size if sample.is_file() else 0}
-      log.info('COLUMN_PROBE rne=%s columns=%s downloaded_rows=%s total_rows=%s size=%s elapsed=%.2fs',rp,len(columns),downloaded,total_rows,probe_info['size'],elapsed)
-      notes.append(f'1行だけの問い合わせで取得しました（{downloaded}行・{probe_info["size"]}バイト・{elapsed:.1f}秒）')
-     except Exception as pe:
-      log.warning('COLUMN_PROBE_FAILED rne=%s error=%s',rp,pe);notes.append(f'1行だけの取得に失敗しました: {pe}')
-     finally:
-      try:sample.unlink(missing_ok=True)
-      except Exception:pass
-   if columns and need_classify:
-    t=time.perf_counter()
-    try:
-     classify=api.classify_columns(handle,columns)
-     log.info('COLUMN_CLASSIFY rne=%s total=%s removable=%s elapsed=%.2fs',rp,len(classify),sum(1 for x in classify if x['removable']),time.perf_counter()-t)
-    except Exception as ce:classify_error=str(ce);log.warning('COLUMN_CLASSIFY_FAILED rne=%s error=%s',rp,ce)
-   try:api.close_catalog()
-   except Exception:pass
+   # 列挙は独立プロセスで行う。DLL側の異常終了でアプリごと落ちないようにするため。
+   user,pw,server,_=creds(resolve_path(c['symnavim_conf']))
+   ins=run_inspect_worker(job,c,user,pw,server,['items'])
+   if not ins.get('ok'):
+    return jsonify(ok=False,error=ins.get('error') or 'RNEを読み取れませんでした',crashed=bool(ins.get('crashed'))),200
+   layout=ins.get('layout') or {}
+   log.info('COLUMN_LAYOUT rne=%s removable=%s fixed=%s condition=%s data_items=%s control_points=%s detail=%s',
+            rp,len(layout.get('removable') or []),len(layout.get('fixed') or []),len(layout.get('condition') or []),
+            layout.get('data_item_count'),layout.get('control_point_count'),ins.get('di_diag',''))
+   log.info('COLUMN_LAYOUT_NAMES removable=%s',' | '.join((layout.get('removable') or [])[:40]))
+   # 分類は列挙結果から作れる。出力の並び順にある列が、データ欄の列かどうかを見るだけ。
+   if columns:
+    rem=set(layout.get('removable') or [])
+    classify=[{'name':n,'removable':n in rem,'locate':'データ' if n in rem else '表側など'} for n in columns]
  except Exception as e:
   log.exception('COLUMN_PLAN_FAILED rne=%s',rp)
   return jsonify(ok=False,error=str(e)),200
- finally:
-  if api:
-   try:api.close()
-   except Exception:pass
  if columns and source!='cache':save_column_cache(rp,columns,source=source or 'unknown',job=job)
  if classify:save_column_classification(rp,classify)
  elif cached and cached.get('classify') and not cached['stale']:classify=cached['classify']
