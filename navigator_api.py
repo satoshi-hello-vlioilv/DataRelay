@@ -4,10 +4,8 @@ from pathlib import Path
 
 NAVI_OK=0
 NAVI_DOWNLOADNOW=0
-# NAVI_DOWNLOADLATER はマニュアルに数値の記載がなく、NAVI_DOWNLOADNOW=0 との対で1と判断している。
-# 誤っていれば NaviExecuteCatalog が NAVI_ERROR を返すだけなので、見出し取得側で検知して通常実行に戻す。
-NAVI_DOWNLOADLATER=1
-NAVI_EOD=1
+NAVI_DOWNLOADLATER=0x1
+NAVI_EOD=0x2
 NAVI_CSV=1
 NAVI_TXT=2
 NAVI_XLSX=5
@@ -36,12 +34,25 @@ NAVI_CONTROLPOINT_TEMPLATE=0x6
 NAVI_CONTROLPOINT_UNKNOWN=0x7
 NAVI_CONTROLPOINT_RULE=0x8
 CONTROLPOINT_TYPE_NAMES={1:'マスタ型',2:'全値型',3:'カテゴリ型',4:'範囲型',5:'時間型',6:'ユーザ定義の時間型',7:'不明な型',8:'ルール型'}
+# SymNaviApi.bas（Navigator Visual Basic Interface API 9.6.0）の定数定義そのまま。
 ERROR_NAMES={
- 3:'NAVI_ERROR_SYMFOWARE',4:'NAVI_ERROR_ORACLE',5:'NAVI_ERROR_SERVERENV',6:'NAVI_ERROR_LOGON',
- 7:'NAVI_ERROR_CONNECT',8:'NAVI_ERROR_SERVER',9:'NAVI_ERROR_SESSION',10:'NAVI_ERROR_OPEN',
- 11:'NAVI_ERROR_CATALOG',12:'NAVI_ERROR_EXECMD',13:'NAVI_ERROR_EXECUTE',14:'NAVI_ERROR_DOWNLOAD',
- 15:'NAVI_ERROR_READ',16:'NAVI_ERROR_SAVEDATA',31:'NAVI_ERROR_SAVE',32:'NAVI_ERROR_FILENOTFOUND',
- 33:'NAVI_ERROR_BADPATH',34:'NAVI_ERROR_ACCESSDENIED',35:'NAVI_ERROR_DISKFULL',36:'NAVI_ERROR_SHARINGVIOLATION'
+ 0x3:'NAVI_ERROR_SYMFOWARE',0x4:'NAVI_ERROR_ORACLE',0x5:'NAVI_ERROR_SERVERENV',0x6:'NAVI_ERROR_LOGON',
+ 0x7:'NAVI_ERROR_CONNECT',0x8:'NAVI_ERROR_SERVER',0x9:'NAVI_ERROR_SESSION',0xA:'NAVI_ERROR_OPEN',
+ 0xB:'NAVI_ERROR_CATALOG',0xC:'NAVI_ERROR_EXECMD',0xD:'NAVI_ERROR_EXECUTE',0xE:'NAVI_ERROR_DOWNLOAD',
+ 0xF:'NAVI_ERROR_READ',0x10:'NAVI_ERROR_SAVEDATA',0x11:'NAVI_ERROR_CONTROLPOINT',0x12:'NAVI_ERROR_DATAITEM',
+ 0x13:'NAVI_ERROR_TYPE',0x14:'NAVI_ERROR_CATEGORY',0x15:'NAVI_ERROR_ZERO',0x16:'NAVI_ERROR_OVER8000',
+ 0x17:'NAVI_ERROR_NONMATCH',0x18:'NAVI_ERROR_VALUE',0x19:'NAVI_ERROR_RECONNECT',0x1A:'NAVI_ERROR_ITEM',
+ 0x1B:'NAVI_ERROR_EXECUTING',0x1C:'NAVI_ERROR_SQLSERVER',0x1D:'NAVI_ERROR_INGRES',0x1E:'NAVI_ERROR_DBKIND',
+ 0x1F:'NAVI_ERROR_SAVE',0x20:'NAVI_ERROR_FILENOTFOUND',0x21:'NAVI_ERROR_BADPATH',0x22:'NAVI_ERROR_ACCESSDENIED',
+ 0x23:'NAVI_ERROR_DISKFULL',0x24:'NAVI_ERROR_SHARINGVIOLATION',0x46:'NAVI_ERROR_CANNOTUSE',
+ 0x67:'NAVI_ERROR_CANNOT_SAVE',0x68:'NAVI_ERROR_USEDDATAITEM',0x96:'NAVI_ERROR_NOSUPPORT',
+}
+# 列分割で意味を持つエラー。原因を利用者向けの言葉に置き換えるために使う。
+ERROR_HINTS={
+ 0x68:'この列は項目間演算に使われているため削除できません',
+ 0x1B:'問い合わせファイルの実行中です',
+ 0x12:'データ項目の取得・削除に失敗しました',
+ 0x11:'管理ポイントの取得・削除に失敗しました',
 }
 
 def _ansi(value):
@@ -289,8 +300,13 @@ class NavigatorApi:
             d.NaviGetDataItemNumber.argtypes=[L,P,L,P];d.NaviGetDataItemNumber.restype=None
         if hasattr(d,'NaviGetDataItem2'):
             d.NaviGetDataItem2.argtypes=[L,P,L,L];d.NaviGetDataItem2.restype=L
+        # NaviGetNameDI(hDItem, rc, name) — 引数は3つ。NaviGetNameCP と違い master を取らない。
+        # 4つで呼んでいたため、列名が全件空で返っていた。宣言は SymNaviApi.bas による。
         if hasattr(d,'NaviGetNameDI'):
-            d.NaviGetNameDI.argtypes=[L,P,L,S];d.NaviGetNameDI.restype=None
+            d.NaviGetNameDI.argtypes=[L,P,S];d.NaviGetNameDI.restype=None
+        # NaviGetPeriod(hCPoint, rc, locate, condition, fromTime, toTime, reserve)
+        if hasattr(d,'NaviGetPeriod'):
+            d.NaviGetPeriod.argtypes=[L,P,L,P,S,S,S];d.NaviGetPeriod.restype=None
         # ここから下はマニュアル記載の書式そのまま。
         # NaviGetDataItem(hCatalog, rc, locate, label, order, reserve) -> hDItem（5.5.1）
         if hasattr(d,'NaviGetDataItem'):
@@ -498,16 +514,16 @@ class NavigatorApi:
         return all(hasattr(self.dll,n) for n in ('NaviGetDataItemNumber','NaviGetDataItem2','NaviGetNameDI'))
 
     def get_name_di(self,h_di):
-        """データ項目名を取得する。取れた名前と、判定に使った戻り値をあわせて返す。
+        """データ項目の見出しを取得する（SymNaviApi.bas: hDItem, rc, name の3引数）。
 
-        呼び出し規約は管理ポイント側（NaviGetNameCP）と同型と仮定している。名前が空で返るのが
-        「仮定違い」なのか「この項目に表示名が無い」のかを切り分けたいので rc も一緒に返す。
+        取れた名前と判定に使った戻り値をあわせて返す。名前が空なのが呼び出しの失敗なのか、
+        その項目に見出しが無いだけなのかをログで区別できるようにするため。
         """
         if not hasattr(self.dll,'NaviGetNameDI'):
             return '','no_export'
         try:
             buf=ctypes.create_string_buffer(1024);rc=ctypes.c_long(-1)
-            self.dll.NaviGetNameDI(h_di,ctypes.byref(rc),NAVI_LABEL,buf)
+            self.dll.NaviGetNameDI(h_di,ctypes.byref(rc),buf)
             raw=buf.value or b''
             if int(rc.value)!=NAVI_OK:
                 return '',f'rc={int(rc.value)}'
@@ -545,6 +561,20 @@ class NavigatorApi:
         h=int(self.dll.NaviGetDataItem(h_catalog,ctypes.byref(rc),locate,label.encode('mbcs'),order,0))
         self._check('NaviGetDataItem',rc)
         return h
+
+    def column_layout(self,h_catalog):
+        """RNEを開くだけで、分割できる列と必ず残る列を数える。実行も出力も不要。
+
+        分割できる列 = データ項目（NaviRemoveDataItem で削除できる）
+        必ず残る列   = 表側・表頭の管理ポイント（削除できないので全パートに現れ、そのまま結合キーになる）
+        """
+        items=self.list_data_items(h_catalog) if self.supports_data_item_enum() else []
+        points=self.list_time_control_points(h_catalog) if hasattr(self.dll,'NaviGetControlPointNumber') else []
+        # 条件欄は絞り込みに使うだけで出力の列にはならないため、分割できる列としては数えない。
+        removable=[x for x in items if x['location']=='データ']
+        fixed=[x for x in points if x['location'] in ('表側','表頭')]
+        return {'removable':removable,'fixed':fixed,'data_items':items,'control_points':points,
+                'condition_items':[x for x in items if x['location']=='条件']}
 
     def classify_columns(self,h_catalog,names):
         """列名ごとに、削除できる列（データ項目）か、必ず残る列（管理ポイント由来）かを判定する。
