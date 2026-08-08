@@ -25,10 +25,16 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.27.1'; APP_VERSION_TITLE='RNE差し替え時の列ずれを修正し、分割数にデータ量の軸を追加'; APP_RELEASED_AT='2026-08-07'
-BUILD_VERSION=f'{APP_VERSION}-volume'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.28.0'; APP_VERSION_TITLE='同名の列を検出して分割前に警告'; APP_RELEASED_AT='2026-08-07'
+BUILD_VERSION=f'{APP_VERSION}-dupcols'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
+{'version':'1.28.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'同じ名前の列があるRNEを検出し、列分割を行わないようにしました。列分割は列名で担当を決め、結合でも列名を突き合わせるため、同名の列があると外す対象を取り違えたり、結合で片方が消えたりします。',
+'「RNEの中身を調べる」と「列の分割可否を調べる」で、重複している列名と回数を表示します。実行する前に分かります。通常の実行には影響しません。',
+'影実行は開始前に止めます。RNEを差し替えて列が増えた場合に備え、実行後の見出しでも再確認します。',
+'結合処理そのものにも防御を入れました。パートの見出しや出力の列順に同名があれば、理由を明示して中止します。黙って片方の列が消えることはありません。',
+]},
 {'version':'1.27.1','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
 'RNEを差し替えた直後に「結合後の列数が違います（178 != 177）」となる不具合を修正しました。列の並び順を直近の出力ファイルから取っていたため、まだ1回も実行していない新しいRNEでは古い列構成を使っていました。影実行は「分割なし」を必ず先に実行するので、その見出し行を正とするようにしました。',
 '結合の突き合わせに使う列を、全パートに共通して現れる列から求めるようにしました。位置や事前の想定に頼らないため、列が増減しても成立します。',
@@ -883,6 +889,17 @@ class SplitRowsetMismatch(ValueError):
  def __init__(self,message,first_rows=0,other_rows=0,part=''):
   super().__init__(message);self.first_rows=first_rows;self.other_rows=other_rows;self.part=part
 
+def duplicate_columns(columns):
+ """同じ名前が2回以上現れる列を返す。
+
+ 列分割は列名を同一性の手がかりにしている（担当外を名前で外し、結合で名前を突き合わせる）。
+ 同名の列があると、外す対象を取り違えたり、結合で片方が消えたりする。
+ 見つけたら分割は行わない。
+ """
+ seen={}
+ for c in columns or []:seen[c]=seen.get(c,0)+1
+ return [{'name':n,'count':k} for n,k in seen.items() if k>1]
+
 def column_weights(path,job,columns):
  """直近の出力ファイルから、列ごとの「データ量」と「値の入っている割合」を1回の走査で数える。
 
@@ -1127,6 +1144,13 @@ def merge_column_parts(part_files,dest,key_columns=None,column_order=None,encodi
   with Path(pf).open('r',encoding=encoding,newline='') as f:rows=list(csv.reader(f))
   if not rows:raise ValueError(f'分割結果が空です: {pf}')
   parts.append((Path(pf).name,rows[0],rows[1:]))
+ # 同名の列があると、突き合わせにも並べ直しにも列名が使えない。先に弾いて理由を明確にする。
+ for name,hdr,_b in parts:
+  d=duplicate_columns(hdr)
+  if d:raise ValueError(f'{name} に同じ名前の列があります: '+'、'.join(f"{x['name']}×{x['count']}" for x in d[:5]))
+ if column_order:
+  d=duplicate_columns(column_order)
+  if d:raise ValueError('出力に同じ名前の列があるため結合できません: '+'、'.join(f"{x['name']}×{x['count']}" for x in d[:5]))
  common=set(parts[0][1])
  for _n,hdr,_b in parts[1:]:common&=set(hdr)
  keys=[c for c in parts[0][1] if c in common]
@@ -1164,6 +1188,8 @@ def merge_column_parts(part_files,dest,key_columns=None,column_order=None,encodi
    raise ValueError(f'結合後の列数が違います: {len(header)} != {len(column_order)}'+(f'（余分: {extra[:5]}）' if extra else ''))
   idx=[pos[c] for c in column_order];header=list(column_order)
   merged=[[r[i] for i in idx] for r in merged]
+ dup=[n for n,k in {c:header.count(c) for c in header}.items() if k>1]
+ if dup:raise ValueError(f'結合後に同じ名前の列が残っています: {dup[:5]}')
  with Path(dest).open('w',encoding=encoding,newline='') as f:
   w=csv.writer(f,quoting=csv.QUOTE_MINIMAL);w.writerow(header);w.writerows(merged)
  return len(merged),len(header)
@@ -3141,12 +3167,14 @@ def period_control_points():
    else:out_error='まだ出力ファイルがありません（1回実行すると列名が読めます）'
   except Exception as oe:out_error=str(oe)
  else:out_error='保存済みの対象を編集すると、直近の出力から列名を読み取れます'
- log.info('CATALOG_OUTPUT_COLUMNS file=%s count=%s error=%s',out_from,len(out_cols),out_error)
+ dupes=duplicate_columns(out_cols)
+ if dupes:log.warning('COLUMN_DUPLICATES rne=%s count=%s names=%s',rp,len(dupes),[d['name'] for d in dupes[:10]])
+ log.info('CATALOG_OUTPUT_COLUMNS file=%s count=%s duplicates=%s error=%s',out_from,len(out_cols),len(dupes),out_error)
  return jsonify(ok=True,points=points,time_points=time_points,count=len(points),time_count=len(time_points),
                 data_items=items,data_item_count=len(items),data_item_named=di_named,data_item_error='',
                 data_item_detail=ins.get('di_diag',''),field_count=ins.get('field_count'),control_point_named=cp_named,
                 output_columns=out_cols,output_column_source=out_from,output_column_error=out_error,
-                layout=layout,column_split_ready=bool(ins.get('column_split_ready')))
+                layout=layout,column_split_ready=bool(ins.get('column_split_ready')),duplicates=dupes)
 
 def open_api_catalog(c,rne_path):
  """セッションを開き、データソースへ接続し、RNEを読み込んで (api, handle) を返す。呼び出し側で api.close() すること。"""
@@ -3235,6 +3263,9 @@ def column_plan():
    if pw:panchors,pcov=pick_anchor_columns(removable,pw,int(c['settings'].get('split_anchor_limit',3) or 3))
  except Exception as pe:
   log.warning('COLUMN_PLAN_WEIGHTS_FAILED rne=%s error=%s',rp,pe)
+ dupes=duplicate_columns(columns)
+ if dupes:
+  log.warning('COLUMN_DUPLICATES rne=%s count=%s names=%s',rp,len(dupes),[d['name'] for d in dupes[:10]])
  payload=split_payload_profile(columns,removable,pw)
  best,best_gain,detail_rows=recommend_split_parts(columns,removable,int(c['settings'].get('api_parallel_max_lines',4) or 4),trials,timing,pw,c['settings'])
  reason=split_gain_reason(columns,removable,max(2,best),timing,pw)
@@ -3243,7 +3274,7 @@ def column_plan():
  log.info('SPLIT_PAYLOAD rne=%s unit=%s fixed=%s(%.0f%%) splittable=%s(%.0f%%) anchors=%s coverage=%.4f',
           rp,payload['unit'],payload['fixed'],payload['fixed_share']*100,payload['splittable'],payload['splittable_share']*100,
           panchors or '(なし)',pcov)
- if incompatible:best,best_gain=1,1.0
+ if incompatible or dupes:best,best_gain=1,1.0
  log.info('COLUMN_PLAN rne=%s job=%s source=%s basis=%s columns=%s removable=%s fixed=%s recommend=%s gain=%s incompatible=%s elapsed=%.2fs',
           rp,job['name'],source,basis,len(columns),len(removable),len(fixed),best,best_gain,incompatible,elapsed)
  return jsonify(ok=True,rne=str(rp),job=job['name'],source=source,cache_state=state,columns=columns,column_count=len(columns),
@@ -3252,7 +3283,7 @@ def column_plan():
                 notes=notes,probe=probe_info,elapsed=round(elapsed,2),
                 recommended_parts=best,predicted_gain=best_gain,gain_detail=detail_rows,gain_reason=reason,
                 timing=timing,incompatible=incompatible,payload=payload,anchors=panchors,anchor_coverage=round(pcov,4),
-                throughput=tp,breakeven_fixed_share=breakeven)
+                throughput=tp,breakeven_fixed_share=breakeven,duplicates=dupes)
 
 def _spawn_split_parts(job,cfg,user,pw,server,work,jobs_spec,timeout=1800):
  """パートを独立プロセスで同時に走らせる。戻り値は投入順の結果一覧。
@@ -3325,6 +3356,16 @@ def _split_trial_run(data,c,job):
                  f'最も埋まっている列でも全行の{coverage*100:.1f}%%しか覆えず、残りの行は担当列がすべて空になるため落ちます。'
                  '錨を増やしても覆えないため、このRNEの現在の列構成では分割できません。',
                  rowset_mismatch=True,anchor_coverage=coverage,no_anchor=True)
+ dupes=duplicate_columns(columns)
+ if dupes and not data.get('force'):
+  log.warning('SPLIT_TRIAL_DUPLICATES rne=%s names=%s',rp,[d['name'] for d in dupes[:10]])
+  return dict(ok=False,duplicates=dupes,
+              error='同じ名前の列が複数あるため、列分割は行えません（'
+                    +'、'.join(f"{d['name']}×{d['count']}" for d in dupes[:5])
+                    +('ほか' if len(dupes)>5 else '')
+                    +'）。列分割は列名で担当を決め、結合でも列名を突き合わせるため、'
+                     '同名の列があると外す対象を取り違えたり、結合で片方が消えたりします。'
+                     'RNE側で列名を分けてから再度お試しください。')
  if parts<2:
   parts,_g,_d=recommend_split_parts(columns,removable,int(c['settings'].get('api_parallel_max_lines',4) or 4),
                                     trials,load_rne_timing(rp),weights,c['settings'])
@@ -3360,6 +3401,13 @@ def _split_trial_run(data,c,job):
    added=[x for x in actual if x not in set(columns)]
    if added:log.info('SPLIT_TRIAL_COLUMNS_ADDED %s',' | '.join(added[:20]))
    columns=actual
+   redup=duplicate_columns(columns)
+   if redup and not data.get('force'):
+    log.warning('SPLIT_TRIAL_DUPLICATES_ACTUAL rne=%s names=%s',rp,[d['name'] for d in redup[:10]])
+    return dict(ok=False,duplicates=redup,
+                error='実行した結果に同じ名前の列が含まれていたため、結合を行いませんでした（'
+                      +'、'.join(f"{d['name']}×{d['count']}" for d in redup[:5])+'）。'
+                      'RNE側で列名を分けてから再度お試しください。出力ファイルは更新していません。')
    save_column_cache(rp,columns,rows=base.get('rows'),source='trial',job=job)
    # 追加された列は分類が無いので固定列として扱う（全パートに残る＝結合に影響しない）。
    keys=[c for c in columns if c not in set(removable)]
