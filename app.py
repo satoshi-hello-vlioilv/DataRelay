@@ -25,10 +25,16 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.32.0'; APP_VERSION_TITLE='影実行の進捗と、実行実績の表示'; APP_RELEASED_AT='2026-08-08'
-BUILD_VERSION=f'{APP_VERSION}-meter'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.32.1'; APP_VERSION_TITLE='出力先のダブルクリックと列幅'; APP_RELEASED_AT='2026-08-08'
+BUILD_VERSION=f'{APP_VERSION}-click'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
+{'version':'1.32.1','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'出力先のリンクをダブルクリックしたとき、フォルダーが開いてしまい詳細（設定編集）へ進めなかったのを直しました。ダブルクリックでは詳細だけが開きます。',
+'ブラウザは1回目のクリックを先に配ってからダブルクリックを出すため、待たずに開くと必ずフォルダーが先に出ます。フォルダーを開く動作だけを0.4秒遅らせ、その間に2回目が来たら取り消して詳細へ回すようにしました。フォルダーを開くのはエクスプローラーの起動を伴うので、この遅れは体感に出ません。',
+'2回目かどうかの判定は、OS側のダブルクリック速度の設定に頼らずアプリ内で間隔を測ります。設定が遅い環境でも同じ操作感になります。',
+'出力ファイル名の列を188pxから228pxへ広げました。日付が入る長い名前も切れずに読めます。出力先の列はそのぶん縮みますが、横スクロールは出ません。',
+]},
 {'version':'1.32.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
 '影実行の進捗バーが、実際の進み具合を表すようになりました。書き出されつつあるファイルの大きさを見込みの大きさで割った、実測の割合です。これまでは常に100%幅の飾りでした。',
 'まだ1バイトも届いていない間（サーバ側で問い合わせ実行中）は経過時間からの見当になるため、バーを縞模様にして見分けられるようにし、その旨も明記します。見当は9割で頭打ちにして、実測より先へ進まないようにしています。',
