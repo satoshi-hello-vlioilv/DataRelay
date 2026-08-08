@@ -25,10 +25,17 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.23.3'; APP_VERSION_TITLE='起動できないときの理由をログに残す'; APP_RELEASED_AT='2026-08-07'
-BUILD_VERSION=f'{APP_VERSION}-startup-diag'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.24.0'; APP_VERSION_TITLE='列分割の可否と効果を実測で判定'; APP_RELEASED_AT='2026-08-07'
+BUILD_VERSION=f'{APP_VERSION}-split-verdict'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
+{'version':'1.24.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'影実行で「分割間で行集合が一致しません」となる場合の原因と件数を表示するようにしました。データ項目を外すと返ってくる行そのものが変わる問い合わせでは、列分割は使えません。結合の不具合ではありません。',
+'一度この食い違いが確認されたRNEは、以後は分割対象から外します。同じ試行を繰り返しません。',
+'分割の効果の見積もりを、実測の内訳に基づく式へ改めました。分割で縮むのは結果の転送だけで、サーバ側の問い合わせ実行は行数で決まるため列を減らしても縮まず、しかも各パートが満額払います。以前の見積もりはこれを織り込んでおらず、過大でした。',
+'通常実行のたびに、実行時間の内訳（サーバ実行・転送）をRNE単位で記録するようにしました。これを使って「分割しても何%変わるか」を実行前に表示します。',
+'見込みの差が1割未満のときは分割を勧めません。同じ問い合わせを何本も走らせる価値がないためです。',
+]},
 {'version':'1.23.3','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
 '起動できなかった理由をログ（app.log）へ残すようにしました。これまではポートが空いていない場合、Flaskが自前で処理して標準出力へ出すだけだったため、ログに何も残らず、起動画面には「起動確認がタイムアウトしました」としか出ませんでした。',
 'ポートが使用中のときは APP_PORT_IN_USE として記録し、対処方法（stop_app.bat の実行、python.exe / pythonw.exe の終了）を併記します。',
@@ -449,6 +456,7 @@ def init_settings_db():
   CREATE TABLE IF NOT EXISTS run_history (id INTEGER PRIMARY KEY AUTOINCREMENT,job_id TEXT,job_name TEXT,finished_at TEXT,status TEXT,trigger TEXT,detail TEXT,rows INTEGER,cols INTEGER,output_file TEXT);
   CREATE TABLE IF NOT EXISTS split_trials (id INTEGER PRIMARY KEY AUTOINCREMENT,rne_key TEXT NOT NULL,rne_path TEXT NOT NULL DEFAULT '',job_id TEXT NOT NULL DEFAULT '',job_name TEXT NOT NULL DEFAULT '',parts INTEGER NOT NULL,rows INTEGER,cols INTEGER,normal_elapsed REAL,split_elapsed REAL,observed_speedup REAL,identical INTEGER NOT NULL DEFAULT 0,detail TEXT NOT NULL DEFAULT '',tried_at TEXT NOT NULL);
   CREATE INDEX IF NOT EXISTS idx_split_trials_rne ON split_trials(rne_key);
+  CREATE TABLE IF NOT EXISTS rne_timing (rne_key TEXT PRIMARY KEY,rne_path TEXT NOT NULL DEFAULT '',execute_seconds REAL,save_seconds REAL,total_seconds REAL,rows INTEGER,cols INTEGER,measured_at TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS rne_columns (rne_key TEXT PRIMARY KEY,rne_path TEXT NOT NULL,rne_mtime_ns TEXT NOT NULL DEFAULT '',rne_size INTEGER NOT NULL DEFAULT 0,columns_json TEXT NOT NULL,column_count INTEGER NOT NULL DEFAULT 0,row_count INTEGER,source TEXT NOT NULL DEFAULT '',job_id TEXT NOT NULL DEFAULT '',job_name TEXT NOT NULL DEFAULT '',captured_at TEXT NOT NULL);
   CREATE INDEX IF NOT EXISTS idx_run_history_finished ON run_history(finished_at);
   """)
@@ -826,6 +834,11 @@ def read_header_names(path,job):
 # 1つのRNEを複数プロセスで開き、各プロセスが担当外の列を外して問い合わせ、結果を横に結合する。
 # 削除できない列（管理ポイント由来）は全パートに残るので、そのまま結合キーになる。
 
+class SplitRowsetMismatch(ValueError):
+ """パートごとに返る行が違う。列を外すと行も変わる問い合わせで起きる。"""
+ def __init__(self,message,first_rows=0,other_rows=0,part=''):
+  super().__init__(message);self.first_rows=first_rows;self.other_rows=other_rows;self.part=part
+
 def plan_column_split(columns,removable,parts):
  """出力列を parts 個の担当に分ける。列の並び順は元のまま保つ。
 
@@ -854,11 +867,7 @@ def split_transfer_ratio(columns,removable,parts):
  return (parts*keys+rem)/total
 
 def split_speedup_estimate(parts,trials=None):
- """パート数に対する並列転送の効き目。実測があればそれを優先する。
-
- 実測がないうちは、この回線で測った同時実行の利得（7並列で単一の約2.5倍）から
- 逓減する形で見積もる。試行が貯まればその平均で置き換わる。
- """
+ """パート数に対する並列転送の効き目。実測があればそれを優先する。"""
  parts=max(1,int(parts))
  if parts==1:return 1.0
  for t in (trials or []):
@@ -866,14 +875,38 @@ def split_speedup_estimate(parts,trials=None):
    return float(t['observed_speedup'])
  return 1.0+1.5*(1.0-1.0/parts)      # 2本で1.75倍、4本で2.13倍、無限で2.5倍
 
-def predict_split_gain(columns,removable,parts,trials=None):
- """分割したときの所要時間の見込み（1.0=変わらない、0.6なら4割短縮）。"""
+def predict_split_gain(columns,removable,parts,trials=None,timing=None):
+ """分割したときの所要時間の見込み（1.0=変わらない、0.6なら4割短縮）。
+
+ 肝心なのは、分割で縮むのは「結果の転送・保存」だけだということ。サーバ側の問い合わせ実行は
+ 行数で決まるため列を減らしても縮まず、しかも各パートが満額払う。
+ 実測の内訳（timing）があれば、それを使って正直に見積もる。無ければ転送が支配的と仮定する。
+ """
  total=len(columns) or 1;rem=len([c for c in columns if c in set(removable)]);keys=total-rem
  if parts<2 or not rem:return 1.0
- per_part=(keys+rem/parts)/total                 # 1パートあたりの転送量の比
- return per_part/split_speedup_estimate(parts,trials)
+ ratio=(keys+rem/parts)/total                     # 1パートあたりの列の割合
+ if timing and (timing.get('execute') or 0)>0:
+  ex=float(timing['execute']);sv=float(timing.get('save') or 0)
+  other=max(0.0,float(timing.get('total') or (ex+sv))-ex-sv)
+  base=ex+sv+other
+  if base<=0:return 1.0
+  # 各パート = サーバ実行(満額) + 転送(列の割合ぶん) + その他。並列なのでこれが全体の所要。
+  return round((ex+sv*ratio+other)/base,3)
+ return ratio/split_speedup_estimate(parts,trials)
 
-def recommend_split_parts(columns,removable,max_parts=4,trials=None):
+def split_gain_reason(columns,removable,parts,timing=None):
+ """見込みの内訳を、そのまま画面へ出せる形で返す。"""
+ total=len(columns) or 1;rem=len([c for c in columns if c in set(removable)]);keys=total-rem
+ ratio=(keys+rem/max(1,parts))/total
+ if not (timing and (timing.get('execute') or 0)>0):
+  return {'measured':False,'ratio':round(ratio,3)}
+ ex=float(timing['execute']);sv=float(timing.get('save') or 0)
+ other=max(0.0,float(timing.get('total') or (ex+sv))-ex-sv);base=ex+sv+other
+ return {'measured':True,'ratio':round(ratio,3),'execute':round(ex,1),'save':round(sv,1),'other':round(other,1),
+         'total':round(base,1),'execute_share':round(ex/base,3) if base else 0,
+         'floor':round((ex+other)/base,3) if base else 1.0}
+
+def recommend_split_parts(columns,removable,max_parts=4,trials=None,timing=None):
  """効果が最大になるパート数を選ぶ。得にならなければ1（分割しない）を返す。
 
  見込みの式はサーバ側の負荷を織り込めない（パートを増やすほど同じ問い合わせを何度も走らせる）。
@@ -883,19 +916,18 @@ def recommend_split_parts(columns,removable,max_parts=4,trials=None):
  rem=len([c for c in columns if c in set(removable)])
  trials=trials or []
  measured={int(t['parts']):float(t['observed_speedup']) for t in trials if t.get('observed_speedup')}
- proven=[n for n,s in measured.items() if s>1.0]
- # 遅かったパート数が分かっていれば、そこで頭打ちにする
- slow=[n for n,s in measured.items() if s<=1.0]
+ proven=[n for n,sp in measured.items() if sp>1.0]
+ slow=[n for n,sp in measured.items() if sp<=1.0]
  ceiling=min(int(max_parts),max(2,(max(proven) if proven else 1)+1))
  if slow:ceiling=min(ceiling,min(slow)-1)
  best,best_gain=1,1.0;details=[]
  for n in range(1,max(1,int(max_parts))+1):
   if n>1 and rem<n*2:break                      # 1パートあたり2列未満になる分割はしない
-  g=predict_split_gain(columns,removable,n,trials)
-  row={'parts':n,'predicted':round(g,3),'transfer_ratio':round(split_transfer_ratio(columns,removable,n),3),
-       'measured':round(measured[n],2) if n in measured else None,'allowed':n<=ceiling}
-  details.append(row)
-  if n<=ceiling and g<best_gain-0.02:best,best_gain=n,g   # わずかな差では分割しない
+  g=predict_split_gain(columns,removable,n,trials,timing)
+  details.append({'parts':n,'predicted':round(g,3),'transfer_ratio':round(split_transfer_ratio(columns,removable,n),3),
+                  'measured':round(measured[n],2) if n in measured else None,'allowed':n<=ceiling})
+  # わずかな差では分割しない。転送だけが縮む以上、1割未満の見込みで並列問い合わせを増やす価値はない。
+  if n<=ceiling and g<best_gain-0.10:best,best_gain=n,g
  return best,round(best_gain,3),details
 
 def merge_column_parts(part_files,dest,key_columns,column_order,encoding='cp932'):
@@ -914,7 +946,11 @@ def merge_column_parts(part_files,dest,key_columns,column_order,encoding='cp932'
   if i==0:
    order=[tuple(r[:kn]) for r in body];base={k:list(v) for k,v in m.items()};header=list(hdr)
   else:
-   if set(m)!=set(base):raise ValueError(f'分割間で行集合が一致しません: {pf}')
+   if set(m)!=set(base):
+    # 行数まで添える。列を外したことで返る行そのものが変わった場合、ここで大きく食い違う。
+    raise SplitRowsetMismatch(f'分割間で行集合が一致しません（1つ目 {len(base)}行 / {Path(pf).name} {len(m)}行）。'
+                              'データ項目を外すと返ってくる行が変わる問い合わせのため、列分割は使えません。',
+                              first_rows=len(base),other_rows=len(m),part=Path(pf).name)
    header+=hdr[kn:]
    for k in order:base[k]+=m[k]
  merged=[list(k)+base[k] for k in order]
@@ -944,6 +980,37 @@ def record_split_trial(rne_path,job,parts,rows,cols,normal_elapsed,split_elapsed
  log.info('SPLIT_TRIAL rne=%s parts=%s rows=%s cols=%s normal=%.2fs split=%.2fs speedup=%s identical=%s',
           rne_path,parts,rows,cols,normal_elapsed or 0,split_elapsed or 0,f'{speedup:.2f}' if speedup else '-',identical)
  return speedup
+
+def save_rne_timing(rne_path,execute_seconds,save_seconds,total_seconds,rows=None,cols=None):
+ """1回の実行の内訳を残す。分割で縮むのは転送(保存)の部分だけなので、その比率が判断の要になる。"""
+ if not (execute_seconds or save_seconds):return
+ try:
+  with settings_sync_lock, settings_connection() as c:
+   c.execute('INSERT OR REPLACE INTO rne_timing(rne_key,rne_path,execute_seconds,save_seconds,total_seconds,rows,cols,measured_at) VALUES(?,?,?,?,?,?,?,?)',
+             (_rne_key(rne_path),str(rne_path),execute_seconds,save_seconds,total_seconds,rows,cols,datetime.now().isoformat(timespec='seconds')))
+   _mark_settings_dirty()
+ except Exception:
+  log.exception('RNE_TIMING_SAVE_FAILED rne=%s',rne_path);return
+ log.info('RNE_TIMING rne=%s execute=%.2fs save=%.2fs total=%.2fs',rne_path,execute_seconds or 0,save_seconds or 0,total_seconds or 0)
+
+def load_rne_timing(rne_path):
+ try:
+  with settings_connection() as c:
+   r=c.execute('SELECT * FROM rne_timing WHERE rne_key=?',(_rne_key(rne_path),)).fetchone()
+ except Exception:
+  return None
+ if not r:return None
+ return {'execute':r['execute_seconds'] or 0,'save':r['save_seconds'] or 0,'total':r['total_seconds'] or 0,
+         'rows':r['rows'],'cols':r['cols'],'measured_at':r['measured_at']}
+
+def split_incompatible(rne_path):
+ """このRNEは列分割に向かないと確定しているか（行集合が食い違った実績があるか）。"""
+ try:
+  with settings_connection() as c:
+   r=c.execute("SELECT COUNT(*) n FROM split_trials WHERE rne_key=? AND identical=0 AND detail LIKE 'rowset%'",(_rne_key(rne_path),)).fetchone()
+  return bool(r and r['n'])
+ except Exception:
+  return False
 
 def load_split_trials(rne_path=None):
  """記録済みの実測。パート数ごとに、一致した試行の平均速度比を返す。"""
@@ -2005,8 +2072,12 @@ def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,
     log.info('COLUMN_CACHE_READ line=%s job=%s state=%s columns=%s file=%s elapsed=%.2fs',line_name,j['name'],state,len(column_names),db.name,time.perf_counter()-read_started)
   except Exception as ce:
    log.warning('COLUMN_CACHE_READ_FAILED line=%s job=%s error=%s',line_name,j['name'],ce)
+  ph=_phase_profile.get('phases') or {}
   return {'ok':True,'job':j['name'],'format':fmt,'rows':nr,'columns':nc,'elapsed':total,'target':str(target),'result':result,
-          'column_names':column_names,'rne_path':str(rp)}
+          'column_names':column_names,'rne_path':str(rp),
+          'execute_seconds':round(float(ph.get('api_execute_catalog') or 0),2),
+          'save_seconds':round(float(ph.get('api_save_csv') or ph.get('api_save_xlsx_direct') or 0),2),
+          'total_seconds':round(total,2)}
  except Exception as e:
   total=time.perf_counter()-job_started
   update_parallel_line(line_name,job=j.get('name',''),job_id=j.get('id',''),state='失敗',percent=100,detail=str(e),elapsed=round(total,1));log.error('PARALLEL_JOB_ERROR line=%s job=%s elapsed=%.2fs error=%s\n%s',line_name,j.get('name'),total,e,traceback.format_exc())
@@ -2106,6 +2177,9 @@ def run_api_process_batch(jobs,cfg,user,pw,server,dde_work,backup,max_lines,trig
    # ワーカーが持ち帰った列名をここで保存する。設定DBへの書き込みを親1本に集約して競合を避ける。
    if result.get('ok') and result.get('column_names'):
     save_column_cache(result.get('rne_path') or '',result['column_names'],rows=result.get('rows'),source='run',job=item['job'])
+   if result.get('ok') and result.get('rne_path'):
+    save_rne_timing(result['rne_path'],result.get('execute_seconds'),result.get('save_seconds'),
+                    result.get('total_seconds'),result.get('rows'),result.get('columns'))
    with active_workers_lock:active_workers.pop(slot,None)
    del active[slot]
    if queue and not cancel_requested.is_set():start_one(slot)
@@ -2865,11 +2939,18 @@ def column_plan():
   removable=[x['name'] for x in classify if x.get('removable')]
   fixed=[x['name'] for x in classify if not x.get('removable')];basis='classify'
  elapsed=time.perf_counter()-started
- log.info('COLUMN_PLAN rne=%s job=%s source=%s basis=%s columns=%s removable=%s fixed=%s elapsed=%.2fs',rp,job['name'],source,basis,len(columns),len(removable),len(fixed),elapsed)
+ timing=load_rne_timing(rp);incompatible=split_incompatible(rp)
+ best,best_gain,detail_rows=recommend_split_parts(columns,removable,int(c['settings'].get('api_parallel_max_lines',4) or 4),trials,timing)
+ reason=split_gain_reason(columns,removable,max(2,best),timing)
+ if incompatible:best,best_gain=1,1.0
+ log.info('COLUMN_PLAN rne=%s job=%s source=%s basis=%s columns=%s removable=%s fixed=%s recommend=%s gain=%s incompatible=%s elapsed=%.2fs',
+          rp,job['name'],source,basis,len(columns),len(removable),len(fixed),best,best_gain,incompatible,elapsed)
  return jsonify(ok=True,rne=str(rp),job=job['name'],source=source,cache_state=state,columns=columns,column_count=len(columns),
                 classify=classify,removable=removable,fixed=fixed,removable_count=len(removable),fixed_count=len(fixed),
                 basis=basis,layout=layout,classify_error=classify_error,captured_at=(cached or {}).get('captured_at',''),
-                notes=notes,probe=probe_info,elapsed=round(elapsed,2))
+                notes=notes,probe=probe_info,elapsed=round(elapsed,2),
+                recommended_parts=best,predicted_gain=best_gain,gain_detail=detail_rows,gain_reason=reason,
+                timing=timing,incompatible=incompatible)
 
 def _spawn_split_parts(job,cfg,user,pw,server,work,jobs_spec):
  """パートを独立プロセスで同時に走らせる。戻り値は投入順の結果一覧。"""
@@ -2912,8 +2993,11 @@ def column_split_trial():
   return jsonify(ok=False,error='分割して取得できる列がありません'),200
  columns=cached['columns'];trials=load_split_trials(rp)
  parts=int(data.get('parts') or 0)
+ if split_incompatible(rp) and not data.get('force'):
+  return jsonify(ok=False,error='このRNEは、列を外すと返ってくる行そのものが変わることが確認済みです。'
+                 '列分割は使えません（以前の試行で行集合が食い違いました）。',rowset_mismatch=True,known=True),200
  if parts<2:
-  parts,_g,_d=recommend_split_parts(columns,removable,int(c['settings'].get('api_parallel_max_lines',4) or 4),trials)
+  parts,_g,_d=recommend_split_parts(columns,removable,int(c['settings'].get('api_parallel_max_lines',4) or 4),trials,load_rne_timing(rp))
   if parts<2:parts=2                              # 明示的な試行なので、推奨が1でも2で測る
  plan,keys=plan_column_split(columns,removable,parts)
  if len(plan)<2:return jsonify(ok=False,error='この列構成では分割できません'),200
@@ -2939,6 +3023,14 @@ def column_split_trial():
   merged=work/'merged.csv';t=time.perf_counter()
   try:
    mrows,mcols=merge_column_parts([r['file'] for r in results],merged,keys,columns)
+  except SplitRowsetMismatch as me:
+   # 列を外すと返る行が変わる問い合わせ。速さ以前に分割が成立しないので、以後は勧めない。
+   log.warning('SPLIT_TRIAL_ROWSET_MISMATCH rne=%s parts=%s rows=%s error=%s',rp,len(plan),[r.get('rows') for r in results],me)
+   record_split_trial(rp,job,len(plan),None,None,normal_elapsed,None,False,
+                      detail=f'rowset first={me.first_rows} other={me.other_rows} part={me.part}')
+   return jsonify(ok=False,error=str(me),parts=len(plan),results=results,rowset_mismatch=True,
+                  part_rows=[{'part':r.get('part'),'rows':r.get('rows'),'cols':r.get('cols')} for r in results],
+                  normal_rows=base.get('rows')),200
   except Exception as me:
    log.warning('SPLIT_TRIAL_MERGE_FAILED rne=%s error=%s',rp,me)
    return jsonify(ok=False,error=f'結合に失敗しました: {me}',parts=len(plan),results=results),200
