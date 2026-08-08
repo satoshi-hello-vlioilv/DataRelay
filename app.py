@@ -1,5 +1,5 @@
 ﻿from __future__ import annotations
-import atexit, calendar, configparser, csv, gc, json, logging, os, re, shutil, sqlite3, struct, subprocess, sys, tempfile, threading, time, traceback, uuid, webbrowser
+import atexit, calendar, configparser, csv, gc, json, logging, os, re, shutil, socket, sqlite3, struct, subprocess, sys, tempfile, threading, time, traceback, uuid, webbrowser
 from collections import deque
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -25,10 +25,15 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.23.2'; APP_VERSION_TITLE='ヒープ破壊による調査の異常終了を修正'; APP_RELEASED_AT='2026-08-07'
-BUILD_VERSION=f'{APP_VERSION}-heapfix'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.23.3'; APP_VERSION_TITLE='起動できないときの理由をログに残す'; APP_RELEASED_AT='2026-08-07'
+BUILD_VERSION=f'{APP_VERSION}-startup-diag'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
+{'version':'1.23.3','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'起動できなかった理由をログ（app.log）へ残すようにしました。これまではポートが空いていない場合、Flaskが自前で処理して標準出力へ出すだけだったため、ログに何も残らず、起動画面には「起動確認がタイムアウトしました」としか出ませんでした。',
+'ポートが使用中のときは APP_PORT_IN_USE として記録し、対処方法（stop_app.bat の実行、python.exe / pythonw.exe の終了）を併記します。',
+'起動時のその他の失敗も APP_RUN_FAILED として記録します。',
+]},
 {'version':'1.23.2','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
 '「調べる」が異常終了する不具合を修正しました。終了コード 3221226356（0xC0000374）はヒープ破壊です。名前を受け取るバッファを番兵で埋めていたため、NUL文字が1つも無い状態でDLLへ渡していました。DLLが文字列の長さを測ろうとするとバッファの外まで走査し、ヒープを壊していました。',
 'バッファをゼロ埋めに戻しました（1.21.1と同じ渡し方です）。大きさも1024バイトに戻しています。',
@@ -3505,4 +3510,20 @@ if __name__=='__main__':
  _t=time.perf_counter(); threading.Thread(target=scheduler,daemon=True,name='scheduler').start(); threading.Thread(target=command_dispatcher,daemon=True,name='command-dispatcher').start(); threading.Thread(target=heartbeat_watchdog,daemon=True,name='heartbeat-watchdog').start(); log.info('APP_START_THREADS elapsed=%.2fs',time.perf_counter()-_t)
  _t=time.perf_counter(); log.info('APP_START_TRAY available=%s elapsed=%.2fs',bool(start_tray()),time.perf_counter()-_t)
  log.info('APP_START_TOTAL boot_to_run=%.2fs total_since_spawn=%.2fs',time.perf_counter()-startup_clock,(time.time()-_spawn_at) if _spawn_at else -1)
- app.run(host=HOST,port=PORT,debug=False,threaded=True)
+ # ポートが空いているかを先に確かめる。Flask(werkzeug)は束縛失敗を自前で処理して
+ # 標準出力にだけ出して終了するため、そのままではログに何も残らず、
+ # ランチャー側からは「起動確認がタイムアウト」としか見えない。
+ _probe=socket.socket(socket.AF_INET,socket.SOCK_STREAM)
+ try:
+  _probe.bind((HOST,PORT))
+ except OSError as e:
+  log.error('APP_PORT_IN_USE host=%s port=%s error=%s',HOST,PORT,e)
+  log.error('APP_PORT_IN_USE_HINT 既にSymfoNavi Data Hubが起動しているか、前回のプロセスが残っています。'
+            'stop_app.bat を実行するか、タスクマネージャーで python.exe / pythonw.exe を終了してから起動し直してください。')
+  raise SystemExit(1)
+ finally:
+  _probe.close()
+ try:
+  app.run(host=HOST,port=PORT,debug=False,threaded=True)
+ except Exception:
+  log.exception('APP_RUN_FAILED host=%s port=%s',HOST,PORT);raise
