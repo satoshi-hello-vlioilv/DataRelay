@@ -25,10 +25,14 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.24.0'; APP_VERSION_TITLE='列分割の可否と効果を実測で判定'; APP_RELEASED_AT='2026-08-07'
-BUILD_VERSION=f'{APP_VERSION}-split-verdict'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.24.1'; APP_VERSION_TITLE='影実行に時間制限を追加'; APP_RELEASED_AT='2026-08-07'
+BUILD_VERSION=f'{APP_VERSION}-trial-timeout'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
+{'version':'1.24.1','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'影実行に時間制限を追加しました（既定30分）。応答が返らないパートがあると、これまでは影実行そのものが返らず、画面が待ち続けていました。',
+'制限を超えたパートは終了させ、失敗として扱います。他のパートの結果は保持し、何が起きたかを表示します。出力ファイルは更新しないため、影響は試行の中だけです。',
+]},
 {'version':'1.24.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
 '影実行で「分割間で行集合が一致しません」となる場合の原因と件数を表示するようにしました。データ項目を外すと返ってくる行そのものが変わる問い合わせでは、列分割は使えません。結合の不具合ではありません。',
 '一度この食い違いが確認されたRNEは、以後は分割対象から外します。同じ試行を繰り返しません。',
@@ -1051,7 +1055,7 @@ def load():
   _prev_profile=cfg['settings'].get('stability_profile')
   if _prev_profile in (None,'stable_api_serial'):
    cfg['settings']['api_parallel_lines']=6; cfg['settings']['stability_profile']='balanced_api_parallel'
-  cfg['settings'].setdefault('api_parallel_lines',6); cfg['settings'].setdefault('stability_profile','balanced_api_parallel'); cfg['settings'].setdefault('backup_enabled',True); _backup_mode_missing='backup_mode' not in cfg['settings']; cfg['settings'].setdefault('backup_mode','generations'); cfg['settings'].setdefault('backup_retention_days',30); cfg['settings'].setdefault('backup_generation_limit_enabled',True); cfg['settings'].setdefault('backup_generations',3); cfg['settings'].setdefault('schedule_catchup_minutes',30); cfg['settings'].setdefault('api_worker_stagger_ms',700)
+  cfg['settings'].setdefault('api_parallel_lines',6); cfg['settings'].setdefault('stability_profile','balanced_api_parallel'); cfg['settings'].setdefault('backup_enabled',True); _backup_mode_missing='backup_mode' not in cfg['settings']; cfg['settings'].setdefault('backup_mode','generations'); cfg['settings'].setdefault('backup_retention_days',30); cfg['settings'].setdefault('backup_generation_limit_enabled',True); cfg['settings'].setdefault('backup_generations',3); cfg['settings'].setdefault('schedule_catchup_minutes',30); cfg['settings'].setdefault('api_worker_stagger_ms',700); cfg['settings'].setdefault('split_trial_timeout_seconds',1800)
   if _backup_mode_missing:cfg['settings']['backup_generations']=3
   if int(cfg['settings'].get('api_parallel_lines',6) or 6)==2:cfg['settings']['api_parallel_lines']=6
   cfg.setdefault('navigator_api_dll',r'.\Config\NAVIAP\debugdllVC14x64\SymNaviA.dll'); cfg.setdefault('accdb_template','.\\assets\\empty.accdb');
@@ -2952,9 +2956,13 @@ def column_plan():
                 recommended_parts=best,predicted_gain=best_gain,gain_detail=detail_rows,gain_reason=reason,
                 timing=timing,incompatible=incompatible)
 
-def _spawn_split_parts(job,cfg,user,pw,server,work,jobs_spec):
- """パートを独立プロセスで同時に走らせる。戻り値は投入順の結果一覧。"""
- procs=[]
+def _spawn_split_parts(job,cfg,user,pw,server,work,jobs_spec,timeout=1800):
+ """パートを独立プロセスで同時に走らせる。戻り値は投入順の結果一覧。
+
+ 応答が返らないパートがあると影実行そのものが返らなくなるため、必ず時間制限をつける。
+ 制限を超えたパートは終了させ、失敗として扱う（公開はしないので影響は試行の中だけ）。
+ """
+ procs=[];deadline=time.perf_counter()+max(60,int(timeout))
  for spec in jobs_spec:
   d=work/f'part{spec["index"]}';d.mkdir(parents=True,exist_ok=True)
   payload={'job':job,'cfg':cfg,'user':user,'password':pw,'server':server,
@@ -2966,7 +2974,15 @@ def _spawn_split_parts(job,cfg,user,pw,server,work,jobs_spec):
   procs.append((spec,subprocess.Popen([sys.executable,str(BASE/'api_worker.py'),str(pp)],cwd=str(BASE),env=env,creationflags=flags),d/'result.json'))
  out=[]
  for spec,proc,rp in procs:
-  rc=proc.wait()
+  remain=deadline-time.perf_counter()
+  try:
+   rc=proc.wait(timeout=max(1,remain))
+  except subprocess.TimeoutExpired:
+   proc.kill()
+   try:proc.wait(timeout=10)
+   except Exception:pass
+   log.warning('SPLIT_PART_TIMEOUT part=%s timeout=%ss',spec['label'],timeout)
+   out.append({'ok':False,'part':spec['label'],'error':f'{timeout}秒を超えたため中止しました'});continue
   out.append(_read_worker_json(rp,{'ok':False,'part':spec['label'],'error':f'Worker終了コード {rc}'}))
  return out
 
@@ -3009,12 +3025,13 @@ def column_split_trial():
  try:
   # 1) 分割なし。比較の基準であり、所要時間の基準でもある。
   base_csv=work/'normal.csv';t=time.perf_counter()
-  base=_spawn_split_parts(job,c,user,pw,server,work,[{'index':0,'label':'分割なし','drop':[],'out_csv':base_csv}])[0]
+  trial_timeout=int(c['settings'].get('split_trial_timeout_seconds',1800) or 1800)
+  base=_spawn_split_parts(job,c,user,pw,server,work,[{'index':0,'label':'分割なし','drop':[],'out_csv':base_csv}],trial_timeout)[0]
   normal_elapsed=time.perf_counter()-t
   if not base.get('ok'):return jsonify(ok=False,error=f'分割なしの実行に失敗しました: {base.get("error")}'),200
   # 2) 分割あり。パートは同時に走らせる。
   specs=[{'index':p['index'],'label':f'パート{p["index"]}/{len(plan)}','drop':p['drop'],'out_csv':work/f'part{p["index"]}.csv'} for p in plan]
-  t=time.perf_counter();results=_spawn_split_parts(job,c,user,pw,server,work,specs);split_run=time.perf_counter()-t
+  t=time.perf_counter();results=_spawn_split_parts(job,c,user,pw,server,work,specs,trial_timeout);split_run=time.perf_counter()-t
   bad=[r for r in results if not r.get('ok')]
   if bad:
    return jsonify(ok=False,error='分割実行に失敗しました: '+'; '.join(f'{r.get("part")}: {r.get("error")}' for r in bad),
