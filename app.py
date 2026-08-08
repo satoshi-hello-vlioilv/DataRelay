@@ -25,10 +25,18 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.31.0'; APP_VERSION_TITLE='分割なしと分割を競争させる'; APP_RELEASED_AT='2026-08-08'
-BUILD_VERSION=f'{APP_VERSION}-race'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.32.0'; APP_VERSION_TITLE='影実行の進捗と、実行実績の表示'; APP_RELEASED_AT='2026-08-08'
+BUILD_VERSION=f'{APP_VERSION}-meter'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
+{'version':'1.32.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'影実行の進捗バーが、実際の進み具合を表すようになりました。書き出されつつあるファイルの大きさを見込みの大きさで割った、実測の割合です。これまでは常に100%幅の飾りでした。',
+'まだ1バイトも届いていない間（サーバ側で問い合わせ実行中）は経過時間からの見当になるため、バーを縞模様にして見分けられるようにし、その旨も明記します。見当は9割で頭打ちにして、実測より先へ進まないようにしています。',
+'工程（①列の重みを測定 → ②分割なし → ③分割を並列実行 → ④結合 → ⑤比較）ごとに受け持ち範囲を決め、全体の何%かが分かるようにしました。競争のときは②③をまとめて1工程として扱います。',
+'対象一覧の「進捗・次回実行」に、直前の実行実績を1行で表示します。取り方（通常 / N分割 / 競争→勝った側）、所要時間、件数、転送量、転送速度です。マウスを載せると問い合わせ・転送・結合の内訳も出ます。',
+'その場所を作るため、進捗・次回実行の列を236pxから308pxへ広げ、出力先の列をそのぶん縮めました。',
+'アプリ上部で名前が2回書かれていたのを、1つにまとめました。',
+]},
 {'version':'1.31.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
 '分割なし1本と分割Nパートを同時に起動し、先に終わった方を採用して残りを中断する「競争」を追加しました。対象ごとに選べます（対象を編集 → RNEを調べる → 動作 → 競争させる）。',
 '影実行にも「競争させて測る」を追加しました。両方を最後まで走らせ、決着の順番と各racerの着順時刻を記録します。公開はしません。',
@@ -522,7 +530,7 @@ def init_settings_db():
   CREATE TABLE IF NOT EXISTS schedules (id TEXT PRIMARY KEY,job_id TEXT NOT NULL,display_order INTEGER NOT NULL DEFAULT 0,enabled INTEGER NOT NULL DEFAULT 1,name TEXT NOT NULL,schedule_type TEXT NOT NULL,time_value TEXT,interval_minutes INTEGER,weekdays_json TEXT,month_days_json TEXT,dates_json TEXT,updated_at TEXT NOT NULL,FOREIGN KEY(job_id) REFERENCES jobs(id) ON DELETE CASCADE);
   CREATE TABLE IF NOT EXISTS scheduler_state (state_key TEXT PRIMARY KEY,state_value TEXT NOT NULL,updated_at TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS schema_info (key TEXT PRIMARY KEY,value TEXT NOT NULL);
-  CREATE TABLE IF NOT EXISTS job_runs (job_id TEXT PRIMARY KEY,job_name TEXT,finished_at TEXT,status TEXT,trigger TEXT,detail TEXT,rows INTEGER,cols INTEGER,output_file TEXT,updated_at TEXT NOT NULL DEFAULT '');
+  CREATE TABLE IF NOT EXISTS job_runs (job_id TEXT PRIMARY KEY,job_name TEXT,finished_at TEXT,status TEXT,trigger TEXT,detail TEXT,rows INTEGER,cols INTEGER,output_file TEXT,updated_at TEXT NOT NULL DEFAULT '',metrics TEXT NOT NULL DEFAULT '');
   CREATE TABLE IF NOT EXISTS run_history (id INTEGER PRIMARY KEY AUTOINCREMENT,job_id TEXT,job_name TEXT,finished_at TEXT,status TEXT,trigger TEXT,detail TEXT,rows INTEGER,cols INTEGER,output_file TEXT);
   CREATE TABLE IF NOT EXISTS split_trials (id INTEGER PRIMARY KEY AUTOINCREMENT,rne_key TEXT NOT NULL,rne_path TEXT NOT NULL DEFAULT '',job_id TEXT NOT NULL DEFAULT '',job_name TEXT NOT NULL DEFAULT '',parts INTEGER NOT NULL,rows INTEGER,cols INTEGER,normal_elapsed REAL,split_elapsed REAL,observed_speedup REAL,identical INTEGER NOT NULL DEFAULT 0,detail TEXT NOT NULL DEFAULT '',metrics TEXT NOT NULL DEFAULT '',tried_at TEXT NOT NULL);
   CREATE INDEX IF NOT EXISTS idx_split_trials_rne ON split_trials(rne_key);
@@ -574,6 +582,8 @@ def ensure_schema_upgrades():
   if rc and 'classify_json' not in rc:c.execute("ALTER TABLE rne_columns ADD COLUMN classify_json TEXT NOT NULL DEFAULT ''")
   st=[r['name'] for r in c.execute('PRAGMA table_info(split_trials)')]
   if st and 'metrics' not in st:c.execute("ALTER TABLE split_trials ADD COLUMN metrics TEXT NOT NULL DEFAULT ''")
+  jr=[r['name'] for r in c.execute('PRAGMA table_info(job_runs)')]
+  if jr and 'metrics' not in jr:c.execute("ALTER TABLE job_runs ADD COLUMN metrics TEXT NOT NULL DEFAULT ''")
 
 def _decode_setting(row):
  v=row['value']; t=row['value_type']
@@ -787,12 +797,16 @@ def resolve_output_filename(job,cfg,now=None):
   base=Path(str(job.get('output_file') or 'output')).stem
  return canonical_output_file(base,fmt)
 
-def record_job_run(job_id,job_name,status_value,trigger,detail='',rows=None,cols=None,output_file=''):
+def _json_or_empty(text):
+ try:return json.loads(text or '{}') or {}
+ except Exception:return {}
+
+def record_job_run(job_id,job_name,status_value,trigger,detail='',rows=None,cols=None,output_file='',metrics=None):
  if not job_id:return
  now=datetime.now().isoformat(timespec='seconds')
  try:
   with settings_sync_lock, settings_connection() as c:
-   c.execute('INSERT OR REPLACE INTO job_runs(job_id,job_name,finished_at,status,trigger,detail,rows,cols,output_file,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)',(job_id,job_name,now,status_value,trigger,detail,rows,cols,output_file,now))
+   c.execute('INSERT OR REPLACE INTO job_runs(job_id,job_name,finished_at,status,trigger,detail,rows,cols,output_file,updated_at,metrics) VALUES(?,?,?,?,?,?,?,?,?,?,?)',(job_id,job_name,now,status_value,trigger,detail,rows,cols,output_file,now,json.dumps(metrics or {},ensure_ascii=False)))
    # カレンダーの実施履歴用に追記式でも保持する（job_runsは最新1件のみのため）。
    c.execute('INSERT INTO run_history(job_id,job_name,finished_at,status,trigger,detail,rows,cols,output_file) VALUES(?,?,?,?,?,?,?,?,?)',(job_id,job_name,now,status_value,trigger,detail,rows,cols,output_file))
    # 実施履歴は直近2000件へ制限し、肥大化を防ぐ。
@@ -803,7 +817,7 @@ def record_job_run(job_id,job_name,status_value,trigger,detail='',rows=None,cols
 def load_job_runs():
  try:
   with settings_connection() as c:
-   return {r['job_id']:{'finished_at':r['finished_at'],'status':r['status'],'trigger':r['trigger'],'detail':r['detail'],'rows':r['rows'],'cols':r['cols'],'output_file':r['output_file']} for r in c.execute('SELECT * FROM job_runs')}
+   return {r['job_id']:{'finished_at':r['finished_at'],'status':r['status'],'trigger':r['trigger'],'detail':r['detail'],'rows':r['rows'],'cols':r['cols'],'output_file':r['output_file'],'metrics':_json_or_empty(r['metrics'] if 'metrics' in r.keys() else '')} for r in c.execute('SELECT * FROM job_runs')}
  except Exception:
   return {}
 
@@ -1479,9 +1493,12 @@ def pick_split_plan(rne_path,columns,max_parts,min_speedup=None):
  return best,''
 
 def last_run_info(run):
- if not run:return {'last_run':None,'last_status':'','last_trigger':'','last_output':''}
+ if not run:return {'last_run':None,'last_status':'','last_trigger':'','last_output':'','last_metrics':{}}
  trig=str(run.get('trigger') or '');kind='schedule' if trig.startswith('schedule') else 'manual'
- return {'last_run':run.get('finished_at'),'last_status':run.get('status') or '','last_trigger':kind,'last_output':run.get('output_file') or '','last_detail':run.get('detail') or ''}
+ m=dict(run.get('metrics') or {})
+ if run.get('rows') is not None:m.setdefault('rows',run.get('rows'))
+ if run.get('cols') is not None:m.setdefault('cols',run.get('cols'))
+ return {'last_run':run.get('finished_at'),'last_status':run.get('status') or '','last_trigger':kind,'last_output':run.get('output_file') or '','last_detail':run.get('detail') or '','last_metrics':m}
 
 def load():
  init_settings_db()
@@ -2468,7 +2485,7 @@ def plan_run_split(rne_path,job,cfg,fmt,budget_lines,line=''):
           len(chosen['keys']),chosen['anchors'] or '(なし)')
  return chosen,''
 
-def run_split_extraction(j,cfg,user,pw,server,work,chosen,dest_csv,line=''):
+def run_split_extraction(j,cfg,user,pw,server,work,chosen,dest_csv,line='',stats=None):
  """保存済みの割り当てで分割抽出し、1本のCSVへ結合する。戻り値は (行数, 列数)。
 
  失敗したら例外を投げる。呼び出し側は分割なしでやり直す。公開するファイルを落とさないため、
@@ -2498,13 +2515,18 @@ def run_split_extraction(j,cfg,user,pw,server,work,chosen,dest_csv,line=''):
  merge_elapsed=time.perf_counter()-started-run_elapsed
  # サーバ側の実行はパートごとに満額かかるので、内訳は「一番遅いパート」で見るのが実態に近い。
  slowest=max(results,key=lambda r:r.get('elapsed') or 0)
+ if stats is not None:
+  stats.update(transfer_bytes=sum((r.get('size') or 0) for r in results),
+               transfer_seconds=round(max((r.get('save_elapsed') or 0) for r in results),2),
+               execute_seconds=round(max((r.get('execute_elapsed') or 0) for r in results),2),
+               merge_seconds=round(merge_elapsed,2),parts=total)
  log.info('SPLIT_RUN_DONE line=%s job=%s rne=%s parts=%s rows=%s cols=%s 抽出=%.2fs 結合=%.2fs 最遅パート=%s(実行%.2fs+保存%.2fs) 合計転送=%.1fMB',
           line,j['name'],rp,total,rows,cols,run_elapsed,merge_elapsed,slowest.get('part'),
           slowest.get('execute_elapsed') or 0,slowest.get('save_elapsed') or 0,
           sum((r.get('size') or 0) for r in results)/1024/1024)
  return rows,cols
 
-def run_race_extraction(j,cfg,user,pw,server,work,chosen,dest_csv,line=''):
+def run_race_extraction(j,cfg,user,pw,server,work,chosen,dest_csv,line='',stats=None):
  """分割なし1本と、分割Nパートを同時に走らせ、先に使える形になった方を採る。
 
  分割側は結合まで終えて初めて「使える形」になる。パートが出そろった時点では勝ちではない。
@@ -2545,6 +2567,9 @@ def run_race_extraction(j,cfg,user,pw,server,work,chosen,dest_csv,line=''):
   log.info('RACE_WINNER line=%s job=%s winner=normal 所要=%.2fs rows=%s パートは中断',
            line,j['name'],run_elapsed,normal.get('rows'))
   shutil.copyfile(normal['file'],Path(dest_csv))
+  if stats is not None:
+   stats.update(transfer_bytes=normal.get('size') or 0,transfer_seconds=round(normal.get('save_elapsed') or 0,2),
+                execute_seconds=round(normal.get('execute_elapsed') or 0,2),merge_seconds=0,parts=total,winner='normal')
   return normal.get('rows'),normal.get('cols'),'normal',{'elapsed':round(run_elapsed,2),'results':results}
  bad=[r for r in pres if not r.get('ok')]
  if bad:raise RuntimeError('競争の両方が失敗しました: '+'; '.join(f'{r.get("part")}: {r.get("error")}' for r in bad)
@@ -2558,6 +2583,11 @@ def run_race_extraction(j,cfg,user,pw,server,work,chosen,dest_csv,line=''):
   raise
  phase_log('split_merge',t,job=j['name'],line=line,rows=rows,columns=cols)
  total_elapsed=time.perf_counter()-started
+ if stats is not None:
+  stats.update(transfer_bytes=sum((r.get('size') or 0) for r in pres),
+               transfer_seconds=round(max((r.get('save_elapsed') or 0) for r in pres),2),
+               execute_seconds=round(max((r.get('execute_elapsed') or 0) for r in pres),2),
+               merge_seconds=round(total_elapsed-run_elapsed,2),parts=total,winner='split')
  log.info('RACE_WINNER line=%s job=%s winner=split 所要=%.2fs（抽出%.2fs＋結合%.2fs） rows=%s cols=%s 分割なしは中断',
           line,j['name'],total_elapsed,run_elapsed,total_elapsed-run_elapsed,rows,cols)
  return rows,cols,'split',{'elapsed':round(total_elapsed,2),'results':results}
@@ -2591,7 +2621,7 @@ def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,
   update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='開始',percent=5,detail=fmt);log.info('PARALLEL_JOB_START line=%s job=%s index=%s/%s format=%s target=%s',line_name,j['name'],job_index,total_jobs,fmt,target)
   log.info('PIPELINE job=%s engine=api parallel_line=%s common_intermediate=%s format=%s planned_intermediate=%s converted=%s target=%s',j['name'],line_name,common_intermediate,fmt,planned,db,target)
   # 分割して取るか、そのまま取るか。判断は保存済みの裏付けだけで行い、ここでは測定しない。
-  split_used=None;split_reason='';intermediate=None;api_direct_output=False;race_winner=''
+  split_used=None;split_reason='';intermediate=None;api_direct_output=False;race_winner='';run_stats={}
   try:split_used,split_reason=plan_run_split(rp,j,cfg,fmt,int(j.get('_split_budget') or 1),line_name)
   except Exception as se:
    split_used=None;split_reason=f'判断に失敗しました: {se}';log.warning('SPLIT_RUN_PLAN_FAILED line=%s job=%s error=%s',line_name,j.get('name'),se)
@@ -2601,9 +2631,9 @@ def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,
    api_csv=dde_work/f'navi_{job_index}_{stamp}.csv'
    try:
     if split_used.get('race'):
-     expected_rows,expected_cols,race_winner,_rd=run_race_extraction(j,cfg,user,pw,server,split_work,split_used,api_csv,line_name)
+     expected_rows,expected_cols,race_winner,_rd=run_race_extraction(j,cfg,user,pw,server,split_work,split_used,api_csv,line_name,run_stats)
     else:
-     expected_rows,expected_cols=run_split_extraction(j,cfg,user,pw,server,split_work,split_used,api_csv,line_name)
+     expected_rows,expected_cols=run_split_extraction(j,cfg,user,pw,server,split_work,split_used,api_csv,line_name,run_stats)
     intermediate=api_csv
    except Exception as spe:
     # 公開するファイルを落とさないことを最優先にする。分割で転んだら、そのまま1本で取り直す。
@@ -2685,12 +2715,19 @@ def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,
   except Exception as ce:
    log.warning('COLUMN_CACHE_READ_FAILED line=%s job=%s error=%s',line_name,j['name'],ce)
   ph=_phase_profile.get('phases') or {}
+  # 転送の内訳。分割なしは工程プロファイルから、分割・競争は各パートの実測から取る。
+  execute_s=run_stats.get('execute_seconds',round(float(ph.get('api_execute_catalog') or 0),2))
+  save_s=run_stats.get('transfer_seconds',round(float(ph.get('api_save_csv') or ph.get('api_save_xlsx_direct') or 0),2))
+  tbytes=run_stats.get('transfer_bytes')
+  if tbytes is None:
+   try:tbytes=Path(intermediate).stat().st_size if intermediate and Path(intermediate).is_file() else 0
+   except Exception:tbytes=0
   return {'ok':True,'job':j['name'],'format':fmt,'rows':nr,'columns':nc,'elapsed':total,'target':str(target),'result':result,
           'column_names':column_names,'rne_path':str(rp),
           'split_parts':len(split_used['plan']) if split_used else 0,'split_reason':split_reason,'race_winner':race_winner,
-          'execute_seconds':round(float(ph.get('api_execute_catalog') or 0),2),
-          'save_seconds':round(float(ph.get('api_save_csv') or ph.get('api_save_xlsx_direct') or 0),2),
-          'total_seconds':round(total,2)}
+          'execute_seconds':execute_s,'save_seconds':save_s,'total_seconds':round(total,2),
+          'transfer_bytes':int(tbytes or 0),'merge_seconds':run_stats.get('merge_seconds',0),
+          'transfer_kbs':round((tbytes or 0)/1024/save_s,1) if save_s else None}
  except Exception as e:
   total=time.perf_counter()-job_started
   update_parallel_line(line_name,job=j.get('name',''),job_id=j.get('id',''),state='失敗',percent=100,detail=str(e),elapsed=round(total,1));log.error('PARALLEL_JOB_ERROR line=%s job=%s elapsed=%.2fs error=%s\n%s',line_name,j.get('name'),total,e,traceback.format_exc())
@@ -2791,7 +2828,8 @@ def run_api_process_batch(jobs,cfg,user,pw,server,dde_work,backup,max_lines,trig
    (results if result.get('ok') else failures).append(result)
    (completed_ids if result.get('ok') else failed_ids).append(item['job']['id'])
    log.info('WORKER_END batch_id=%s line=%s pid=%s job=%s returncode=%s ok=%s elapsed=%.2fs',batch_id,item['line'],item['proc'].pid,item['job']['name'],rc,result.get('ok'),result.get('elapsed',0))
-   record_job_run(item['job']['id'],item['job']['name'],'ok' if result.get('ok') else 'failed',trigger,detail=(result.get('result') or result.get('error') or ''),rows=result.get('rows'),cols=result.get('columns'),output_file=Path(result.get('target') or '').name)
+   record_job_run(item['job']['id'],item['job']['name'],'ok' if result.get('ok') else 'failed',trigger,detail=(result.get('result') or result.get('error') or ''),rows=result.get('rows'),cols=result.get('columns'),output_file=Path(result.get('target') or '').name,
+                  metrics={k:result.get(k) for k in ('elapsed','execute_seconds','save_seconds','merge_seconds','transfer_bytes','transfer_kbs','split_parts','race_winner','format') if result.get(k) is not None})
    # ワーカーが持ち帰った列名をここで保存する。設定DBへの書き込みを親1本に集約して競合を避ける。
    if result.get('ok') and result.get('column_names'):
     save_column_cache(result.get('rne_path') or '',result['column_names'],rows=result.get('rows'),source='run',job=item['job'])
@@ -3608,7 +3646,7 @@ def column_plan():
                 throughput=tp,breakeven_fixed_share=breakeven,duplicates=dupes,link=link,
                 useful_parts=split_useful_parts(link),runtime_split=runtime_split)
 
-def _spawn_racers(job,cfg,user,pw,server,work,jobs_spec,timeout=1800,stop_when=None):
+def _spawn_racers(job,cfg,user,pw,server,work,jobs_spec,timeout=1800,stop_when=None,on_tick=None):
  """指定した取り方を独立プロセスで同時に起こし、終わった順に結果を集める。
 
  終わった順が要るのは競争のためだけではない。どのパートが足を引っ張ったかも、これで分かる。
@@ -3652,7 +3690,12 @@ def _spawn_racers(job,cfg,user,pw,server,work,jobs_spec,timeout=1800,stop_when=N
     done[p['spec']['label']]=dict(ok=False,aborted=True,part=p['spec']['label'],group=p['spec'].get('group',''),
                                   error='先に決着がついたため中断しました',finished_at=round(time.perf_counter()-started,2))
    break
-  if any(not p['done'] for p in procs):time.sleep(0.2)
+  if any(not p['done'] for p in procs):
+   # 進み具合を知らせる。書きかけのファイルの大きさが唯一の実測なので、それを見てもらう。
+   if on_tick:
+    try:on_tick(time.perf_counter()-started,[{'spec':p['spec'],'done':p['done']} for p in procs])
+    except Exception:pass
+   time.sleep(0.2)
  return [done[s['label']] for s in jobs_spec]
 
 def _kill_proc(proc):
@@ -3691,7 +3734,7 @@ def _split_trial_run(data,c,job):
  try:
   op=_viewer_output_path(job,c)
   if op.is_file():
-   split_trial_stage('列の重みを測定中')
+   split_trial_stage('列の重みを測定中（直近の出力を1回読みます）',phase='weights',progress=0)
    wt=time.perf_counter();weights=column_weights(op,job,columns)
    if weights:
     anchors,coverage=pick_anchor_columns(removable,weights,int(c['settings'].get('split_anchor_limit',3) or 3))
@@ -3741,13 +3784,24 @@ def _split_trial_run(data,c,job):
   race=bool(data.get('race'));results=None;split_run=None
   part_specs=[{'index':p['index'],'label':f'パート{p["index"]}/{len(plan)}','group':'split',
                'drop':p['drop'],'out_csv':work/f'part{p["index"]}.csv'} for p in plan]
+  # 進み具合の目安。前回の出力の大きさと、前回の所要時間があれば、それを使う。
+  # どちらも無い初回は経過時間だけで見当をつける（バーは9割で止まり、嘘をつかない）。
+  expect_bytes=split_expected_bytes(rp,job,c)
+  expect_seconds=(load_rne_timing(rp) or {}).get('total') or None
+  part_paths=[str(x['out_csv']) for x in part_specs]
   if race:
    # 同じ回線を奪い合わせて、実際に何秒で決着するかを測る。どちらも最後まで走らせる。
    # 途中で打ち切ると「負けた方が何秒かかったか」が分からず、比較にならない。
    log.info('SPLIT_TRIAL_RACE rne=%s racers=%s（分割なし1本 ＋ %s分割）',rp,len(plan)+1,len(plan))
-   split_trial_stage(f'競争中: 分割なし1本 対 {len(plan)}分割（同時に{len(plan)+1}プロセス）',parts=len(plan))
+   racers=len(plan)+1
+   split_trial_stage(f'競争中: 分割なし1本 対 {len(plan)}分割（同時に{racers}プロセス）',phase='race',progress=0,parts=len(plan))
+   # 競争は分割なしと全パートが同時に書かれるので、期待値は「1本ぶん＋パート合計」。
+   both=(expect_bytes or 0)*(1+split_transfer_ratio(columns,removable,len(plan),weights)*len(plan)) if expect_bytes else 0
    allr=_spawn_racers(job,c,user,pw,server,work,
-                      [{'index':0,'label':'分割なし','group':'normal','drop':[],'out_csv':base_csv}]+part_specs,trial_timeout)
+                      [{'index':0,'label':'分割なし','group':'normal','drop':[],'out_csv':base_csv}]+part_specs,trial_timeout,
+                      on_tick=lambda el,st:split_trial_tick('race',f'競争中（{racers}プロセス同時）',[str(base_csv)]+part_paths,
+                                                            both,el,(expect_seconds or 0)*1.6 or None,
+                                                            f'{sum(1 for x in st if x["done"])}/{racers}本 完了'))
    base=next((r for r in allr if r.get('group')=='normal'),{})
    results=[r for r in allr if r.get('group')=='split']
    normal_elapsed=base.get('finished_at') or (time.perf_counter()-t)
@@ -3755,8 +3809,9 @@ def _split_trial_run(data,c,job):
    log.info('SPLIT_TRIAL_RACE_ORDER rne=%s %s',rp,' / '.join(
     f"{r.get('part')}={r.get('finished_at')}s" for r in sorted(allr,key=lambda r:r.get('finished_at') or 0)))
   else:
-   split_trial_stage(f'分割なしを実行中（{len(plan)}分割と比較します）',parts=len(plan))
-   base=_spawn_split_parts(job,c,user,pw,server,work,[{'index':0,'label':'分割なし','drop':[],'out_csv':base_csv}],trial_timeout)[0]
+   split_trial_stage(f'分割なしを実行中（{len(plan)}分割と比較します）',phase='normal',progress=0,parts=len(plan))
+   base=_spawn_racers(job,c,user,pw,server,work,[{'index':0,'label':'分割なし','group':'normal','drop':[],'out_csv':base_csv}],trial_timeout,
+                      on_tick=lambda el,st:split_trial_tick('normal','分割なしを実行中',[str(base_csv)],expect_bytes,el,expect_seconds))[0]
    normal_elapsed=time.perf_counter()-t
   if not base.get('ok'):return dict(ok=False,error=f'分割なしの実行に失敗しました: {base.get("error")}')
   # 列の並び順は、たった今実行した「分割なし」の見出し行を正とする。
@@ -3784,14 +3839,22 @@ def _split_trial_run(data,c,job):
   log.info('SPLIT_PLAN rne=%s parts=%s anchors=%s keep=%s bytes=%s',rp,len(plan),anchors or '(なし)',
            [len(p['keep']) for p in plan],[p.get('bytes') for p in plan])
   if results is None:
-   split_trial_stage(f'{len(plan)}分割を並列実行中（分割なしは {normal_elapsed:.0f}秒）')
-   t=time.perf_counter();results=_spawn_split_parts(job,c,user,pw,server,work,part_specs,trial_timeout);split_run=time.perf_counter()-t
+   # ここからは「分割なし」の実測がある。期待するバイト数も所要時間も、そこから作れる。
+   split_bytes=(base.get('size') or 0)*split_transfer_ratio(columns,removable,len(plan),weights)*len(plan)
+   split_seconds=normal_elapsed*predict_split_gain(columns,removable,len(plan),trials,load_rne_timing(rp),weights,split_link_profile(rp))
+   split_trial_stage(f'{len(plan)}分割を並列実行中（分割なしは {normal_elapsed:.0f}秒）',phase='split',progress=0)
+   t=time.perf_counter()
+   results=_spawn_racers(job,c,user,pw,server,work,part_specs,trial_timeout,
+                         on_tick=lambda el,st:split_trial_tick('split',f'{len(plan)}分割を並列実行中',
+                                                               [str(x['out_csv']) for x in part_specs],split_bytes,el,split_seconds or None,
+                                                               f'{sum(1 for x in st if x["done"])}/{len(plan)}パート 完了'))
+   split_run=time.perf_counter()-t
   bad=[r for r in results if not r.get('ok')]
   if bad:
    return dict(ok=False,error='分割実行に失敗しました: '+'; '.join(f'{r.get("part")}: {r.get("error")}' for r in bad),
                   parts=len(plan),results=results)
   # 3) 結合して、分割なしの結果と突き合わせる。
-  split_trial_stage('結合して比較中')
+  split_trial_stage(f'結合中（{len(plan)}パートを横につなぎます）',phase='merge',progress=0)
   merged=work/'merged.csv';t=time.perf_counter()
   try:
    mrows,mcols=merge_column_parts([r['file'] for r in results],merged,keys,columns)
@@ -3807,6 +3870,7 @@ def _split_trial_run(data,c,job):
    log.warning('SPLIT_TRIAL_MERGE_FAILED rne=%s error=%s',rp,me)
    return dict(ok=False,error=f'結合に失敗しました: {me}',parts=len(plan),results=results)
   merge_elapsed=time.perf_counter()-t;split_elapsed=split_run+merge_elapsed
+  split_trial_stage('結果を比較中（分割なしと1行ずつ突き合わせます）',phase='compare',progress=0)
   cmp=compare_csv_content(base_csv,merged,keys)
   identical=bool(cmp.get('content_identical'))     # 並び順の違いは不一致としない
   log.info('SPLIT_TRIAL_COMPARE rne=%s byte_identical=%s content_identical=%s order_match=%s diff_rows=%s diff_cells=%s only_normal=%s only_merged=%s reason=%s',
@@ -3868,12 +3932,66 @@ def _split_trial_run(data,c,job):
 # 影実行は数分かかる。画面を占有すると、その間ログも他の機能も見られないため、
 # 別スレッドで走らせて、状態だけを画面へ渡す。
 split_trial_lock=threading.Lock()
-split_trial_state={'running':False,'stage':'','job':'','started':0.0,'elapsed':0.0,'result':None,'parts':0}
+split_trial_state={'running':False,'stage':'','job':'','started':0.0,'elapsed':0.0,'result':None,'parts':0,
+                   'percent':0,'phase':'','phase_index':0,'phase_total':4,'bytes':0,'expected_bytes':0,'note':''}
 
-def split_trial_stage(stage,**extra):
+# 影実行の進み具合。工程ごとに、全体のどこからどこまでを占めるかを決めておく。
+# 実測できるのは「書き出されつつあるファイルの大きさ」だけなので、進み具合はそこから出す。
+# 大きさが分からない工程（重みの測定・結合）は、その工程の始まりの値のまま置く。
+SPLIT_TRIAL_PHASES={'weights':(0,5,'列の重みを測定中'),'normal':(5,50,'分割なしを実行中'),
+                    'split':(50,90,'分割を並列実行中'),'race':(5,90,'競争中'),
+                    'merge':(90,97,'結合中'),'compare':(97,100,'結果を比較中')}
+
+def split_expected_bytes(rne_path,job,cfg):
+ """今回どれくらいのバイト数が返ってきそうか。進み具合の分母にだけ使う。
+
+ いちばん確かなのは前回の影実行で測った「分割なし」の実バイト数。無ければ直近の出力ファイルの
+ 大きさで代用する（形式が違えば目安にしかならないが、分母としては十分）。
+ """
+ try:
+  with settings_connection() as c:
+   for r in c.execute("SELECT metrics FROM split_trials WHERE rne_key=? AND metrics<>'' ORDER BY id DESC LIMIT 5",(_rne_key(rne_path),)):
+    nb=(_json_or_empty(r['metrics']) or {}).get('normal_bytes')
+    if nb:return int(nb)
+ except Exception:pass
+ try:
+  op=_viewer_output_path(job,cfg)
+  if op.is_file():return int(op.stat().st_size)
+ except Exception:pass
+ return 0
+
+def split_trial_stage(stage,phase='',progress=None,**extra):
+ """進み具合を書き込む。phase を渡すと、その工程の受け持ち範囲へ progress(0..1)を割り当てる。"""
+ lo,hi,_=SPLIT_TRIAL_PHASES.get(phase or '',(None,None,''))
+ fields=dict(extra)
+ if lo is not None:
+  pct=lo if progress is None else lo+(hi-lo)*max(0.0,min(1.0,float(progress)))
+  fields['percent']=round(pct,1);fields['phase']=phase
  with split_trial_lock:
-  split_trial_state.update(stage=stage,elapsed=round(time.time()-(split_trial_state.get('started') or time.time()),1),**extra)
+  split_trial_state.update(stage=stage,elapsed=round(time.time()-(split_trial_state.get('started') or time.time()),1),**fields)
  log.info('SPLIT_TRIAL_STAGE %s',stage)
+
+def split_trial_tick(phase,stage,paths,expected_bytes,elapsed,expected_seconds=None,note=''):
+ """走っている最中の進み具合を更新する。
+
+ バイトで測れるならバイトで測る（これが唯一の実測）。まだ1バイトも出ていない間は
+ サーバ側の問い合わせ実行中なので、そこだけ経過時間で見当をつける。
+ 見当は上限を9割に抑える。実測が始まる前に満杯にすると、バーが嘘をつくため。
+ """
+ got=0
+ for f in paths:
+  try:got+=Path(f).stat().st_size
+  except Exception:pass          # まだ作られていないファイルは 0 として数える
+ if expected_bytes and got:
+  prog=min(0.99,got/float(expected_bytes))
+  detail=f'{got/1024/1024:.1f} / 約{expected_bytes/1024/1024:.1f}MB'
+ elif expected_seconds:
+  prog=min(0.9,float(elapsed)/float(expected_seconds))
+  detail=f'{elapsed:.0f}秒 / 見込み約{expected_seconds:.0f}秒'
+ else:
+  prog=min(0.9,float(elapsed)/120.0);detail=f'{elapsed:.0f}秒経過'
+ split_trial_stage(f'{stage}（{detail}{"・"+note if note else ""}）',phase=phase,progress=prog,
+                   bytes=got,expected_bytes=int(expected_bytes or 0),note=note)
 
 @app.post('/api/column-split-trial')
 def column_split_trial_start():
