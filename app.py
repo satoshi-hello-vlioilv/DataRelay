@@ -25,10 +25,16 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.26.0'; APP_VERSION_TITLE='影実行をバックグラウンド化し、比較を内容単位に'; APP_RELEASED_AT='2026-08-07'
-BUILD_VERSION=f'{APP_VERSION}-bg-compare'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.26.1'; APP_VERSION_TITLE='データ量の内訳を表示し、分割の限界を可視化'; APP_RELEASED_AT='2026-08-07'
+BUILD_VERSION=f'{APP_VERSION}-payload'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
+{'version':'1.26.1','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'「列の分割可否を調べる」に、データ量の内訳（全パートに複製される固定列と、分割できる列の割合）を表示するようにしました。何分割しても1パートは固定列ぶんを必ず運ぶため、ここが短縮の限界になります。',
+'分割数ごとに「1パートが運ぶデータ量の割合」と見込みを並べて表示します。分割数を増やしてどこで頭打ちになるかが、実行前に分かります。',
+'見込みの計算を列数からデータ量へ変えました。実測（SIKALOT: 2分割で1パート79%）と試算（76%）が一致することを確認しています。',
+'選んだ錨の列と、その列が全行の何%を覆えるかを表示します。',
+]},
 {'version':'1.26.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
 '影実行をバックグラウンドで走らせるようにしました。実行中も画面は塞がらず、ログ・診断を含む他の機能をそのまま使えます。対象の編集画面を閉じても実行は続き、開き直せば経過が表示されます。',
 '進み具合を段階で表示します（列の重みを測定中 → 分割なしを実行中 → N分割を並列実行中 → 結合して比較中）。ログにも SPLIT_TRIAL_STAGE として残ります。',
@@ -982,14 +988,31 @@ def plan_column_split(columns,removable,parts,weights=None,anchors=None):
               'bytes':sum(w(c) for c in g) if cw else None})
  return out,keys
 
-def split_transfer_ratio(columns,removable,parts):
- """分割したときに増える転送量の比。1.0なら増えない。
+def split_payload_profile(columns,removable,weights=None):
+ """データ量が「全パートに複製される固定列」と「分割できる列」にどう分かれているかを返す。
 
- 各パートがキー列を持ち回るので、パート数を増やすほど総量は増える。
+ 分割の効き目の上限を決めるのは固定列の割合。ここが大きいRNEは、何分割しても速くならない。
+ RNEを調整して速くしたいときに、まず見るべき数字。
  """
- total=len(columns) or 1;rem=len([c for c in columns if c in set(removable)]);keys=total-rem
- if parts<2 or not rem:return 1.0
- return (parts*keys+rem)/total
+ rem=set(removable);cw=(weights or {}).get('columns') or {}
+ if cw:
+  rb=sum(cw.get(c,{}).get('bytes',0) for c in columns if c in rem)
+  kb=sum(cw.get(c,{}).get('bytes',0) for c in columns if c not in rem)
+  unit='bytes'
+ else:
+  rb=len([c for c in columns if c in rem]);kb=len(columns)-rb;unit='columns'
+ total=rb+kb or 1
+ return {'unit':unit,'fixed':kb,'splittable':rb,'total':total,
+         'fixed_share':round(kb/total,4),'splittable_share':round(rb/total,4)}
+
+def split_transfer_ratio(columns,removable,parts,weights=None):
+ """1パートが運ぶデータ量の、分割なしに対する割合。
+
+ 列数ではなくデータ量で測る。固定列は全パートが運ぶため、ここが下限になる。
+ """
+ pf=split_payload_profile(columns,removable,weights)
+ if parts<2 or not pf['splittable']:return 1.0
+ return (pf['fixed']+pf['splittable']/parts)/pf['total']
 
 def split_speedup_estimate(parts,trials=None):
  """パート数に対する並列転送の効き目。実測があればそれを優先する。"""
@@ -1000,16 +1023,15 @@ def split_speedup_estimate(parts,trials=None):
    return float(t['observed_speedup'])
  return 1.0+1.5*(1.0-1.0/parts)      # 2本で1.75倍、4本で2.13倍、無限で2.5倍
 
-def predict_split_gain(columns,removable,parts,trials=None,timing=None):
+def predict_split_gain(columns,removable,parts,trials=None,timing=None,weights=None):
  """分割したときの所要時間の見込み（1.0=変わらない、0.6なら4割短縮）。
 
  肝心なのは、分割で縮むのは「結果の転送・保存」だけだということ。サーバ側の問い合わせ実行は
  行数で決まるため列を減らしても縮まず、しかも各パートが満額払う。
  実測の内訳（timing）があれば、それを使って正直に見積もる。無ければ転送が支配的と仮定する。
  """
- total=len(columns) or 1;rem=len([c for c in columns if c in set(removable)]);keys=total-rem
- if parts<2 or not rem:return 1.0
- ratio=(keys+rem/parts)/total                     # 1パートあたりの列の割合
+ if parts<2 or not [c for c in columns if c in set(removable)]:return 1.0
+ ratio=split_transfer_ratio(columns,removable,parts,weights)   # 1パートが運ぶデータ量の割合
  if timing and (timing.get('execute') or 0)>0:
   ex=float(timing['execute']);sv=float(timing.get('save') or 0)
   other=max(0.0,float(timing.get('total') or (ex+sv))-ex-sv)
@@ -1019,19 +1041,19 @@ def predict_split_gain(columns,removable,parts,trials=None,timing=None):
   return round((ex+sv*ratio+other)/base,3)
  return ratio/split_speedup_estimate(parts,trials)
 
-def split_gain_reason(columns,removable,parts,timing=None):
+def split_gain_reason(columns,removable,parts,timing=None,weights=None):
  """見込みの内訳を、そのまま画面へ出せる形で返す。"""
- total=len(columns) or 1;rem=len([c for c in columns if c in set(removable)]);keys=total-rem
- ratio=(keys+rem/max(1,parts))/total
+ pf=split_payload_profile(columns,removable,weights)
+ ratio=split_transfer_ratio(columns,removable,max(1,parts),weights)
  if not (timing and (timing.get('execute') or 0)>0):
-  return {'measured':False,'ratio':round(ratio,3)}
+  return {'measured':False,'ratio':round(ratio,3),'payload':pf}
  ex=float(timing['execute']);sv=float(timing.get('save') or 0)
  other=max(0.0,float(timing.get('total') or (ex+sv))-ex-sv);base=ex+sv+other
  return {'measured':True,'ratio':round(ratio,3),'execute':round(ex,1),'save':round(sv,1),'other':round(other,1),
          'total':round(base,1),'execute_share':round(ex/base,3) if base else 0,
-         'floor':round((ex+other)/base,3) if base else 1.0}
+         'floor':round((ex+other+sv*pf['fixed_share'])/base,3) if base else 1.0,'payload':pf}
 
-def recommend_split_parts(columns,removable,max_parts=4,trials=None,timing=None):
+def recommend_split_parts(columns,removable,max_parts=4,trials=None,timing=None,weights=None):
  """効果が最大になるパート数を選ぶ。得にならなければ1（分割しない）を返す。
 
  見込みの式はサーバ側の負荷を織り込めない（パートを増やすほど同じ問い合わせを何度も走らせる）。
@@ -1048,8 +1070,8 @@ def recommend_split_parts(columns,removable,max_parts=4,trials=None,timing=None)
  best,best_gain=1,1.0;details=[]
  for n in range(1,max(1,int(max_parts))+1):
   if n>1 and rem<n*2:break                      # 1パートあたり2列未満になる分割はしない
-  g=predict_split_gain(columns,removable,n,trials,timing)
-  details.append({'parts':n,'predicted':round(g,3),'transfer_ratio':round(split_transfer_ratio(columns,removable,n),3),
+  g=predict_split_gain(columns,removable,n,trials,timing,weights)
+  details.append({'parts':n,'predicted':round(g,3),'transfer_ratio':round(split_transfer_ratio(columns,removable,n,weights),3),
                   'measured':round(measured[n],2) if n in measured else None,'allowed':n<=ceiling})
   # わずかな差では分割しない。転送だけが縮む以上、1割未満の見込みで並列問い合わせを増やす価値はない。
   if n<=ceiling and g<best_gain-0.10:best,best_gain=n,g
@@ -3114,8 +3136,21 @@ def column_plan():
   fixed=[x['name'] for x in classify if not x.get('removable')];basis='classify'
  elapsed=time.perf_counter()-started
  timing=load_rne_timing(rp);incompatible=split_incompatible(rp)
- best,best_gain,detail_rows=recommend_split_parts(columns,removable,int(c['settings'].get('api_parallel_max_lines',4) or 4),trials,timing)
- reason=split_gain_reason(columns,removable,max(2,best),timing)
+ # データ量の内訳（固定列と分割できる列）が、効き目の上限を決める。接続なしで測れる。
+ pw=None;panchors=[];pcov=0.0
+ try:
+  op=_viewer_output_path(job,c)
+  if op.is_file() and columns:
+   pw=column_weights(op,job,columns)
+   if pw:panchors,pcov=pick_anchor_columns(removable,pw,int(c['settings'].get('split_anchor_limit',3) or 3))
+ except Exception as pe:
+  log.warning('COLUMN_PLAN_WEIGHTS_FAILED rne=%s error=%s',rp,pe)
+ payload=split_payload_profile(columns,removable,pw)
+ best,best_gain,detail_rows=recommend_split_parts(columns,removable,int(c['settings'].get('api_parallel_max_lines',4) or 4),trials,timing,pw)
+ reason=split_gain_reason(columns,removable,max(2,best),timing,pw)
+ log.info('SPLIT_PAYLOAD rne=%s unit=%s fixed=%s(%.0f%%) splittable=%s(%.0f%%) anchors=%s coverage=%.4f',
+          rp,payload['unit'],payload['fixed'],payload['fixed_share']*100,payload['splittable'],payload['splittable_share']*100,
+          panchors or '(なし)',pcov)
  if incompatible:best,best_gain=1,1.0
  log.info('COLUMN_PLAN rne=%s job=%s source=%s basis=%s columns=%s removable=%s fixed=%s recommend=%s gain=%s incompatible=%s elapsed=%.2fs',
           rp,job['name'],source,basis,len(columns),len(removable),len(fixed),best,best_gain,incompatible,elapsed)
@@ -3124,7 +3159,7 @@ def column_plan():
                 basis=basis,layout=layout,classify_error=classify_error,captured_at=(cached or {}).get('captured_at',''),
                 notes=notes,probe=probe_info,elapsed=round(elapsed,2),
                 recommended_parts=best,predicted_gain=best_gain,gain_detail=detail_rows,gain_reason=reason,
-                timing=timing,incompatible=incompatible)
+                timing=timing,incompatible=incompatible,payload=payload,anchors=panchors,anchor_coverage=round(pcov,4))
 
 def _spawn_split_parts(job,cfg,user,pw,server,work,jobs_spec,timeout=1800):
  """パートを独立プロセスで同時に走らせる。戻り値は投入順の結果一覧。
