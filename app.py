@@ -25,10 +25,17 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.25.1'; APP_VERSION_TITLE='行落ちを防ぐ錨を組み合わせで選び、再挑戦できるようにした'; APP_RELEASED_AT='2026-08-07'
-BUILD_VERSION=f'{APP_VERSION}-anchor-cover'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.26.0'; APP_VERSION_TITLE='影実行をバックグラウンド化し、比較を内容単位に'; APP_RELEASED_AT='2026-08-07'
+BUILD_VERSION=f'{APP_VERSION}-bg-compare'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
+{'version':'1.26.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'影実行をバックグラウンドで走らせるようにしました。実行中も画面は塞がらず、ログ・診断を含む他の機能をそのまま使えます。対象の編集画面を閉じても実行は続き、開き直せば経過が表示されます。',
+'進み具合を段階で表示します（列の重みを測定中 → 分割なしを実行中 → N分割を並列実行中 → 結合して比較中）。ログにも SPLIT_TRIAL_STAGE として残ります。',
+'結果の比較をバイト単位から内容単位へ変えました。バイト比較では「どこがどう違うか」が分からず、判断できませんでした。',
+'行の並び順だけの違いと、中身の違いを区別します。別々に問い合わせている以上、並び順まで一致する保証はないためです。',
+'違いがある場合は、行数の過不足・相違した行数とセル数・実際の値の例をログと画面に出します（SPLIT_TRIAL_COMPARE / SPLIT_TRIAL_DIFF）。',
+]},
 {'version':'1.25.1','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
 '過去に行集合が食い違ったRNEでも、錨の列を立てられる場合は影実行できるようにしました。1.25.0では判定が錨を探す前にあり、条件が変わっても弾いていました。',
 '錨の列を1本ではなく組み合わせで選べるようにしました。1本で全行を覆えない場合は、覆える行が多い列から足していきます（既定3本まで）。',
@@ -1088,6 +1095,50 @@ def merge_column_parts(part_files,dest,key_columns,column_order,encoding='cp932'
  with Path(dest).open('w',encoding=encoding,newline='') as f:
   w=csv.writer(f,quoting=csv.QUOTE_MINIMAL);w.writerow(header);w.writerows(merged)
  return len(merged),len(header)
+
+def compare_csv_content(a_path,b_path,key_columns,encoding='cp932',samples=5):
+ """2つのCSVを内容で比べる。バイト比較では「どこがどう違うか」が分からないため。
+
+ 行の並び順だけの違いと、中身の違いを区別する。生きているデータを別々に問い合わせている以上、
+ 並び順まで一致する保証は無いので、そこを分けて見ないと判断できない。
+ """
+ def read(p):
+  with Path(p).open('r',encoding=encoding,newline='') as f:
+   rows=list(csv.reader(f))
+  return (rows[0] if rows else []),rows[1:]
+ ha,ra=read(a_path);hb,rb=read(b_path)
+ out={'header_match':ha==hb,'rows_a':len(ra),'rows_b':len(rb),'columns_a':len(ha),'columns_b':len(hb)}
+ if ha!=hb:
+  diff=[i for i,(x,y) in enumerate(zip(ha,hb)) if x!=y]
+  out['header_diff']=[{'index':i,'a':ha[i],'b':hb[i]} for i in diff[:samples]]
+  out['identical']=False;out['reason']='列の並びまたは名前が違います';return out
+ kn=len(key_columns)
+ if ha[:kn]!=list(key_columns):
+  out['identical']=False;out['reason']='キー列が想定と違います';return out
+ out['byte_identical']=Path(a_path).read_bytes()==Path(b_path).read_bytes()
+ out['order_match']=[r[:kn] for r in ra]==[r[:kn] for r in rb]
+ ma={tuple(r[:kn]):r for r in ra};mb={tuple(r[:kn]):r for r in rb}
+ only_a=set(ma)-set(mb);only_b=set(mb)-set(ma)
+ out['only_in_a']=len(only_a);out['only_in_b']=len(only_b)
+ diff_rows=[];diff_cells=0
+ for k in ma:
+  if k in only_a:continue
+  x,y=ma[k],mb[k]
+  if x==y:continue
+  cols=[i for i in range(min(len(x),len(y))) if x[i]!=y[i]]
+  diff_cells+=len(cols)
+  if len(diff_rows)<samples:
+   diff_rows.append({'key':list(k),'columns':[{'name':ha[i],'a':x[i],'b':y[i]} for i in cols[:samples]]})
+ out['diff_rows']=len(ma)-len(only_a)-sum(1 for k in ma if k not in only_a and ma[k]==mb.get(k))
+ out['diff_cells']=diff_cells;out['samples']=diff_rows
+ same=not only_a and not only_b and diff_cells==0
+ out['content_identical']=same
+ out['identical']=bool(out.get('byte_identical'))
+ out['reason']=('完全に一致' if out['identical'] else
+                ('行の並び順だけが違います（内容は一致）' if same else
+                 f'{out["diff_rows"]}行の中身が違います（{diff_cells}セル）' if diff_cells else
+                 f'行の過不足があります（分割なしのみ {len(only_a)}行 / 結合のみ {len(only_b)}行）'))
+ return out
 
 def record_split_trial(rne_path,job,parts,rows,cols,normal_elapsed,split_elapsed,identical,detail=''):
  """分割と未分割の実測を残す。パート数の判断を経験で補正するための材料。"""
@@ -3105,27 +3156,23 @@ def _spawn_split_parts(job,cfg,user,pw,server,work,jobs_spec,timeout=1800):
   out.append(_read_worker_json(rp,{'ok':False,'part':spec['label'],'error':f'Worker終了コード {rc}'}))
  return out
 
-@app.post('/api/column-split-trial')
-def column_split_trial():
+def _split_trial_run(data,c,job):
  """列分割を影実行して、分割なしの結果とバイト比較する。公開はしない。
+
+ 別スレッドから呼ばれる。進捗は split_trial_state に書き、画面はそれを見に来る。
 
  既存の出力ファイルには一切触れない。速さと一致の両方を満たしたときだけ、
  その組み合わせを実運用の判断材料として記録する。
  """
- data=request.get_json(force=True) or {};c=load()
- job=next((x for x in c['jobs'] if x['id']==data.get('job_id')),None) if data.get('job_id') else None
- if not job:return jsonify(ok=False,error='保存済みの対象を選んでください'),200
- if str(c['settings'].get('extract_engine') or 'api').lower()!='api':
-  return jsonify(ok=False,error='列分割はNavigator API方式のときに使用できます'),200
  try:rp=resolve_rne_path(job,c)
- except Exception as e:return jsonify(ok=False,error=f'RNEパスの解決に失敗しました: {e}'),200
- if not Path(rp).is_file():return jsonify(ok=False,error=f'RNEが見つかりません: {rp}'),200
+ except Exception as e:return dict(ok=False,error=f'RNEパスの解決に失敗しました: {e}')
+ if not Path(rp).is_file():return dict(ok=False,error=f'RNEが見つかりません: {rp}')
  cached=load_column_cache(rp)
  if not cached or cached['stale'] or not cached['columns']:
-  return jsonify(ok=False,error='先に「列の分割可否を調べる」を実行してください（列定義が未取得か、RNEが更新されています）'),200
+  return dict(ok=False,error='先に「列の分割可否を調べる」を実行してください（列定義が未取得か、RNEが更新されています）')
  removable=[x['name'] for x in (cached.get('classify') or []) if x.get('removable')]
  if not removable:
-  return jsonify(ok=False,error='分割して取得できる列がありません'),200
+  return dict(ok=False,error='分割して取得できる列がありません')
  columns=cached['columns'];trials=load_split_trials(rp)
  parts=int(data.get('parts') or 0)
  if parts<2:
@@ -3136,6 +3183,7 @@ def column_split_trial():
  try:
   op=_viewer_output_path(job,c)
   if op.is_file():
+   split_trial_stage('列の重みを測定中')
    wt=time.perf_counter();weights=column_weights(op,job,columns)
    if weights:
     anchors,coverage=pick_anchor_columns(removable,weights,int(c['settings'].get('split_anchor_limit',3) or 3))
@@ -3148,39 +3196,42 @@ def column_split_trial():
  # 錨が立たない＝担当列がすべて空になる行を防げない。行が落ちると分かっているので実行しない。
  if weights and not anchors and not data.get('force'):
   log.warning('SPLIT_NO_ANCHOR rne=%s coverage=%.4f',rp,coverage)
-  return jsonify(ok=False,error=f'行をつなぎ留める列（錨）が見つかりませんでした。'
+  return dict(ok=False,error=f'行をつなぎ留める列（錨）が見つかりませんでした。'
                  f'最も埋まっている列でも全行の{coverage*100:.1f}%%しか覆えず、残りの行は担当列がすべて空になるため落ちます。'
                  '錨を増やしても覆えないため、このRNEの現在の列構成では分割できません。',
-                 rowset_mismatch=True,anchor_coverage=coverage,no_anchor=True),200
+                 rowset_mismatch=True,anchor_coverage=coverage,no_anchor=True)
  plan,keys=plan_column_split(columns,removable,parts,weights,anchors)
- if len(plan)<2:return jsonify(ok=False,error='この列構成では分割できません'),200
+ if len(plan)<2:return dict(ok=False,error='この列構成では分割できません')
  if split_incompatible(rp) and not anchors and not data.get('force'):
-  return jsonify(ok=False,error='このRNEは、列を外すと返ってくる行そのものが変わることが確認済みです。'
+  return dict(ok=False,error='このRNEは、列を外すと返ってくる行そのものが変わることが確認済みです。'
                  '行をつなぎ留める錨の列も立てられないため、列分割は使えません。'
                  '直近の出力ファイルがあれば錨を探せます。1回実行してから再度お試しください。',
-                 rowset_mismatch=True,known=True),200
- if not keys:return jsonify(ok=False,error='全パートに残る列（結合キー）がないため、結合できません'),200
+                 rowset_mismatch=True,known=True)
+ if not keys:return dict(ok=False,error='全パートに残る列（結合キー）がないため、結合できません')
  work=LOCAL_RUNTIME/('split_trial_'+datetime.now().strftime('%Y%m%d_%H%M%S'));work.mkdir(parents=True,exist_ok=True)
  user,pw,server,_=creds(resolve_path(c['symnavim_conf']))
  log.info('SPLIT_TRIAL_START rne=%s job=%s parts=%s columns=%s removable=%s keys=%s transfer_ratio=%.2f',
           rp,job['name'],len(plan),len(columns),len(removable),len(keys),split_transfer_ratio(columns,removable,len(plan)))
  try:
   # 1) 分割なし。比較の基準であり、所要時間の基準でもある。
+  split_trial_stage(f'分割なしを実行中（{len(plan)}分割と比較します）',parts=len(plan))
   base_csv=work/'normal.csv';t=time.perf_counter()
   trial_timeout=int(c['settings'].get('split_trial_timeout_seconds',1800) or 1800)
   base=_spawn_split_parts(job,c,user,pw,server,work,[{'index':0,'label':'分割なし','drop':[],'out_csv':base_csv}],trial_timeout)[0]
   normal_elapsed=time.perf_counter()-t
-  if not base.get('ok'):return jsonify(ok=False,error=f'分割なしの実行に失敗しました: {base.get("error")}'),200
+  if not base.get('ok'):return dict(ok=False,error=f'分割なしの実行に失敗しました: {base.get("error")}')
   # 2) 分割あり。パートは同時に走らせる。
   specs=[{'index':p['index'],'label':f'パート{p["index"]}/{len(plan)}','drop':p['drop'],'out_csv':work/f'part{p["index"]}.csv'} for p in plan]
   log.info('SPLIT_PLAN rne=%s parts=%s anchors=%s keep=%s bytes=%s',rp,len(plan),anchors or '(なし)',
            [len(p['keep']) for p in plan],[p.get('bytes') for p in plan])
+  split_trial_stage(f'{len(plan)}分割を並列実行中（分割なしは {normal_elapsed:.0f}秒）')
   t=time.perf_counter();results=_spawn_split_parts(job,c,user,pw,server,work,specs,trial_timeout);split_run=time.perf_counter()-t
   bad=[r for r in results if not r.get('ok')]
   if bad:
-   return jsonify(ok=False,error='分割実行に失敗しました: '+'; '.join(f'{r.get("part")}: {r.get("error")}' for r in bad),
-                  parts=len(plan),results=results),200
+   return dict(ok=False,error='分割実行に失敗しました: '+'; '.join(f'{r.get("part")}: {r.get("error")}' for r in bad),
+                  parts=len(plan),results=results)
   # 3) 結合して、分割なしの結果と突き合わせる。
+  split_trial_stage('結合して比較中')
   merged=work/'merged.csv';t=time.perf_counter()
   try:
    mrows,mcols=merge_column_parts([r['file'] for r in results],merged,keys,columns)
@@ -3189,34 +3240,83 @@ def column_split_trial():
    log.warning('SPLIT_TRIAL_ROWSET_MISMATCH rne=%s parts=%s rows=%s error=%s',rp,len(plan),[r.get('rows') for r in results],me)
    record_split_trial(rp,job,len(plan),None,None,normal_elapsed,None,False,
                       detail=f'rowset first={me.first_rows} other={me.other_rows} part={me.part}')
-   return jsonify(ok=False,error=str(me),parts=len(plan),results=results,rowset_mismatch=True,
+   return dict(ok=False,error=str(me),parts=len(plan),results=results,rowset_mismatch=True,
                   part_rows=[{'part':r.get('part'),'rows':r.get('rows'),'cols':r.get('cols')} for r in results],
-                  normal_rows=base.get('rows')),200
+                  normal_rows=base.get('rows'))
   except Exception as me:
    log.warning('SPLIT_TRIAL_MERGE_FAILED rne=%s error=%s',rp,me)
-   return jsonify(ok=False,error=f'結合に失敗しました: {me}',parts=len(plan),results=results),200
+   return dict(ok=False,error=f'結合に失敗しました: {me}',parts=len(plan),results=results)
   merge_elapsed=time.perf_counter()-t;split_elapsed=split_run+merge_elapsed
-  a=base_csv.read_bytes();b=merged.read_bytes();identical=a==b
-  detail='' if identical else f'normal={len(a)}bytes merged={len(b)}bytes'
+  cmp=compare_csv_content(base_csv,merged,keys)
+  identical=bool(cmp.get('content_identical'))     # 並び順の違いは不一致としない
+  log.info('SPLIT_TRIAL_COMPARE rne=%s byte_identical=%s content_identical=%s order_match=%s diff_rows=%s diff_cells=%s only_normal=%s only_merged=%s reason=%s',
+           rp,cmp.get('byte_identical'),cmp.get('content_identical'),cmp.get('order_match'),
+           cmp.get('diff_rows'),cmp.get('diff_cells'),cmp.get('only_in_a'),cmp.get('only_in_b'),cmp.get('reason'))
+  for sm in (cmp.get('samples') or [])[:3]:
+   log.info('SPLIT_TRIAL_DIFF key=%s %s',sm['key'],'; '.join(f"{c['name']}: 分割なし={c['a']!r} 結合={c['b']!r}" for c in sm['columns']))
+  a=base_csv.read_bytes();b=merged.read_bytes()
+  detail='' if identical else f'diff_rows={cmp.get("diff_rows")} diff_cells={cmp.get("diff_cells")}'
   speedup=record_split_trial(rp,job,len(plan),mrows,mcols,normal_elapsed,split_elapsed,identical,detail)
   log.info('SPLIT_TRIAL_RESULT rne=%s parts=%s identical=%s normal=%.2fs split=%.2fs(実行%.2fs+結合%.2fs) speedup=%s',
            rp,len(plan),identical,normal_elapsed,split_elapsed,split_run,merge_elapsed,f'{speedup:.2f}' if speedup else '-')
-  return jsonify(ok=True,rne=str(rp),job=job['name'],parts=len(plan),identical=identical,
+  return dict(ok=True,rne=str(rp),job=job['name'],parts=len(plan),identical=identical,
                  rows=mrows,cols=mcols,key_count=len(keys),
                  normal_elapsed=round(normal_elapsed,2),split_elapsed=round(split_elapsed,2),
                  split_run_elapsed=round(split_run,2),merge_elapsed=round(merge_elapsed,2),
                  speedup=round(speedup,2) if speedup else None,
                  transfer_ratio=round(split_transfer_ratio(columns,removable,len(plan)),2),
-                 normal_size=len(a),merged_size=len(b),results=results,
+                 normal_size=len(a),merged_size=len(b),results=results,compare=cmp,
                  parts_plan=[{'index':p['index'],'keep':len(p['keep']),'drop':len(p['drop'])} for p in plan],
                  trials=load_split_trials(rp))
  except Exception as e:
   log.exception('SPLIT_TRIAL_FAILED rne=%s',rp)
-  return jsonify(ok=False,error=str(e)),200
+  return dict(ok=False,error=str(e))
  finally:
   # 影実行の中間ファイルは残さない。公開もしていないので、ここで完結させる。
   try:shutil.rmtree(work,ignore_errors=True)
   except Exception:pass
+
+
+# ---- 影実行の進行状態 -------------------------------------------------------
+# 影実行は数分かかる。画面を占有すると、その間ログも他の機能も見られないため、
+# 別スレッドで走らせて、状態だけを画面へ渡す。
+split_trial_lock=threading.Lock()
+split_trial_state={'running':False,'stage':'','job':'','started':0.0,'elapsed':0.0,'result':None,'parts':0}
+
+def split_trial_stage(stage,**extra):
+ with split_trial_lock:
+  split_trial_state.update(stage=stage,elapsed=round(time.time()-(split_trial_state.get('started') or time.time()),1),**extra)
+ log.info('SPLIT_TRIAL_STAGE %s',stage)
+
+@app.post('/api/column-split-trial')
+def column_split_trial_start():
+ """影実行を開始する。すぐ戻り、進み具合は /api/column-split-trial/status で見る。"""
+ data=request.get_json(force=True) or {};c=load()
+ job=next((x for x in c['jobs'] if x['id']==data.get('job_id')),None) if data.get('job_id') else None
+ if not job:return jsonify(ok=False,error='保存済みの対象を選んでください'),200
+ if str(c['settings'].get('extract_engine') or 'api').lower()!='api':
+  return jsonify(ok=False,error='列分割はNavigator API方式のときに使用できます'),200
+ with split_trial_lock:
+  if split_trial_state.get('running'):
+   return jsonify(ok=False,error=f'影実行が進行中です（{split_trial_state.get("job")}）。終わるまでお待ちください',busy=True),200
+  split_trial_state.update(running=True,stage='準備中',job=job['name'],started=time.time(),elapsed=0.0,result=None,parts=0)
+ def worker():
+  try:
+   res=_split_trial_run(data,c,job)
+  except Exception as e:
+   log.exception('SPLIT_TRIAL_FAILED job=%s',job.get('name'));res={'ok':False,'error':str(e)}
+  with split_trial_lock:
+   split_trial_state.update(running=False,stage='完了',result=res,
+                            elapsed=round(time.time()-(split_trial_state.get('started') or time.time()),1))
+ threading.Thread(target=worker,daemon=True,name='split-trial').start()
+ return jsonify(ok=True,started=True,job=job['name'])
+
+@app.get('/api/column-split-trial/status')
+def column_split_trial_status():
+ with split_trial_lock:
+  st=dict(split_trial_state)
+ if st.get('running'):st['elapsed']=round(time.time()-(st.get('started') or time.time()),1)
+ return jsonify(ok=True,**st)
 
 @app.post('/api/run')
 def run_all():
