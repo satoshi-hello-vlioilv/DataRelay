@@ -25,10 +25,17 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.33.0'; APP_VERSION_TITLE='ヘッダー操作系の再設計と一覧の2行化'; APP_RELEASED_AT='2026-08-08'
-BUILD_VERSION=f'{APP_VERSION}-ui'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.33.1'; APP_VERSION_TITLE='実行直後の実績表示'; APP_RELEASED_AT='2026-08-08'
+BUILD_VERSION=f'{APP_VERSION}-calc'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
+{'version':'1.33.1','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'実行が終わってから一覧に実績（所要・件数・転送量・転送速度）が出るまで、最大60秒かかっていたのを直しました。実績の取得が60秒ごとの定期処理まかせだったためです。1件終わるたびに取りに行くようにしました。',
+'それでも記録の保存と読み直しにわずかな間があるため、その間は「集計中」のバッジを出します。無言のまま待たせません。',
+'古い実績をそのまま出し続けることもしません。集計中の間は前回の値を隠します（終わった直後に古い数字が残っていると、新しい結果と見間違えるため）。',
+'記録が届かないまま30秒を超えた場合は、バッジを黙って引っ込めます。出しっぱなしにはなりません。',
+'定期取得の間隔（60秒）自体は変えていません。取りに行くのは実行が終わった対象があるときだけです。',
+]},
 {'version':'1.33.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
 'ヘッダー右側の操作系を1つの体系へ再設計しました。状態表示・実行・終了で高さも角の丸みも余白も文字の大きさもばらばらだったのを、共通の寸法（高さ38px / 角10px / 文字12.5px）へそろえました。',
 '役割が形で分かるようにしました。実行の2つ（選択を実行・全件実行）は1つの塊にまとめ、主たる操作である全件実行だけを塗りつぶします。終了はその塊から離し、触れたときだけ赤くなります。状態表示は押すと進捗が開くので、押せる要素として作り直しました。',

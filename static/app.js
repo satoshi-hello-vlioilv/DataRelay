@@ -1,4 +1,4 @@
-const UI_BUILD='1.33.0-ui';
+const UI_BUILD='1.33.1-calc';
 let cfg,editing=null,editingRule=null,sortDir=1,scheduleInfo={},rowLive={},rowQueue={},statusFailCount=0,serverLostShown=false;const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)],E=s=>String(s??'').replace(/[&<>"']/g,x=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[x]));const uid=()=>crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random();function toast(t){$('#toast').textContent=t;$('#toast').style.display='block';setTimeout(()=>$('#toast').style.display='none',2500)}function dirty(){$('#dirty').textContent='未保存の変更があります'}$$('nav button').forEach(b=>b.onclick=()=>{$$('nav button,section').forEach(x=>x.classList.remove('on'));b.classList.add('on');$('#'+b.dataset.p).classList.add('on');if(b.dataset.p==='logs')loadLog();if(b.dataset.p==='calendar')openCalendar();if(b.dataset.p==='viewer')loadViewerJobs()});
 const paths={navigator_api_dll:['Navigator API DLL','file',[['DLLファイル','*.dll'],['すべて','*.*']]],symnavi_exe:['SymNavi.exe','file',[['実行ファイル','*.exe'],['すべて','*.*']]],symnavim_conf:['symnavim.conf','file',[['CONFファイル','*.conf'],['すべて','*.*']]],symnavim_def:['symnavim.def','file',[['DEFファイル','*.def'],['すべて','*.*']]],accdb_template:['ACCDB空テンプレート','file',[['Access Database','*.accdb'],['すべて','*.*']]],rne_folder:['RNE基本フォルダー','folder'],default_output_folder:['既定の出力先','folder'],backup_folder:['バックアップ先','folder']};
 let waitingTimer=null,waitingStarted=0;function currentEngine(){return $('#extract-engine')?.value||cfg?.settings?.extract_engine||'api'}function waitingEngineLabel(context='common'){if(context==='api'||(context==='engine'&&currentEngine()==='api'))return 'NAVIGATOR API';if(context==='dde'||(context==='engine'&&currentEngine()==='dde'))return 'DDE COMPATIBILITY';return 'COMMON OPERATION'}function showWaiting(title='確認中',detail='処理を続行しています...',context='common'){let d=$('#waiting-dialog');$('#waiting-engine').textContent=waitingEngineLabel(context);$('#waiting-title').textContent=title;$('#waiting-detail').textContent=detail;waitingStarted=Date.now();clearInterval(waitingTimer);let tick=()=>{let sec=Math.floor((Date.now()-waitingStarted)/1000);$('#waiting-elapsed').textContent=`経過 ${String(Math.floor(sec/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`};tick();waitingTimer=setInterval(tick,1000);if(!d.open)d.showModal()}function updateWaiting(title,detail,context){if(title)$('#waiting-title').textContent=title;if(detail)$('#waiting-detail').textContent=detail;if(context)$('#waiting-engine').textContent=waitingEngineLabel(context)}function hideWaiting(){clearInterval(waitingTimer);waitingTimer=null;let d=$('#waiting-dialog');if(d?.open)d.close()}async function convertPath(input,mode){showWaiting('パス変換中',mode==='relative'?'アプリフォルダー基準へ変換しています...':'実際の絶対パスを解決しています...');try{let r=await fetch('/api/path-convert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({value:input.value,mode})}),d=await r.json();if(!r.ok)return toast(d.error);input.value=d.value;updatePathBadge(input);dirty()}finally{hideWaiting()}}function updatePathBadge(input){let badge=input.closest('label')?.querySelector('.path-badge');if(!badge)return;let relative=input.value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(input.value);badge.textContent=relative?'相対パス / 基準: アプリフォルダー':'絶対パス';badge.className='path-badge '+(relative?'path-kind-relative':'path-kind-absolute')}function isRelativePath(value){return !!value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(value)}function enhancePathInput(input,kind='folder'){if(!input||input.dataset.pathEnhanced)return;input.dataset.pathEnhanced='1';let tools=document.createElement('div');tools.className='path-tools compact-path-tools';tools.innerHTML='<button type="button" class="pathmode path-toggle" title="絶対パスと相対パスを切り替えます"></button><small class="path-badge"></small>';input.closest('label')?.appendChild(tools);let toggle=tools.querySelector('.path-toggle');function refresh(){let relative=isRelativePath(input.value);toggle.textContent=relative?'相対 → 絶対':'絶対 → 相対';toggle.dataset.mode=relative?'absolute':'relative';updatePathBadge(input)}toggle.onclick=async()=>{await convertPath(input,toggle.dataset.mode);refresh()};input.addEventListener('input',refresh);input._refreshPathControl=refresh;refresh()}async function browse(kind,initial,types){showWaiting('参照画面を準備中','設定中のパスを解決して、その場所から開きます...');try{let url=kind==='folder'?'/api/pick-folder':'/api/pick-file',r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({initial,types})}),d=await r.json();if(!r.ok)toast(d.error);return d.path||''}finally{hideWaiting()}}
@@ -311,9 +311,27 @@ function lastRunTitle(info){
 function lastStatusClass(info){if(!info||!info.last_run)return 'none';return info.last_status==='ok'?'ok':info.last_status==='failed'?'ng':'warn'}
 function fmtBytes(n){n=Number(n||0);if(!n)return '';return n>=1048576?`${(n/1048576).toFixed(1)}MB`:`${Math.max(1,Math.round(n/1024))}KB`}
 function fmtSeconds(n){n=Number(n||0);if(!n)return '';return n>=60?`${Math.floor(n/60)}分${String(Math.round(n%60)).padStart(2,'0')}秒`:`${n.toFixed(1)}秒`}
+// 実行が終わってから実績が画面に載るまでには、ほんの少し間がある（結果を保存し、
+// それを読み直すまで）。その間を無言にすると「出ないのでは」と見えるので、
+// 集計中であることをその場に出す。どの対象が待ちかは、実行前の記録と見比べて判断する。
+let metricsPending={};
+const METRICS_WAIT_MAX_MS=30000;   // 記録が来ないまま出し続けない。来ないなら黙って引っ込める。
+function markMetricsPending(id){
+ if(!id||id in metricsPending)return;
+ metricsPending[id]={before:(scheduleInfo[id]&&scheduleInfo[id].last_run)||'',at:Date.now()};
+}
+function metricsIsPending(id){
+ let p=metricsPending[id];if(!p)return false;
+ let now=(scheduleInfo[id]&&scheduleInfo[id].last_run)||'';
+ if(now&&now!==p.before){delete metricsPending[id];return false}          // 新しい記録が届いた
+ if(Date.now()-p.at>METRICS_WAIT_MAX_MS){delete metricsPending[id];return false}
+ return true;
+}
 // 直前の実行の実績。所要・転送量・転送速度・取り方（通常/N分割/競争）を1行で出す。
 // どれか欠けていても、あるものだけ並べる（古い実績には転送量が入っていない）。
-function lastMetricsRow(info){
+function lastMetricsRow(info,jobId){
+ if(jobId&&metricsIsPending(jobId))
+  return `<div class="rp-metrics is-pending"><span class="rp-mode calc">集計中</span><em>実行結果をまとめています…</em></div>`;
  let m=(info&&info.last_metrics)||{};
  if(!info||!info.last_run)return '';
  let mode=m.race_winner?['race',`競争→${m.race_winner==='split'?(m.split_parts||2)+'分割':'分割なし'}`]
@@ -339,12 +357,12 @@ function scheduleRowHtml(j,info){
 }
 function rowProgressCell(j){
  let info=scheduleInfo[j.id];
- return `<div class="rowprogress" data-jobid="${j.id}"><div class="rp-schedule"><div class="rp-plan">${scheduleRowHtml(j,info)}</div>${lastMetricsRow(info)}</div><div class="rp-live"><div class="rp-live-top"><span class="rp-state"></span><time class="rp-elapsed"></time></div><div class="rp-track"><i class="rp-bar"></i></div><div class="rp-detail"></div></div></div>`;
+ return `<div class="rowprogress" data-jobid="${j.id}"><div class="rp-schedule"><div class="rp-plan">${scheduleRowHtml(j,info)}</div>${lastMetricsRow(info,j.id)}</div><div class="rp-live"><div class="rp-live-top"><span class="rp-state"></span><time class="rp-elapsed"></time></div><div class="rp-track"><i class="rp-bar"></i></div><div class="rp-detail"></div></div></div>`;
 }
 async function loadSchedulePreview(){try{let d=await fetch('/api/schedule-preview').then(r=>r.json());scheduleInfo=Object.fromEntries((d.items||[]).map(x=>[x.id,x]));applyScheduleCells()}catch{}}
 function applyScheduleCells(){$$('.rowprogress').forEach(el=>{if(el.classList.contains('is-running')||el.classList.contains('is-wait')||el.classList.contains('is-done')||el.classList.contains('is-error'))return;let j=cfg?.jobs?.find(x=>x.id===el.dataset.jobid);if(!j)return;let info=scheduleInfo[j.id];
  let pl=el.querySelector('.rp-plan');if(pl)pl.innerHTML=scheduleRowHtml(j,info);
- let sc=el.querySelector('.rp-schedule'),mt=el.querySelector('.rp-metrics');if(sc){let html=lastMetricsRow(info);if(mt)mt.remove();if(html)sc.insertAdjacentHTML('beforeend',html)}})}
+ let sc=el.querySelector('.rp-schedule'),mt=el.querySelector('.rp-metrics');if(sc){let html=lastMetricsRow(info,j.id);if(mt)mt.remove();if(html)sc.insertAdjacentHTML('beforeend',html)}})}
 function jobStateClass(stateText){stateText=String(stateText||'');if(stateText.includes('失敗')||stateText.includes('中断'))return'is-error';if(stateText.includes('完了'))return'is-done';return'is-running'}
 const ROW_DONE_HOLD_MS=6000;
 /* 実行中の1バッチについて、対象(job_id)ごとの確定状態をクライアント側でも保持する。
@@ -367,9 +385,15 @@ function applyRowLiveProgress(s){
   if(cls==='is-running')runningInfo[s.current_job_id]={cls:'is-running',state:s.step_label||'',detail:[s.activity_detail,s.activity_value].filter(Boolean).join(' / '),elapsed:s.elapsed_seconds||0,percent:s.step_percent||0};
  }
  // バックエンドが確定した完了/失敗の対象を取り込む（累積・不可逆）。
+ let doneBefore=runCompletedIds.size+runFailedIds.size;
  if(s.running){
   (s.queue_completed_ids||[]).forEach(id=>{runCompletedIds.add(id);if(!runDoneMeta[id])runDoneMeta[id]={cls:'is-done',state:'完了',detail:'このバッチで完了しました',elapsed:0,percent:100}});
   (s.queue_failed_ids||[]).forEach(id=>{runFailedIds.add(id);if(!runDoneMeta[id])runDoneMeta[id]={cls:'is-error',state:'失敗',detail:'',elapsed:0,percent:100}});
+ }
+ // 1件終わるたびに実績を取りに行く。60秒の定期取得を待つと、その間ずっと出てこない。
+ if(runCompletedIds.size+runFailedIds.size>doneBefore){
+  runCompletedIds.forEach(markMetricsPending);runFailedIds.forEach(markMetricsPending);
+  loadSchedulePreview();
  }
  rowLive={};
  if(s.running){
@@ -390,6 +414,8 @@ function applyRowLiveProgress(s){
    runFailedIds.forEach(id=>rowLive[id]=runDoneMeta[id]||{cls:'is-error',state:'失敗',detail:'',elapsed:0,percent:100});
   }else{
    lastRunActive=false;runCompletedIds.clear();runFailedIds.clear();runDoneMeta={};
+   applyScheduleCells();          // 予定表示へ戻る瞬間に、実績（または集計中）を出し直す
+   loadSchedulePreview();         // 最後の1件ぶんの記録を取りこぼさない
   }
  }
  paintRowProgress();

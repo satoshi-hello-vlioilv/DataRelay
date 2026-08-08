@@ -287,6 +287,11 @@ tr:has(.rowprogress.is-running) td{background:#f6fcfd}tr:has(.rowprogress.is-err
 .rp-mode{font-size:9px;font-weight:800;border-radius:4px;padding:1px 5px;flex:none;white-space:nowrap;background:#eef3f5;color:#6d818c}
 .rp-mode.split{background:#e4f2f5;color:#1c6c85}
 .rp-mode.race{background:#f3ecfa;color:#6b4c9a}
+/* 実行直後、実績が届くまでの間。無言にすると「出ないのでは」と見えるので、待ちだと分かるようにする。 */
+.rp-mode.calc{background:#fdf0da;color:#8a6320}
+.rp-metrics.is-pending em{color:#8a7440}
+.rp-metrics.is-pending .rp-mode.calc{animation:rp-calc 1.3s ease-in-out infinite}
+@keyframes rp-calc{0%,100%{opacity:1}50%{opacity:.45}}
 .rp-live{min-width:0;max-width:100%}
 .rp-live-top{gap:8px}
 .rp-state{max-width:none;flex:1 1 auto;min-width:0}
