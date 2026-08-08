@@ -1,4 +1,4 @@
-const UI_BUILD='1.25.1-anchor-cover';
+const UI_BUILD='1.26.0-bg-compare';
 let cfg,editing=null,editingRule=null,sortDir=1,scheduleInfo={},rowLive={},rowQueue={},statusFailCount=0,serverLostShown=false;const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)],E=s=>String(s??'').replace(/[&<>"']/g,x=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[x]));const uid=()=>crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random();function toast(t){$('#toast').textContent=t;$('#toast').style.display='block';setTimeout(()=>$('#toast').style.display='none',2500)}function dirty(){$('#dirty').textContent='未保存の変更があります'}$$('nav button').forEach(b=>b.onclick=()=>{$$('nav button,section').forEach(x=>x.classList.remove('on'));b.classList.add('on');$('#'+b.dataset.p).classList.add('on');if(b.dataset.p==='logs')loadLog();if(b.dataset.p==='calendar')openCalendar();if(b.dataset.p==='viewer')loadViewerJobs()});
 const paths={navigator_api_dll:['Navigator API DLL','file',[['DLLファイル','*.dll'],['すべて','*.*']]],symnavi_exe:['SymNavi.exe','file',[['実行ファイル','*.exe'],['すべて','*.*']]],symnavim_conf:['symnavim.conf','file',[['CONFファイル','*.conf'],['すべて','*.*']]],symnavim_def:['symnavim.def','file',[['DEFファイル','*.def'],['すべて','*.*']]],accdb_template:['ACCDB空テンプレート','file',[['Access Database','*.accdb'],['すべて','*.*']]],rne_folder:['RNE基本フォルダー','folder'],default_output_folder:['既定の出力先','folder'],backup_folder:['バックアップ先','folder']};
 let waitingTimer=null,waitingStarted=0;function currentEngine(){return $('#extract-engine')?.value||cfg?.settings?.extract_engine||'api'}function waitingEngineLabel(context='common'){if(context==='api'||(context==='engine'&&currentEngine()==='api'))return 'NAVIGATOR API';if(context==='dde'||(context==='engine'&&currentEngine()==='dde'))return 'DDE COMPATIBILITY';return 'COMMON OPERATION'}function showWaiting(title='確認中',detail='処理を続行しています...',context='common'){let d=$('#waiting-dialog');$('#waiting-engine').textContent=waitingEngineLabel(context);$('#waiting-title').textContent=title;$('#waiting-detail').textContent=detail;waitingStarted=Date.now();clearInterval(waitingTimer);let tick=()=>{let sec=Math.floor((Date.now()-waitingStarted)/1000);$('#waiting-elapsed').textContent=`経過 ${String(Math.floor(sec/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`};tick();waitingTimer=setInterval(tick,1000);if(!d.open)d.showModal()}function updateWaiting(title,detail,context){if(title)$('#waiting-title').textContent=title;if(detail)$('#waiting-detail').textContent=detail;if(context)$('#waiting-engine').textContent=waitingEngineLabel(context)}function hideWaiting(){clearInterval(waitingTimer);waitingTimer=null;let d=$('#waiting-dialog');if(d?.open)d.close()}async function convertPath(input,mode){showWaiting('パス変換中',mode==='relative'?'アプリフォルダー基準へ変換しています...':'実際の絶対パスを解決しています...');try{let r=await fetch('/api/path-convert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({value:input.value,mode})}),d=await r.json();if(!r.ok)return toast(d.error);input.value=d.value;updatePathBadge(input);dirty()}finally{hideWaiting()}}function updatePathBadge(input){let badge=input.closest('label')?.querySelector('.path-badge');if(!badge)return;let relative=input.value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(input.value);badge.textContent=relative?'相対パス / 基準: アプリフォルダー':'絶対パス';badge.className='path-badge '+(relative?'path-kind-relative':'path-kind-absolute')}function isRelativePath(value){return !!value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(value)}function enhancePathInput(input,kind='folder'){if(!input||input.dataset.pathEnhanced)return;input.dataset.pathEnhanced='1';let tools=document.createElement('div');tools.className='path-tools compact-path-tools';tools.innerHTML='<button type="button" class="pathmode path-toggle" title="絶対パスと相対パスを切り替えます"></button><small class="path-badge"></small>';input.closest('label')?.appendChild(tools);let toggle=tools.querySelector('.path-toggle');function refresh(){let relative=isRelativePath(input.value);toggle.textContent=relative?'相対 → 絶対':'絶対 → 相対';toggle.dataset.mode=relative?'absolute':'relative';updatePathBadge(input)}toggle.onclick=async()=>{await convertPath(input,toggle.dataset.mode);refresh()};input.addEventListener('input',refresh);input._refreshPathControl=refresh;refresh()}async function browse(kind,initial,types){showWaiting('参照画面を準備中','設定中のパスを解決して、その場所から開きます...');try{let url=kind==='folder'?'/api/pick-folder':'/api/pick-file',r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({initial,types})}),d=await r.json();if(!r.ok)toast(d.error);return d.path||''}finally{hideWaiting()}}
@@ -85,7 +85,7 @@ async function copyTextValue(v,label){try{await navigator.clipboard.writeText(v|
 async function openJobOutput(j){try{let r=await fetch('/api/open-path',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:j.output_folder||cfg.default_output_folder})}),d=await r.json();toast(r.ok&&d.ok?'出力先を開きました':d.error||'出力先を開けませんでした')}catch{toast('出力先を開けませんでした')}}
 function duplicateJob(j){let n=structuredClone(j);n.id=uid();n.name+=' コピー';n.schedules=(n.schedules||[]).map(r=>({...r,id:uid(),enabled:false}));cfg.jobs.splice(cfg.jobs.indexOf(j)+1,0,n);render();dirty()}
 if($('#job-context-menu')){$('#job-context-menu').onclick=e=>{let a=e.target.closest('[data-action]');if(!a||!contextJob)return;let j=contextJob,act=a.dataset.action;hideJobContextMenu();if(act==='edit')openEditor(j);else if(act==='run')runJobs([j.id]);else if(act==='open-output')openJobOutput(j);else if(act==='viewer'){document.querySelector('[data-p="viewer"]')?.click();setTimeout(()=>{let sel=$('#viewer-job');if(sel){sel.value=j.id;sel.dispatchEvent(new Event('change'))}},100)}else if(act==='copy-rne')copyTextValue(j.rne_path||j.rne,'RNEパス');else if(act==='copy-output')copyTextValue(j.output_folder||cfg.default_output_folder,'出力先');else if(act==='duplicate')duplicateJob(j);else if(act==='toggle'){j.enabled=!j.enabled;render();dirty();toast(j.enabled?'有効にしました':'無効にしました')}else if(act==='delete')deleteJob(j)};document.addEventListener('click',e=>{if(!e.target.closest('#job-context-menu'))hideJobContextMenu()});document.addEventListener('keydown',e=>{if(e.key==='Escape')hideJobContextMenu()});window.addEventListener('blur',hideJobContextMenu)}
-function openEditor(job){editing=structuredClone(job||{id:uid(),name:'新しい対象',enabled:true,rne:'NEW.RNE',rne_path:cfg.rne_folder+'\\NEW.RNE',output_folder:cfg.default_output_folder,output_format:'sqlite3',output_file:'NEW.sqlite3',table:'仕掛',sheet:'Page1',type:'詳細データ',naming_mode:'fixed',output_pattern:'',comment:'',period:{enabled:false,control_point:'',unit:'month',from_offset:-1,to_offset:0},schedules:[]});$('#modal-title').textContent=job?'対象を編集':'対象を追加';$('#m-id').value=editing.id;$('#m-name').value=editing.name;$('#m-enabled').checked=editing.enabled;$('#m-rne-path').value=editing.rne_path||'';$('#m-output').value=editing.output_folder||cfg.default_output_folder;editing.output_format=normalizeFormat(editing.output_format);$('#m-format').value=editing.output_format;$('#m-output-file').value=editing.output_file;$('#m-table').value=editing.table;$('#m-sheet').value=editing.sheet;$('#m-type').value=editing.type;if($('#m-comment'))$('#m-comment').value=editing.comment||'';syncOutputExtension();initNaming(editing);setPeriodUI(editing.period);['#m-rne-inspect-result','#m-column-plan-result','#m-split-trial-result'].forEach(id=>{let e=$(id);if(e){e.hidden=true;e.innerHTML=''}});rulesRender();updatePeriodBadge();setEditorTab('basic');$('#editor').showModal()}
+function openEditor(job){editing=structuredClone(job||{id:uid(),name:'新しい対象',enabled:true,rne:'NEW.RNE',rne_path:cfg.rne_folder+'\\NEW.RNE',output_folder:cfg.default_output_folder,output_format:'sqlite3',output_file:'NEW.sqlite3',table:'仕掛',sheet:'Page1',type:'詳細データ',naming_mode:'fixed',output_pattern:'',comment:'',period:{enabled:false,control_point:'',unit:'month',from_offset:-1,to_offset:0},schedules:[]});$('#modal-title').textContent=job?'対象を編集':'対象を追加';$('#m-id').value=editing.id;$('#m-name').value=editing.name;$('#m-enabled').checked=editing.enabled;$('#m-rne-path').value=editing.rne_path||'';$('#m-output').value=editing.output_folder||cfg.default_output_folder;editing.output_format=normalizeFormat(editing.output_format);$('#m-format').value=editing.output_format;$('#m-output-file').value=editing.output_file;$('#m-table').value=editing.table;$('#m-sheet').value=editing.sheet;$('#m-type').value=editing.type;if($('#m-comment'))$('#m-comment').value=editing.comment||'';syncOutputExtension();initNaming(editing);setPeriodUI(editing.period);['#m-rne-inspect-result','#m-column-plan-result','#m-split-trial-result'].forEach(id=>{let e=$(id);if(e){e.hidden=true;e.innerHTML=''}});splitTrialPoll();rulesRender();updatePeriodBadge();setEditorTab('basic');$('#editor').showModal()}
 $('#m-format').onchange=()=>{syncOutputExtension();if(currentNamingMode()==='template')refreshNamePreview()};$('#m-rne-check').onclick=async()=>{showWaiting('RNEファイル確認中','設定場所と周辺フォルダーを検索しています...');try{let temp={item:'rne',job_id:editing.id,label:editing.rne,configured:$('#m-rne-path').value,resolved:$('#m-rne-path').value,candidates:[],ok:false};let r=await fetch('/api/path-check',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({item:'rne',job_id:editing.id,value:$('#m-rne-path').value,expected_name:$('#m-rne-path').value.split(/[\\/]/).pop()})}),d=await r.json();if(r.ok)showPathResult(d);else toast(d.error)}finally{hideWaiting()}};$('#m-rne-pick').onclick=async()=>{let p=await browse('file',$('#m-rne-path').value,[['RNEファイル','*.RNE'],['すべて','*.*']]);if(p){let i=$('#m-rne-path'),wasRel=i.value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(i.value);i.value=p;if(wasRel)await convertPath(i,'relative');updatePathBadge(i);i._refreshPathControl?.()}};$('#m-output-pick').onclick=async()=>{let p=await browse('folder',$('#m-output').value);if(p){let i=$('#m-output'),wasRel=i.value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(i.value);i.value=p;if(wasRel)await convertPath(i,'relative');updatePathBadge(i)}};enhancePathInput($('#m-rne-path'),'file');enhancePathInput($('#m-output'),'folder');$('#add-rule').onclick=()=>openRule({id:uid(),enabled:true,name:'実行ルール',type:'daily',time:'06:00'},true);$('#apply').onclick=async e=>{e.preventDefault();syncOutputExtension();const f=normalizeFormat($('#m-format').value),file=canonicalOutputFile($('#m-output-file').value,f),updated={...editing,name:$('#m-name').value.trim(),enabled:$('#m-enabled').checked,rne_path:$('#m-rne-path').value.trim(),rne:$('#m-rne-path').value.trim().split(/[\\/]/).pop(),output_folder:$('#m-output').value.trim(),output_format:f,output_file:file,table:$('#m-table').value.trim(),sheet:$('#m-sheet').value.trim(),type:$('#m-type').value,naming_mode:currentNamingMode(),output_pattern:$('#m-output-pattern').value.trim(),comment:($('#m-comment')?.value||'').trim(),period:currentPeriod()};let i=cfg.jobs.findIndex(j=>j.id===updated.id);if(i<0)cfg.jobs.unshift(updated);else cfg.jobs[i]=updated;let payload=structuredClone(cfg);delete payload.credential_status;showWaiting('設定を保存中',`${formatName(f)} / ${file}`);try{let r=await fetch('/api/config',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),d=await r.json();if(!r.ok)throw Error(d.error||'設定保存失敗');$('#editor').close();await init();toast(`保存完了: ${formatName(f)} / ${file}`)}catch(x){toast(x.message)}finally{hideWaiting()}};
 /* V35: dynamic output filename builder */
 let namePreviewTimer=null;
@@ -613,38 +613,69 @@ if($('#m-column-plan'))$('#m-column-plan').onclick=async()=>{
 
 /* 分割の効果を試す（影実行）。分割あり・なしを続けて実行し、結合結果をバイト比較する。
    出力ファイルは更新しない。速いかどうかは実測でしか分からないため、判断材料をここで作る。 */
+/* 影実行は数分かかるため、開始だけして裏で走らせる。画面は閉じてもよく、
+   実行中もログ・診断など他の機能をそのまま使える。進み具合は結果欄に出す。 */
+let splitTrialTimer=null;
+function splitTrialRender(d){
+ let rb=$('#m-split-trial-result');if(!rb)return;
+ rb.hidden=false;
+ if(d.running){
+  rb.innerHTML=`<p class="ri-note"><b>${E(d.job||'')}</b> の影実行を実行中です（経過 ${Math.round(d.elapsed||0)}秒）</p>`
+   +`<p class="ri-note">${E(d.stage||'準備中')}</p>`
+   +`<div class="cq-progress-track"><i class="cq-progress-run" style="width:100%"></i></div>`
+   +`<p class="ri-note">この画面は閉じても構いません。実行中も他の機能を使えます。詳しい経過は「ログ・診断」で確認できます。</p>`;
+  return;
+ }
+ let r=d.result;if(!r)return;
+ if(!r.ok){
+  let extra='';
+  if(r.rowset_mismatch&&r.part_rows?.length)extra=`<div class="ri-cards">`
+    +`<div class="ri-card"><span>分割なし</span><b>${r.normal_rows??'—'}</b><small>行</small></div>`
+    +r.part_rows.map(x=>`<div class="ri-card"><span>${E(x.part)}</span><b>${x.rows}</b><small>行 / ${x.cols}列</small></div>`).join('')+`</div>`;
+  if(r.rowset_mismatch)extra+=`<p class="ri-note">結果は公開していません。既存の出力ファイルは無事です。</p>`;
+  rb.innerHTML=`<p class="ri-ng">${r.rowset_mismatch?'このRNEでは列分割を使えません':'試せませんでした。'}</p><p class="ri-note">${E(r.error||'')}</p>${extra}`;
+  return;
+ }
+ let faster=r.speedup&&r.speedup>1.05,cp=r.compare||{};
+ let verdict=!r.identical?(cp.content_identical
+   ?['内容は一致しました（並び順のみ相違）','行の中身はすべて一致しています。行の並び順だけが分割なしと違います']
+   :[`結果が一致しませんでした`,E(cp.reason||'分割した結果と分割なしの結果が違います')])
+  :faster?[`${r.speedup}倍 速くなりました`,`結果は分割なしと完全に一致し、所要時間が ${r.normal_elapsed}秒 から ${r.split_elapsed}秒 へ短縮しました`]
+  :['速くなりませんでした',`結果は一致しましたが、所要時間は ${r.normal_elapsed}秒 に対し ${r.split_elapsed}秒 でした。この分割数では得になりません`];
+ let body=`<div class="ri-cards">`
+  +`<div class="ri-card"><span>分割なし</span><b>${r.normal_elapsed}s</b><small>${(r.normal_size/1024/1024).toFixed(2)} MB</small></div>`
+  +`<div class="ri-card"><span>${r.parts}分割</span><b>${r.split_elapsed}s</b><small>実行 ${r.split_run_elapsed}s ＋ 結合 ${r.merge_elapsed}s</small></div>`
+  +`<div class="ri-card"><span>速度比</span><b>${r.speedup?r.speedup+'x':'—'}</b><small>転送量 ${r.transfer_ratio}倍</small></div>`
+  +`<div class="ri-card"><span>結果の一致</span><b>${r.identical?'一致':(cp.content_identical?'内容一致':'不一致')}</b><small>${r.rows}行 ${r.cols}列</small></div></div>`
+  +`<p class="${r.identical&&faster?'ri-ok':'ri-ng'}">${E(verdict[0])}</p><p class="ri-note">${E(verdict[1])}</p>`
+  +`<p class="ri-note">出力ファイルは更新していません（影実行）。結合キーは ${r.key_count} 列です。</p>`;
+ if(cp.reason)body+=`<p class="ri-note">比較: ${E(cp.reason)}（行 ${cp.rows_a} 対 ${cp.rows_b} / 並び順一致 ${cp.order_match?'はい':'いいえ'}）</p>`;
+ if(cp.samples?.length)body+=`<details class="ri-list"><summary>違いの例（${cp.samples.length}件）</summary><div class="ri-chips">`
+  +cp.samples.map(x=>x.columns.map(c=>`<span class="ri-chip unnamed">${E(c.name)}<em>${E(String(c.a).slice(0,18))} → ${E(String(c.b).slice(0,18))}</em></span>`).join('')).join('')+`</div></details>`;
+ if(r.results?.length)body+=`<details class="ri-list"><summary>パートごとの内訳（${r.results.length}件）</summary><div class="ri-chips">`
+  +r.results.map(x=>`<span class="ri-chip">${E(x.part)}<em>${x.cols}列 / ${x.elapsed}s / ${(x.size/1024/1024).toFixed(2)}MB</em></span>`).join('')+`</div></details>`;
+ if(r.trials?.length)body+=`<p class="ri-note">これまでの実測: `+r.trials.map(t=>`${t.parts}分割 ${t.observed_speedup.toFixed(2)}倍（${t.samples}回）`).join(' / ')+`</p>`;
+ rb.innerHTML=body;
+}
+async function splitTrialPoll(){
+ try{
+  let r=await fetch('/api/column-split-trial/status'),d=await r.json();
+  splitTrialRender(d);
+  if(!d.running){clearInterval(splitTrialTimer);splitTrialTimer=null}
+ }catch{}
+}
 if($('#m-split-trial'))$('#m-split-trial').onclick=async()=>{
  let rb=$('#m-split-trial-result');
  if(!editing?.id||!cfg.jobs.some(j=>j.id===editing.id)){if(rb){rb.hidden=false;rb.innerHTML=`<p class="ri-ng">先に「設定を反映」で対象を保存してください。</p>`}return}
  let parts=Number($('#m-split-parts')?.value||0);
- showWaiting('分割の効果を測っています','分割なし → 分割あり の順に実行し、結合してバイト比較します...','api');
  try{
   let r=await fetch('/api/column-split-trial',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_id:editing.id,parts})}),d=await r.json();
-  if(rb)rb.hidden=false;
-  if(!d.ok){
-   let extra='';
-   if(d.rowset_mismatch&&d.part_rows?.length)extra=`<div class="ri-cards">`
-     +`<div class="ri-card"><span>分割なし</span><b>${d.normal_rows??'—'}</b><small>行</small></div>`
-     +d.part_rows.map(x=>`<div class="ri-card"><span>${E(x.part)}</span><b>${x.rows}</b><small>行 / ${x.cols}列</small></div>`).join('')+`</div>`;
-   if(d.rowset_mismatch)extra+=`<p class="ri-note">結果は公開していません。既存の出力ファイルは無事です。</p>`;
-   if(rb)rb.innerHTML=`<p class="ri-ng">${d.rowset_mismatch?'このRNEでは列分割を使えません':'試せませんでした。'}</p><p class="ri-note">${E(d.error||'')}</p>${extra}`;return}
-  let faster=d.speedup&&d.speedup>1.05;
-  let verdict=!d.identical?['結果が一致しませんでした','分割した結果と分割なしの結果が違います。この対象では分割を使えません']
-   :faster?[`${d.speedup}倍 速くなりました`,`結果は分割なしと完全に一致し、所要時間が ${d.normal_elapsed}秒 から ${d.split_elapsed}秒 へ短縮しました`]
-   :['速くなりませんでした',`結果は一致しましたが、所要時間は ${d.normal_elapsed}秒 に対し ${d.split_elapsed}秒 でした。この分割数では得になりません`];
-  let body=`<div class="ri-cards">`
-   +`<div class="ri-card"><span>分割なし</span><b>${d.normal_elapsed}s</b><small>${(d.normal_size/1024/1024).toFixed(2)} MB</small></div>`
-   +`<div class="ri-card"><span>${d.parts}分割</span><b>${d.split_elapsed}s</b><small>実行 ${d.split_run_elapsed}s ＋ 結合 ${d.merge_elapsed}s</small></div>`
-   +`<div class="ri-card"><span>速度比</span><b>${d.speedup?d.speedup+'x':'—'}</b><small>転送量 ${d.transfer_ratio}倍</small></div>`
-   +`<div class="ri-card"><span>結果の一致</span><b>${d.identical?'一致':'不一致'}</b><small>${d.rows}行 ${d.cols}列</small></div></div>`
-   +`<p class="${d.identical&&faster?'ri-ok':'ri-ng'}">${E(verdict[0])}</p><p class="ri-note">${E(verdict[1])}</p>`
-   +`<p class="ri-note">出力ファイルは更新していません（影実行）。結合キーは ${d.key_count} 列です。</p>`;
-  if(d.results?.length)body+=`<details class="ri-list"><summary>パートごとの内訳（${d.results.length}件）</summary><div class="ri-chips">`
-   +d.results.map(x=>`<span class="ri-chip">${E(x.part)}<em>${x.cols}列 / ${x.elapsed}s / ${(x.size/1024/1024).toFixed(2)}MB</em></span>`).join('')+`</div></details>`;
-  if(d.trials?.length)body+=`<p class="ri-note">これまでの実測: `+d.trials.map(t=>`${t.parts}分割 ${t.observed_speedup.toFixed(2)}倍（${t.samples}回）`).join(' / ')+`</p>`;
-  if(rb)rb.innerHTML=body;
- }catch(x){if(rb){rb.hidden=false;rb.innerHTML=`<p class="ri-ng">試行中にエラーが発生しました。</p>`}}
- finally{hideWaiting()}
+  if(!d.ok){if(rb){rb.hidden=false;rb.innerHTML=`<p class="ri-ng">開始できませんでした。</p><p class="ri-note">${E(d.error||'')}</p>`}return}
+  toast('影実行を開始しました。実行中も他の機能を使えます');
+  splitTrialRender({running:true,job:d.job,stage:'準備中',elapsed:0});
+  if(splitTrialTimer)clearInterval(splitTrialTimer);
+  splitTrialTimer=setInterval(splitTrialPoll,2000);splitTrialPoll();
+ }catch(x){if(rb){rb.hidden=false;rb.innerHTML=`<p class="ri-ng">開始時にエラーが発生しました。</p>`}}
 };
 
 /* ============================================================
