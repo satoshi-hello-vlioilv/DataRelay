@@ -25,10 +25,16 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.26.1'; APP_VERSION_TITLE='データ量の内訳を表示し、分割の限界を可視化'; APP_RELEASED_AT='2026-08-07'
-BUILD_VERSION=f'{APP_VERSION}-payload'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.27.0'; APP_VERSION_TITLE='分割の損益分岐を実測から算出'; APP_RELEASED_AT='2026-08-07'
+BUILD_VERSION=f'{APP_VERSION}-breakeven'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
+{'version':'1.27.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'影実行のたびに、並列時の転送スループットを記録するようにしました。並列にすると1本あたりの速度は落ちますが合計は増えます。その伸び方（傾き k）を実測から学びます。',
+'「固定列の割合が何%未満なら分割が得か」（損益分岐）を算出して表示します。1パートが運ぶ割合は f+(1-f)/n、所要はこれに n/σ(n) を掛けたものに比例するため、得になる条件は f < k に整理できます。分割数によらず同じ値です。',
+'実測が無いうちは損益分岐を表示しません。推測で断定しないためです。影実行を1回行うと表示されるようになります。',
+'ログに SPLIT_THROUGHPUT として、合計スループットの倍率・傾き・損益分岐を記録します。',
+]},
 {'version':'1.26.1','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
 '「列の分割可否を調べる」に、データ量の内訳（全パートに複製される固定列と、分割できる列の割合）を表示するようにしました。何分割しても1パートは固定列ぶんを必ず運ぶため、ここが短縮の限界になります。',
 '分割数ごとに「1パートが運ぶデータ量の割合」と見込みを並べて表示します。分割数を増やしてどこで頭打ちになるかが、実行前に分かります。',
@@ -484,7 +490,7 @@ def init_settings_db():
   CREATE TABLE IF NOT EXISTS schema_info (key TEXT PRIMARY KEY,value TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS job_runs (job_id TEXT PRIMARY KEY,job_name TEXT,finished_at TEXT,status TEXT,trigger TEXT,detail TEXT,rows INTEGER,cols INTEGER,output_file TEXT,updated_at TEXT NOT NULL DEFAULT '');
   CREATE TABLE IF NOT EXISTS run_history (id INTEGER PRIMARY KEY AUTOINCREMENT,job_id TEXT,job_name TEXT,finished_at TEXT,status TEXT,trigger TEXT,detail TEXT,rows INTEGER,cols INTEGER,output_file TEXT);
-  CREATE TABLE IF NOT EXISTS split_trials (id INTEGER PRIMARY KEY AUTOINCREMENT,rne_key TEXT NOT NULL,rne_path TEXT NOT NULL DEFAULT '',job_id TEXT NOT NULL DEFAULT '',job_name TEXT NOT NULL DEFAULT '',parts INTEGER NOT NULL,rows INTEGER,cols INTEGER,normal_elapsed REAL,split_elapsed REAL,observed_speedup REAL,identical INTEGER NOT NULL DEFAULT 0,detail TEXT NOT NULL DEFAULT '',tried_at TEXT NOT NULL);
+  CREATE TABLE IF NOT EXISTS split_trials (id INTEGER PRIMARY KEY AUTOINCREMENT,rne_key TEXT NOT NULL,rne_path TEXT NOT NULL DEFAULT '',job_id TEXT NOT NULL DEFAULT '',job_name TEXT NOT NULL DEFAULT '',parts INTEGER NOT NULL,rows INTEGER,cols INTEGER,normal_elapsed REAL,split_elapsed REAL,observed_speedup REAL,identical INTEGER NOT NULL DEFAULT 0,detail TEXT NOT NULL DEFAULT '',metrics TEXT NOT NULL DEFAULT '',tried_at TEXT NOT NULL);
   CREATE INDEX IF NOT EXISTS idx_split_trials_rne ON split_trials(rne_key);
   CREATE TABLE IF NOT EXISTS rne_timing (rne_key TEXT PRIMARY KEY,rne_path TEXT NOT NULL DEFAULT '',execute_seconds REAL,save_seconds REAL,total_seconds REAL,rows INTEGER,cols INTEGER,measured_at TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS rne_columns (rne_key TEXT PRIMARY KEY,rne_path TEXT NOT NULL,rne_mtime_ns TEXT NOT NULL DEFAULT '',rne_size INTEGER NOT NULL DEFAULT 0,columns_json TEXT NOT NULL,column_count INTEGER NOT NULL DEFAULT 0,row_count INTEGER,source TEXT NOT NULL DEFAULT '',job_id TEXT NOT NULL DEFAULT '',job_name TEXT NOT NULL DEFAULT '',captured_at TEXT NOT NULL);
@@ -530,6 +536,8 @@ def ensure_schema_upgrades():
   if 'period_json' not in cols:c.execute("ALTER TABLE jobs ADD COLUMN period_json TEXT NOT NULL DEFAULT ''")
   rc=[r['name'] for r in c.execute('PRAGMA table_info(rne_columns)')]
   if rc and 'classify_json' not in rc:c.execute("ALTER TABLE rne_columns ADD COLUMN classify_json TEXT NOT NULL DEFAULT ''")
+  st=[r['name'] for r in c.execute('PRAGMA table_info(split_trials)')]
+  if st and 'metrics' not in st:c.execute("ALTER TABLE split_trials ADD COLUMN metrics TEXT NOT NULL DEFAULT ''")
 
 def _decode_setting(row):
  v=row['value']; t=row['value_type']
@@ -1162,14 +1170,15 @@ def compare_csv_content(a_path,b_path,key_columns,encoding='cp932',samples=5):
                  f'行の過不足があります（分割なしのみ {len(only_a)}行 / 結合のみ {len(only_b)}行）'))
  return out
 
-def record_split_trial(rne_path,job,parts,rows,cols,normal_elapsed,split_elapsed,identical,detail=''):
+def record_split_trial(rne_path,job,parts,rows,cols,normal_elapsed,split_elapsed,identical,detail='',metrics=None):
  """分割と未分割の実測を残す。パート数の判断を経験で補正するための材料。"""
  speedup=(normal_elapsed/split_elapsed) if split_elapsed and normal_elapsed else None
  try:
   with settings_sync_lock, settings_connection() as c:
-   c.execute('INSERT INTO split_trials(rne_key,rne_path,job_id,job_name,parts,rows,cols,normal_elapsed,split_elapsed,observed_speedup,identical,detail,tried_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',
+   c.execute('INSERT INTO split_trials(rne_key,rne_path,job_id,job_name,parts,rows,cols,normal_elapsed,split_elapsed,observed_speedup,identical,detail,metrics,tried_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
              (_rne_key(rne_path),str(rne_path),str((job or {}).get('id') or ''),str((job or {}).get('name') or ''),int(parts),rows,cols,
-              normal_elapsed,split_elapsed,speedup,1 if identical else 0,detail,datetime.now().isoformat(timespec='seconds')))
+              normal_elapsed,split_elapsed,speedup,1 if identical else 0,detail,json.dumps(metrics or {},ensure_ascii=False),
+              datetime.now().isoformat(timespec='seconds')))
    _mark_settings_dirty()
  except Exception:
   log.exception('SPLIT_TRIAL_RECORD_FAILED rne=%s',rne_path);return None
@@ -1198,6 +1207,42 @@ def load_rne_timing(rne_path):
  if not r:return None
  return {'execute':r['execute_seconds'] or 0,'save':r['save_seconds'] or 0,'total':r['total_seconds'] or 0,
          'rows':r['rows'],'cols':r['cols'],'measured_at':r['measured_at']}
+
+def split_throughput_profile(rne_path=None):
+ """並列にしたとき、転送の合計スループットが何倍になるかを実測から求める。
+
+ 1本あたりの速度は並列にすると落ちる（帯域を分け合う）。合計が何倍まで伸びるかで、
+ 分割が得になるかどうかが決まる。σ(n) ≒ 1 + k(n-1) と見て、傾き k を推定する。
+ """
+ try:
+  with settings_connection() as c:
+   if rne_path:rows=list(c.execute("SELECT parts,metrics FROM split_trials WHERE rne_key=? AND metrics<>''",(_rne_key(rne_path),)))
+   else:rows=list(c.execute("SELECT parts,metrics FROM split_trials WHERE metrics<>''"))
+ except Exception:
+  return {'samples':0,'slope':None,'points':[]}
+ pts=[]
+ for r in rows:
+  try:m=json.loads(r['metrics'] or '{}')
+  except Exception:continue
+  nb,ns=m.get('normal_bytes'),m.get('normal_save')
+  parts=m.get('parts') or []
+  if not (nb and ns and parts):continue
+  base=nb/ns                                              # 1本のときのスループット
+  agg=sum((p.get('bytes') or 0) for p in parts)/max(p.get('save') or 0 for p in parts)
+  if base>0 and agg>0:pts.append({'parts':int(r['parts']),'sigma':round(agg/base,3)})
+ if not pts:return {'samples':0,'slope':None,'points':[]}
+ slopes=[(p['sigma']-1)/(p['parts']-1) for p in pts if p['parts']>1]
+ return {'samples':len(pts),'slope':round(sum(slopes)/len(slopes),3) if slopes else None,'points':pts}
+
+def split_breakeven_share(slope):
+ """分割が転送で得になる「固定列の割合」の上限。
+
+ 1パートが運ぶ割合 ratio(n)=f+(1-f)/n、所要は ratio(n)×n/σ(n) に比例する。
+ σ(n)=1+k(n-1) とすると、得になる条件は f×n+(1-f) < σ(n)、整理して f < k。
+ 分割数によらず、傾き k がそのまま分岐点になる。
+ """
+ if not slope or slope<=0:return None
+ return round(min(1.0,max(0.0,slope)),3)
 
 def split_incompatible(rne_path):
  """このRNEは列分割に向かないと確定しているか（行集合が食い違った実績があるか）。"""
@@ -3148,6 +3193,8 @@ def column_plan():
  payload=split_payload_profile(columns,removable,pw)
  best,best_gain,detail_rows=recommend_split_parts(columns,removable,int(c['settings'].get('api_parallel_max_lines',4) or 4),trials,timing,pw)
  reason=split_gain_reason(columns,removable,max(2,best),timing,pw)
+ tp=split_throughput_profile(rp) if trials else split_throughput_profile()
+ breakeven=split_breakeven_share(tp.get('slope'))
  log.info('SPLIT_PAYLOAD rne=%s unit=%s fixed=%s(%.0f%%) splittable=%s(%.0f%%) anchors=%s coverage=%.4f',
           rp,payload['unit'],payload['fixed'],payload['fixed_share']*100,payload['splittable'],payload['splittable_share']*100,
           panchors or '(なし)',pcov)
@@ -3159,7 +3206,8 @@ def column_plan():
                 basis=basis,layout=layout,classify_error=classify_error,captured_at=(cached or {}).get('captured_at',''),
                 notes=notes,probe=probe_info,elapsed=round(elapsed,2),
                 recommended_parts=best,predicted_gain=best_gain,gain_detail=detail_rows,gain_reason=reason,
-                timing=timing,incompatible=incompatible,payload=payload,anchors=panchors,anchor_coverage=round(pcov,4))
+                timing=timing,incompatible=incompatible,payload=payload,anchors=panchors,anchor_coverage=round(pcov,4),
+                throughput=tp,breakeven_fixed_share=breakeven)
 
 def _spawn_split_parts(job,cfg,user,pw,server,work,jobs_spec,timeout=1800):
  """パートを独立プロセスで同時に走らせる。戻り値は投入順の結果一覧。
@@ -3291,7 +3339,13 @@ def _split_trial_run(data,c,job):
    log.info('SPLIT_TRIAL_DIFF key=%s %s',sm['key'],'; '.join(f"{c['name']}: 分割なし={c['a']!r} 結合={c['b']!r}" for c in sm['columns']))
   a=base_csv.read_bytes();b=merged.read_bytes()
   detail='' if identical else f'diff_rows={cmp.get("diff_rows")} diff_cells={cmp.get("diff_cells")}'
-  speedup=record_split_trial(rp,job,len(plan),mrows,mcols,normal_elapsed,split_elapsed,identical,detail)
+  metrics={'normal_bytes':base.get('size'),'normal_save':base.get('save_elapsed'),'normal_execute':base.get('execute_elapsed'),
+           'parts':[{'bytes':r.get('size'),'save':r.get('save_elapsed'),'execute':r.get('execute_elapsed'),'cols':r.get('cols')} for r in results],
+           'fixed_share':(split_payload_profile(columns,removable,weights) or {}).get('fixed_share')}
+  speedup=record_split_trial(rp,job,len(plan),mrows,mcols,normal_elapsed,split_elapsed,identical,detail,metrics)
+  tp=split_throughput_profile(rp)
+  log.info('SPLIT_THROUGHPUT rne=%s parts=%s 合計スループット倍率=%s 傾きk=%s 損益分岐(固定列割合)=%s',
+           rp,len(plan),[p['sigma'] for p in tp['points']],tp['slope'],split_breakeven_share(tp['slope']))
   log.info('SPLIT_TRIAL_RESULT rne=%s parts=%s identical=%s normal=%.2fs split=%.2fs(実行%.2fs+結合%.2fs) speedup=%s',
            rp,len(plan),identical,normal_elapsed,split_elapsed,split_run,merge_elapsed,f'{speedup:.2f}' if speedup else '-')
   return dict(ok=True,rne=str(rp),job=job['name'],parts=len(plan),identical=identical,
