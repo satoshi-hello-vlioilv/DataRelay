@@ -25,10 +25,17 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.32.1'; APP_VERSION_TITLE='出力先のダブルクリックと列幅'; APP_RELEASED_AT='2026-08-08'
-BUILD_VERSION=f'{APP_VERSION}-click'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.33.0'; APP_VERSION_TITLE='ヘッダー操作系の再設計と一覧の2行化'; APP_RELEASED_AT='2026-08-08'
+BUILD_VERSION=f'{APP_VERSION}-ui'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
+{'version':'1.33.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'ヘッダー右側の操作系を1つの体系へ再設計しました。状態表示・実行・終了で高さも角の丸みも余白も文字の大きさもばらばらだったのを、共通の寸法（高さ38px / 角10px / 文字12.5px）へそろえました。',
+'役割が形で分かるようにしました。実行の2つ（選択を実行・全件実行）は1つの塊にまとめ、主たる操作である全件実行だけを塗りつぶします。終了はその塊から離し、触れたときだけ赤くなります。状態表示は押すと進捗が開くので、押せる要素として作り直しました。',
+'「選択を実行」は選んだ件数をボタン自身に表示し、0件なら押せません。押してから「選択してください」と出す作りをやめました。',
+'対象一覧の「進捗・次回実行」を2行に収めました。次回と直前を横並びの1行にし、実行実績を2行目にしています。行の高さは約64pxから44pxへ縮みました。省いた情報（毎日06:00などの予定の詳細、手動か定期か）はマウスを載せると出ます。',
+'停止直後に再起動すると「ポートが使用中」と誤判定して起動できないことがある不具合を修正しました。起動前の確認をFlaskと同じ条件（SO_REUSEADDR）で行うようにしています。前のプロセスの後始末待ちが残っているだけの状態を、使用中と数えていました。',
+]},
 {'version':'1.32.1','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
 '出力先のリンクをダブルクリックしたとき、フォルダーが開いてしまい詳細（設定編集）へ進めなかったのを直しました。ダブルクリックでは詳細だけが開きます。',
 'ブラウザは1回目のクリックを先に配ってからダブルクリックを出すため、待たずに開くと必ずフォルダーが先に出ます。フォルダーを開く動作だけを0.4秒遅らせ、その間に2回目が来たら取り消して詳細へ回すようにしました。フォルダーを開くのはエクスプローラーの起動を伴うので、この遅れは体感に出ません。',
@@ -4579,6 +4586,10 @@ if __name__=='__main__':
  # ランチャー側からは「起動確認がタイムアウト」としか見えない。
  _probe=socket.socket(socket.AF_INET,socket.SOCK_STREAM)
  try:
+  # Flask(werkzeug)と同じ条件で試す。これを付けないと、直前に終了したプロセスの
+  # 後始末待ち(TIME_WAIT)が残っているだけで「使用中」と判定してしまい、
+  # 本当は起動できるのに起動を諦めることになる（停止直後の再起動で起きる）。
+  _probe.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
   _probe.bind((HOST,PORT))
  except OSError as e:
   log.error('APP_PORT_IN_USE host=%s port=%s error=%s',HOST,PORT,e)
