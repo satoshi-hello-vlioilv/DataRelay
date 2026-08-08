@@ -25,10 +25,18 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.29.0'; APP_VERSION_TITLE='分割の可否を回線の空きから判断'; APP_RELEASED_AT='2026-08-07'
-BUILD_VERSION=f'{APP_VERSION}-link'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.30.0'; APP_VERSION_TITLE='列分割を本番の実行へ組み込み'; APP_RELEASED_AT='2026-08-08'
+BUILD_VERSION=f'{APP_VERSION}-run'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
+{'version':'1.30.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'列分割を本番の実行（出力ファイルの生成・公開）へ組み込みました。影実行で「結果が一致し、かつ実際に速かった」割り当てだけが保存され、次の実行から使われます。',
+'実行時に列の重みを測り直すことはしません。測り直しに数秒かかり、分割で稼げる時間をそこで使い切ってしまうためです。割り当ての算出は影実行の側の仕事にしました。',
+'対象ごとに「自動 / 常に分割 / 使わない」を選べます（対象を編集 → RNEを調べる）。既定は自動で、裏付けが無い対象はこれまで通り1本で実行します。',
+'同時プロセス数は共通設定の並列ライン数を超えません。1対象あたりの持ち分（並列ライン数 ÷ 対象数）に収まる分割数だけを使います。',
+'分割の途中で失敗した場合は、分割なしで自動的に取り直します。出力ファイルが欠けることはありません。行集合が食い違った場合は、その割り当てを取り下げて以後使いません。',
+'分割で取得した回は、所要時間の基準（分割なし1本の実測）を上書きしません。判断の土台が分割後の値に置き換わらないようにするためです。',
+]},
 {'version':'1.29.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
 '分割が得になるかどうかの判断を、回線の空き具合から行うようにしました。1本で出せる速度が回線の上限に近いと、本数を増やしても合計は伸びません。実測でも、単一823KB/sのときは2分割で合計が1.18倍にしかならず、遅くなりました（0.91倍）。',
 '影実行のたびに「回線の上限」「直近の単一速度」「伸びしろ（上限÷単一）」を記録し、有効な分割数を求めます。同じRNEでも、回線が空いている時間帯かどうかで結果が変わります。',
@@ -511,6 +519,7 @@ def init_settings_db():
   CREATE TABLE IF NOT EXISTS run_history (id INTEGER PRIMARY KEY AUTOINCREMENT,job_id TEXT,job_name TEXT,finished_at TEXT,status TEXT,trigger TEXT,detail TEXT,rows INTEGER,cols INTEGER,output_file TEXT);
   CREATE TABLE IF NOT EXISTS split_trials (id INTEGER PRIMARY KEY AUTOINCREMENT,rne_key TEXT NOT NULL,rne_path TEXT NOT NULL DEFAULT '',job_id TEXT NOT NULL DEFAULT '',job_name TEXT NOT NULL DEFAULT '',parts INTEGER NOT NULL,rows INTEGER,cols INTEGER,normal_elapsed REAL,split_elapsed REAL,observed_speedup REAL,identical INTEGER NOT NULL DEFAULT 0,detail TEXT NOT NULL DEFAULT '',metrics TEXT NOT NULL DEFAULT '',tried_at TEXT NOT NULL);
   CREATE INDEX IF NOT EXISTS idx_split_trials_rne ON split_trials(rne_key);
+  CREATE TABLE IF NOT EXISTS split_plans (rne_key TEXT NOT NULL,parts INTEGER NOT NULL,rne_path TEXT NOT NULL DEFAULT '',rne_mtime_ns TEXT NOT NULL DEFAULT '',rne_size INTEGER NOT NULL DEFAULT 0,columns_json TEXT NOT NULL,plan_json TEXT NOT NULL,keys_json TEXT NOT NULL,anchors_json TEXT NOT NULL DEFAULT '[]',observed_speedup REAL,rows INTEGER,cols INTEGER,source TEXT NOT NULL DEFAULT '',proven_at TEXT NOT NULL,PRIMARY KEY(rne_key,parts));
   CREATE TABLE IF NOT EXISTS rne_timing (rne_key TEXT PRIMARY KEY,rne_path TEXT NOT NULL DEFAULT '',execute_seconds REAL,save_seconds REAL,total_seconds REAL,rows INTEGER,cols INTEGER,measured_at TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS rne_columns (rne_key TEXT PRIMARY KEY,rne_path TEXT NOT NULL,rne_mtime_ns TEXT NOT NULL DEFAULT '',rne_size INTEGER NOT NULL DEFAULT 0,columns_json TEXT NOT NULL,column_count INTEGER NOT NULL DEFAULT 0,row_count INTEGER,source TEXT NOT NULL DEFAULT '',job_id TEXT NOT NULL DEFAULT '',job_name TEXT NOT NULL DEFAULT '',captured_at TEXT NOT NULL);
   CREATE INDEX IF NOT EXISTS idx_run_history_finished ON run_history(finished_at);
@@ -553,6 +562,7 @@ def ensure_schema_upgrades():
   if 'output_pattern' not in cols:c.execute("ALTER TABLE jobs ADD COLUMN output_pattern TEXT NOT NULL DEFAULT ''")
   if 'comment' not in cols:c.execute("ALTER TABLE jobs ADD COLUMN comment TEXT NOT NULL DEFAULT ''")
   if 'period_json' not in cols:c.execute("ALTER TABLE jobs ADD COLUMN period_json TEXT NOT NULL DEFAULT ''")
+  if 'split_mode' not in cols:c.execute("ALTER TABLE jobs ADD COLUMN split_mode TEXT NOT NULL DEFAULT 'auto'")
   rc=[r['name'] for r in c.execute('PRAGMA table_info(rne_columns)')]
   if rc and 'classify_json' not in rc:c.execute("ALTER TABLE rne_columns ADD COLUMN classify_json TEXT NOT NULL DEFAULT ''")
   st=[r['name'] for r in c.execute('PRAGMA table_info(split_trials)')]
@@ -1372,6 +1382,81 @@ def load_split_trials(rne_path=None):
  for r in rows:agg.setdefault(int(r['parts']),[]).append(float(r['observed_speedup']))
  return [{'parts':k,'observed_speedup':sum(v)/len(v),'samples':len(v)} for k,v in sorted(agg.items())]
 
+# ---- 実運用での分割（確定した割り当てを保存して使い回す） --------------------
+# 実行のたびに列の重みを測り直すと、それだけで数秒かかる（11MBで約3秒）。分割で稼げるのが
+# 数秒なのだから、そこで使い切ってしまう。そこで、影実行で「一致した・速かった」と確認できた
+# 割り当てだけを保存し、実行時はそれを読むだけにする。測り直しは影実行の側の仕事にする。
+
+SPLIT_MODES=('auto','force','off')
+
+def normalize_split_mode(value):
+ v=str(value or '').strip().lower()
+ return v if v in SPLIT_MODES else 'auto'
+
+def save_split_plan(rne_path,columns,parts,plan,keys,anchors,speedup=None,rows=None,cols=None,source='trial'):
+ """影実行で裏付けの取れた割り当てを保存する。次からの実行はこれを読むだけで済む。"""
+ key=_rne_key(rne_path);mtime,size=rne_signature(rne_path);now=datetime.now().isoformat(timespec='seconds')
+ body=[{'index':p['index'],'keep':list(p.get('keep') or []),'drop':list(p.get('drop') or [])} for p in plan]
+ try:
+  with settings_sync_lock, settings_connection() as c:
+   c.execute('INSERT OR REPLACE INTO split_plans(rne_key,parts,rne_path,rne_mtime_ns,rne_size,columns_json,plan_json,keys_json,anchors_json,observed_speedup,rows,cols,source,proven_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+             (key,int(parts),str(rne_path),mtime,size,json.dumps(list(columns),ensure_ascii=False),
+              json.dumps(body,ensure_ascii=False),json.dumps(list(keys),ensure_ascii=False),
+              json.dumps(list(anchors or []),ensure_ascii=False),
+              float(speedup) if speedup else None,rows,cols,source,now))
+   _mark_settings_dirty()
+ except Exception:
+  log.exception('SPLIT_PLAN_SAVE_FAILED rne=%s parts=%s',rne_path,parts);return False
+ log.info('SPLIT_PLAN_SAVE rne=%s parts=%s columns=%s keys=%s anchors=%s speedup=%s',
+          rne_path,parts,len(columns),len(keys),anchors or '(なし)',f'{speedup:.2f}' if speedup else '-')
+ return True
+
+def load_split_plans(rne_path):
+ """保存済みの割り当て。RNEが更新されていれば stale を付けて返す（採用しない）。"""
+ try:
+  with settings_connection() as c:
+   rows=list(c.execute('SELECT * FROM split_plans WHERE rne_key=? ORDER BY parts',(_rne_key(rne_path),)))
+ except Exception:
+  return []
+ mtime,size=rne_signature(rne_path);out=[]
+ for r in rows:
+  try:
+   body=json.loads(r['plan_json']);cols=json.loads(r['columns_json']);keys=json.loads(r['keys_json'])
+  except Exception:
+   continue
+  out.append({'parts':int(r['parts']),'plan':body,'columns':cols,'keys':keys,
+              'anchors':json.loads(r['anchors_json'] or '[]'),'observed_speedup':r['observed_speedup'],
+              'rows':r['rows'],'cols':r['cols'],'source':r['source'],'proven_at':r['proven_at'],
+              'stale':bool(mtime) and (mtime!=r['rne_mtime_ns'] or size!=r['rne_size'])})
+ return out
+
+def drop_split_plans(rne_path,reason=''):
+ """割り当てを取り下げる。実行で失敗した割り当てを次も使わないための後始末。"""
+ try:
+  with settings_sync_lock, settings_connection() as c:
+   n=c.execute('DELETE FROM split_plans WHERE rne_key=?',(_rne_key(rne_path),)).rowcount;_mark_settings_dirty()
+ except Exception:
+  log.exception('SPLIT_PLAN_DROP_FAILED rne=%s',rne_path);return 0
+ if n:log.warning('SPLIT_PLAN_DROP rne=%s removed=%s reason=%s',rne_path,n,reason)
+ return n
+
+def pick_split_plan(rne_path,columns,max_parts):
+ """使える割り当てを1つ選ぶ。無ければ (None, 理由)。
+
+ 選ぶ条件は3つだけ。RNEが変わっていないこと、列の顔ぶれが当時と同じであること、
+ 使えるライン数に収まっていること。速さの裏付けは保存時に済ませてある。
+ """
+ plans=load_split_plans(rne_path)
+ if not plans:return None,'確認済みの割り当てがありません（影実行で一致と短縮を確認すると保存されます）'
+ fresh=[p for p in plans if not p['stale']]
+ if not fresh:return None,'RNEが更新されたため、保存済みの割り当ては使えません'
+ same=[p for p in fresh if list(p['columns'])==list(columns or [])]
+ if not same:return None,f'列の顔ぶれが当時と違います（保存時 {len(fresh[0]["columns"])}列 / 現在 {len(columns or [])}列）'
+ fits=[p for p in same if p['parts']<=max(1,int(max_parts))]
+ if not fits:return None,f'保存済みは{min(p["parts"] for p in same)}分割以上ですが、使えるラインは{max_parts}本です'
+ best=max(fits,key=lambda p:(p['observed_speedup'] or 0,p['parts']))
+ return best,''
+
 def last_run_info(run):
  if not run:return {'last_run':None,'last_status':'','last_trigger':'','last_output':''}
  trig=str(run.get('trigger') or '');kind='schedule' if trig.startswith('schedule') else 'manual'
@@ -1390,14 +1475,14 @@ def load():
     if x['month_days_json']:q['month_days']=json.loads(x['month_days_json'])
     if x['dates_json']:q['dates']=json.loads(x['dates_json'])
     rules.append(q)
-   fmt=normalize_output_format(r['output_format'],r['output_file']); jobs.append({'id':r['id'],'enabled':bool(r['enabled']),'name':r['name'],'rne':r['rne'],'rne_path':r['rne_path'],'output_folder':r['output_folder'],'output_format':fmt,'output_file':canonical_output_file(r['output_file'],fmt),'table':r['table_name'],'sheet':r['sheet_name'],'type':r['read_type'],'naming_mode':(r['naming_mode'] if 'naming_mode' in r.keys() else 'fixed'),'output_pattern':(r['output_pattern'] if 'output_pattern' in r.keys() else ''),'comment':(r['comment'] if 'comment' in r.keys() else ''),'period':_decode_period(r['period_json'] if 'period_json' in r.keys() else ''),'schedules':rules})
+   fmt=normalize_output_format(r['output_format'],r['output_file']); jobs.append({'id':r['id'],'enabled':bool(r['enabled']),'name':r['name'],'rne':r['rne'],'rne_path':r['rne_path'],'output_folder':r['output_folder'],'output_format':fmt,'output_file':canonical_output_file(r['output_file'],fmt),'table':r['table_name'],'sheet':r['sheet_name'],'type':r['read_type'],'naming_mode':(r['naming_mode'] if 'naming_mode' in r.keys() else 'fixed'),'output_pattern':(r['output_pattern'] if 'output_pattern' in r.keys() else ''),'comment':(r['comment'] if 'comment' in r.keys() else ''),'split_mode':normalize_split_mode(r['split_mode'] if 'split_mode' in r.keys() else ''),'period':_decode_period(r['period_json'] if 'period_json' in r.keys() else ''),'schedules':rules})
   cfg['jobs']=jobs; cfg.setdefault('settings',{}); cfg['settings'].setdefault('extract_engine','api'); cfg['settings'].setdefault('api_parallel_max_lines',PARALLEL_LINES_SUPPORTED_MAX); cfg['settings'].setdefault('api_parallel_model','process')
   # 既定の並列ラインは6。旧テスト実装では stability_profile='stable_api_serial' の環境で読込のたびに api_parallel_lines を1へ強制していた（毎回1ラインへ戻る不具合の原因）。
   # その名残マーカーが残る環境（または初期状態）だけ一度2へ引き上げ、以降はユーザーが保存した値をそのまま尊重する。
   _prev_profile=cfg['settings'].get('stability_profile')
   if _prev_profile in (None,'stable_api_serial'):
    cfg['settings']['api_parallel_lines']=6; cfg['settings']['stability_profile']='balanced_api_parallel'
-  cfg['settings'].setdefault('api_parallel_lines',6); cfg['settings'].setdefault('stability_profile','balanced_api_parallel'); cfg['settings'].setdefault('backup_enabled',True); _backup_mode_missing='backup_mode' not in cfg['settings']; cfg['settings'].setdefault('backup_mode','generations'); cfg['settings'].setdefault('backup_retention_days',30); cfg['settings'].setdefault('backup_generation_limit_enabled',True); cfg['settings'].setdefault('backup_generations',3); cfg['settings'].setdefault('schedule_catchup_minutes',30); cfg['settings'].setdefault('api_worker_stagger_ms',700); cfg['settings'].setdefault('split_trial_timeout_seconds',1800); cfg['settings'].setdefault('split_anchor_limit',3); cfg['settings'].setdefault('split_min_part_mb',2.0); cfg['settings'].setdefault('split_min_gain_seconds',5.0)
+  cfg['settings'].setdefault('api_parallel_lines',6); cfg['settings'].setdefault('stability_profile','balanced_api_parallel'); cfg['settings'].setdefault('backup_enabled',True); _backup_mode_missing='backup_mode' not in cfg['settings']; cfg['settings'].setdefault('backup_mode','generations'); cfg['settings'].setdefault('backup_retention_days',30); cfg['settings'].setdefault('backup_generation_limit_enabled',True); cfg['settings'].setdefault('backup_generations',3); cfg['settings'].setdefault('schedule_catchup_minutes',30); cfg['settings'].setdefault('api_worker_stagger_ms',700); cfg['settings'].setdefault('split_trial_timeout_seconds',1800); cfg['settings'].setdefault('split_anchor_limit',3); cfg['settings'].setdefault('split_min_part_mb',2.0); cfg['settings'].setdefault('split_min_gain_seconds',5.0); cfg['settings'].setdefault('split_min_speedup',1.05); cfg['settings'].setdefault('split_run_enabled',True)
   if _backup_mode_missing:cfg['settings']['backup_generations']=3
   if int(cfg['settings'].get('api_parallel_lines',6) or 6)==2:cfg['settings']['api_parallel_lines']=6
   cfg.setdefault('navigator_api_dll',r'.\Config\NAVIAP\debugdllVC14x64\SymNaviA.dll'); cfg.setdefault('accdb_template','.\\assets\\empty.accdb');
@@ -1414,7 +1499,7 @@ def _save_local(v):
   keep=[]
   for order,j in enumerate(jobs):
    jid=j.get('id') or str(uuid.uuid4()); keep.append(jid)
-   fmt=normalize_output_format(j.get('output_format'),j.get('output_file')); output_file=canonical_output_file(j.get('output_file'),fmt); log.info('設定保存 job=%s requested_format=%s saved_format=%s requested_file=%s saved_file=%s',j.get('name'),j.get('output_format'),fmt,j.get('output_file'),output_file); c.execute('INSERT OR REPLACE INTO jobs (id,display_order,enabled,name,rne,rne_path,output_folder,output_format,output_file,table_name,sheet_name,read_type,naming_mode,output_pattern,comment,period_json,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',(jid,order,int(bool(j.get('enabled',True))),j.get('name',''),j.get('rne',''),j.get('rne_path',''),j.get('output_folder',''),fmt,output_file,j.get('table','仕掛'),j.get('sheet','Page1'),j.get('type','詳細データ'),str(j.get('naming_mode') or 'fixed'),str(j.get('output_pattern') or ''),str(j.get('comment') or ''),json.dumps(_decode_period(json.dumps(j.get('period') or {},ensure_ascii=False)),ensure_ascii=False),now))
+   fmt=normalize_output_format(j.get('output_format'),j.get('output_file')); output_file=canonical_output_file(j.get('output_file'),fmt); log.info('設定保存 job=%s requested_format=%s saved_format=%s requested_file=%s saved_file=%s',j.get('name'),j.get('output_format'),fmt,j.get('output_file'),output_file); c.execute('INSERT OR REPLACE INTO jobs (id,display_order,enabled,name,rne,rne_path,output_folder,output_format,output_file,table_name,sheet_name,read_type,naming_mode,output_pattern,comment,split_mode,period_json,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',(jid,order,int(bool(j.get('enabled',True))),j.get('name',''),j.get('rne',''),j.get('rne_path',''),j.get('output_folder',''),fmt,output_file,j.get('table','仕掛'),j.get('sheet','Page1'),j.get('type','詳細データ'),str(j.get('naming_mode') or 'fixed'),str(j.get('output_pattern') or ''),str(j.get('comment') or ''),normalize_split_mode(j.get('split_mode')),json.dumps(_decode_period(json.dumps(j.get('period') or {},ensure_ascii=False)),ensure_ascii=False),now))
    c.execute('DELETE FROM schedules WHERE job_id=?',(jid,))
    for ro,q in enumerate(j.get('schedules',[])):
     c.execute('INSERT INTO schedules VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',(q.get('id') or str(uuid.uuid4()),jid,ro,int(bool(q.get('enabled',True))),q.get('name','実行ルール'),q.get('type','daily'),q.get('time','06:00'),q.get('interval_minutes'),json.dumps(q.get('weekdays'),ensure_ascii=False) if 'weekdays' in q else None,json.dumps(q.get('month_days'),ensure_ascii=False) if 'month_days' in q else None,json.dumps(q.get('dates'),ensure_ascii=False) if 'dates' in q else None,now))
@@ -2325,6 +2410,70 @@ def process_split_part(j,cfg,user,pw,server,out_csv,drop_columns,part_label=''):
    try:api.close()
    except Exception:pass
 
+def plan_run_split(rne_path,job,cfg,fmt,budget_lines,line=''):
+ """本番の実行を分割で取るかどうかを決める。分割しないときは (None, 理由)。
+
+ ここは実行の直前に通る道なので、測定も問い合わせもしない。判断材料は保存済みのものだけ。
+ 「一致した・速かった」と確認済みの割り当てが有り、RNEも列の顔ぶれも当時のままで、
+ 使えるラインが足りているときだけ分割する。ひとつでも欠けたら、そのまま1本で取る。
+ """
+ mode=normalize_split_mode(job.get('split_mode'))
+ if not bool((cfg.get('settings') or {}).get('split_run_enabled',True)):return None,'共通設定で列分割を使わない設定です'
+ if mode=='off':return None,'この対象は列分割を使わない設定です'
+ if int(budget_lines or 1)<2:return None,f'同時に使えるラインが{budget_lines}本しかありません'
+ if fmt=='xlsx' and mode!='force':
+  # XLSXはAPIが直接書き出せる。分割するとCSV経由＋結合＋変換になり、速さの前提が変わる。
+  return None,'XLSXはAPIが直接書き出す方が速いため、自動では分割しません（常に分割を選ぶと分割します）'
+ state,cached=column_cache_state(rne_path)
+ if state!='hit':return None,('RNEが更新されています。もう一度実行すると列定義が取り直されます' if state=='stale' else '列定義がまだありません')
+ columns=cached['columns']
+ dupes=duplicate_columns(columns)
+ if dupes:return None,'同じ名前の列があります（'+'、'.join(d['name'] for d in dupes[:3])+'）'
+ chosen,why=pick_split_plan(rne_path,columns,budget_lines)
+ if not chosen:return None,why
+ if len(chosen['plan'])<2 or not chosen['keys']:return None,'保存済みの割り当てが不完全です'
+ log.info('SPLIT_RUN_PLAN line=%s job=%s rne=%s parts=%s mode=%s budget=%s 裏付け=%s倍(%s) keys=%s anchors=%s',
+          line,job.get('name'),rne_path,len(chosen['plan']),mode,budget_lines,
+          f"{chosen['observed_speedup']:.2f}" if chosen['observed_speedup'] else '-',chosen['proven_at'],
+          len(chosen['keys']),chosen['anchors'] or '(なし)')
+ return chosen,''
+
+def run_split_extraction(j,cfg,user,pw,server,work,chosen,dest_csv,line=''):
+ """保存済みの割り当てで分割抽出し、1本のCSVへ結合する。戻り値は (行数, 列数)。
+
+ 失敗したら例外を投げる。呼び出し側は分割なしでやり直す。公開するファイルを落とさないため、
+ ここで無理に結果を作らない。行が食い違ったときは、その割り当てを以後使わないよう取り下げる。
+ """
+ rp=resolve_rne_path(j,cfg);parts=chosen['plan'];total=len(parts)
+ specs=[{'index':p['index'],'label':f'パート{p["index"]}/{total}','drop':list(p['drop']),
+         'out_csv':Path(work)/f'part{p["index"]}.csv'} for p in parts]
+ timeout=int((cfg.get('settings') or {}).get('split_trial_timeout_seconds',1800) or 1800)
+ started=time.perf_counter()
+ update_parallel_line(line,job=j['name'],job_id=j['id'],state=f'{total}分割で抽出',percent=40,detail=f'{total}プロセス同時')
+ t=phase_log('split_extract',job=j['name'],line=line,parts=total)
+ results=_spawn_split_parts(j,cfg,user,pw,server,Path(work),specs,timeout)
+ bad=[r for r in results if not r.get('ok')]
+ if bad:raise RuntimeError('分割抽出に失敗: '+'; '.join(f'{r.get("part")}: {r.get("error")}' for r in bad))
+ run_elapsed=time.perf_counter()-started
+ phase_log('split_extract',t,job=j['name'],line=line,parts=total,
+           rows=max((r.get('rows') or 0) for r in results),bytes=sum((r.get('size') or 0) for r in results))
+ update_parallel_line(line,job=j['name'],job_id=j['id'],state='結合',percent=68,detail=f'{total}パートを横に結合')
+ t=phase_log('split_merge',job=j['name'],line=line)
+ try:
+  rows,cols=merge_column_parts([r['file'] for r in results],Path(dest_csv),chosen['keys'],chosen['columns'])
+ except SplitRowsetMismatch as me:
+  drop_split_plans(rp,f'実行時に行集合が食い違いました: {me}')
+  raise
+ phase_log('split_merge',t,job=j['name'],line=line,rows=rows,columns=cols)
+ merge_elapsed=time.perf_counter()-started-run_elapsed
+ # サーバ側の実行はパートごとに満額かかるので、内訳は「一番遅いパート」で見るのが実態に近い。
+ slowest=max(results,key=lambda r:r.get('elapsed') or 0)
+ log.info('SPLIT_RUN_DONE line=%s job=%s rne=%s parts=%s rows=%s cols=%s 抽出=%.2fs 結合=%.2fs 最遅パート=%s(実行%.2fs+保存%.2fs) 合計転送=%.1fMB',
+          line,j['name'],rp,total,rows,cols,run_elapsed,merge_elapsed,slowest.get('part'),
+          slowest.get('execute_elapsed') or 0,slowest.get('save_elapsed') or 0,
+          sum((r.get('size') or 0) for r in results)/1024/1024)
+ return rows,cols
+
 def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,backup):
  from navigator_api import NavigatorApi
  line_name=os.environ.get('NAVI_WORKER_LINE') or threading.current_thread().name
@@ -2353,51 +2502,74 @@ def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,
   phase_profile_add('job_preflight',max(0.0,time.perf_counter()-_preflight_started-_pending_elapsed))
   update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='開始',percent=5,detail=fmt);log.info('PARALLEL_JOB_START line=%s job=%s index=%s/%s format=%s target=%s',line_name,j['name'],job_index,total_jobs,fmt,target)
   log.info('PIPELINE job=%s engine=api parallel_line=%s common_intermediate=%s format=%s planned_intermediate=%s converted=%s target=%s',j['name'],line_name,common_intermediate,fmt,planned,db,target)
-  _dll_started=time.perf_counter();api_client=NavigatorApi(resolve_path(cfg['symnavi_exe']),log,resolve_path(cfg.get('navigator_api_dll')) if cfg.get('navigator_api_dll') else None,base_dir=BASE);phase_profile_add('api_load_dll',time.perf_counter()-_dll_started)
-  update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='API接続',percent=10,detail='セッション接続');session_started=time.perf_counter();session_elapsed=api_client.open_session(user,pw,server);phase_profile_add('api_open_session',session_elapsed);log.info('PARALLEL_API_SESSION line=%s job=%s dll=%s elapsed=%.2fs is_opened=1',line_name,j['name'],api_client.dll_path,session_elapsed)
-  profiles=api_data_source_profiles(resolve_path(cfg['symnavim_conf']))
-  if not any(p.get('kind')=='oracle' for p in profiles):
-   profiles.insert(0,{'section':'NavigatorCredentialFallback','kind':'oracle','user':user,'password':pw,'server':'','option':'','resource':'','resource_kind':'0','credential_source':'navigator_session'})
-   log.info('API Oracle接続設定未指定。Navigator認証を1回だけ流用 line=%s job=%s credential_source=navigator_session user_configured=%s password_configured=%s',line_name,j['name'],bool(user),bool(pw))
-  for profile in profiles:
-   source=profile.get('credential_source') or 'explicit_config'
-   elapsed=api_client.connect_data_source(profile);phase_profile_add('api_connect_source',elapsed)
-   log.info('APIデータソース接続完了 line=%s job=%s section=%s kind=%s credential_source=%s elapsed=%.2fs',line_name,j['name'],profile['section'],profile['kind'],source,elapsed)
-  api_rne=rp.resolve();rne_stat=api_rne.stat()
-  with chdir_lock:
-   previous_cwd=os.getcwd()
-   try:
-    os.chdir(api_rne.parent)
-    log.info('APIカタログ読込条件 line=%s dll=%s cwd=%s catalog_full=%s catalog_name=%s extension=%s size=%s mtime_ns=%s strategy=original_fullpath',line_name,api_client.dll_path,os.getcwd(),api_rne,api_rne.name,api_rne.suffix,rne_stat.st_size,rne_stat.st_mtime_ns)
-    t=phase_log('api_open_catalog',job=j['name'],line=line_name);handle,api_elapsed=api_client.open_catalog(api_rne);phase_log('api_open_catalog',t,job=j['name'],line=line_name,handle=handle,api_elapsed=f'{api_elapsed:.2f}s',strategy='original_fullpath')
-   finally:os.chdir(previous_cwd)
-  if (j.get('period') or {}).get('enabled'):update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='期間指定',percent=30,detail='相対期間を適用');apply_dynamic_period(api_client,handle,j,datetime.now(),line=line_name)
-  update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='問い合わせ実行',percent=35,detail='API execute');t=phase_log('api_execute_catalog',job=j['name'],line=line_name);api_number,api_elapsed=api_client.execute(handle);phase_log('api_execute_catalog',t,job=j['name'],line=line_name,number=api_number,api_elapsed=f'{api_elapsed:.2f}s',rows_per_sec=f'{api_number/api_elapsed:.0f}' if api_elapsed>0 else '0')
-  t=phase_log('api_get_dimensions',job=j['name'],line=line_name);expected_rows,expected_cols=api_client.dimensions(handle);phase_log('api_get_dimensions',t,job=j['name'],line=line_name,rows=expected_rows,columns=expected_cols)
-  api_direct_output=False
-  if fmt=='xlsx':
-   update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='XLSX保存',percent=58,detail='直接出力')
-   try:
-    if db.exists():
-     try:db.unlink()
-     except:pass
-    save_wall_started=time.perf_counter();t=phase_log('api_save_xlsx_direct',job=j['name'],line=line_name,target=db,repeat='NAVI_NONREPEAT',ftype='NAVI_XLSX');save_elapsed=api_client.save_xlsx(handle,db);save_wall_elapsed=time.perf_counter()-save_wall_started;phase_log('api_save_xlsx_direct',t,job=j['name'],line=line_name,api_elapsed=f'{save_elapsed:.2f}s',wall_elapsed=f'{save_wall_elapsed:.2f}s',size=db.stat().st_size if db.exists() else 0,throughput_kb_s=f'{(db.stat().st_size/1024/save_wall_elapsed):.1f}' if db.exists() and save_wall_elapsed>0 else '0')
-    if not db.is_file() or db.stat().st_size<=0:raise RuntimeError(f'API直接XLSXが作成されませんでした: {db}')
-    v=phase_log('api_direct_xlsx_validation',job=j['name'],line=line_name,file=db,mode='fast_header_only');verify_xlsx_fast(db,expected_cols);phase_log('api_direct_xlsx_validation',v,job=j['name'],line=line_name,mode='fast_header_only',rows=expected_rows,columns=expected_cols,size=db.stat().st_size)
-    api_direct_output=True;intermediate=db;nr,nc=int(expected_rows),int(expected_cols)
-    log.info('API_DIRECT_OUTPUT line=%s job=%s format=xlsx method=NaviSaveData(NAVI_XLSX) rows=%s columns=%s file=%s bytes_per_cell=%.2f',line_name,j['name'],expected_rows,expected_cols,db,(db.stat().st_size/max(1,(int(expected_rows)+1)*int(expected_cols))))
-   except Exception as e:
-    log.warning('API直接XLSX保存に失敗したためCSV経由へフォールバック line=%s job=%s error=%s',line_name,j['name'],e)
-    try:
-     if db.exists():db.unlink()
-    except:pass
-  if not api_direct_output:
-   update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='CSV保存',percent=58,detail='API保存')
+  # 分割して取るか、そのまま取るか。判断は保存済みの裏付けだけで行い、ここでは測定しない。
+  split_used=None;split_reason='';intermediate=None;api_direct_output=False
+  try:split_used,split_reason=plan_run_split(rp,j,cfg,fmt,int(j.get('_split_budget') or 1),line_name)
+  except Exception as se:
+   split_used=None;split_reason=f'判断に失敗しました: {se}';log.warning('SPLIT_RUN_PLAN_FAILED line=%s job=%s error=%s',line_name,j.get('name'),se)
+  if not split_used:log.info('SPLIT_RUN_SKIP line=%s job=%s rne=%s 理由=%s',line_name,j.get('name'),rp,split_reason)
+  if split_used:
+   split_work=dde_work/f'split_{job_index}_{stamp}';split_work.mkdir(parents=True,exist_ok=True)
    api_csv=dde_work/f'navi_{job_index}_{stamp}.csv'
-   t=phase_log('api_save_csv',job=j['name'],line=line_name);save_elapsed=api_client.save_csv(handle,api_csv);phase_log('api_save_csv',t,job=j['name'],line=line_name,api_elapsed=f'{save_elapsed:.2f}s',**save_metrics(api_csv,save_elapsed,expected_rows))
-   if not api_csv.is_file() or api_csv.stat().st_size<=0:raise RuntimeError(f'API中間CSVが作成されませんでした: {api_csv}')
-   intermediate=api_csv
-  t=phase_log('api_close_catalog',job=j['name'],line=line_name);api_client.close_catalog();phase_log('api_close_catalog',t,job=j['name'],line=line_name)
+   try:
+    expected_rows,expected_cols=run_split_extraction(j,cfg,user,pw,server,split_work,split_used,api_csv,line_name)
+    intermediate=api_csv
+   except Exception as spe:
+    # 公開するファイルを落とさないことを最優先にする。分割で転んだら、そのまま1本で取り直す。
+    log.warning('SPLIT_RUN_FALLBACK line=%s job=%s rne=%s error=%s 分割なしでやり直します',line_name,j.get('name'),rp,spe)
+    update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='分割なしで再実行',percent=20,detail=str(spe)[:80])
+    split_used=None;intermediate=None
+    try:
+     if api_csv.exists():api_csv.unlink()
+    except Exception:pass
+   finally:
+    shutil.rmtree(split_work,ignore_errors=True)
+  if intermediate is None:
+   _dll_started=time.perf_counter();api_client=NavigatorApi(resolve_path(cfg['symnavi_exe']),log,resolve_path(cfg.get('navigator_api_dll')) if cfg.get('navigator_api_dll') else None,base_dir=BASE);phase_profile_add('api_load_dll',time.perf_counter()-_dll_started)
+   update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='API接続',percent=10,detail='セッション接続');session_started=time.perf_counter();session_elapsed=api_client.open_session(user,pw,server);phase_profile_add('api_open_session',session_elapsed);log.info('PARALLEL_API_SESSION line=%s job=%s dll=%s elapsed=%.2fs is_opened=1',line_name,j['name'],api_client.dll_path,session_elapsed)
+   profiles=api_data_source_profiles(resolve_path(cfg['symnavim_conf']))
+   if not any(p.get('kind')=='oracle' for p in profiles):
+    profiles.insert(0,{'section':'NavigatorCredentialFallback','kind':'oracle','user':user,'password':pw,'server':'','option':'','resource':'','resource_kind':'0','credential_source':'navigator_session'})
+    log.info('API Oracle接続設定未指定。Navigator認証を1回だけ流用 line=%s job=%s credential_source=navigator_session user_configured=%s password_configured=%s',line_name,j['name'],bool(user),bool(pw))
+   for profile in profiles:
+    source=profile.get('credential_source') or 'explicit_config'
+    elapsed=api_client.connect_data_source(profile);phase_profile_add('api_connect_source',elapsed)
+    log.info('APIデータソース接続完了 line=%s job=%s section=%s kind=%s credential_source=%s elapsed=%.2fs',line_name,j['name'],profile['section'],profile['kind'],source,elapsed)
+   api_rne=rp.resolve();rne_stat=api_rne.stat()
+   with chdir_lock:
+    previous_cwd=os.getcwd()
+    try:
+     os.chdir(api_rne.parent)
+     log.info('APIカタログ読込条件 line=%s dll=%s cwd=%s catalog_full=%s catalog_name=%s extension=%s size=%s mtime_ns=%s strategy=original_fullpath',line_name,api_client.dll_path,os.getcwd(),api_rne,api_rne.name,api_rne.suffix,rne_stat.st_size,rne_stat.st_mtime_ns)
+     t=phase_log('api_open_catalog',job=j['name'],line=line_name);handle,api_elapsed=api_client.open_catalog(api_rne);phase_log('api_open_catalog',t,job=j['name'],line=line_name,handle=handle,api_elapsed=f'{api_elapsed:.2f}s',strategy='original_fullpath')
+    finally:os.chdir(previous_cwd)
+   if (j.get('period') or {}).get('enabled'):update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='期間指定',percent=30,detail='相対期間を適用');apply_dynamic_period(api_client,handle,j,datetime.now(),line=line_name)
+   update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='問い合わせ実行',percent=35,detail='API execute');t=phase_log('api_execute_catalog',job=j['name'],line=line_name);api_number,api_elapsed=api_client.execute(handle);phase_log('api_execute_catalog',t,job=j['name'],line=line_name,number=api_number,api_elapsed=f'{api_elapsed:.2f}s',rows_per_sec=f'{api_number/api_elapsed:.0f}' if api_elapsed>0 else '0')
+   t=phase_log('api_get_dimensions',job=j['name'],line=line_name);expected_rows,expected_cols=api_client.dimensions(handle);phase_log('api_get_dimensions',t,job=j['name'],line=line_name,rows=expected_rows,columns=expected_cols)
+   api_direct_output=False
+   if fmt=='xlsx':
+    update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='XLSX保存',percent=58,detail='直接出力')
+    try:
+     if db.exists():
+      try:db.unlink()
+      except:pass
+     save_wall_started=time.perf_counter();t=phase_log('api_save_xlsx_direct',job=j['name'],line=line_name,target=db,repeat='NAVI_NONREPEAT',ftype='NAVI_XLSX');save_elapsed=api_client.save_xlsx(handle,db);save_wall_elapsed=time.perf_counter()-save_wall_started;phase_log('api_save_xlsx_direct',t,job=j['name'],line=line_name,api_elapsed=f'{save_elapsed:.2f}s',wall_elapsed=f'{save_wall_elapsed:.2f}s',size=db.stat().st_size if db.exists() else 0,throughput_kb_s=f'{(db.stat().st_size/1024/save_wall_elapsed):.1f}' if db.exists() and save_wall_elapsed>0 else '0')
+     if not db.is_file() or db.stat().st_size<=0:raise RuntimeError(f'API直接XLSXが作成されませんでした: {db}')
+     v=phase_log('api_direct_xlsx_validation',job=j['name'],line=line_name,file=db,mode='fast_header_only');verify_xlsx_fast(db,expected_cols);phase_log('api_direct_xlsx_validation',v,job=j['name'],line=line_name,mode='fast_header_only',rows=expected_rows,columns=expected_cols,size=db.stat().st_size)
+     api_direct_output=True;intermediate=db;nr,nc=int(expected_rows),int(expected_cols)
+     log.info('API_DIRECT_OUTPUT line=%s job=%s format=xlsx method=NaviSaveData(NAVI_XLSX) rows=%s columns=%s file=%s bytes_per_cell=%.2f',line_name,j['name'],expected_rows,expected_cols,db,(db.stat().st_size/max(1,(int(expected_rows)+1)*int(expected_cols))))
+    except Exception as e:
+     log.warning('API直接XLSX保存に失敗したためCSV経由へフォールバック line=%s job=%s error=%s',line_name,j['name'],e)
+     try:
+      if db.exists():db.unlink()
+     except:pass
+   if not api_direct_output:
+    update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='CSV保存',percent=58,detail='API保存')
+    api_csv=dde_work/f'navi_{job_index}_{stamp}.csv'
+    t=phase_log('api_save_csv',job=j['name'],line=line_name);save_elapsed=api_client.save_csv(handle,api_csv);phase_log('api_save_csv',t,job=j['name'],line=line_name,api_elapsed=f'{save_elapsed:.2f}s',**save_metrics(api_csv,save_elapsed,expected_rows))
+    if not api_csv.is_file() or api_csv.stat().st_size<=0:raise RuntimeError(f'API中間CSVが作成されませんでした: {api_csv}')
+    intermediate=api_csv
+   t=phase_log('api_close_catalog',job=j['name'],line=line_name);api_client.close_catalog();phase_log('api_close_catalog',t,job=j['name'],line=line_name)
   update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='変換・検証',percent=75,detail=fmt)
   if api_direct_output:
    t=phase_log('format_conversion',job=j['name'],line=line_name,format=fmt,mode='api_direct_xlsx');phase_log('format_conversion',t,job=j['name'],line=line_name,format=fmt,mode='api_direct_xlsx',rows=nr,columns=nc)
@@ -2407,7 +2579,7 @@ def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,
   total=time.perf_counter()-job_started
   update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='完了',percent=100,detail=f'{nr}件/{nc}列',elapsed=round(total,1));log.info('PARALLEL_JOB_RESULT line=%s job=%s format=%s rows=%s columns=%s elapsed=%.2fs target=%s published=%s',line_name,j['name'],fmt,nr,nc,total,target,pub['published'])
   log.info('JOB_PROFILE line=%s job=%s rows=%s columns=%s %s',line_name,j['name'],nr,nc,phase_profile_summary())
-  result=f'{j["name"]}: {nr}件/{nc}列 / {total:.1f}秒'+('' if pub['published'] else f' / 更新保留: {pub["pending"]}')
+  result=f'{j["name"]}: {nr}件/{nc}列 / {total:.1f}秒'+(f' / {len(split_used["plan"])}分割' if split_used else '')+('' if pub['published'] else f' / 更新保留: {pub["pending"]}')
   # 列名はここでしか分からないので、作業ファイルの見出しだけ読んで持ち帰る。書き込みは親プロセスが行う
   # （ワーカーが同時に設定DBへ書くと競合するため）。失敗しても抽出結果には影響させない。
   column_names=[]
@@ -2421,6 +2593,7 @@ def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,
   ph=_phase_profile.get('phases') or {}
   return {'ok':True,'job':j['name'],'format':fmt,'rows':nr,'columns':nc,'elapsed':total,'target':str(target),'result':result,
           'column_names':column_names,'rne_path':str(rp),
+          'split_parts':len(split_used['plan']) if split_used else 0,'split_reason':split_reason,
           'execute_seconds':round(float(ph.get('api_execute_catalog') or 0),2),
           'save_seconds':round(float(ph.get('api_save_csv') or ph.get('api_save_xlsx_direct') or 0),2),
           'total_seconds':round(total,2)}
@@ -2464,7 +2637,12 @@ def run_api_process_batch(jobs,cfg,user,pw,server,dde_work,backup,max_lines,trig
  # 各対象(ジョブ)の実状態を job_id 単位で保持し、完了後に「待機」へ戻る不具合を防ぐ。
  completed_ids=[];failed_ids=[];all_job_ids=[j['id'] for j in jobs]
  with active_workers_lock:active_workers.clear()
- batch_started=time.perf_counter(); total=len(jobs); max_lines=max(1,min(int(max_lines),total))
+ batch_started=time.perf_counter(); total=len(jobs); configured_lines=max(1,int(max_lines)); max_lines=max(1,min(int(max_lines),total))
+ # 列分割は同時プロセスを増やす。設定した並列数を超えないよう、1対象あたりの持ち分を先に決める。
+ # 対象がラインを埋め切っているときは持ち分が1になり、分割は行われない。
+ split_budget=max(1,configured_lines//total)
+ log.info('SPLIT_BUDGET configured_lines=%s jobs=%s per_job=%s',configured_lines,total,split_budget)
+ for _j in jobs:_j['_split_budget']=split_budget
  set_status(parallel_lines=[{'line':f'ライン {n}','job':'','state':'待機','percent':0,'elapsed':0,'detail':'開始待ち','slot':n} for n in range(1,max_lines+1)],queue_total=total,queue_waiting=total,queue_active=0,queue_completed=0,queue_completed_ids=[],queue_failed_ids=[],queue_running_ids=[],queue_waiting_ids=list(all_job_ids),parallel_max_lines=max_lines,parallel_mode=True,symnavi_window=f'独立プロセス {max_lines}ライン')
  log.info('PARALLEL_BATCH_START model=process-isolated trigger=%s batch_id=%s runtime=%s jobs=%s max_lines=%s total_jobs=%s parent_pid=%s',trigger,batch_id,runtime,[j['rne'] for j in jobs],max_lines,total,os.getpid())
  def start_one(slot):
@@ -2523,9 +2701,12 @@ def run_api_process_batch(jobs,cfg,user,pw,server,dde_work,backup,max_lines,trig
    # ワーカーが持ち帰った列名をここで保存する。設定DBへの書き込みを親1本に集約して競合を避ける。
    if result.get('ok') and result.get('column_names'):
     save_column_cache(result.get('rne_path') or '',result['column_names'],rows=result.get('rows'),source='run',job=item['job'])
-   if result.get('ok') and result.get('rne_path'):
+   # 所要時間の基準は「分割なし1本」の値でなければ意味がない。分割で取った回は記録しない。
+   if result.get('ok') and result.get('rne_path') and not result.get('split_parts'):
     save_rne_timing(result['rne_path'],result.get('execute_seconds'),result.get('save_seconds'),
                     result.get('total_seconds'),result.get('rows'),result.get('columns'))
+   if result.get('split_parts'):
+    log.info('SPLIT_RUN_USED batch_id=%s job=%s parts=%s elapsed=%.2fs',batch_id,item['job']['name'],result['split_parts'],result.get('elapsed') or 0)
    with active_workers_lock:active_workers.pop(slot,None)
    del active[slot]
    if queue and not cancel_requested.is_set():start_one(slot)
@@ -3312,6 +3493,15 @@ def column_plan():
           rp,payload['unit'],payload['fixed'],payload['fixed_share']*100,payload['splittable'],payload['splittable_share']*100,
           panchors or '(なし)',pcov)
  if incompatible or dupes:best,best_gain=1,1.0
+ # 「次に実行したらどうなるか」。この対象を単独で実行したときの持ち分で判定して見せる。
+ solo_budget=max(1,int(c['settings'].get('api_parallel_lines',6) or 6))
+ chosen,why=plan_run_split(rp,job,c,normalize_output_format(job.get('output_format'),job.get('output_file')),solo_budget)
+ runtime_split={'mode':normalize_split_mode(job.get('split_mode')),'budget':solo_budget,'active':bool(chosen),
+                'parts':len(chosen['plan']) if chosen else 0,'reason':why,
+                'proven_at':(chosen or {}).get('proven_at',''),'observed_speedup':(chosen or {}).get('observed_speedup'),
+                'saved':[{'parts':p['parts'],'speedup':p['observed_speedup'],'proven_at':p['proven_at'],
+                          'stale':p['stale'],'columns':len(p['columns'])} for p in load_split_plans(rp)],
+                'min_speedup':float(c['settings'].get('split_min_speedup',1.05) or 1.05)}
  log.info('COLUMN_PLAN rne=%s job=%s source=%s basis=%s columns=%s removable=%s fixed=%s recommend=%s gain=%s incompatible=%s elapsed=%.2fs',
           rp,job['name'],source,basis,len(columns),len(removable),len(fixed),best,best_gain,incompatible,elapsed)
  return jsonify(ok=True,rne=str(rp),job=job['name'],source=source,cache_state=state,columns=columns,column_count=len(columns),
@@ -3321,7 +3511,7 @@ def column_plan():
                 recommended_parts=best,predicted_gain=best_gain,gain_detail=detail_rows,gain_reason=reason,
                 timing=timing,incompatible=incompatible,payload=payload,anchors=panchors,anchor_coverage=round(pcov,4),
                 throughput=tp,breakeven_fixed_share=breakeven,duplicates=dupes,link=link,
-                useful_parts=split_useful_parts(link))
+                useful_parts=split_useful_parts(link),runtime_split=runtime_split)
 
 def _spawn_split_parts(job,cfg,user,pw,server,work,jobs_spec,timeout=1800):
  """パートを独立プロセスで同時に走らせる。戻り値は投入順の結果一覧。
@@ -3489,6 +3679,15 @@ def _split_trial_run(data,c,job):
            'parts':[{'bytes':r.get('size'),'save':r.get('save_elapsed'),'execute':r.get('execute_elapsed'),'cols':r.get('cols')} for r in results],
            'fixed_share':(split_payload_profile(columns,removable,weights) or {}).get('fixed_share')}
   speedup=record_split_trial(rp,job,len(plan),mrows,mcols,normal_elapsed,split_elapsed,identical,detail,metrics)
+  # 一致して、かつ実際に速かった割り当てだけを実運用へ引き渡す。
+  # 実行時に測り直さないで済むよう、担当列の割り当てそのものを保存する。
+  min_sp=float(c['settings'].get('split_min_speedup',1.05) or 1.05)
+  plan_saved=False
+  if identical and speedup and speedup>=min_sp:
+   plan_saved=save_split_plan(rp,columns,len(plan),plan,keys,anchors,speedup,mrows,mcols)
+  else:
+   log.info('SPLIT_PLAN_NOT_SAVED rne=%s parts=%s identical=%s speedup=%s 基準=%.2f倍 実運用には採用しません',
+            rp,len(plan),identical,f'{speedup:.2f}' if speedup else '-',min_sp)
   lp=split_link_profile(rp)
   log.info('SPLIT_LINK rne=%s 回線の上限=%s KB/s 直近の単一速度=%s KB/s 伸びしろ=%s倍 有効な分割数=%s 実測=%s',
            rp,lp.get('capacity_kbs'),lp.get('base_kbs'),lp.get('headroom'),split_useful_parts(lp),
@@ -3503,6 +3702,7 @@ def _split_trial_run(data,c,job):
                  transfer_ratio=round(split_transfer_ratio(columns,removable,len(plan)),2),
                  normal_size=len(a),merged_size=len(b),results=results,compare=cmp,
                  parts_plan=[{'index':p['index'],'keep':len(p['keep']),'drop':len(p['drop'])} for p in plan],
+                 plan_saved=bool(plan_saved),min_speedup=min_sp,split_mode=normalize_split_mode(job.get('split_mode')),
                  trials=load_split_trials(rp))
  except Exception as e:
   log.exception('SPLIT_TRIAL_FAILED rne=%s',rp)
