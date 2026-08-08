@@ -221,7 +221,7 @@ tr:has(.rowprogress.is-running) td{background:#f6fcfd}tr:has(.rowprogress.is-err
 .jobs-table .c-state{width:58px}
 .jobs-table th:nth-child(3){width:168px}
 .jobs-table th:nth-child(4){width:178px}
-.jobs-table th:nth-child(5){width:188px}
+.jobs-table th:nth-child(5){width:228px}   /* 出力ファイル名。日付入りの長い名前が切れないよう広げた */
 .jobs-table th:nth-child(6){width:auto}
 .jobs-table .c-progress{width:308px}   /* 実績（所要・転送量・速度・取り方）を1行で出すため広げた。出力先(auto)から取る */
 .jobs-table .c-action{width:150px}
