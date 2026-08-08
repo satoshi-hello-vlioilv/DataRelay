@@ -1,4 +1,4 @@
-const UI_BUILD='1.30.0-run';
+const UI_BUILD='1.31.0-race';
 let cfg,editing=null,editingRule=null,sortDir=1,scheduleInfo={},rowLive={},rowQueue={},statusFailCount=0,serverLostShown=false;const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)],E=s=>String(s??'').replace(/[&<>"']/g,x=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[x]));const uid=()=>crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random();function toast(t){$('#toast').textContent=t;$('#toast').style.display='block';setTimeout(()=>$('#toast').style.display='none',2500)}function dirty(){$('#dirty').textContent='未保存の変更があります'}$$('nav button').forEach(b=>b.onclick=()=>{$$('nav button,section').forEach(x=>x.classList.remove('on'));b.classList.add('on');$('#'+b.dataset.p).classList.add('on');if(b.dataset.p==='logs')loadLog();if(b.dataset.p==='calendar')openCalendar();if(b.dataset.p==='viewer')loadViewerJobs()});
 const paths={navigator_api_dll:['Navigator API DLL','file',[['DLLファイル','*.dll'],['すべて','*.*']]],symnavi_exe:['SymNavi.exe','file',[['実行ファイル','*.exe'],['すべて','*.*']]],symnavim_conf:['symnavim.conf','file',[['CONFファイル','*.conf'],['すべて','*.*']]],symnavim_def:['symnavim.def','file',[['DEFファイル','*.def'],['すべて','*.*']]],accdb_template:['ACCDB空テンプレート','file',[['Access Database','*.accdb'],['すべて','*.*']]],rne_folder:['RNE基本フォルダー','folder'],default_output_folder:['既定の出力先','folder'],backup_folder:['バックアップ先','folder']};
 let waitingTimer=null,waitingStarted=0;function currentEngine(){return $('#extract-engine')?.value||cfg?.settings?.extract_engine||'api'}function waitingEngineLabel(context='common'){if(context==='api'||(context==='engine'&&currentEngine()==='api'))return 'NAVIGATOR API';if(context==='dde'||(context==='engine'&&currentEngine()==='dde'))return 'DDE COMPATIBILITY';return 'COMMON OPERATION'}function showWaiting(title='確認中',detail='処理を続行しています...',context='common'){let d=$('#waiting-dialog');$('#waiting-engine').textContent=waitingEngineLabel(context);$('#waiting-title').textContent=title;$('#waiting-detail').textContent=detail;waitingStarted=Date.now();clearInterval(waitingTimer);let tick=()=>{let sec=Math.floor((Date.now()-waitingStarted)/1000);$('#waiting-elapsed').textContent=`経過 ${String(Math.floor(sec/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`};tick();waitingTimer=setInterval(tick,1000);if(!d.open)d.showModal()}function updateWaiting(title,detail,context){if(title)$('#waiting-title').textContent=title;if(detail)$('#waiting-detail').textContent=detail;if(context)$('#waiting-engine').textContent=waitingEngineLabel(context)}function hideWaiting(){clearInterval(waitingTimer);waitingTimer=null;let d=$('#waiting-dialog');if(d?.open)d.close()}async function convertPath(input,mode){showWaiting('パス変換中',mode==='relative'?'アプリフォルダー基準へ変換しています...':'実際の絶対パスを解決しています...');try{let r=await fetch('/api/path-convert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({value:input.value,mode})}),d=await r.json();if(!r.ok)return toast(d.error);input.value=d.value;updatePathBadge(input);dirty()}finally{hideWaiting()}}function updatePathBadge(input){let badge=input.closest('label')?.querySelector('.path-badge');if(!badge)return;let relative=input.value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(input.value);badge.textContent=relative?'相対パス / 基準: アプリフォルダー':'絶対パス';badge.className='path-badge '+(relative?'path-kind-relative':'path-kind-absolute')}function isRelativePath(value){return !!value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(value)}function enhancePathInput(input,kind='folder'){if(!input||input.dataset.pathEnhanced)return;input.dataset.pathEnhanced='1';let tools=document.createElement('div');tools.className='path-tools compact-path-tools';tools.innerHTML='<button type="button" class="pathmode path-toggle" title="絶対パスと相対パスを切り替えます"></button><small class="path-badge"></small>';input.closest('label')?.appendChild(tools);let toggle=tools.querySelector('.path-toggle');function refresh(){let relative=isRelativePath(input.value);toggle.textContent=relative?'相対 → 絶対':'絶対 → 相対';toggle.dataset.mode=relative?'absolute':'relative';updatePathBadge(input)}toggle.onclick=async()=>{await convertPath(input,toggle.dataset.mode);refresh()};input.addEventListener('input',refresh);input._refreshPathControl=refresh;refresh()}async function browse(kind,initial,types){showWaiting('参照画面を準備中','設定中のパスを解決して、その場所から開きます...');try{let url=kind==='folder'?'/api/pick-folder':'/api/pick-file',r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({initial,types})}),d=await r.json();if(!r.ok)toast(d.error);return d.path||''}finally{hideWaiting()}}
@@ -655,14 +655,17 @@ function renderRuntimeSplit(rs){
  let lines=[];
  if(rs.active){
   box.className='split-run-state is-on';
-  lines.push(`<b>次に実行すると ${rs.parts}分割で取得します。</b>`);
+  lines.push(rs.mode==='race'
+   ?`<b>次に実行すると、分割なし1本と${rs.parts}分割を同時に走らせ、先に終わった方を採用します。</b>`
+   :`<b>次に実行すると ${rs.parts}分割で取得します。</b>`);
+  if(rs.mode==='race')lines.push(`同時プロセスは ${rs.parts+1} 本になります。負けた方は中断して捨てます。`);
   if(rs.observed_speedup)lines.push(`裏付け: 影実行で ${rs.observed_speedup.toFixed(2)}倍（${E(rs.proven_at||'')}）`);
  }else{
   box.className='split-run-state is-off';
   lines.push(`<b>次に実行すると分割せず1本で取得します。</b>`);
   if(rs.reason)lines.push(E(rs.reason));
  }
- lines.push(`動作の設定: ${({auto:'自動',force:'常に分割',off:'使わない'})[rs.mode]||rs.mode} ／ この対象を単独で実行したときに使えるライン: ${rs.budget}本`);
+ lines.push(`動作の設定: ${({auto:'自動',race:'競争させる',force:'常に分割',off:'使わない'})[rs.mode]||rs.mode} ／ この対象を単独で実行したときに使えるライン: ${rs.budget}本`);
  if(saved.length)lines.push('保存済みの割り当て: '+saved.map(p=>`${p.parts}分割（${p.speedup?p.speedup.toFixed(2)+'倍':'—'} / ${p.columns}列）`).join('、'));
  else lines.push(`保存済みの割り当てはありません。影実行で結果が一致し、かつ ${rs.min_speedup}倍以上速かったときに保存されます。`);
  box.innerHTML=lines.map(x=>`<p>${x}</p>`).join('');
@@ -710,6 +713,12 @@ function splitTrialRender(d){
  if(r.results?.length)body+=`<details class="ri-list"><summary>パートごとの内訳（${r.results.length}件）</summary><div class="ri-chips">`
   +r.results.map(x=>`<span class="ri-chip">${E(x.part)}<em>${x.cols}列 / ${x.elapsed}s / ${(x.size/1024/1024).toFixed(2)}MB</em></span>`).join('')+`</div></details>`;
  if(r.trials?.length)body+=`<p class="ri-note">これまでの実測: `+r.trials.map(t=>`${t.parts}分割 ${t.observed_speedup.toFixed(2)}倍（${t.samples}回）`).join(' / ')+`</p>`;
+ if(r.race){
+  let win=r.race_winner==='split'?`${r.parts}分割`:'分割なし';
+  body+=`<p class="ri-note"><b>競争の結果: ${win}の勝ち</b>（分割なし ${r.normal_elapsed}s 対 ${r.parts}分割 ${r.split_elapsed}s）</p>`;
+  if(r.race_order?.length)body+=`<div class="ri-chips">`+r.race_order.map((x,i)=>`<span class="ri-chip">${i+1}着 ${E(x.part)}<em>${x.at}s</em></span>`).join('')+`</div>`;
+  body+=`<p class="ri-note">この値は同じ回線を奪い合った結果です。運ぶ量が多い分割なしの側がより強く痛むため、速度比は分割に有利へ振れます（実測相当の値で 1.11倍 対 1.29倍、伸びしろは 1.44倍 対 2.56倍）。単独で測った値と混ぜると分割しすぎる方向へ狂うので、回線の見積もりと速度比の平均からは除いています。</p>`;
+ }
  if(r.plan_saved)body+=`<p class="ri-ok">この ${r.parts}分割の割り当てを保存しました。`
   +(r.split_mode==='off'?'この対象は「使わない」設定のため、本番では分割しません。設定を「自動」にすると使われます。'
    :`次の本番実行から、この割り当てで ${r.parts}分割で取得します（実行時に測り直しはしません）。`)+`</p>`;
@@ -727,10 +736,11 @@ if($('#m-split-trial'))$('#m-split-trial').onclick=async()=>{
  let rb=$('#m-split-trial-result');
  if(!editing?.id||!cfg.jobs.some(j=>j.id===editing.id)){if(rb){rb.hidden=false;rb.innerHTML=`<p class="ri-ng">先に「設定を反映」で対象を保存してください。</p>`}return}
  let parts=Number($('#m-split-parts')?.value||0);
+ let race=!!$('#m-split-race')?.checked;
  try{
-  let r=await fetch('/api/column-split-trial',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_id:editing.id,parts})}),d=await r.json();
+  let r=await fetch('/api/column-split-trial',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_id:editing.id,parts,race})}),d=await r.json();
   if(!d.ok){if(rb){rb.hidden=false;rb.innerHTML=`<p class="ri-ng">開始できませんでした。</p><p class="ri-note">${E(d.error||'')}</p>`}return}
-  toast('影実行を開始しました。実行中も他の機能を使えます');
+  toast(race?'競争させる影実行を開始しました。実行中も他の機能を使えます':'影実行を開始しました。実行中も他の機能を使えます');
   splitTrialRender({running:true,job:d.job,stage:'準備中',elapsed:0});
   if(splitTrialTimer)clearInterval(splitTrialTimer);
   splitTrialTimer=setInterval(splitTrialPoll,2000);splitTrialPoll();
