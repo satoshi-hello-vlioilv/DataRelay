@@ -25,10 +25,16 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.27.0'; APP_VERSION_TITLE='分割の損益分岐を実測から算出'; APP_RELEASED_AT='2026-08-07'
-BUILD_VERSION=f'{APP_VERSION}-breakeven'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.27.1'; APP_VERSION_TITLE='RNE差し替え時の列ずれを修正し、分割数にデータ量の軸を追加'; APP_RELEASED_AT='2026-08-07'
+BUILD_VERSION=f'{APP_VERSION}-volume'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
+{'version':'1.27.1','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'RNEを差し替えた直後に「結合後の列数が違います（178 != 177）」となる不具合を修正しました。列の並び順を直近の出力ファイルから取っていたため、まだ1回も実行していない新しいRNEでは古い列構成を使っていました。影実行は「分割なし」を必ず先に実行するので、その見出し行を正とするようにしました。',
+'結合の突き合わせに使う列を、全パートに共通して現れる列から求めるようにしました。位置や事前の想定に頼らないため、列が増減しても成立します。',
+'分割数の判断にデータ量の軸を加えました。パートを増やすたびに接続・カタログ読込・プロセス起動の固定費がかかるため、小さいデータを細かく割ると損になります。1パートあたり最低2MB（設定キー split_min_part_mb）を目安に上限を決めます。',
+'実時間での得が小さい場合は分割しません（既定5秒未満 / 設定キー split_min_gain_seconds）。転送が短い対象は、割合が良くても対象外です。',
+]},
 {'version':'1.27.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
 '影実行のたびに、並列時の転送スループットを記録するようにしました。並列にすると1本あたりの速度は落ちますが合計は増えます。その伸び方（傾き k）を実測から学びます。',
 '「固定列の割合が何%未満なら分割が得か」（損益分岐）を算出して表示します。1パートが運ぶ割合は f+(1-f)/n、所要はこれに n/σ(n) を掛けたものに比例するため、得になる条件は f < k に整理できます。分割数によらず同じ値です。',
@@ -1061,13 +1067,32 @@ def split_gain_reason(columns,removable,parts,timing=None,weights=None):
          'total':round(base,1),'execute_share':round(ex/base,3) if base else 0,
          'floor':round((ex+other+sv*pf['fixed_share'])/base,3) if base else 1.0,'payload':pf}
 
-def recommend_split_parts(columns,removable,max_parts=4,trials=None,timing=None,weights=None):
+def split_volume_cap(weights=None,timing=None,min_part_mb=2.0,min_gain_seconds=5.0):
+ """データ量から見た、分割数の上限。
+
+ パートを1本増やすたびに、セッション接続・カタログ読込・プロセス起動の固定費がかかる。
+ 小さなデータを細かく割ると、その固定費が得を食い潰す。運ぶ量が少ないほど上限を低くする。
+ """
+ total=(weights or {}).get('total_bytes') or 0
+ if not total:return None,'データ量が不明'
+ mb=total/1024/1024
+ cap=max(1,int(mb//max(0.1,float(min_part_mb))))
+ note=f'総データ量 {mb:.1f}MB / 1パートあたり最低 {min_part_mb}MB とすると上限 {cap}分割'
+ if timing and (timing.get('save') or 0)>0:
+  # 転送が短いと、何割縮めても実時間の得が小さい。得が閾値未満なら分割しない。
+  if float(timing['save'])<float(min_gain_seconds)*2:
+   return 1,note+f' / 転送が {float(timing["save"]):.0f}秒しかなく、分割しても実時間の得が小さい'
+ return cap,note
+
+def recommend_split_parts(columns,removable,max_parts=4,trials=None,timing=None,weights=None,settings=None):
  """効果が最大になるパート数を選ぶ。得にならなければ1（分割しない）を返す。
 
- 見込みの式はサーバ側の負荷を織り込めない（パートを増やすほど同じ問い合わせを何度も走らせる）。
- そのため、実測がないパート数へいきなり進まず、測れている数の1つ先までしか勧めない。
- 遅かったと分かったパート数と、それ以上は候補から外す。実測が貯まるほど上限が伸びる。
+ 判断の軸は3つ。
+   ① データ量の内訳  … 固定列の割合が大きいほど分割は効かない
+   ② 実測の裏付け    … 測れていない分割数へは進まない。遅かった数以上は選ばない
+   ③ データ量の規模  … 小さいデータを細かく割ると、パートごとの固定費で損をする
  """
+ st=settings or {}
  rem=len([c for c in columns if c in set(removable)])
  trials=trials or []
  measured={int(t['parts']):float(t['observed_speedup']) for t in trials if t.get('observed_speedup')}
@@ -1075,51 +1100,68 @@ def recommend_split_parts(columns,removable,max_parts=4,trials=None,timing=None,
  slow=[n for n,sp in measured.items() if sp<=1.0]
  ceiling=min(int(max_parts),max(2,(max(proven) if proven else 1)+1))
  if slow:ceiling=min(ceiling,min(slow)-1)
+ vcap,vnote=split_volume_cap(weights,timing,float(st.get('split_min_part_mb',2.0) or 2.0),
+                             float(st.get('split_min_gain_seconds',5.0) or 5.0))
+ if vcap:ceiling=min(ceiling,max(1,vcap))
  best,best_gain=1,1.0;details=[]
  for n in range(1,max(1,int(max_parts))+1):
   if n>1 and rem<n*2:break                      # 1パートあたり2列未満になる分割はしない
   g=predict_split_gain(columns,removable,n,trials,timing,weights)
   details.append({'parts':n,'predicted':round(g,3),'transfer_ratio':round(split_transfer_ratio(columns,removable,n,weights),3),
                   'measured':round(measured[n],2) if n in measured else None,'allowed':n<=ceiling})
-  # わずかな差では分割しない。転送だけが縮む以上、1割未満の見込みで並列問い合わせを増やす価値はない。
-  if n<=ceiling and g<best_gain-0.10:best,best_gain=n,g
+  # わずかな差では分割しない。実時間での得が小さいときも同じ。
+  gain_seconds=(1-g)*float((timing or {}).get('total') or 0)
+  worth=g<best_gain-0.10 and (not timing or gain_seconds>=float(st.get('split_min_gain_seconds',5.0) or 5.0))
+  if n<=ceiling and worth:best,best_gain=n,g
  return best,round(best_gain,3),details
 
-def merge_column_parts(part_files,dest,key_columns,column_order,encoding='cp932'):
- """列分割の結果を横に結合する。キー列で突き合わせるので、行順が違っても正しく合う。
+def merge_column_parts(part_files,dest,key_columns=None,column_order=None,encoding='cp932'):
+ """列分割の結果を横に結合する。
 
- 食い違いは必ず例外にする。黙って埋めると、欠けた列が空値として出てしまう。
+ 突き合わせに使う列は、全パートに共通して現れる列（＝削除できなかった固定列と錨）を
+ パート自身の見出しから求める。位置や事前の想定に頼らないので、RNEを差し替えて列が
+ 増えていても成立する。食い違いは必ず例外にする。黙って埋めると欠けた列が空値で出てしまう。
  """
- kn=len(key_columns);order=None;base=None;header=None
- for i,pf in enumerate(part_files):
+ parts=[]
+ for pf in part_files:
   with Path(pf).open('r',encoding=encoding,newline='') as f:rows=list(csv.reader(f))
   if not rows:raise ValueError(f'分割結果が空です: {pf}')
-  hdr,body=rows[0],rows[1:]
-  if hdr[:kn]!=list(key_columns):raise ValueError(f'キー列が一致しません: {pf} -> {hdr[:kn]}')
-  m={tuple(r[:kn]):r[kn:] for r in body}
-  if len(m)!=len(body):raise ValueError(f'キーが一意ではありません: {pf}')
-  if i==0:
-   order=[tuple(r[:kn]) for r in body];base={k:list(v) for k,v in m.items()};header=list(hdr)
+  parts.append((Path(pf).name,rows[0],rows[1:]))
+ common=set(parts[0][1])
+ for _n,hdr,_b in parts[1:]:common&=set(hdr)
+ keys=[c for c in parts[0][1] if c in common]
+ if not keys:raise ValueError('全パートに共通する列がないため、突き合わせられません')
+ if key_columns and not set(key_columns)<=common:
+  missing=[c for c in key_columns if c not in common]
+  log.info('SPLIT_MERGE_KEYS 想定していた固定列のうち %s 件が全パートには無いため、共通列 %s 件で突き合わせます（不足例: %s）',
+           len(missing),len(keys),missing[:5])
+ order=None;base=None;header=None
+ for name,hdr,body in parts:
+  ki=[hdr.index(c) for c in keys]
+  rest=[i for i in range(len(hdr)) if i not in set(ki)]
+  m={tuple(r[i] for i in ki):[r[i] for i in rest] for r in body}
+  if len(m)!=len(body):raise ValueError(f'キーが一意ではありません: {name}')
+  if base is None:
+   order=[tuple(r[i] for i in ki) for r in body];base={k:list(v) for k,v in m.items()}
+   header=list(keys)+[hdr[i] for i in rest]
   else:
-   dup=[k for k,name in enumerate(hdr[kn:]) if name in set(header)]
-   if dup:
-    keep_idx=[k for k in range(len(hdr)-kn) if k not in set(dup)]
-    hdr=hdr[:kn]+[hdr[kn+k] for k in keep_idx]
-    m={key:[v[k] for k in keep_idx] for key,v in m.items()}
    if set(m)!=set(base):
-    # 行数まで添える。列を外したことで返る行そのものが変わった場合、ここで大きく食い違う。
-    raise SplitRowsetMismatch(f'分割間で行集合が一致しません（1つ目 {len(base)}行 / {Path(pf).name} {len(m)}行）。'
+    raise SplitRowsetMismatch(f'分割間で行集合が一致しません（1つ目 {len(base)}行 / {name} {len(m)}行）。'
                               'データ項目を外すと返ってくる行が変わる問い合わせのため、列分割は使えません。',
-                              first_rows=len(base),other_rows=len(m),part=Path(pf).name)
-   header+=hdr[kn:]
-   for k in order:base[k]+=m[k]
+                              first_rows=len(base),other_rows=len(m),part=name)
+   # 既に取り込んだ列は足さない（錨の列は全パートに現れるため）
+   keep=[j for j,i in enumerate(rest) if hdr[i] not in set(header)]
+   header+=[hdr[rest[j]] for j in keep]
+   for k in order:base[k]+=[m[k][j] for j in keep]
  merged=[list(k)+base[k] for k in order]
  # 元の列順へ戻す。並びが違うだけで内容が同じでも、比較で不一致になるため必ず復元する。
  if column_order:
   pos={name:i for i,name in enumerate(header)}
   missing=[c for c in column_order if c not in pos]
   if missing:raise ValueError(f'結合後に足りない列があります: {missing[:5]}')
-  if len(header)!=len(column_order):raise ValueError(f'結合後の列数が違います: {len(header)} != {len(column_order)}')
+  if len(header)!=len(column_order):
+   extra=[c for c in header if c not in set(column_order)]
+   raise ValueError(f'結合後の列数が違います: {len(header)} != {len(column_order)}'+(f'（余分: {extra[:5]}）' if extra else ''))
   idx=[pos[c] for c in column_order];header=list(column_order)
   merged=[[r[i] for i in idx] for r in merged]
  with Path(dest).open('w',encoding=encoding,newline='') as f:
@@ -1143,30 +1185,33 @@ def compare_csv_content(a_path,b_path,key_columns,encoding='cp932',samples=5):
   out['header_diff']=[{'index':i,'a':ha[i],'b':hb[i]} for i in diff[:samples]]
   out['identical']=False;out['reason']='列の並びまたは名前が違います';return out
  kn=len(key_columns)
- if ha[:kn]!=list(key_columns):
-  out['identical']=False;out['reason']='キー列が想定と違います';return out
+ keys=[c for c in key_columns if c in ha]
+ if len(keys)!=kn:
+  # 想定した固定列が出力に無い場合は、先頭の列で突き合わせる（並び順の判定にのみ使う）
+  keys=ha[:1];kn=1
+ ki=[ha.index(c) for c in keys]
  out['byte_identical']=Path(a_path).read_bytes()==Path(b_path).read_bytes()
- out['order_match']=[r[:kn] for r in ra]==[r[:kn] for r in rb]
- ma={tuple(r[:kn]):r for r in ra};mb={tuple(r[:kn]):r for r in rb}
+ out['order_match']=[[r[i] for i in ki] for r in ra]==[[r[i] for i in ki] for r in rb]
+ ma={tuple(r[i] for i in ki):r for r in ra};mb={tuple(r[i] for i in ki):r for r in rb}
  only_a=set(ma)-set(mb);only_b=set(mb)-set(ma)
  out['only_in_a']=len(only_a);out['only_in_b']=len(only_b)
- diff_rows=[];diff_cells=0
+ diff_rows=[];diff_cells=0;changed=0
  for k in ma:
   if k in only_a:continue
   x,y=ma[k],mb[k]
   if x==y:continue
+  changed+=1
   cols=[i for i in range(min(len(x),len(y))) if x[i]!=y[i]]
   diff_cells+=len(cols)
   if len(diff_rows)<samples:
    diff_rows.append({'key':list(k),'columns':[{'name':ha[i],'a':x[i],'b':y[i]} for i in cols[:samples]]})
- out['diff_rows']=len(ma)-len(only_a)-sum(1 for k in ma if k not in only_a and ma[k]==mb.get(k))
- out['diff_cells']=diff_cells;out['samples']=diff_rows
+ out['diff_rows']=changed;out['diff_cells']=diff_cells;out['samples']=diff_rows
  same=not only_a and not only_b and diff_cells==0
  out['content_identical']=same
  out['identical']=bool(out.get('byte_identical'))
  out['reason']=('完全に一致' if out['identical'] else
                 ('行の並び順だけが違います（内容は一致）' if same else
-                 f'{out["diff_rows"]}行の中身が違います（{diff_cells}セル）' if diff_cells else
+                 f'{changed}行の中身が違います（{diff_cells}セル）' if diff_cells else
                  f'行の過不足があります（分割なしのみ {len(only_a)}行 / 結合のみ {len(only_b)}行）'))
  return out
 
@@ -1292,7 +1337,7 @@ def load():
   _prev_profile=cfg['settings'].get('stability_profile')
   if _prev_profile in (None,'stable_api_serial'):
    cfg['settings']['api_parallel_lines']=6; cfg['settings']['stability_profile']='balanced_api_parallel'
-  cfg['settings'].setdefault('api_parallel_lines',6); cfg['settings'].setdefault('stability_profile','balanced_api_parallel'); cfg['settings'].setdefault('backup_enabled',True); _backup_mode_missing='backup_mode' not in cfg['settings']; cfg['settings'].setdefault('backup_mode','generations'); cfg['settings'].setdefault('backup_retention_days',30); cfg['settings'].setdefault('backup_generation_limit_enabled',True); cfg['settings'].setdefault('backup_generations',3); cfg['settings'].setdefault('schedule_catchup_minutes',30); cfg['settings'].setdefault('api_worker_stagger_ms',700); cfg['settings'].setdefault('split_trial_timeout_seconds',1800); cfg['settings'].setdefault('split_anchor_limit',3)
+  cfg['settings'].setdefault('api_parallel_lines',6); cfg['settings'].setdefault('stability_profile','balanced_api_parallel'); cfg['settings'].setdefault('backup_enabled',True); _backup_mode_missing='backup_mode' not in cfg['settings']; cfg['settings'].setdefault('backup_mode','generations'); cfg['settings'].setdefault('backup_retention_days',30); cfg['settings'].setdefault('backup_generation_limit_enabled',True); cfg['settings'].setdefault('backup_generations',3); cfg['settings'].setdefault('schedule_catchup_minutes',30); cfg['settings'].setdefault('api_worker_stagger_ms',700); cfg['settings'].setdefault('split_trial_timeout_seconds',1800); cfg['settings'].setdefault('split_anchor_limit',3); cfg['settings'].setdefault('split_min_part_mb',2.0); cfg['settings'].setdefault('split_min_gain_seconds',5.0)
   if _backup_mode_missing:cfg['settings']['backup_generations']=3
   if int(cfg['settings'].get('api_parallel_lines',6) or 6)==2:cfg['settings']['api_parallel_lines']=6
   cfg.setdefault('navigator_api_dll',r'.\Config\NAVIAP\debugdllVC14x64\SymNaviA.dll'); cfg.setdefault('accdb_template','.\\assets\\empty.accdb');
@@ -3191,7 +3236,7 @@ def column_plan():
  except Exception as pe:
   log.warning('COLUMN_PLAN_WEIGHTS_FAILED rne=%s error=%s',rp,pe)
  payload=split_payload_profile(columns,removable,pw)
- best,best_gain,detail_rows=recommend_split_parts(columns,removable,int(c['settings'].get('api_parallel_max_lines',4) or 4),trials,timing,pw)
+ best,best_gain,detail_rows=recommend_split_parts(columns,removable,int(c['settings'].get('api_parallel_max_lines',4) or 4),trials,timing,pw,c['settings'])
  reason=split_gain_reason(columns,removable,max(2,best),timing,pw)
  tp=split_throughput_profile(rp) if trials else split_throughput_profile()
  breakeven=split_breakeven_share(tp.get('slope'))
@@ -3258,10 +3303,7 @@ def _split_trial_run(data,c,job):
   return dict(ok=False,error='分割して取得できる列がありません')
  columns=cached['columns'];trials=load_split_trials(rp)
  parts=int(data.get('parts') or 0)
- if parts<2:
-  parts,_g,_d=recommend_split_parts(columns,removable,int(c['settings'].get('api_parallel_max_lines',4) or 4),trials,load_rne_timing(rp))
-  if parts<2:parts=2                              # 明示的な試行なので、推奨が1でも2で測る
- # 直近の出力から列ごとのデータ量と埋まり具合を測り、量が揃うように分ける。
+ # 直近の出力から列ごとのデータ量と埋まり具合を測る。分割数の判断にも使うので先に済ませる。
  weights=None;anchors=[];coverage=0.0
  try:
   op=_viewer_output_path(job,c)
@@ -3283,6 +3325,10 @@ def _split_trial_run(data,c,job):
                  f'最も埋まっている列でも全行の{coverage*100:.1f}%%しか覆えず、残りの行は担当列がすべて空になるため落ちます。'
                  '錨を増やしても覆えないため、このRNEの現在の列構成では分割できません。',
                  rowset_mismatch=True,anchor_coverage=coverage,no_anchor=True)
+ if parts<2:
+  parts,_g,_d=recommend_split_parts(columns,removable,int(c['settings'].get('api_parallel_max_lines',4) or 4),
+                                    trials,load_rne_timing(rp),weights,c['settings'])
+  if parts<2:parts=2                              # 明示的な試行なので、推奨が1でも2で測る
  plan,keys=plan_column_split(columns,removable,parts,weights,anchors)
  if len(plan)<2:return dict(ok=False,error='この列構成では分割できません')
  if split_incompatible(rp) and not anchors and not data.get('force'):
@@ -3303,6 +3349,20 @@ def _split_trial_run(data,c,job):
   base=_spawn_split_parts(job,c,user,pw,server,work,[{'index':0,'label':'分割なし','drop':[],'out_csv':base_csv}],trial_timeout)[0]
   normal_elapsed=time.perf_counter()-t
   if not base.get('ok'):return dict(ok=False,error=f'分割なしの実行に失敗しました: {base.get("error")}')
+  # 列の並び順は、たった今実行した「分割なし」の見出し行を正とする。
+  # 直近の出力ファイルはRNEを差し替えた直後だと古く、列数が食い違う（178対177）。
+  try:
+   actual=read_header_names(base_csv,{'output_format':'csv'})
+  except Exception as he:
+   actual=[];log.warning('SPLIT_TRIAL_HEADER_FAILED rne=%s error=%s',rp,he)
+  if actual and actual!=columns:
+   log.info('SPLIT_TRIAL_COLUMNS_REFRESH rne=%s cached=%s actual=%s 分割なしの見出しを正として採用',rp,len(columns),len(actual))
+   added=[x for x in actual if x not in set(columns)]
+   if added:log.info('SPLIT_TRIAL_COLUMNS_ADDED %s',' | '.join(added[:20]))
+   columns=actual
+   save_column_cache(rp,columns,rows=base.get('rows'),source='trial',job=job)
+   # 追加された列は分類が無いので固定列として扱う（全パートに残る＝結合に影響しない）。
+   keys=[c for c in columns if c not in set(removable)]
   # 2) 分割あり。パートは同時に走らせる。
   specs=[{'index':p['index'],'label':f'パート{p["index"]}/{len(plan)}','drop':p['drop'],'out_csv':work/f'part{p["index"]}.csv'} for p in plan]
   log.info('SPLIT_PLAN rne=%s parts=%s anchors=%s keep=%s bytes=%s',rp,len(plan),anchors or '(なし)',
