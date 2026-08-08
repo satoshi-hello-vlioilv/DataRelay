@@ -25,10 +25,17 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.24.1'; APP_VERSION_TITLE='影実行に時間制限を追加'; APP_RELEASED_AT='2026-08-07'
-BUILD_VERSION=f'{APP_VERSION}-trial-timeout'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.25.0'; APP_VERSION_TITLE='データ量で分割し、行落ちを防ぐ錨の列を追加'; APP_RELEASED_AT='2026-08-07'
+BUILD_VERSION=f'{APP_VERSION}-weighted-split'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
+{'version':'1.25.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'列の分け方を「列数で均等」から「データ量で均等」に変えました。実測では、列数で34/34に分けてもデータ量は89%対11%に偏っており、分割の意味がほとんどありませんでした。効き目を決めるのは列数ではなくデータ量です。',
+'直近の出力ファイルを1回走査して、列ごとのデータ量と「値が入っている割合」を数えます。SymfoNaviへの接続は不要です。',
+'各パートに「常に値が入る列」を1本ずつ持たせるようにしました（錨の列）。担当列がすべて空の行は問い合わせ結果から落ちるため、これが行集合の食い違いの原因でした。錨は全パートに現れますが、結合時に重複を取り除きます。',
+'常に値が入る列が1本も無い場合は、錨を立てずにその旨を記録します。誤って行を落とさないためです。',
+'行集合が食い違った記録のあるRNEでも、錨を立てられる場合は再挑戦できるようにしました。',
+]},
 {'version':'1.24.1','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
 '影実行に時間制限を追加しました（既定30分）。応答が返らないパートがあると、これまでは影実行そのものが返らず、画面が待ち続けていました。',
 '制限を超えたパートは終了させ、失敗として扱います。他のパートの結果は保持し、何が起きたかを表示します。出力ファイルは更新しないため、影響は試行の中だけです。',
@@ -843,23 +850,91 @@ class SplitRowsetMismatch(ValueError):
  def __init__(self,message,first_rows=0,other_rows=0,part=''):
   super().__init__(message);self.first_rows=first_rows;self.other_rows=other_rows;self.part=part
 
-def plan_column_split(columns,removable,parts):
+def column_weights(path,job,columns):
+ """直近の出力ファイルから、列ごとの「データ量」と「値の入っている割合」を1回の走査で数える。
+
+ 分割の効き目を決めるのは列数ではなくデータ量。また、担当列が全部空の行は問い合わせ結果から
+ 落ちるため、どの列が常に埋まっているかも同時に調べる（各パートへ1本入れる錨にする）。
+ """
+ path=Path(path);fmt=normalize_output_format(job.get('output_format'),path.name)
+ names=list(columns);n=len(names)
+ size=[0]*n;filled=[0]*n;rows=0
+ if fmt=='sqlite3':
+  with sqlite3.connect(path) as conn:
+   table=str(job.get('table') or '')
+   tables=[r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE '_更新情報' ORDER BY name")]
+   if table not in tables:table=tables[0] if tables else ''
+   if not table:return None
+   cols=[x[1] for x in conn.execute(f'PRAGMA table_info({qi(table)})')]
+   idx=[cols.index(c) for c in names if c in cols]
+   if len(idx)!=n:return None
+   for r in conn.execute(f'SELECT * FROM {qi(table)}'):
+    rows+=1
+    for k,i in enumerate(idx):
+     v=r[i]
+     if v is None or v=='':continue
+     filled[k]+=1;size[k]+=len(str(v))
+ elif fmt in ('csv','txt'):
+  delimiter=',' if fmt=='csv' else '\t'
+  data=None
+  for enc in ('utf-8-sig','cp932','utf-8'):
+   try:
+    with path.open('r',encoding=enc,newline='') as h:data=csv.reader(h,delimiter=delimiter);hdr=next(data,[]);break
+   except UnicodeDecodeError:continue
+  if data is None:return None
+  with path.open('r',encoding=enc,newline='') as h:
+   rd=csv.reader(h,delimiter=delimiter);hdr=next(rd,[])
+   try:idx=[hdr.index(c) for c in names]
+   except ValueError:return None
+   for r in rd:
+    rows+=1
+    for k,i in enumerate(idx):
+     v=r[i] if i<len(r) else ''
+     if not v:continue
+     filled[k]+=1;size[k]+=len(v)
+ else:
+  return None
+ if not rows:return None
+ total=sum(size) or 1
+ return {'rows':rows,'total_bytes':total,
+         'columns':{names[k]:{'bytes':size[k],'share':size[k]/total,'filled':filled[k],'fill_ratio':filled[k]/rows} for k in range(n)}}
+
+def pick_anchor_column(removable,weights):
+ """全パートに入れる錨の列。常に値が入っている列ほど良い（行落ちを防ぐため）。"""
+ if not weights:return ''
+ cw=weights.get('columns') or {}
+ cand=[(cw.get(c,{}).get('fill_ratio',0),-cw.get(c,{}).get('bytes',0),c) for c in removable if c in cw]
+ if not cand:return ''
+ best=max(cand)
+ return best[2] if best[0]>=0.999 else ''      # 1行でも空があるなら錨にしない
+
+def plan_column_split(columns,removable,parts,weights=None,anchor=''):
  """出力列を parts 個の担当に分ける。列の並び順は元のまま保つ。
 
- 戻り値の keep/drop は「データ項目のうち何を残し、何を外すか」。管理ポイント由来の列は
- そもそも外せないため drop には現れず、全パートに現れる（＝結合キー）。
+ 分けるのは列数ではなくデータ量。列数で均等に割ると、スカスカな列ばかりのパートができて
+ 転送量が偏り、分割した意味がなくなる（実測: 34/34に割ってバイトは89%対11%）。
+ anchor は全パートに残す列。担当列が全部空の行は結果から落ちるため、
+ 常に値の入る列を1本ずつ持たせて行集合を揃える。
  """
  parts=max(1,int(parts))
- rem=[c for c in columns if c in set(removable)]          # 元の並び順で拾う
+ rem=[c for c in columns if c in set(removable)]
  keys=[c for c in columns if c not in set(removable)]
+ if anchor and anchor in rem:rem=[c for c in rem if c!=anchor]
  if parts<2 or len(rem)<parts:
-  return [{'index':1,'keep':list(rem),'drop':[]}],keys
- size=len(rem)/parts;groups=[]
- for i in range(parts):
-  a,b=round(i*size),round((i+1)*size)
-  groups.append(rem[a:b])
- groups=[g for g in groups if g]
- return [{'index':i+1,'keep':list(g),'drop':[c for c in rem if c not in set(g)]} for i,g in enumerate(groups)],keys
+  return [{'index':1,'keep':list(rem),'drop':[],'anchor':anchor}],keys
+ cw=(weights or {}).get('columns') or {}
+ def w(c):return max(1,int(cw.get(c,{}).get('bytes',0))) if cw else 1
+ # 重い列から順に、いちばん軽いパートへ入れる。データ量が揃うように配る。
+ groups=[[] for _ in range(parts)];load=[0]*parts
+ for c in sorted(rem,key=w,reverse=True):
+  k=load.index(min(load));groups[k].append(c);load[k]+=w(c)
+ groups=[[c for c in columns if c in set(g)] for g in groups if g]   # 元の並び順へ戻す
+ out=[]
+ for i,g in enumerate(groups):
+  own=set(g)
+  out.append({'index':i+1,'keep':list(g),'drop':[c for c in rem if c not in own],'anchor':anchor,
+              'bytes':sum(w(c) for c in g) if cw else None})
+ return out,keys
 
 def split_transfer_ratio(columns,removable,parts):
  """分割したときに増える転送量の比。1.0なら増えない。
@@ -950,6 +1025,11 @@ def merge_column_parts(part_files,dest,key_columns,column_order,encoding='cp932'
   if i==0:
    order=[tuple(r[:kn]) for r in body];base={k:list(v) for k,v in m.items()};header=list(hdr)
   else:
+   dup=[k for k,name in enumerate(hdr[kn:]) if name in set(header)]
+   if dup:
+    keep_idx=[k for k in range(len(hdr)-kn) if k not in set(dup)]
+    hdr=hdr[:kn]+[hdr[kn+k] for k in keep_idx]
+    m={key:[v[k] for k in keep_idx] for key,v in m.items()}
    if set(m)!=set(base):
     # 行数まで添える。列を外したことで返る行そのものが変わった場合、ここで大きく食い違う。
     raise SplitRowsetMismatch(f'分割間で行集合が一致しません（1つ目 {len(base)}行 / {Path(pf).name} {len(m)}行）。'
@@ -3009,14 +3089,28 @@ def column_split_trial():
   return jsonify(ok=False,error='分割して取得できる列がありません'),200
  columns=cached['columns'];trials=load_split_trials(rp)
  parts=int(data.get('parts') or 0)
- if split_incompatible(rp) and not data.get('force'):
+ # 錨の列を立てれば行落ちを防げる可能性があるため、錨が取れるなら再挑戦を許す。
+ if split_incompatible(rp) and not data.get('force') and not data.get('retry_with_anchor'):
   return jsonify(ok=False,error='このRNEは、列を外すと返ってくる行そのものが変わることが確認済みです。'
                  '列分割は使えません（以前の試行で行集合が食い違いました）。',rowset_mismatch=True,known=True),200
  if parts<2:
   parts,_g,_d=recommend_split_parts(columns,removable,int(c['settings'].get('api_parallel_max_lines',4) or 4),trials,load_rne_timing(rp))
   if parts<2:parts=2                              # 明示的な試行なので、推奨が1でも2で測る
- plan,keys=plan_column_split(columns,removable,parts)
+ # 直近の出力から列ごとのデータ量と埋まり具合を測り、量が揃うように分ける。
+ weights=None;anchor=''
+ try:
+  op=_viewer_output_path(job,c)
+  if op.is_file():
+   wt=time.perf_counter();weights=column_weights(op,job,columns)
+   if weights:
+    anchor=pick_anchor_column(removable,weights)
+    log.info('COLUMN_WEIGHTS rne=%s rows=%s total_bytes=%s anchor=%s elapsed=%.2fs',rp,weights['rows'],weights['total_bytes'],anchor or '(なし)',time.perf_counter()-wt)
+ except Exception as we:
+  log.warning('COLUMN_WEIGHTS_FAILED rne=%s error=%s',rp,we)
+ plan,keys=plan_column_split(columns,removable,parts,weights,anchor)
  if len(plan)<2:return jsonify(ok=False,error='この列構成では分割できません'),200
+ if weights and not anchor:
+  log.warning('SPLIT_NO_ANCHOR rne=%s 常に値の入る列が無いため、行が落ちる可能性があります',rp)
  if not keys:return jsonify(ok=False,error='全パートに残る列（結合キー）がないため、結合できません'),200
  work=LOCAL_RUNTIME/('split_trial_'+datetime.now().strftime('%Y%m%d_%H%M%S'));work.mkdir(parents=True,exist_ok=True)
  user,pw,server,_=creds(resolve_path(c['symnavim_conf']))
@@ -3031,6 +3125,8 @@ def column_split_trial():
   if not base.get('ok'):return jsonify(ok=False,error=f'分割なしの実行に失敗しました: {base.get("error")}'),200
   # 2) 分割あり。パートは同時に走らせる。
   specs=[{'index':p['index'],'label':f'パート{p["index"]}/{len(plan)}','drop':p['drop'],'out_csv':work/f'part{p["index"]}.csv'} for p in plan]
+  log.info('SPLIT_PLAN rne=%s parts=%s anchor=%s keep=%s bytes=%s',rp,len(plan),anchor or '(なし)',
+           [len(p['keep']) for p in plan],[p.get('bytes') for p in plan])
   t=time.perf_counter();results=_spawn_split_parts(job,c,user,pw,server,work,specs,trial_timeout);split_run=time.perf_counter()-t
   bad=[r for r in results if not r.get('ok')]
   if bad:
