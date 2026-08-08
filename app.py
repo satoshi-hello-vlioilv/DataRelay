@@ -25,10 +25,17 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.28.0'; APP_VERSION_TITLE='同名の列を検出して分割前に警告'; APP_RELEASED_AT='2026-08-07'
-BUILD_VERSION=f'{APP_VERSION}-dupcols'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.29.0'; APP_VERSION_TITLE='分割の可否を回線の空きから判断'; APP_RELEASED_AT='2026-08-07'
+BUILD_VERSION=f'{APP_VERSION}-link'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
+{'version':'1.29.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'分割が得になるかどうかの判断を、回線の空き具合から行うようにしました。1本で出せる速度が回線の上限に近いと、本数を増やしても合計は伸びません。実測でも、単一823KB/sのときは2分割で合計が1.18倍にしかならず、遅くなりました（0.91倍）。',
+'影実行のたびに「回線の上限」「直近の単一速度」「伸びしろ（上限÷単一）」を記録し、有効な分割数を求めます。同じRNEでも、回線が空いている時間帯かどうかで結果が変わります。',
+'「列の分割可否を調べる」に回線の状態を表示します。余地が無ければ、その旨をはっきり出します。',
+'「列の分割可否を調べる」が「調査中にエラーが発生しました」となる不具合を修正しました（内部エラー）。',
+'RNEを差し替えた直後、出力ファイルにまだ無い列があると、列の重みを一切測れず「錨の列も立てられない」と誤判定していました。測れる列だけで判断を進めるようにしました。',
+]},
 {'version':'1.28.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
 '同じ名前の列があるRNEを検出し、列分割を行わないようにしました。列分割は列名で担当を決め、結合でも列名を突き合わせるため、同名の列があると外す対象を取り違えたり、結合で片方が消えたりします。',
 '「RNEの中身を調べる」と「列の分割可否を調べる」で、重複している列名と回数を表示します。実行する前に分かります。通常の実行には影響しません。',
@@ -918,12 +925,16 @@ def column_weights(path,job,columns):
    if table not in tables:table=tables[0] if tables else ''
    if not table:return None
    cols=[x[1] for x in conn.execute(f'PRAGMA table_info({qi(table)})')]
-   idx=[cols.index(c) for c in names if c in cols]
-   if len(idx)!=n:return None
+   # RNEを差し替えた直後は、出力ファイルにまだ無い列がある。あるぶんだけ測って先へ進む。
+   pos={c:cols.index(c) for c in names if c in cols}
+   if not pos:return None
+   missing=[c for c in names if c not in pos]
+   if missing:log.info('COLUMN_WEIGHTS_PARTIAL 出力ファイルにまだ無い列 %s 件（例: %s）',len(missing),missing[:5])
+   idx=[pos.get(c) for c in names]
    for r in conn.execute(f'SELECT * FROM {qi(table)}'):
     rows+=1
     for k,i in enumerate(idx):
-     v=r[i]
+     v=None if i is None else r[i]
      if v is None or v=='':mask[k].append(0);continue
      mask[k].append(1);filled[k]+=1;size[k]+=len(str(v))
  elif fmt in ('csv','txt'):
@@ -936,12 +947,13 @@ def column_weights(path,job,columns):
   if data is None:return None
   with path.open('r',encoding=enc,newline='') as h:
    rd=csv.reader(h,delimiter=delimiter);hdr=next(rd,[])
-   try:idx=[hdr.index(c) for c in names]
-   except ValueError:return None
+   pos={c:hdr.index(c) for c in names if c in hdr}
+   if not pos:return None
+   idx=[pos.get(c) for c in names]
    for r in rd:
     rows+=1
     for k,i in enumerate(idx):
-     v=r[i] if i<len(r) else ''
+     v=(r[i] if i<len(r) else '') if i is not None else ''
      if not v:mask[k].append(0);continue
      mask[k].append(1);filled[k]+=1;size[k]+=len(v)
  else:
@@ -1045,16 +1057,15 @@ def split_transfer_ratio(columns,removable,parts,weights=None):
  if parts<2 or not pf['splittable']:return 1.0
  return (pf['fixed']+pf['splittable']/parts)/pf['total']
 
-def split_speedup_estimate(parts,trials=None):
+def split_speedup_estimate(parts,trials=None,link=None):
  """パート数に対する並列転送の効き目。実測があればそれを優先する。"""
  parts=max(1,int(parts))
  if parts==1:return 1.0
- for t in (trials or []):
-  if int(t.get('parts') or 0)==parts and t.get('observed_speedup'):
-   return float(t['observed_speedup'])
- return 1.0+1.5*(1.0-1.0/parts)      # 2本で1.75倍、4本で2.13倍、無限で2.5倍
+ h=(link or {}).get('headroom')
+ if h:return min(float(parts),float(h))     # 回線の空き以上には伸びない
+ return 1.0+1.5*(1.0-1.0/parts)             # 実測が無いときの控えめな見積もり
 
-def predict_split_gain(columns,removable,parts,trials=None,timing=None,weights=None):
+def predict_split_gain(columns,removable,parts,trials=None,timing=None,weights=None,link=None):
  """分割したときの所要時間の見込み（1.0=変わらない、0.6なら4割短縮）。
 
  肝心なのは、分割で縮むのは「結果の転送・保存」だけだということ。サーバ側の問い合わせ実行は
@@ -1068,9 +1079,12 @@ def predict_split_gain(columns,removable,parts,trials=None,timing=None,weights=N
   other=max(0.0,float(timing.get('total') or (ex+sv))-ex-sv)
   base=ex+sv+other
   if base<=0:return 1.0
-  # 各パート = サーバ実行(満額) + 転送(列の割合ぶん) + その他。並列なのでこれが全体の所要。
-  return round((ex+sv*ratio+other)/base,3)
- return ratio/split_speedup_estimate(parts,trials)
+  # 各パート = サーバ実行(満額) + 転送 + その他。並列なのでこれが全体の所要。
+  # 転送は「列の割合」だけでなく「回線がどれだけ伸びるか」でも決まる。
+  sp=split_speedup_estimate(parts,trials,link)
+  transfer=sv*ratio*parts/sp if sp else sv*ratio
+  return round((ex+transfer+other)/base,3)
+ return ratio/split_speedup_estimate(parts,trials,link)
 
 def split_gain_reason(columns,removable,parts,timing=None,weights=None):
  """見込みの内訳を、そのまま画面へ出せる形で返す。"""
@@ -1101,7 +1115,7 @@ def split_volume_cap(weights=None,timing=None,min_part_mb=2.0,min_gain_seconds=5
    return 1,note+f' / 転送が {float(timing["save"]):.0f}秒しかなく、分割しても実時間の得が小さい'
  return cap,note
 
-def recommend_split_parts(columns,removable,max_parts=4,trials=None,timing=None,weights=None,settings=None):
+def recommend_split_parts(columns,removable,max_parts=4,trials=None,timing=None,weights=None,settings=None,link=None):
  """効果が最大になるパート数を選ぶ。得にならなければ1（分割しない）を返す。
 
  判断の軸は3つ。
@@ -1120,10 +1134,13 @@ def recommend_split_parts(columns,removable,max_parts=4,trials=None,timing=None,
  vcap,vnote=split_volume_cap(weights,timing,float(st.get('split_min_part_mb',2.0) or 2.0),
                              float(st.get('split_min_gain_seconds',5.0) or 5.0))
  if vcap:ceiling=min(ceiling,max(1,vcap))
+ # 回線に空きが無ければ、本数を増やしても合計は伸びない。ここが実際にいちばん効く。
+ lcap=split_useful_parts(link)
+ if lcap:ceiling=min(ceiling,max(1,lcap))
  best,best_gain=1,1.0;details=[]
  for n in range(1,max(1,int(max_parts))+1):
   if n>1 and rem<n*2:break                      # 1パートあたり2列未満になる分割はしない
-  g=predict_split_gain(columns,removable,n,trials,timing,weights)
+  g=predict_split_gain(columns,removable,n,trials,timing,weights,link)
   details.append({'parts':n,'predicted':round(g,3),'transfer_ratio':round(split_transfer_ratio(columns,removable,n,weights),3),
                   'measured':round(measured[n],2) if n in measured else None,'allowed':n<=ceiling})
   # わずかな差では分割しない。実時間での得が小さいときも同じ。
@@ -1279,38 +1296,55 @@ def load_rne_timing(rne_path):
  return {'execute':r['execute_seconds'] or 0,'save':r['save_seconds'] or 0,'total':r['total_seconds'] or 0,
          'rows':r['rows'],'cols':r['cols'],'measured_at':r['measured_at']}
 
-def split_throughput_profile(rne_path=None):
- """並列にしたとき、転送の合計スループットが何倍になるかを実測から求める。
+def split_link_profile(rne_path=None):
+ """回線の様子を実測から求める。分割が効くかどうかは、ここでほぼ決まる。
 
- 1本あたりの速度は並列にすると落ちる（帯域を分け合う）。合計が何倍まで伸びるかで、
- 分割が得になるかどうかが決まる。σ(n) ≒ 1 + k(n-1) と見て、傾き k を推定する。
+ 1本で出せる速度が回線の上限に近いと、本数を増やしても合計は伸びない（分割しても損）。
+ 逆に1本では上限まで使い切れていないとき（遅延律速）だけ、並列にする意味がある。
+   capacity_kbs … これまでに観測した合計スループットの最大値。回線の上限とみなす。
+   base_kbs     … 直近の「分割なし」1本の速度
+   headroom     … capacity ÷ base。何本ぶんの余地があるか。σ(n) ≒ min(n, headroom)
  """
  try:
   with settings_connection() as c:
-   if rne_path:rows=list(c.execute("SELECT parts,metrics FROM split_trials WHERE rne_key=? AND metrics<>''",(_rne_key(rne_path),)))
-   else:rows=list(c.execute("SELECT parts,metrics FROM split_trials WHERE metrics<>''"))
+   q="SELECT parts,metrics,tried_at FROM split_trials WHERE metrics<>''"
+   rows=list(c.execute(q+' AND rne_key=? ORDER BY id',(_rne_key(rne_path),))) if rne_path else list(c.execute(q+' ORDER BY id'))
  except Exception:
-  return {'samples':0,'slope':None,'points':[]}
- pts=[]
+  return {'samples':0,'capacity_kbs':None,'base_kbs':None,'headroom':None,'points':[]}
+ pts=[];cap=0.0;base=None;at=''
  for r in rows:
   try:m=json.loads(r['metrics'] or '{}')
   except Exception:continue
-  nb,ns=m.get('normal_bytes'),m.get('normal_save')
-  parts=m.get('parts') or []
+  nb,ns=m.get('normal_bytes'),m.get('normal_save');parts=m.get('parts') or []
   if not (nb and ns and parts):continue
-  base=nb/ns                                              # 1本のときのスループット
-  agg=sum((p.get('bytes') or 0) for p in parts)/max(p.get('save') or 0 for p in parts)
-  if base>0 and agg>0:pts.append({'parts':int(r['parts']),'sigma':round(agg/base,3)})
- if not pts:return {'samples':0,'slope':None,'points':[]}
- slopes=[(p['sigma']-1)/(p['parts']-1) for p in pts if p['parts']>1]
- return {'samples':len(pts),'slope':round(sum(slopes)/len(slopes),3) if slopes else None,'points':pts}
+  b=nb/1024/ns
+  slowest=max((p.get('save') or 0) for p in parts)
+  if slowest<=0:continue
+  agg=sum((p.get('bytes') or 0) for p in parts)/1024/slowest
+  cap=max(cap,agg,b);base=b;at=r['tried_at']
+  pts.append({'parts':int(r['parts']),'base_kbs':round(b),'aggregate_kbs':round(agg),'sigma':round(agg/b,2)})
+ if not pts:return {'samples':0,'capacity_kbs':None,'base_kbs':None,'headroom':None,'points':[]}
+ return {'samples':len(pts),'capacity_kbs':round(cap),'base_kbs':round(base),'measured_at':at,
+         'headroom':round(cap/base,2) if base else None,'points':pts}
+
+def split_useful_parts(link):
+ """回線の空きから見た、意味のある分割数の上限。余地が無ければ1（分割しない）。"""
+ h=(link or {}).get('headroom')
+ if not h:return None
+ # 切り捨てない。伸びしろ1.8倍は「2本目がほぼ丸ごと効く」という意味で、分割する価値がある。
+ # 逆に1.3倍なら2本目は3割しか効かず、各パートが運ぶ量を上回れないので1本のままにする。
+ return max(1,int(round(float(h))))
+
+def split_throughput_profile(rne_path=None):
+ """従来の呼び出し口。傾きの代わりに、回線の空きから見た伸びを返す。"""
+ lp=split_link_profile(rne_path)
+ h=lp.get('headroom')
+ return {'samples':lp['samples'],'slope':round(h-1,3) if h else None,'points':lp['points'],'link':lp}
 
 def split_breakeven_share(slope):
  """分割が転送で得になる「固定列の割合」の上限。
 
- 1パートが運ぶ割合 ratio(n)=f+(1-f)/n、所要は ratio(n)×n/σ(n) に比例する。
- σ(n)=1+k(n-1) とすると、得になる条件は f×n+(1-f) < σ(n)、整理して f < k。
- 分割数によらず、傾き k がそのまま分岐点になる。
+ σ(n)=1+k(n-1) と見ると、得になる条件は f < k。k は回線の空き（headroom-1）に相当する。
  """
  if not slope or slope<=0:return None
  return round(min(1.0,max(0.0,slope)),3)
@@ -3267,9 +3301,12 @@ def column_plan():
  if dupes:
   log.warning('COLUMN_DUPLICATES rne=%s count=%s names=%s',rp,len(dupes),[d['name'] for d in dupes[:10]])
  payload=split_payload_profile(columns,removable,pw)
- best,best_gain,detail_rows=recommend_split_parts(columns,removable,int(c['settings'].get('api_parallel_max_lines',4) or 4),trials,timing,pw,c['settings'])
+ trials=load_split_trials(rp)
+ link=split_link_profile(rp)
+ if not link.get('samples'):link=split_link_profile()      # このRNEの実測が無ければ全体の実測を使う
+ best,best_gain,detail_rows=recommend_split_parts(columns,removable,int(c['settings'].get('api_parallel_max_lines',4) or 4),trials,timing,pw,c['settings'],link)
  reason=split_gain_reason(columns,removable,max(2,best),timing,pw)
- tp=split_throughput_profile(rp) if trials else split_throughput_profile()
+ tp={'samples':link.get('samples',0),'slope':(link['headroom']-1) if link.get('headroom') else None,'points':link.get('points',[]),'link':link}
  breakeven=split_breakeven_share(tp.get('slope'))
  log.info('SPLIT_PAYLOAD rne=%s unit=%s fixed=%s(%.0f%%) splittable=%s(%.0f%%) anchors=%s coverage=%.4f',
           rp,payload['unit'],payload['fixed'],payload['fixed_share']*100,payload['splittable'],payload['splittable_share']*100,
@@ -3283,7 +3320,8 @@ def column_plan():
                 notes=notes,probe=probe_info,elapsed=round(elapsed,2),
                 recommended_parts=best,predicted_gain=best_gain,gain_detail=detail_rows,gain_reason=reason,
                 timing=timing,incompatible=incompatible,payload=payload,anchors=panchors,anchor_coverage=round(pcov,4),
-                throughput=tp,breakeven_fixed_share=breakeven,duplicates=dupes)
+                throughput=tp,breakeven_fixed_share=breakeven,duplicates=dupes,link=link,
+                useful_parts=split_useful_parts(link))
 
 def _spawn_split_parts(job,cfg,user,pw,server,work,jobs_spec,timeout=1800):
  """パートを独立プロセスで同時に走らせる。戻り値は投入順の結果一覧。
@@ -3368,7 +3406,7 @@ def _split_trial_run(data,c,job):
                      'RNE側で列名を分けてから再度お試しください。')
  if parts<2:
   parts,_g,_d=recommend_split_parts(columns,removable,int(c['settings'].get('api_parallel_max_lines',4) or 4),
-                                    trials,load_rne_timing(rp),weights,c['settings'])
+                                    trials,load_rne_timing(rp),weights,c['settings'],split_link_profile(rp))
   if parts<2:parts=2                              # 明示的な試行なので、推奨が1でも2で測る
  plan,keys=plan_column_split(columns,removable,parts,weights,anchors)
  if len(plan)<2:return dict(ok=False,error='この列構成では分割できません')
@@ -3451,9 +3489,10 @@ def _split_trial_run(data,c,job):
            'parts':[{'bytes':r.get('size'),'save':r.get('save_elapsed'),'execute':r.get('execute_elapsed'),'cols':r.get('cols')} for r in results],
            'fixed_share':(split_payload_profile(columns,removable,weights) or {}).get('fixed_share')}
   speedup=record_split_trial(rp,job,len(plan),mrows,mcols,normal_elapsed,split_elapsed,identical,detail,metrics)
-  tp=split_throughput_profile(rp)
-  log.info('SPLIT_THROUGHPUT rne=%s parts=%s 合計スループット倍率=%s 傾きk=%s 損益分岐(固定列割合)=%s',
-           rp,len(plan),[p['sigma'] for p in tp['points']],tp['slope'],split_breakeven_share(tp['slope']))
+  lp=split_link_profile(rp)
+  log.info('SPLIT_LINK rne=%s 回線の上限=%s KB/s 直近の単一速度=%s KB/s 伸びしろ=%s倍 有効な分割数=%s 実測=%s',
+           rp,lp.get('capacity_kbs'),lp.get('base_kbs'),lp.get('headroom'),split_useful_parts(lp),
+           [(p['parts'],p['base_kbs'],p['aggregate_kbs'],p['sigma']) for p in lp['points']])
   log.info('SPLIT_TRIAL_RESULT rne=%s parts=%s identical=%s normal=%.2fs split=%.2fs(実行%.2fs+結合%.2fs) speedup=%s',
            rp,len(plan),identical,normal_elapsed,split_elapsed,split_run,merge_elapsed,f'{speedup:.2f}' if speedup else '-')
   return dict(ok=True,rne=str(rp),job=job['name'],parts=len(plan),identical=identical,

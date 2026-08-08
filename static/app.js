@@ -1,4 +1,4 @@
-const UI_BUILD='1.28.0-dupcols';
+const UI_BUILD='1.29.0-link';
 let cfg,editing=null,editingRule=null,sortDir=1,scheduleInfo={},rowLive={},rowQueue={},statusFailCount=0,serverLostShown=false;const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)],E=s=>String(s??'').replace(/[&<>"']/g,x=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[x]));const uid=()=>crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random();function toast(t){$('#toast').textContent=t;$('#toast').style.display='block';setTimeout(()=>$('#toast').style.display='none',2500)}function dirty(){$('#dirty').textContent='未保存の変更があります'}$$('nav button').forEach(b=>b.onclick=()=>{$$('nav button,section').forEach(x=>x.classList.remove('on'));b.classList.add('on');$('#'+b.dataset.p).classList.add('on');if(b.dataset.p==='logs')loadLog();if(b.dataset.p==='calendar')openCalendar();if(b.dataset.p==='viewer')loadViewerJobs()});
 const paths={navigator_api_dll:['Navigator API DLL','file',[['DLLファイル','*.dll'],['すべて','*.*']]],symnavi_exe:['SymNavi.exe','file',[['実行ファイル','*.exe'],['すべて','*.*']]],symnavim_conf:['symnavim.conf','file',[['CONFファイル','*.conf'],['すべて','*.*']]],symnavim_def:['symnavim.def','file',[['DEFファイル','*.def'],['すべて','*.*']]],accdb_template:['ACCDB空テンプレート','file',[['Access Database','*.accdb'],['すべて','*.*']]],rne_folder:['RNE基本フォルダー','folder'],default_output_folder:['既定の出力先','folder'],backup_folder:['バックアップ先','folder']};
 let waitingTimer=null,waitingStarted=0;function currentEngine(){return $('#extract-engine')?.value||cfg?.settings?.extract_engine||'api'}function waitingEngineLabel(context='common'){if(context==='api'||(context==='engine'&&currentEngine()==='api'))return 'NAVIGATOR API';if(context==='dde'||(context==='engine'&&currentEngine()==='dde'))return 'DDE COMPATIBILITY';return 'COMMON OPERATION'}function showWaiting(title='確認中',detail='処理を続行しています...',context='common'){let d=$('#waiting-dialog');$('#waiting-engine').textContent=waitingEngineLabel(context);$('#waiting-title').textContent=title;$('#waiting-detail').textContent=detail;waitingStarted=Date.now();clearInterval(waitingTimer);let tick=()=>{let sec=Math.floor((Date.now()-waitingStarted)/1000);$('#waiting-elapsed').textContent=`経過 ${String(Math.floor(sec/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`};tick();waitingTimer=setInterval(tick,1000);if(!d.open)d.showModal()}function updateWaiting(title,detail,context){if(title)$('#waiting-title').textContent=title;if(detail)$('#waiting-detail').textContent=detail;if(context)$('#waiting-engine').textContent=waitingEngineLabel(context)}function hideWaiting(){clearInterval(waitingTimer);waitingTimer=null;let d=$('#waiting-dialog');if(d?.open)d.close()}async function convertPath(input,mode){showWaiting('パス変換中',mode==='relative'?'アプリフォルダー基準へ変換しています...':'実際の絶対パスを解決しています...');try{let r=await fetch('/api/path-convert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({value:input.value,mode})}),d=await r.json();if(!r.ok)return toast(d.error);input.value=d.value;updatePathBadge(input);dirty()}finally{hideWaiting()}}function updatePathBadge(input){let badge=input.closest('label')?.querySelector('.path-badge');if(!badge)return;let relative=input.value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(input.value);badge.textContent=relative?'相対パス / 基準: アプリフォルダー':'絶対パス';badge.className='path-badge '+(relative?'path-kind-relative':'path-kind-absolute')}function isRelativePath(value){return !!value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(value)}function enhancePathInput(input,kind='folder'){if(!input||input.dataset.pathEnhanced)return;input.dataset.pathEnhanced='1';let tools=document.createElement('div');tools.className='path-tools compact-path-tools';tools.innerHTML='<button type="button" class="pathmode path-toggle" title="絶対パスと相対パスを切り替えます"></button><small class="path-badge"></small>';input.closest('label')?.appendChild(tools);let toggle=tools.querySelector('.path-toggle');function refresh(){let relative=isRelativePath(input.value);toggle.textContent=relative?'相対 → 絶対':'絶対 → 相対';toggle.dataset.mode=relative?'absolute':'relative';updatePathBadge(input)}toggle.onclick=async()=>{await convertPath(input,toggle.dataset.mode);refresh()};input.addEventListener('input',refresh);input._refreshPathControl=refresh;refresh()}async function browse(kind,initial,types){showWaiting('参照画面を準備中','設定中のパスを解決して、その場所から開きます...');try{let url=kind==='folder'?'/api/pick-folder':'/api/pick-file',r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({initial,types})}),d=await r.json();if(!r.ok)toast(d.error);return d.path||''}finally{hideWaiting()}}
@@ -613,16 +613,21 @@ if($('#m-column-plan'))$('#m-column-plan').onclick=async()=>{
    if(rows)body+=`<div class="ri-chips">${rows}</div>`;
   }
   if(d.anchors?.length)body+=`<p class="ri-note">行をつなぎ留める錨の列: ${d.anchors.map(E).join('、')}（全行の ${Math.round((d.anchor_coverage||0)*100)}% を覆えます）</p>`;
-  let be=d.breakeven_fixed_share,tp=d.throughput;
-  if(be!=null&&pf&&pf.unit==='bytes'){
-   let fx=pf.fixed_share,ok=fx<be;
-   body+=`<p class="${ok?'ri-ok':'ri-ng'}">損益分岐: 固定列が ${Math.round(be*100)}% 未満なら分割が得になります`
-    +`（この対象は ${Math.round(fx*100)}% ＝ ${ok?'条件を満たします':'条件を満たしません'}）</p>`
-    +`<p class="ri-note">並列にすると1本あたりの転送速度は落ちますが、合計は増えます。実測した合計の伸びは`
-    +` ${tp.points.map(p=>`${p.parts}本 ${p.sigma}倍`).join(' / ')}（傾き k=${tp.slope}、${tp.samples}回の実測）。`
-    +`固定列は全パートが運ぶため、その割合が k を超えると分割しても損になります。</p>`;
+  let lk=d.link||{},useful=d.useful_parts;
+  if(lk.headroom){
+   let ok=useful>1;
+   body+=`<div class="ri-cards">`
+    +`<div class="ri-card"><span>回線の上限</span><b>${lk.capacity_kbs}</b><small>KB/s（実測の最大）</small></div>`
+    +`<div class="ri-card"><span>直近の単一速度</span><b>${lk.base_kbs}</b><small>KB/s（分割なし1本）</small></div>`
+    +`<div class="ri-card"><span>伸びしろ</span><b>${lk.headroom}x</b><small>上限 ÷ 単一速度</small></div>`
+    +`<div class="ri-card"><span>有効な分割数</span><b>${useful}</b><small>回線から見た上限</small></div></div>`
+    +`<p class="${ok?'ri-ok':'ri-ng'}">${ok?`回線に余地があります。${useful}分割まで意味があります`:'回線に余地がありません。今は分割しても速くなりません'}</p>`
+    +`<p class="ri-note">1本ですでに ${lk.base_kbs} KB/s 出ており、回線の上限は約 ${lk.capacity_kbs} KB/s です。`
+    +`本数を増やしても合計は ${lk.headroom} 倍までしか伸びないため、各パートが運ぶ量（${Math.round((d.gain_detail||[]).find(x=>x.parts===2)?.transfer_ratio*100||0)}%）を下回れません。`
+    +`回線が空いている時間帯は伸びしろが大きくなり、同じRNEでも結果が変わります。</p>`
+    +`<p class="ri-note">実測: ${lk.points.map(p=>`${p.parts}本 単一${p.base_kbs}→合計${p.aggregate_kbs} KB/s（${p.sigma}倍）`).join(' / ')}</p>`;
   }else if(pf&&pf.unit==='bytes'){
-   body+=`<p class="ri-note">損益分岐の判定には影実行の実測が必要です。1回試すと、以後は「固定列が何%未満なら得か」を表示します。</p>`;
+   body+=`<p class="ri-note">分割が得になるかは回線の空き具合で決まります。影実行を1回行うと、回線の上限と伸びしろを実測して表示します。</p>`;
   }
   if(d.layout?.condition?.length)body+=`<p class="ri-note">ほかに条件欄のデータ項目が ${d.layout.condition.length} 件あります（絞り込み用で、出力の列にはなりません）。</p>`;
   if(d.column_count)body+=`<p class="ri-note">出力の並び順は ${E(SOURCE_LABEL[d.source]||d.source)} から ${d.column_count} 列ぶん取得済みです（結合時の列順に使います）。</p>`;
