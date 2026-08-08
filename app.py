@@ -25,10 +25,16 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.25.0'; APP_VERSION_TITLE='データ量で分割し、行落ちを防ぐ錨の列を追加'; APP_RELEASED_AT='2026-08-07'
-BUILD_VERSION=f'{APP_VERSION}-weighted-split'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.25.1'; APP_VERSION_TITLE='行落ちを防ぐ錨を組み合わせで選び、再挑戦できるようにした'; APP_RELEASED_AT='2026-08-07'
+BUILD_VERSION=f'{APP_VERSION}-anchor-cover'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
+{'version':'1.25.1','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'過去に行集合が食い違ったRNEでも、錨の列を立てられる場合は影実行できるようにしました。1.25.0では判定が錨を探す前にあり、条件が変わっても弾いていました。',
+'錨の列を1本ではなく組み合わせで選べるようにしました。1本で全行を覆えない場合は、覆える行が多い列から足していきます（既定3本まで）。',
+'どう組み合わせても全行を覆えない場合は、錨を立てずに実行を止めます。何%の行しか覆えないかを表示します。行が落ちると分かっているものを実行しても意味がないためです。',
+'ログに COLUMN_WEIGHTS（錨と被覆率）と SPLIT_PLAN（各パートの担当列数とデータ量）を記録します。',
+]},
 {'version':'1.25.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
 '列の分け方を「列数で均等」から「データ量で均等」に変えました。実測では、列数で34/34に分けてもデータ量は89%対11%に偏っており、分割の意味がほとんどありませんでした。効き目を決めるのは列数ではなくデータ量です。',
 '直近の出力ファイルを1回走査して、列ごとのデータ量と「値が入っている割合」を数えます。SymfoNaviへの接続は不要です。',
@@ -859,6 +865,8 @@ def column_weights(path,job,columns):
  path=Path(path);fmt=normalize_output_format(job.get('output_format'),path.name)
  names=list(columns);n=len(names)
  size=[0]*n;filled=[0]*n;rows=0
+ # 錨を選ぶには件数だけでなく「どの行が埋まっているか」が要る。列ごとに1バイト/行で持つ。
+ mask=[bytearray() for _ in range(n)]
  if fmt=='sqlite3':
   with sqlite3.connect(path) as conn:
    table=str(job.get('table') or '')
@@ -872,8 +880,8 @@ def column_weights(path,job,columns):
     rows+=1
     for k,i in enumerate(idx):
      v=r[i]
-     if v is None or v=='':continue
-     filled[k]+=1;size[k]+=len(str(v))
+     if v is None or v=='':mask[k].append(0);continue
+     mask[k].append(1);filled[k]+=1;size[k]+=len(str(v))
  elif fmt in ('csv','txt'):
   delimiter=',' if fmt=='csv' else '\t'
   data=None
@@ -890,25 +898,55 @@ def column_weights(path,job,columns):
     rows+=1
     for k,i in enumerate(idx):
      v=r[i] if i<len(r) else ''
-     if not v:continue
-     filled[k]+=1;size[k]+=len(v)
+     if not v:mask[k].append(0);continue
+     mask[k].append(1);filled[k]+=1;size[k]+=len(v)
  else:
   return None
  if not rows:return None
  total=sum(size) or 1
- return {'rows':rows,'total_bytes':total,
+ return {'rows':rows,'total_bytes':total,'masks':{names[k]:mask[k] for k in range(n)},
          'columns':{names[k]:{'bytes':size[k],'share':size[k]/total,'filled':filled[k],'fill_ratio':filled[k]/rows} for k in range(n)}}
 
-def pick_anchor_column(removable,weights):
- """全パートに入れる錨の列。常に値が入っている列ほど良い（行落ちを防ぐため）。"""
- if not weights:return ''
- cw=weights.get('columns') or {}
- cand=[(cw.get(c,{}).get('fill_ratio',0),-cw.get(c,{}).get('bytes',0),c) for c in removable if c in cw]
- if not cand:return ''
- best=max(cand)
- return best[2] if best[0]>=0.999 else ''      # 1行でも空があるなら錨にしない
+def pick_anchor_columns(removable,weights,limit=3):
+ """全パートに残す「錨」の列を選ぶ。担当列がすべて空の行は結果から落ちるため、
+ 残した列のどれかに必ず値が入るようにして、行集合を揃える。
 
-def plan_column_split(columns,removable,parts,weights=None,anchor=''):
+ 1本で全行を覆えればそれが最善。覆えない場合は、覆う行が多い列から貪欲に足していく。
+ limit 本まで足しても全行を覆えないなら、錨は立てない（中途半端に足しても行は落ちる）。
+ 錨は全パートに複製されるので、本数が増えるほど転送量の得は減る。
+ """
+ if not weights:return [],0.0
+ cw=weights.get('columns') or {};rows=int(weights.get('rows') or 0)
+ cand=[c for c in removable if c in cw]
+ if not rows or not cand:return [],0.0
+ best=max(cand,key=lambda c:cw[c].get('fill_ratio',0))
+ if cw[best].get('fill_ratio',0)>=0.999:return [best],1.0
+ masks=weights.get('masks') or {}
+ if not masks:return [],cw[best].get('fill_ratio',0)
+ # 貪欲な集合被覆。まだ覆えていない行を最も多く埋める列を足していく。
+ uncovered=bytearray(b'\x01')*rows
+ chosen=[]
+ for _ in range(max(1,int(limit))):
+  pick,gain=None,0
+  for c in cand:
+   m=masks.get(c)
+   if not m or c in chosen:continue
+   g=sum(1 for i in range(rows) if uncovered[i] and m[i])
+   if g>gain:pick,gain=c,g
+  if not pick or not gain:break
+  chosen.append(pick);m=masks[pick]
+  for i in range(rows):
+   if m[i]:uncovered[i]=0
+  if not any(uncovered):return chosen,1.0
+ covered=1.0-(sum(uncovered)/rows if rows else 0)
+ return ([],covered) if covered<0.999 else (chosen,1.0)
+
+def pick_anchor_column(removable,weights):
+ """従来どおり1本だけ返す入口（既存の呼び出し互換）。"""
+ cols,_=pick_anchor_columns(removable,weights,limit=1)
+ return cols[0] if cols else ''
+
+def plan_column_split(columns,removable,parts,weights=None,anchors=None):
  """出力列を parts 個の担当に分ける。列の並び順は元のまま保つ。
 
  分けるのは列数ではなくデータ量。列数で均等に割ると、スカスカな列ばかりのパートができて
@@ -919,9 +957,10 @@ def plan_column_split(columns,removable,parts,weights=None,anchor=''):
  parts=max(1,int(parts))
  rem=[c for c in columns if c in set(removable)]
  keys=[c for c in columns if c not in set(removable)]
- if anchor and anchor in rem:rem=[c for c in rem if c!=anchor]
+ anchors=[c for c in (anchors or []) if c in set(rem)]
+ rem=[c for c in rem if c not in set(anchors)]
  if parts<2 or len(rem)<parts:
-  return [{'index':1,'keep':list(rem),'drop':[],'anchor':anchor}],keys
+  return [{'index':1,'keep':list(rem),'drop':[],'anchors':list(anchors)}],keys
  cw=(weights or {}).get('columns') or {}
  def w(c):return max(1,int(cw.get(c,{}).get('bytes',0))) if cw else 1
  # 重い列から順に、いちばん軽いパートへ入れる。データ量が揃うように配る。
@@ -932,7 +971,7 @@ def plan_column_split(columns,removable,parts,weights=None,anchor=''):
  out=[]
  for i,g in enumerate(groups):
   own=set(g)
-  out.append({'index':i+1,'keep':list(g),'drop':[c for c in rem if c not in own],'anchor':anchor,
+  out.append({'index':i+1,'keep':list(g),'drop':[c for c in rem if c not in own],'anchors':list(anchors),
               'bytes':sum(w(c) for c in g) if cw else None})
  return out,keys
 
@@ -1135,7 +1174,7 @@ def load():
   _prev_profile=cfg['settings'].get('stability_profile')
   if _prev_profile in (None,'stable_api_serial'):
    cfg['settings']['api_parallel_lines']=6; cfg['settings']['stability_profile']='balanced_api_parallel'
-  cfg['settings'].setdefault('api_parallel_lines',6); cfg['settings'].setdefault('stability_profile','balanced_api_parallel'); cfg['settings'].setdefault('backup_enabled',True); _backup_mode_missing='backup_mode' not in cfg['settings']; cfg['settings'].setdefault('backup_mode','generations'); cfg['settings'].setdefault('backup_retention_days',30); cfg['settings'].setdefault('backup_generation_limit_enabled',True); cfg['settings'].setdefault('backup_generations',3); cfg['settings'].setdefault('schedule_catchup_minutes',30); cfg['settings'].setdefault('api_worker_stagger_ms',700); cfg['settings'].setdefault('split_trial_timeout_seconds',1800)
+  cfg['settings'].setdefault('api_parallel_lines',6); cfg['settings'].setdefault('stability_profile','balanced_api_parallel'); cfg['settings'].setdefault('backup_enabled',True); _backup_mode_missing='backup_mode' not in cfg['settings']; cfg['settings'].setdefault('backup_mode','generations'); cfg['settings'].setdefault('backup_retention_days',30); cfg['settings'].setdefault('backup_generation_limit_enabled',True); cfg['settings'].setdefault('backup_generations',3); cfg['settings'].setdefault('schedule_catchup_minutes',30); cfg['settings'].setdefault('api_worker_stagger_ms',700); cfg['settings'].setdefault('split_trial_timeout_seconds',1800); cfg['settings'].setdefault('split_anchor_limit',3)
   if _backup_mode_missing:cfg['settings']['backup_generations']=3
   if int(cfg['settings'].get('api_parallel_lines',6) or 6)==2:cfg['settings']['api_parallel_lines']=6
   cfg.setdefault('navigator_api_dll',r'.\Config\NAVIAP\debugdllVC14x64\SymNaviA.dll'); cfg.setdefault('accdb_template','.\\assets\\empty.accdb');
@@ -3089,28 +3128,37 @@ def column_split_trial():
   return jsonify(ok=False,error='分割して取得できる列がありません'),200
  columns=cached['columns'];trials=load_split_trials(rp)
  parts=int(data.get('parts') or 0)
- # 錨の列を立てれば行落ちを防げる可能性があるため、錨が取れるなら再挑戦を許す。
- if split_incompatible(rp) and not data.get('force') and not data.get('retry_with_anchor'):
-  return jsonify(ok=False,error='このRNEは、列を外すと返ってくる行そのものが変わることが確認済みです。'
-                 '列分割は使えません（以前の試行で行集合が食い違いました）。',rowset_mismatch=True,known=True),200
  if parts<2:
   parts,_g,_d=recommend_split_parts(columns,removable,int(c['settings'].get('api_parallel_max_lines',4) or 4),trials,load_rne_timing(rp))
   if parts<2:parts=2                              # 明示的な試行なので、推奨が1でも2で測る
  # 直近の出力から列ごとのデータ量と埋まり具合を測り、量が揃うように分ける。
- weights=None;anchor=''
+ weights=None;anchors=[];coverage=0.0
  try:
   op=_viewer_output_path(job,c)
   if op.is_file():
    wt=time.perf_counter();weights=column_weights(op,job,columns)
    if weights:
-    anchor=pick_anchor_column(removable,weights)
-    log.info('COLUMN_WEIGHTS rne=%s rows=%s total_bytes=%s anchor=%s elapsed=%.2fs',rp,weights['rows'],weights['total_bytes'],anchor or '(なし)',time.perf_counter()-wt)
+    anchors,coverage=pick_anchor_columns(removable,weights,int(c['settings'].get('split_anchor_limit',3) or 3))
+    log.info('COLUMN_WEIGHTS rne=%s rows=%s total_bytes=%s anchors=%s coverage=%.4f elapsed=%.2fs',
+             rp,weights['rows'],weights['total_bytes'],anchors or '(なし)',coverage,time.perf_counter()-wt)
+  else:
+   log.info('COLUMN_WEIGHTS_SKIP rne=%s 直近の出力ファイルがありません',rp)
  except Exception as we:
   log.warning('COLUMN_WEIGHTS_FAILED rne=%s error=%s',rp,we)
- plan,keys=plan_column_split(columns,removable,parts,weights,anchor)
+ # 錨が立たない＝担当列がすべて空になる行を防げない。行が落ちると分かっているので実行しない。
+ if weights and not anchors and not data.get('force'):
+  log.warning('SPLIT_NO_ANCHOR rne=%s coverage=%.4f',rp,coverage)
+  return jsonify(ok=False,error=f'行をつなぎ留める列（錨）が見つかりませんでした。'
+                 f'最も埋まっている列でも全行の{coverage*100:.1f}%%しか覆えず、残りの行は担当列がすべて空になるため落ちます。'
+                 '錨を増やしても覆えないため、このRNEの現在の列構成では分割できません。',
+                 rowset_mismatch=True,anchor_coverage=coverage,no_anchor=True),200
+ plan,keys=plan_column_split(columns,removable,parts,weights,anchors)
  if len(plan)<2:return jsonify(ok=False,error='この列構成では分割できません'),200
- if weights and not anchor:
-  log.warning('SPLIT_NO_ANCHOR rne=%s 常に値の入る列が無いため、行が落ちる可能性があります',rp)
+ if split_incompatible(rp) and not anchors and not data.get('force'):
+  return jsonify(ok=False,error='このRNEは、列を外すと返ってくる行そのものが変わることが確認済みです。'
+                 '行をつなぎ留める錨の列も立てられないため、列分割は使えません。'
+                 '直近の出力ファイルがあれば錨を探せます。1回実行してから再度お試しください。',
+                 rowset_mismatch=True,known=True),200
  if not keys:return jsonify(ok=False,error='全パートに残る列（結合キー）がないため、結合できません'),200
  work=LOCAL_RUNTIME/('split_trial_'+datetime.now().strftime('%Y%m%d_%H%M%S'));work.mkdir(parents=True,exist_ok=True)
  user,pw,server,_=creds(resolve_path(c['symnavim_conf']))
@@ -3125,7 +3173,7 @@ def column_split_trial():
   if not base.get('ok'):return jsonify(ok=False,error=f'分割なしの実行に失敗しました: {base.get("error")}'),200
   # 2) 分割あり。パートは同時に走らせる。
   specs=[{'index':p['index'],'label':f'パート{p["index"]}/{len(plan)}','drop':p['drop'],'out_csv':work/f'part{p["index"]}.csv'} for p in plan]
-  log.info('SPLIT_PLAN rne=%s parts=%s anchor=%s keep=%s bytes=%s',rp,len(plan),anchor or '(なし)',
+  log.info('SPLIT_PLAN rne=%s parts=%s anchors=%s keep=%s bytes=%s',rp,len(plan),anchors or '(なし)',
            [len(p['keep']) for p in plan],[p.get('bytes') for p in plan])
   t=time.perf_counter();results=_spawn_split_parts(job,c,user,pw,server,work,specs,trial_timeout);split_run=time.perf_counter()-t
   bad=[r for r in results if not r.get('ok')]
