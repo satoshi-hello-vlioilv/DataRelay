@@ -25,10 +25,17 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.30.0'; APP_VERSION_TITLE='列分割を本番の実行へ組み込み'; APP_RELEASED_AT='2026-08-08'
-BUILD_VERSION=f'{APP_VERSION}-run'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.31.0'; APP_VERSION_TITLE='分割なしと分割を競争させる'; APP_RELEASED_AT='2026-08-08'
+BUILD_VERSION=f'{APP_VERSION}-race'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
+{'version':'1.31.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'分割なし1本と分割Nパートを同時に起動し、先に終わった方を採用して残りを中断する「競争」を追加しました。対象ごとに選べます（対象を編集 → RNEを調べる → 動作 → 競争させる）。',
+'影実行にも「競争させて測る」を追加しました。両方を最後まで走らせ、決着の順番と各racerの着順時刻を記録します。公開はしません。',
+'競争は速さの裏付けを求めません。結果の一致さえ確認できていれば走ります（遅ければ競争に負けて捨てられるだけなので）。一方「自動」はこれまで通り速さの裏付けも求めます。',
+'競争で測った値は、回線の見積もりにも速度比の平均にも使いません。奪い合いは運ぶ量が多い分割なしの側をより強く痛めるため、速度比が分割に有利へ振れます（実測相当の値で1.11倍対1.29倍、伸びしろは1.44倍対2.56倍）。混ぜると分割しすぎる方向へ狂います。',
+'競争には分割なしのぶん1本余分にラインが要ります。2分割なら最低3本。持ち分が足りなければ競争せず、これまで通りの判断で動きます。',
+]},
 {'version':'1.30.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
 '列分割を本番の実行（出力ファイルの生成・公開）へ組み込みました。影実行で「結果が一致し、かつ実際に速かった」割り当てだけが保存され、次の実行から使われます。',
 '実行時に列の重みを測り直すことはしません。測り直しに数秒かかり、分割で稼げる時間をそこで使い切ってしまうためです。割り当ての算出は影実行の側の仕事にしました。',
@@ -1325,6 +1332,9 @@ def split_link_profile(rne_path=None):
  for r in rows:
   try:m=json.loads(r['metrics'] or '{}')
   except Exception:continue
+  # 競争中の値は使えない。単一速度が奪い合いで沈む一方、上限は過去の最大が残るため、
+  # 伸びしろが跳ね上がる（実測値で試すと 1.44倍 → 2.56倍）。分割しすぎる方向へ狂う。
+  if m.get('race'):continue
   nb,ns=m.get('normal_bytes'),m.get('normal_save');parts=m.get('parts') or []
   if not (nb and ns and parts):continue
   b=nb/1024/ns
@@ -1369,13 +1379,16 @@ def split_incompatible(rne_path):
   return False
 
 def load_split_trials(rne_path=None):
- """記録済みの実測。パート数ごとに、一致した試行の平均速度比を返す。"""
+ """記録済みの実測。パート数ごとに、一致した試行の平均速度比を返す。
+
+ 競争させた回（detail が 'race:' で始まる）は除く。奪い合いは分割なしの側をより強く痛めるため
+ （運ぶ量が多いぶん、細った帯域の影響を大きく受ける）、速度比はかえって高く出る。
+ 実測では 単独1.11倍 に対し 競争1.29倍。混ぜると分割を実際より有利に見せてしまう。
+ """
  try:
   with settings_connection() as c:
-   if rne_path:
-    rows=list(c.execute('SELECT parts,observed_speedup FROM split_trials WHERE rne_key=? AND identical=1 AND observed_speedup IS NOT NULL',(_rne_key(rne_path),)))
-   else:
-    rows=list(c.execute('SELECT parts,observed_speedup FROM split_trials WHERE identical=1 AND observed_speedup IS NOT NULL'))
+   q="SELECT parts,observed_speedup FROM split_trials WHERE identical=1 AND observed_speedup IS NOT NULL AND detail NOT LIKE 'race:%'"
+   rows=list(c.execute(q+' AND rne_key=?',(_rne_key(rne_path),))) if rne_path else list(c.execute(q))
  except Exception:
   return []
  agg={}
@@ -1387,7 +1400,7 @@ def load_split_trials(rne_path=None):
 # 数秒なのだから、そこで使い切ってしまう。そこで、影実行で「一致した・速かった」と確認できた
 # 割り当てだけを保存し、実行時はそれを読むだけにする。測り直しは影実行の側の仕事にする。
 
-SPLIT_MODES=('auto','force','off')
+SPLIT_MODES=('auto','force','race','off')
 
 def normalize_split_mode(value):
  v=str(value or '').strip().lower()
@@ -1440,20 +1453,28 @@ def drop_split_plans(rne_path,reason=''):
  if n:log.warning('SPLIT_PLAN_DROP rne=%s removed=%s reason=%s',rne_path,n,reason)
  return n
 
-def pick_split_plan(rne_path,columns,max_parts):
+def pick_split_plan(rne_path,columns,max_parts,min_speedup=None):
  """使える割り当てを1つ選ぶ。無ければ (None, 理由)。
 
- 選ぶ条件は3つだけ。RNEが変わっていないこと、列の顔ぶれが当時と同じであること、
- 使えるライン数に収まっていること。速さの裏付けは保存時に済ませてある。
+ どの割り当ても「結果が分割なしと一致した」ことは保存の時点で確認済み。
+ min_speedup を渡すと、そのうえで実際に速かったものだけに絞る。
+ 競争させる使い方では速さの裏付けは要らない（遅ければ競争に負けて捨てられるだけ）ので、
+ 一致さえしていれば使う。
  """
  plans=load_split_plans(rne_path)
- if not plans:return None,'確認済みの割り当てがありません（影実行で一致と短縮を確認すると保存されます）'
+ if not plans:return None,'確認済みの割り当てがありません（影実行で結果の一致を確認すると保存されます）'
  fresh=[p for p in plans if not p['stale']]
  if not fresh:return None,'RNEが更新されたため、保存済みの割り当ては使えません'
  same=[p for p in fresh if list(p['columns'])==list(columns or [])]
  if not same:return None,f'列の顔ぶれが当時と違います（保存時 {len(fresh[0]["columns"])}列 / 現在 {len(columns or [])}列）'
  fits=[p for p in same if p['parts']<=max(1,int(max_parts))]
  if not fits:return None,f'保存済みは{min(p["parts"] for p in same)}分割以上ですが、使えるラインは{max_parts}本です'
+ if min_speedup is not None:
+  fast=[p for p in fits if (p['observed_speedup'] or 0)>=float(min_speedup)]
+  if not fast:
+   got=max((p['observed_speedup'] or 0) for p in fits)
+   return None,f'保存済みの割り当ては速さの基準に届いていません（実測 {got:.2f}倍 / 基準 {float(min_speedup):.2f}倍）'
+  fits=fast
  best=max(fits,key=lambda p:(p['observed_speedup'] or 0,p['parts']))
  return best,''
 
@@ -2414,14 +2435,19 @@ def plan_run_split(rne_path,job,cfg,fmt,budget_lines,line=''):
  """本番の実行を分割で取るかどうかを決める。分割しないときは (None, 理由)。
 
  ここは実行の直前に通る道なので、測定も問い合わせもしない。判断材料は保存済みのものだけ。
- 「一致した・速かった」と確認済みの割り当てが有り、RNEも列の顔ぶれも当時のままで、
- 使えるラインが足りているときだけ分割する。ひとつでも欠けたら、そのまま1本で取る。
+ 結果の一致が確認済みの割り当てが有り、RNEも列の顔ぶれも当時のままで、使えるラインが
+ 足りているときだけ分割する。ひとつでも欠けたら、そのまま1本で取る。
+ 「自動」はさらに、実際に速かったという裏付けも求める。
+ 「競争」は速さの裏付けを求めない代わりに、分割なしを1本ぶん余分に使う（負けたら捨てる）。
  """
  mode=normalize_split_mode(job.get('split_mode'))
  if not bool((cfg.get('settings') or {}).get('split_run_enabled',True)):return None,'共通設定で列分割を使わない設定です'
  if mode=='off':return None,'この対象は列分割を使わない設定です'
- if int(budget_lines or 1)<2:return None,f'同時に使えるラインが{budget_lines}本しかありません'
- if fmt=='xlsx' and mode!='force':
+ need=3 if mode=='race' else 2                 # 競争は「分割なし1本 ＋ パート2本」が最小
+ if int(budget_lines or 1)<need:
+  return None,(f'競争には最低{need}本のラインが要りますが、いまは{budget_lines}本です' if mode=='race'
+               else f'同時に使えるラインが{budget_lines}本しかありません')
+ if fmt=='xlsx' and mode not in ('force','race'):
   # XLSXはAPIが直接書き出せる。分割するとCSV経由＋結合＋変換になり、速さの前提が変わる。
   return None,'XLSXはAPIが直接書き出す方が速いため、自動では分割しません（常に分割を選ぶと分割します）'
  state,cached=column_cache_state(rne_path)
@@ -2429,9 +2455,13 @@ def plan_run_split(rne_path,job,cfg,fmt,budget_lines,line=''):
  columns=cached['columns']
  dupes=duplicate_columns(columns)
  if dupes:return None,'同じ名前の列があります（'+'、'.join(d['name'] for d in dupes[:3])+'）'
- chosen,why=pick_split_plan(rne_path,columns,budget_lines)
+ # 競争するときは分割なしが1本を占めるので、パートに回せるのは残り。
+ room=(int(budget_lines)-1) if mode=='race' else int(budget_lines)
+ gate=None if mode in ('race','force') else float((cfg.get('settings') or {}).get('split_min_speedup',1.05) or 1.05)
+ chosen,why=pick_split_plan(rne_path,columns,room,gate)
  if not chosen:return None,why
  if len(chosen['plan'])<2 or not chosen['keys']:return None,'保存済みの割り当てが不完全です'
+ chosen=dict(chosen,mode=mode,race=(mode=='race'))
  log.info('SPLIT_RUN_PLAN line=%s job=%s rne=%s parts=%s mode=%s budget=%s 裏付け=%s倍(%s) keys=%s anchors=%s',
           line,job.get('name'),rne_path,len(chosen['plan']),mode,budget_lines,
           f"{chosen['observed_speedup']:.2f}" if chosen['observed_speedup'] else '-',chosen['proven_at'],
@@ -2474,6 +2504,64 @@ def run_split_extraction(j,cfg,user,pw,server,work,chosen,dest_csv,line=''):
           sum((r.get('size') or 0) for r in results)/1024/1024)
  return rows,cols
 
+def run_race_extraction(j,cfg,user,pw,server,work,chosen,dest_csv,line=''):
+ """分割なし1本と、分割Nパートを同時に走らせ、先に使える形になった方を採る。
+
+ 分割側は結合まで終えて初めて「使える形」になる。パートが出そろった時点では勝ちではない。
+ そこで、パートが先に出そろったら結合へ進みつつ、分割なしはそのまま走らせておく。
+ 結合が終わった時点で分割なしも終わっていたら、実際に早かった方を採る。
+
+ 負けた側は NaviTerminateDL 相当（プロセスの中断）で降ろし、成果物は捨てる。
+ 戻り値は (行数, 列数, 勝者, 記録) 。勝者は 'normal' か 'split'。
+ """
+ rp=resolve_rne_path(j,cfg);parts=chosen['plan'];total=len(parts)
+ normal_csv=Path(work)/'normal.csv'
+ specs=[{'index':0,'label':'分割なし','group':'normal','drop':[],'out_csv':normal_csv}]
+ specs+=[{'index':p['index'],'label':f'パート{p["index"]}/{total}','group':'split','drop':list(p['drop']),
+          'out_csv':Path(work)/f'part{p["index"]}.csv'} for p in parts]
+ timeout=int((cfg.get('settings') or {}).get('split_trial_timeout_seconds',1800) or 1800)
+ started=time.perf_counter()
+ update_parallel_line(line,job=j['name'],job_id=j['id'],state=f'競争（1本 対 {total}分割）',percent=40,
+                      detail=f'{total+1}プロセス同時')
+ log.info('RACE_START line=%s job=%s rne=%s racers=%s（分割なし1本 ＋ %s分割）',line,j['name'],rp,total+1,total)
+ # どちらかの側が出そろった時点で決着。負けた側はそこで降ろす。
+ # 分割側はこのあと結合の時間（実測で3〜6秒）を払う。それでも待たせないのは、
+ # パートが出そろった時点で分割なしはまだ大きく遅れているため（負けた側だから遅れている）。
+ def settled(done):
+  if any(r.get('group')=='normal' and r.get('ok') for r in done):return True
+  return sum(1 for r in done if r.get('group')=='split' and r.get('ok'))>=total
+ t=phase_log('race_extract',job=j['name'],line=line,racers=total+1)
+ results=_spawn_racers(j,cfg,user,pw,server,Path(work),specs,timeout,stop_when=settled)
+ run_elapsed=time.perf_counter()-started
+ normal=next((r for r in results if r.get('group')=='normal'),{})
+ pres=[r for r in results if r.get('group')=='split']
+ phase_log('race_extract',t,job=j['name'],line=line,racers=total+1,
+           normal='ok' if normal.get('ok') else 'x',parts_ok=sum(1 for r in pres if r.get('ok')))
+ order=' / '.join(f"{r.get('part')}={r.get('finished_at')}s" + ('' if r.get('ok') else '(中断)' if r.get('aborted') else '(失敗)')
+                  for r in sorted(results,key=lambda r:r.get('finished_at') or 0))
+ log.info('RACE_ORDER line=%s job=%s %s',line,j['name'],order)
+ if normal.get('ok'):
+  # 分割なしが先着。パートは中断済み。結合の手間もかからない分、ここが最短。
+  log.info('RACE_WINNER line=%s job=%s winner=normal 所要=%.2fs rows=%s パートは中断',
+           line,j['name'],run_elapsed,normal.get('rows'))
+  shutil.copyfile(normal['file'],Path(dest_csv))
+  return normal.get('rows'),normal.get('cols'),'normal',{'elapsed':round(run_elapsed,2),'results':results}
+ bad=[r for r in pres if not r.get('ok')]
+ if bad:raise RuntimeError('競争の両方が失敗しました: '+'; '.join(f'{r.get("part")}: {r.get("error")}' for r in bad)
+                           +f'; 分割なし: {normal.get("error")}')
+ update_parallel_line(line,job=j['name'],job_id=j['id'],state='結合',percent=68,detail=f'{total}パートを横に結合')
+ t=phase_log('split_merge',job=j['name'],line=line)
+ try:
+  rows,cols=merge_column_parts([r['file'] for r in pres],Path(dest_csv),chosen['keys'],chosen['columns'])
+ except SplitRowsetMismatch as me:
+  drop_split_plans(rp,f'実行時に行集合が食い違いました: {me}')
+  raise
+ phase_log('split_merge',t,job=j['name'],line=line,rows=rows,columns=cols)
+ total_elapsed=time.perf_counter()-started
+ log.info('RACE_WINNER line=%s job=%s winner=split 所要=%.2fs（抽出%.2fs＋結合%.2fs） rows=%s cols=%s 分割なしは中断',
+          line,j['name'],total_elapsed,run_elapsed,total_elapsed-run_elapsed,rows,cols)
+ return rows,cols,'split',{'elapsed':round(total_elapsed,2),'results':results}
+
 def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,backup):
  from navigator_api import NavigatorApi
  line_name=os.environ.get('NAVI_WORKER_LINE') or threading.current_thread().name
@@ -2503,7 +2591,7 @@ def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,
   update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='開始',percent=5,detail=fmt);log.info('PARALLEL_JOB_START line=%s job=%s index=%s/%s format=%s target=%s',line_name,j['name'],job_index,total_jobs,fmt,target)
   log.info('PIPELINE job=%s engine=api parallel_line=%s common_intermediate=%s format=%s planned_intermediate=%s converted=%s target=%s',j['name'],line_name,common_intermediate,fmt,planned,db,target)
   # 分割して取るか、そのまま取るか。判断は保存済みの裏付けだけで行い、ここでは測定しない。
-  split_used=None;split_reason='';intermediate=None;api_direct_output=False
+  split_used=None;split_reason='';intermediate=None;api_direct_output=False;race_winner=''
   try:split_used,split_reason=plan_run_split(rp,j,cfg,fmt,int(j.get('_split_budget') or 1),line_name)
   except Exception as se:
    split_used=None;split_reason=f'判断に失敗しました: {se}';log.warning('SPLIT_RUN_PLAN_FAILED line=%s job=%s error=%s',line_name,j.get('name'),se)
@@ -2512,7 +2600,10 @@ def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,
    split_work=dde_work/f'split_{job_index}_{stamp}';split_work.mkdir(parents=True,exist_ok=True)
    api_csv=dde_work/f'navi_{job_index}_{stamp}.csv'
    try:
-    expected_rows,expected_cols=run_split_extraction(j,cfg,user,pw,server,split_work,split_used,api_csv,line_name)
+    if split_used.get('race'):
+     expected_rows,expected_cols,race_winner,_rd=run_race_extraction(j,cfg,user,pw,server,split_work,split_used,api_csv,line_name)
+    else:
+     expected_rows,expected_cols=run_split_extraction(j,cfg,user,pw,server,split_work,split_used,api_csv,line_name)
     intermediate=api_csv
    except Exception as spe:
     # 公開するファイルを落とさないことを最優先にする。分割で転んだら、そのまま1本で取り直す。
@@ -2579,7 +2670,10 @@ def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,
   total=time.perf_counter()-job_started
   update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='完了',percent=100,detail=f'{nr}件/{nc}列',elapsed=round(total,1));log.info('PARALLEL_JOB_RESULT line=%s job=%s format=%s rows=%s columns=%s elapsed=%.2fs target=%s published=%s',line_name,j['name'],fmt,nr,nc,total,target,pub['published'])
   log.info('JOB_PROFILE line=%s job=%s rows=%s columns=%s %s',line_name,j['name'],nr,nc,phase_profile_summary())
-  result=f'{j["name"]}: {nr}件/{nc}列 / {total:.1f}秒'+(f' / {len(split_used["plan"])}分割' if split_used else '')+('' if pub['published'] else f' / 更新保留: {pub["pending"]}')
+  split_label=('' if not split_used else
+               (f' / 競争は{"分割なし" if race_winner=="normal" else str(len(split_used["plan"]))+"分割"}の勝ち' if race_winner
+                else f' / {len(split_used["plan"])}分割'))
+  result=f'{j["name"]}: {nr}件/{nc}列 / {total:.1f}秒'+split_label+('' if pub['published'] else f' / 更新保留: {pub["pending"]}')
   # 列名はここでしか分からないので、作業ファイルの見出しだけ読んで持ち帰る。書き込みは親プロセスが行う
   # （ワーカーが同時に設定DBへ書くと競合するため）。失敗しても抽出結果には影響させない。
   column_names=[]
@@ -2593,7 +2687,7 @@ def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,
   ph=_phase_profile.get('phases') or {}
   return {'ok':True,'job':j['name'],'format':fmt,'rows':nr,'columns':nc,'elapsed':total,'target':str(target),'result':result,
           'column_names':column_names,'rne_path':str(rp),
-          'split_parts':len(split_used['plan']) if split_used else 0,'split_reason':split_reason,
+          'split_parts':len(split_used['plan']) if split_used else 0,'split_reason':split_reason,'race_winner':race_winner,
           'execute_seconds':round(float(ph.get('api_execute_catalog') or 0),2),
           'save_seconds':round(float(ph.get('api_save_csv') or ph.get('api_save_xlsx_direct') or 0),2),
           'total_seconds':round(total,2)}
@@ -2706,7 +2800,8 @@ def run_api_process_batch(jobs,cfg,user,pw,server,dde_work,backup,max_lines,trig
     save_rne_timing(result['rne_path'],result.get('execute_seconds'),result.get('save_seconds'),
                     result.get('total_seconds'),result.get('rows'),result.get('columns'))
    if result.get('split_parts'):
-    log.info('SPLIT_RUN_USED batch_id=%s job=%s parts=%s elapsed=%.2fs',batch_id,item['job']['name'],result['split_parts'],result.get('elapsed') or 0)
+    log.info('SPLIT_RUN_USED batch_id=%s job=%s parts=%s winner=%s elapsed=%.2fs',batch_id,item['job']['name'],
+             result['split_parts'],result.get('race_winner') or '-',result.get('elapsed') or 0)
    with active_workers_lock:active_workers.pop(slot,None)
    del active[slot]
    if queue and not cancel_requested.is_set():start_one(slot)
@@ -3513,13 +3608,15 @@ def column_plan():
                 throughput=tp,breakeven_fixed_share=breakeven,duplicates=dupes,link=link,
                 useful_parts=split_useful_parts(link),runtime_split=runtime_split)
 
-def _spawn_split_parts(job,cfg,user,pw,server,work,jobs_spec,timeout=1800):
- """パートを独立プロセスで同時に走らせる。戻り値は投入順の結果一覧。
+def _spawn_racers(job,cfg,user,pw,server,work,jobs_spec,timeout=1800,stop_when=None):
+ """指定した取り方を独立プロセスで同時に起こし、終わった順に結果を集める。
 
- 応答が返らないパートがあると影実行そのものが返らなくなるため、必ず時間制限をつける。
- 制限を超えたパートは終了させ、失敗として扱う（公開はしないので影響は試行の中だけ）。
+ 終わった順が要るのは競争のためだけではない。どのパートが足を引っ張ったかも、これで分かる。
+ stop_when(done) が True を返した時点で、残っているプロセスは中断して打ち切る。
+ 中断されたプロセスの結果は ok=False / aborted=True で返す（失敗ではなく、要らなくなっただけ）。
+ 応答が返らないものがあると呼び出し側が返らなくなるため、必ず時間制限もつける。
  """
- procs=[];deadline=time.perf_counter()+max(60,int(timeout))
+ procs=[];started=time.perf_counter();deadline=started+max(60,int(timeout))
  for spec in jobs_spec:
   d=work/f'part{spec["index"]}';d.mkdir(parents=True,exist_ok=True)
   payload={'job':job,'cfg':cfg,'user':user,'password':pw,'server':server,
@@ -3528,20 +3625,47 @@ def _spawn_split_parts(job,cfg,user,pw,server,work,jobs_spec,timeout=1800):
   env=os.environ.copy();env['NAVI_WORKER_RESULT']=str(d/'result.json');env['NAVI_WORKER_LINE']=spec['label']
   env['NAVI_WORKER_SPAWN_AT']=repr(time.time())
   flags=getattr(subprocess,'CREATE_NO_WINDOW',0)
-  procs.append((spec,subprocess.Popen([sys.executable,str(BASE/'api_worker.py'),str(pp)],cwd=str(BASE),env=env,creationflags=flags),d/'result.json'))
- out=[]
- for spec,proc,rp in procs:
-  remain=deadline-time.perf_counter()
-  try:
-   rc=proc.wait(timeout=max(1,remain))
-  except subprocess.TimeoutExpired:
-   proc.kill()
-   try:proc.wait(timeout=10)
-   except Exception:pass
-   log.warning('SPLIT_PART_TIMEOUT part=%s timeout=%ss',spec['label'],timeout)
-   out.append({'ok':False,'part':spec['label'],'error':f'{timeout}秒を超えたため中止しました'});continue
-  out.append(_read_worker_json(rp,{'ok':False,'part':spec['label'],'error':f'Worker終了コード {rc}'}))
- return out
+  procs.append({'spec':spec,'proc':subprocess.Popen([sys.executable,str(BASE/'api_worker.py'),str(pp)],cwd=str(BASE),env=env,creationflags=flags),
+                'result':d/'result.json','done':False})
+ done={};order=0
+ while any(not p['done'] for p in procs):
+  now=time.perf_counter()
+  for p in procs:
+   if p['done']:continue
+   rc=p['proc'].poll()
+   if rc is None:
+    if now>deadline:
+     _kill_proc(p['proc'])
+     log.warning('SPLIT_PART_TIMEOUT part=%s timeout=%ss',p['spec']['label'],timeout)
+     p['done']=True;order+=1
+     done[p['spec']['label']]=dict(ok=False,part=p['spec']['label'],group=p['spec'].get('group',''),
+                                   error=f'{timeout}秒を超えたため中止しました',order=order,finished_at=round(now-started,2))
+    continue
+   p['done']=True;order+=1
+   r=_read_worker_json(p['result'],{'ok':False,'part':p['spec']['label'],'error':f'Worker終了コード {rc}'})
+   r['group']=p['spec'].get('group','');r['order']=order;r['finished_at']=round(now-started,2)
+   done[p['spec']['label']]=r
+  if stop_when and done and stop_when(list(done.values())):
+   for p in procs:
+    if p['done']:continue
+    _kill_proc(p['proc']);p['done']=True
+    done[p['spec']['label']]=dict(ok=False,aborted=True,part=p['spec']['label'],group=p['spec'].get('group',''),
+                                  error='先に決着がついたため中断しました',finished_at=round(time.perf_counter()-started,2))
+   break
+  if any(not p['done'] for p in procs):time.sleep(0.2)
+ return [done[s['label']] for s in jobs_spec]
+
+def _kill_proc(proc):
+ try:proc.terminate()
+ except Exception:pass
+ try:proc.wait(timeout=10)
+ except Exception:
+  try:proc.kill()
+  except Exception:pass
+
+def _spawn_split_parts(job,cfg,user,pw,server,work,jobs_spec,timeout=1800):
+ """パートを同時に走らせ、全部そろうのを待つ。戻り値は投入順の結果一覧。"""
+ return _spawn_racers(job,cfg,user,pw,server,work,jobs_spec,timeout)
 
 def _split_trial_run(data,c,job):
  """列分割を影実行して、分割なしの結果とバイト比較する。公開はしない。
@@ -3612,11 +3736,28 @@ def _split_trial_run(data,c,job):
           rp,job['name'],len(plan),len(columns),len(removable),len(keys),split_transfer_ratio(columns,removable,len(plan)))
  try:
   # 1) 分割なし。比較の基準であり、所要時間の基準でもある。
-  split_trial_stage(f'分割なしを実行中（{len(plan)}分割と比較します）',parts=len(plan))
   base_csv=work/'normal.csv';t=time.perf_counter()
   trial_timeout=int(c['settings'].get('split_trial_timeout_seconds',1800) or 1800)
-  base=_spawn_split_parts(job,c,user,pw,server,work,[{'index':0,'label':'分割なし','drop':[],'out_csv':base_csv}],trial_timeout)[0]
-  normal_elapsed=time.perf_counter()-t
+  race=bool(data.get('race'));results=None;split_run=None
+  part_specs=[{'index':p['index'],'label':f'パート{p["index"]}/{len(plan)}','group':'split',
+               'drop':p['drop'],'out_csv':work/f'part{p["index"]}.csv'} for p in plan]
+  if race:
+   # 同じ回線を奪い合わせて、実際に何秒で決着するかを測る。どちらも最後まで走らせる。
+   # 途中で打ち切ると「負けた方が何秒かかったか」が分からず、比較にならない。
+   log.info('SPLIT_TRIAL_RACE rne=%s racers=%s（分割なし1本 ＋ %s分割）',rp,len(plan)+1,len(plan))
+   split_trial_stage(f'競争中: 分割なし1本 対 {len(plan)}分割（同時に{len(plan)+1}プロセス）',parts=len(plan))
+   allr=_spawn_racers(job,c,user,pw,server,work,
+                      [{'index':0,'label':'分割なし','group':'normal','drop':[],'out_csv':base_csv}]+part_specs,trial_timeout)
+   base=next((r for r in allr if r.get('group')=='normal'),{})
+   results=[r for r in allr if r.get('group')=='split']
+   normal_elapsed=base.get('finished_at') or (time.perf_counter()-t)
+   split_run=max((r.get('finished_at') or 0) for r in results) if results else 0
+   log.info('SPLIT_TRIAL_RACE_ORDER rne=%s %s',rp,' / '.join(
+    f"{r.get('part')}={r.get('finished_at')}s" for r in sorted(allr,key=lambda r:r.get('finished_at') or 0)))
+  else:
+   split_trial_stage(f'分割なしを実行中（{len(plan)}分割と比較します）',parts=len(plan))
+   base=_spawn_split_parts(job,c,user,pw,server,work,[{'index':0,'label':'分割なし','drop':[],'out_csv':base_csv}],trial_timeout)[0]
+   normal_elapsed=time.perf_counter()-t
   if not base.get('ok'):return dict(ok=False,error=f'分割なしの実行に失敗しました: {base.get("error")}')
   # 列の並び順は、たった今実行した「分割なし」の見出し行を正とする。
   # 直近の出力ファイルはRNEを差し替えた直後だと古く、列数が食い違う（178対177）。
@@ -3639,12 +3780,12 @@ def _split_trial_run(data,c,job):
    save_column_cache(rp,columns,rows=base.get('rows'),source='trial',job=job)
    # 追加された列は分類が無いので固定列として扱う（全パートに残る＝結合に影響しない）。
    keys=[c for c in columns if c not in set(removable)]
-  # 2) 分割あり。パートは同時に走らせる。
-  specs=[{'index':p['index'],'label':f'パート{p["index"]}/{len(plan)}','drop':p['drop'],'out_csv':work/f'part{p["index"]}.csv'} for p in plan]
+  # 2) 分割あり。パートは同時に走らせる（競争のときは 1) で一緒に走り終えている）。
   log.info('SPLIT_PLAN rne=%s parts=%s anchors=%s keep=%s bytes=%s',rp,len(plan),anchors or '(なし)',
            [len(p['keep']) for p in plan],[p.get('bytes') for p in plan])
-  split_trial_stage(f'{len(plan)}分割を並列実行中（分割なしは {normal_elapsed:.0f}秒）')
-  t=time.perf_counter();results=_spawn_split_parts(job,c,user,pw,server,work,specs,trial_timeout);split_run=time.perf_counter()-t
+  if results is None:
+   split_trial_stage(f'{len(plan)}分割を並列実行中（分割なしは {normal_elapsed:.0f}秒）')
+   t=time.perf_counter();results=_spawn_split_parts(job,c,user,pw,server,work,part_specs,trial_timeout);split_run=time.perf_counter()-t
   bad=[r for r in results if not r.get('ok')]
   if bad:
    return dict(ok=False,error='分割実行に失敗しました: '+'; '.join(f'{r.get("part")}: {r.get("error")}' for r in bad),
@@ -3678,16 +3819,23 @@ def _split_trial_run(data,c,job):
   metrics={'normal_bytes':base.get('size'),'normal_save':base.get('save_elapsed'),'normal_execute':base.get('execute_elapsed'),
            'parts':[{'bytes':r.get('size'),'save':r.get('save_elapsed'),'execute':r.get('execute_elapsed'),'cols':r.get('cols')} for r in results],
            'fixed_share':(split_payload_profile(columns,removable,weights) or {}).get('fixed_share')}
-  speedup=record_split_trial(rp,job,len(plan),mrows,mcols,normal_elapsed,split_elapsed,identical,detail,metrics)
-  # 一致して、かつ実際に速かった割り当てだけを実運用へ引き渡す。
+  # 競争させた回は、両者が同じ回線を奪い合った値なので、単独で測った値と混ぜてはいけない。
+  # 印を付けて残し、回線の見積もりと速度比の平均からは外す。
+  metrics['race']=race
+  speedup=record_split_trial(rp,job,len(plan),mrows,mcols,normal_elapsed,split_elapsed,identical,
+                             ('race: ' if race else '')+detail,metrics)
+  # 結果が一致した割り当ては、速さに関わらず保存する。「自動」は速さの裏付けも見るが、
+  # 「競争」は速さを問わない（遅ければ競争に負けて捨てられるだけ）。
   # 実行時に測り直さないで済むよう、担当列の割り当てそのものを保存する。
   min_sp=float(c['settings'].get('split_min_speedup',1.05) or 1.05)
   plan_saved=False
-  if identical and speedup and speedup>=min_sp:
-   plan_saved=save_split_plan(rp,columns,len(plan),plan,keys,anchors,speedup,mrows,mcols)
+  if identical:
+   # 競争中の速度比は回線の奪い合いで沈むので、裏付けとしては記録しない（自動には使わせない）。
+   plan_saved=save_split_plan(rp,columns,len(plan),plan,keys,anchors,None if race else speedup,mrows,mcols,
+                              source='race' if race else 'trial')
   else:
-   log.info('SPLIT_PLAN_NOT_SAVED rne=%s parts=%s identical=%s speedup=%s 基準=%.2f倍 実運用には採用しません',
-            rp,len(plan),identical,f'{speedup:.2f}' if speedup else '-',min_sp)
+   log.info('SPLIT_PLAN_NOT_SAVED rne=%s parts=%s identical=%s speedup=%s 結果が一致しないため保存しません',
+            rp,len(plan),identical,f'{speedup:.2f}' if speedup else '-')
   lp=split_link_profile(rp)
   log.info('SPLIT_LINK rne=%s 回線の上限=%s KB/s 直近の単一速度=%s KB/s 伸びしろ=%s倍 有効な分割数=%s 実測=%s',
            rp,lp.get('capacity_kbs'),lp.get('base_kbs'),lp.get('headroom'),split_useful_parts(lp),
@@ -3703,6 +3851,9 @@ def _split_trial_run(data,c,job):
                  normal_size=len(a),merged_size=len(b),results=results,compare=cmp,
                  parts_plan=[{'index':p['index'],'keep':len(p['keep']),'drop':len(p['drop'])} for p in plan],
                  plan_saved=bool(plan_saved),min_speedup=min_sp,split_mode=normalize_split_mode(job.get('split_mode')),
+                 race=race,race_winner=('split' if split_elapsed<normal_elapsed else 'normal') if race else '',
+                 race_order=[{'part':r.get('part'),'at':r.get('finished_at')} for r in
+                             sorted(([base]+list(results)),key=lambda r:r.get('finished_at') or 0)] if race else [],
                  trials=load_split_trials(rp))
  except Exception as e:
   log.exception('SPLIT_TRIAL_FAILED rne=%s',rp)
