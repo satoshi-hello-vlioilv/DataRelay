@@ -323,6 +323,19 @@ class NavigatorApi:
             d.NaviGetControlPointType.argtypes=[L,P,P];d.NaviGetControlPointType.restype=None
         if hasattr(d,'NaviGetNameCP'):
             d.NaviGetNameCP.argtypes=[L,P,L,S];d.NaviGetNameCP.restype=None
+        # 管理ポイントのカテゴリ（=その軸が取り得る値）。行分割の軸をRNEだけから決めるために使う。
+        # (hCPoint, rc, locate, number)
+        if hasattr(d,'NaviGetCategoryNumber'):
+            d.NaviGetCategoryNumber.argtypes=[L,P,L,P];d.NaviGetCategoryNumber.restype=None
+        # (hCPoint, rc, locate, order, master, separator, category)
+        if hasattr(d,'NaviGetCategory'):
+            d.NaviGetCategory.argtypes=[L,P,L,L,L,S,S];d.NaviGetCategory.restype=None
+        # (hCPoint, rc, category, master, disp, order, separator)
+        if hasattr(d,'NaviChangeCategory'):
+            d.NaviChangeCategory.argtypes=[L,P,S,L,L,L,S];d.NaviChangeCategory.restype=None
+        # (hCPoint, rc, locate, condition, fromTime, toTime, reserve)
+        if hasattr(d,'NaviGetPeriod'):
+            d.NaviGetPeriod.argtypes=[L,P,L,P,S,S,S];d.NaviGetPeriod.restype=None
         # データ項目（列）の読み取り。管理ポイント側と同じ呼び出し規約に合わせている。
         if hasattr(d,'NaviGetDataItemNumber'):
             d.NaviGetDataItemNumber.argtypes=[L,P,L,P];d.NaviGetDataItemNumber.restype=None
@@ -632,6 +645,175 @@ class NavigatorApi:
                 is_time=ctype in (NAVI_CONTROLPOINT_TIME,NAVI_CONTROLPOINT_TEMPLATE)
                 out.append({'location':locname,'index':idx,'name':name or f'管理ポイント#{idx+1}','type':ctype,'type_name':CONTROLPOINT_TYPE_NAMES.get(ctype,'不明'),'is_time':is_time})
         return out
+    # ---- 行分割の軸を、RNEだけから決めるための読み取り ------------------------
+    # 出力される列（データ欄）に条件を付けても1行も絞れないことが実測で分かっている。
+    # 絞れるのは管理ポイント（表側・表頭・条件に置かれている軸）で、明細データの問い合わせなら
+    # 表側に必ず1つ以上ある。直近の出力ファイルが無くても、ここから値を読める。
+    def list_control_points(self,h,read_names=True,with_categories=0):
+        """全ての管理ポイントを、置かれている場所ごとに列挙する。
+
+        with_categories を渡すと、その件数までカテゴリ（その軸が取り得る値）も読む。
+        値まで分かれば、直近の出力ファイルに頼らずに行の区切りを決められる。
+        """
+        if not (hasattr(self.dll,'NaviGetControlPointNumber') and hasattr(self.dll,'NaviGetControlPoint2')):
+            raise RuntimeError('このDLLは管理ポイント列挙API（NaviGetControlPointNumber/2）を公開していません')
+        out=[]
+        for locate,locname in ((NAVI_SIDE,'表側'),(NAVI_HEAD,'表頭'),(NAVI_COND,'条件')):
+            rc=ctypes.c_long();num=ctypes.c_long()
+            try:
+                self.dll.NaviGetControlPointNumber(h,ctypes.byref(rc),locate,ctypes.byref(num))
+            except Exception:
+                continue
+            if int(rc.value)!=NAVI_OK:continue
+            for idx in range(int(num.value)):
+                rc2=ctypes.c_long()
+                hcp=int(self.dll.NaviGetControlPoint2(h,ctypes.byref(rc2),locate,idx))
+                if int(rc2.value)!=NAVI_OK or not hcp:continue
+                ctype=None
+                if hasattr(self.dll,'NaviGetControlPointType'):
+                    try:
+                        rc3=ctypes.c_long();tp=ctypes.c_long()
+                        self.dll.NaviGetControlPointType(hcp,ctypes.byref(rc3),ctypes.byref(tp))
+                        if int(rc3.value)==NAVI_OK:ctype=int(tp.value)
+                    except Exception:ctype=None
+                is_time=ctype in (NAVI_CONTROLPOINT_TIME,NAVI_CONTROLPOINT_TEMPLATE)
+                item={'locate':locate,'location':locname,'index':idx,
+                      'name':(self.get_name_cp(hcp) if read_names else '') or f'管理ポイント#{idx+1}',
+                      'type':ctype,'type_name':CONTROLPOINT_TYPE_NAMES.get(ctype,'不明'),'is_time':is_time,
+                      'category_count':None,'categories':[],'category_error':'','period':None}
+                if is_time:
+                    item['period']=self.get_period(hcp)
+                elif with_categories:
+                    n,vals,err=self.list_categories(hcp,limit=int(with_categories))
+                    item['category_count']=n;item['categories']=vals;item['category_error']=err
+                out.append(item)
+        return out
+
+    def category_number(self,h_cp,locate=NAVI_IN_DISP):
+        """その管理ポイントに、いま何件のカテゴリがあるか。"""
+        if not hasattr(self.dll,'NaviGetCategoryNumber'):return None,'no_export'
+        rc=ctypes.c_long();num=ctypes.c_long()
+        self.dll.NaviGetCategoryNumber(int(h_cp),ctypes.byref(rc),int(locate),ctypes.byref(num))
+        if int(rc.value)!=NAVI_OK:
+            code=self.error_code()
+            return None,f'rc=0x{int(rc.value):X} detail=0x{code:X} {ERROR_NAMES.get(code,"NAVI_ERROR_UNKNOWN")}'
+        return int(num.value),''
+
+    def list_categories(self,h_cp,limit=2000,locate=NAVI_IN_DISP):
+        """カテゴリ（その軸が取り得る値）を先頭から limit 件まで読む。
+
+        件数だけは常に返す。8000件を超えるものはDLL側が扱えない（NAVI_ERROR_OVER8000）。
+        """
+        n,err=self.category_number(h_cp,locate)
+        if n is None:return None,[],err
+        if not hasattr(self.dll,'NaviGetCategory'):return n,[],'no_export'
+        vals=[]
+        for i in range(min(int(n),max(0,int(limit)))):
+            try:
+                text,_why=self._out_string(lambda buf,rc,i=i:self.dll.NaviGetCategory(
+                    int(h_cp),ctypes.byref(rc),int(locate),i,NAVI_LABEL,b'\t',buf))
+            except Exception as e:
+                return n,vals,f'{i}件目で失敗: {type(e).__name__}'
+            if text=='':                       # 名前が読めないカテゴリがあっても、そこで止めない
+                continue
+            vals.append(text)
+        return n,vals,''
+
+    def get_period(self,h_cp):
+        """時間型管理ポイントに、いま設定されている期間を読む。等分割の材料にする。"""
+        if not hasattr(self.dll,'NaviGetPeriod'):return None
+        rc=ctypes.c_long();cond=ctypes.c_long()
+        f=ctypes.create_string_buffer(64);t=ctypes.create_string_buffer(64);r=ctypes.create_string_buffer(64)
+        try:
+            self.dll.NaviGetPeriod(int(h_cp),ctypes.byref(rc),NAVI_IN_DISP,ctypes.byref(cond),f,t,r)
+        except Exception:
+            return None
+        if int(rc.value)!=NAVI_OK:return None
+        def txt(b):
+            try:return b.raw.split(b'\x00',1)[0].decode('mbcs',errors='replace')
+            except Exception:return ''
+        return {'condition':int(cond.value),'from':txt(f),'to':txt(t)}
+
+    def control_point_handle(self,h_catalog,spec):
+        """パートを実行するプロセス側で、軸の管理ポイントをもう一度つかむ。
+
+        場所と並び順で引き当て、名前が食い違ったときだけ名前引きへ落とす。
+        """
+        locate=int(spec.get('locate') or NAVI_SIDE);idx=int(spec.get('index') or 0);name=str(spec.get('column') or '')
+        if hasattr(self.dll,'NaviGetControlPoint2'):
+            rc=ctypes.c_long()
+            hcp=int(self.dll.NaviGetControlPoint2(int(h_catalog),ctypes.byref(rc),locate,idx))
+            if int(rc.value)==NAVI_OK and hcp:
+                got=self.get_name_cp(hcp)
+                if not name or not got or got==name:return hcp,f'{spec.get("location","")}#{idx+1}'
+        if name and hasattr(self.dll,'NaviGetControlPoint'):
+            rc=ctypes.c_long()
+            hcp=int(self.dll.NaviGetControlPoint(int(h_catalog),ctypes.byref(rc),_ansi(name),locate,0))
+            if int(rc.value)==NAVI_OK and hcp:return hcp,'名前引き'
+        raise NavigatorApiError('行分割:管理ポイントの取得',NAVI_ERROR,
+                                f'管理ポイント「{name}」（{spec.get("location","")} {idx+1}番目）をつかめませんでした')
+
+    def apply_row_categories(self,h_catalog,spec):
+        """管理ポイントのカテゴリで行を絞る。担当ぶんだけを残し、残りを外す。
+
+        どの渡し方が通るかはDLL任せなので、確からしい順に試して通った形を持ち帰る。
+        1件も絞れていない場合は呼び出し側が行数で見破る（ここでは分からない）。
+        """
+        if not hasattr(self.dll,'NaviChangeCategory'):
+            raise RuntimeError('このDLLは NaviChangeCategory を公開していません')
+        hcp,how=self.control_point_handle(h_catalog,spec)
+        mine=[str(x) for x in (spec.get('values') or [])]
+        others=[str(x) for x in (spec.get('others') or [])]
+        if not mine:
+            raise NavigatorApiError('行分割:カテゴリ',NAVI_ERROR,'この片が担当する値がありません')
+        sep='\t'
+        def change(cat,disp,separator=''):
+            rc=ctypes.c_long()
+            self.dll.NaviChangeCategory(hcp,ctypes.byref(rc),_ansi(cat),NAVI_LABEL,int(disp),0,_ansi(separator))
+            self._check('NaviChangeCategory',rc,f'cat={cat[:40]!r} disp={disp}')
+        forms=[
+            ('まとめて外して担当ぶんを戻す',lambda:(change(sep.join(others+mine),NAVI_IN_NONDISP,sep) if others or mine else None,
+                                                  change(sep.join(mine),NAVI_IN_DISP,sep))),
+            ('担当外を1件ずつ外す',lambda:[change(v,NAVI_IN_NONDISP) for v in others]),
+            ('担当ぶんを対象に指定する',lambda:[self.change_condition_cp(hcp,v,NAVI_IN_TARGET) for v in mine]),
+        ]
+        tried=[]
+        for label,run in forms:
+            try:
+                run()
+                return {'column':spec.get('column',''),'handle':hcp,'form':label,'locate':spec.get('location',''),
+                        'how':how,'tried':tried,'values':len(mine),'others':len(others)}
+            except Exception as e:
+                tried.append(f'{label}: {e}')
+        raise NavigatorApiError('行分割:カテゴリ',NAVI_ERROR,
+                                f'「{spec.get("column","")}」のカテゴリを絞れませんでした。試した形: '+' / '.join(tried))
+
+    def change_condition_cp(self,h_cp,category,target):
+        """管理ポイントを条件として絞る（NaviChangeConditionCP: hCPoint, rc, category, master, target）。"""
+        if not hasattr(self.dll,'NaviChangeConditionCP'):
+            raise RuntimeError('このDLLは NaviChangeConditionCP を公開していません')
+        rc=ctypes.c_long()
+        self.dll.NaviChangeConditionCP(int(h_cp),ctypes.byref(rc),_ansi(category),NAVI_LABEL,int(target))
+        self._check('NaviChangeConditionCP',rc,f'category={str(category)[:40]!r} target={target}')
+        return True
+
+    def apply_row_period(self,h_catalog,spec):
+        """時間型の管理ポイントを、担当する期間だけに絞る（NaviChangePeriod）。
+
+        日付は YYYYMMDD。月度指定のときは末尾2桁が "00" になり、その場合は種別に NAVI_MONTH を渡す。
+        """
+        if not hasattr(self.dll,'NaviChangePeriod'):
+            raise RuntimeError('このDLLは NaviChangePeriod を公開していません')
+        hcp,how=self.control_point_handle(h_catalog,spec)
+        f=str(spec.get('from') or '');t=str(spec.get('to') or '')
+        if not (f and t):raise NavigatorApiError('行分割:期間',NAVI_ERROR,'期間の両端がありません')
+        kind=NAVI_MONTH if f.endswith('00') else NAVI_YMD
+        rc=ctypes.c_long()
+        self.dll.NaviChangePeriod(hcp,ctypes.byref(rc),int(kind),_ansi(f),_ansi(t),_ansi(''))
+        self._check('NaviChangePeriod',rc,f'from={f} to={t} kind={kind}')
+        return {'column':spec.get('column',''),'handle':hcp,'form':'期間で区切る','locate':spec.get('location',''),
+                'how':how,'tried':[],'from':f,'to':t,'kind':kind}
+
     def supports_column_split(self):
         """列分割ができるDLLか。マニュアルに載っている2関数だけで成立する。
 
