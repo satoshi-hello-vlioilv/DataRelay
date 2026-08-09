@@ -1230,6 +1230,7 @@ body > main{max-width:1620px;padding-left:12px;padding-right:12px}
 .split-run-state.is-on b{color:#226b55}
 .split-run-state.is-off{border-left-color:#c0a25a}
 .split-run-state.is-off b{color:#7d642a}
+.trial-race[hidden]{display:none!important}
 .trial-race{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:#5b6f79;white-space:nowrap}
 .trial-race input{margin:0}
 @media(max-width:1080px){.insp{grid-template-columns:1fr}
