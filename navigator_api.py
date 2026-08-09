@@ -417,6 +417,29 @@ class NavigatorApi:
         save_elapsed=self.save_csv(h,path)
         return execute_elapsed+save_elapsed,downloaded,int(number.value)
 
+    def execute_deferred(self,h):
+        """転送せずに問い合わせだけを実行し、返ってくる行数と所要時間を得る。
+
+        NAVI_DOWNLOADLATER は「結果は作るが、まだ送らない」という指定（マニュアル 5.3.6）。
+        つまりここで測れるのは<サーバー側で結果を作るのにかかる時間>だけで、転送は含まれない。
+        通常の実行(NAVI_DOWNLOADNOW)との差が、そのまま転送に費やされている時間になる。
+        受信は始めないので、呼んだあとは terminate_download で必ず降りること。
+        """
+        if not self.supports_header_probe():
+            raise RuntimeError('このDLLは NaviDownLoadData / NaviTerminateDL を公開していません')
+        rc=ctypes.c_long();number=ctypes.c_long();t=time.perf_counter()
+        self.dll.NaviExecuteCatalog(h,ctypes.byref(rc),ctypes.byref(number),NAVI_DOWNLOADLATER,0)
+        self._check('NaviExecuteCatalog(DOWNLOADLATER)',rc)
+        return int(number.value),time.perf_counter()-t
+
+    def terminate_download(self,h):
+        """受信を始めずに降りる。転送は1バイトも発生させない。"""
+        rc=ctypes.c_long()
+        try:
+            self.dll.NaviTerminateDL(h,ctypes.byref(rc));return True
+        except Exception:
+            return False
+
     def dimensions(self,h):
         rc=ctypes.c_long();rows=ctypes.c_long();cols=ctypes.c_long();self.dll.NaviGetRecordNumber(h,ctypes.byref(rc),ctypes.byref(rows));self._check('NaviGetRecordNumber',rc);self.dll.NaviGetFieldNumber(h,ctypes.byref(rc),ctypes.byref(cols));self._check('NaviGetFieldNumber',rc)
         return int(rows.value),int(cols.value)
