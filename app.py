@@ -25,10 +25,17 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.35.1'; APP_VERSION_TITLE='工程の点が光らない不具合'; APP_RELEASED_AT='2026-08-08'
-BUILD_VERSION=f'{APP_VERSION}-dots'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.35.2'; APP_VERSION_TITLE='行分割の条件を実際のAPI引数まで'; APP_RELEASED_AT='2026-08-08'
+BUILD_VERSION=f'{APP_VERSION}-cond'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
+{'version':'1.35.2','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'「行の分割可否を調べる」のボタンが押しても何も起きない不具合を修正しました。1.35.0で画面を詰めた際に、描画の関数ごと消してしまっていました（ボタンだけが残っていました）。ボタンを押すところから確かめるテストを追加しています。',
+'いただいた SymNaviApi.bas の定数で、条件の指定に必要なものがすべて揃いました。区切りの値から NaviChangeConditionDI へ渡す実際の引数まで組み立てて表示します。',
+'condition=NAVI_RANGE(0x2)、range は 先頭が NAVI_UNDER(0x1)・最後が NAVI_OVER(0x4)・間が NAVI_BETWEEN(0x2)。2組目以降の下限は NAVI_NOTINCLUDE(1) にして境目を二重に数えません。',
+'空の値がある列は、1組目の条件に NAVI_NULL(0x4) を足して拾います。これで全組の和がちょうど全体になり、行が落ちません。',
+'NAVI_REPEAT は表側・表頭の繰り返し表示の指定で、保存の追記ではありませんでした（以前の推測は誤りです）。',
+]},
 {'version':'1.35.1','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
 '実行中の行に出る工程の点（接続・問い合わせ・受信・変換・公開）が、灰色のまま光らない不具合を修正しました。',
 '原因は受け渡しです。ワーカーは工程を書き出していましたが、親プロセスが画面へ渡すときに項目を決め打ちで拾い直していたため、あとから増えた工程(phase)と実測かどうか(measured)を捨てていました。',
@@ -1154,6 +1161,39 @@ def range_cuts(info,rows,parts):
          'exact':bool(info.get('exact')),'distinct':info.get('distinct'),
          'order':'numeric' if numeric else 'text'}
 
+def row_condition_calls(cand,include_empty_in=0):
+ """区切りの値から、NaviChangeConditionDI へ渡す実際の引数を組み立てる。
+
+ 定数は SymNaviApi.bas より:
+   condition … NAVI_RANGE(0x2)。空値も拾う組だけ NAVI_NULL(0x4) を足す
+   range     … 先頭は NAVI_UNDER(0x1)、最後は NAVI_OVER(0x4)、間は NAVI_BETWEEN(0x2)
+   lcheck/rcheck … NAVI_INCLUDE(0x0) / NAVI_NOTINCLUDE(0x1)
+
+ 境目を二重に数えないため、2組目以降の下限は「含まない」にする。
+ これで全組の和がちょうど全体になる（重なりも抜けも無い）。空値はどこにも入らないので、
+ include_empty_in で指定した組へ NAVI_NULL を足して拾う。
+ """
+ if not cand or cand.get('method')!='range':return None
+ NAVI_RANGE,NAVI_NULL=0x2,0x4
+ NAVI_UNDER,NAVI_BETWEEN,NAVI_OVER=0x1,0x2,0x4
+ INCLUDE,NOTINCLUDE=0x0,0x1
+ g=cand['groups'];n=len(g);calls=[]
+ for i,part in enumerate(g):
+  first,last=(i==0),(i==n-1)
+  cond=NAVI_RANGE|(NAVI_NULL if cand.get('has_empty') and i==include_empty_in else 0)
+  rng=NAVI_UNDER if first else (NAVI_OVER if last else NAVI_BETWEEN)
+  calls.append({'part':i+1,'column':cand['column'],'condition':cond,'range':rng,
+                'lcheck':(NOTINCLUDE if not first else INCLUDE),
+                'lvalue':'' if first else str(part['from']),
+                'rcheck':INCLUDE,'rvalue':'' if last else str(part['to']),
+                'rows':part['rows'],
+                'text':('≦ '+str(part['to']) if first else
+                        ('＞ '+str(part['from']) if last else
+                         '＞ '+str(part['from'])+' かつ ≦ '+str(part['to'])))
+                       +(' または 空値' if cond&NAVI_NULL else '')})
+ return {'column':cand['column'],'calls':calls,
+         'covers_empty':bool(cand.get('has_empty')),'expected_rows':sum(x['rows'] for x in calls)}
+
 def balance_groups(counts,parts):
  """値を parts 個の組へ、行数がなるべく揃うように配る。重い値から順に軽い組へ入れる。"""
  groups=[[] for _ in range(parts)];load=[0]*parts
@@ -1176,9 +1216,11 @@ def row_split_candidates(path,job,columns,removable,parts=2,max_values=200,top=8
   if name in rem:
    r=range_cuts(info,rows,parts)
    if not r:continue
-   out.append({'column':name,'method':'range','balance':r['balance'],'exact':r['exact'],
+   x={'column':name,'method':'range','balance':r['balance'],'exact':r['exact'],
                'distinct':r['distinct'],'cuts':r['cuts'],'groups':r['groups'],'rows':rows,
-               'order':r['order'],'empty_rows':(info.get('counts') or {}).get('',0)})
+               'order':r['order'],'empty_rows':(info.get('counts') or {}).get('',0)}
+   x['has_empty']=bool(x['empty_rows']);x['api']=row_condition_calls(x)
+   out.append(x)
   else:
    if not info.get('exact'):continue                         # 種類が多すぎる管理ポイントは列挙できない
    counts=info['counts']
