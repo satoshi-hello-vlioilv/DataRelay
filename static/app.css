@@ -157,6 +157,7 @@ body>main{margin-top:0!important;margin-bottom:0!important;align-self:stretch!im
 .cat-dde{background:#eef2f4;color:#425863;font-size:9px}
 .cat-safety{background:#e5f5ef;color:#0b6b4c}
 .cat-version{background:#f1eaf9;color:#5c3f96}
+.cat-docs{background:#e7f0f7;color:#2f5a86}
 .settings-content{min-width:0;overflow:auto}
 .settings-pane{display:none;background:var(--surface);border:1px solid var(--line);border-radius:10px;box-shadow:0 5px 18px #15384d0d;padding:18px}
 .settings-pane.on{display:block}
@@ -1266,3 +1267,69 @@ body > main{max-width:1620px;padding-left:12px;padding-right:12px}
 .trial-parts{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:800;color:#43616b}
 .trial-parts select{width:auto;height:31px;padding:3px 8px;font-size:12px}
 #m-split-trial-result[hidden]{display:none!important}
+
+/* 6: 仕様書ビュー —— 同梱のMarkdownをアプリの中で読む。
+   左に一覧と目次、右に本文。本文だけが縦に伸びるので、長い資料でも見出しを見失わない。 */
+/* 他の設定ブロックは max-width で読みやすい幅に絞ってあるが、
+   仕様書は表とコードが入るので枠いっぱいに広げる。 */
+.settings-pane[data-cat="docs"] .settings-block{max-width:none}
+.doc-shell{display:grid;grid-template-columns:250px minmax(0,1fr);gap:16px;align-items:start}
+.doc-side{display:grid;gap:8px;align-content:start;position:sticky;top:0}
+.doc-side-label{font-size:10px;font-weight:800;color:#8497a0;letter-spacing:.04em}
+.doc-side-label[hidden]{display:none}
+.doc-list{display:grid;gap:6px}
+.doc-item{display:grid;gap:2px;text-align:left;font:inherit;color:#31505d;cursor:pointer;
+  background:#fff;border:1px solid #e0e9ed;border-radius:10px;padding:9px 11px;transition:border-color .15s,background .15s}
+.doc-item:hover:not([disabled]){border-color:#a9cfd8;background:#fbfdfe}
+.doc-item.on{border-color:#0b6570;background:#f2fafb}
+.doc-item[disabled]{opacity:.55;cursor:default}
+.doc-item b{font-size:12.5px;font-weight:800}
+.doc-item small{font-size:10px;color:#8497a0;line-height:1.5}
+.doc-item em{font-style:normal;font-size:9.5px;font-weight:700;color:#93a4ab}
+.doc-toc{display:grid;gap:1px;max-height:52vh;overflow:auto;border-left:2px solid #e4edf0;padding-left:9px}
+.doc-tocitem{font-size:10.5px;color:#6b8089;text-decoration:none;padding:2px 0;line-height:1.4;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.doc-tocitem:hover{color:#0b6570}
+.doc-tocitem.lv1{font-weight:800;color:#31505d;margin-top:4px}
+.doc-tocitem.lv3{padding-left:11px;font-size:10px;color:#8497a0}
+.doc-main{min-width:0;display:grid;gap:8px}
+.doc-head h3{margin:0;font-size:15px;color:#1f4652}
+.doc-source{margin:2px 0 0;font-size:10.5px;color:#6b8089}
+.doc-path{margin:1px 0 0;font-size:10px;color:#a0b0b7;font-family:Consolas,monospace;word-break:break-all}
+.doc-body{max-height:62vh;overflow:auto;border:1px solid #e0e9ed;border-radius:10px;background:#fff;
+  padding:14px 18px;font-size:12px;color:#3d5560;line-height:1.75}
+.doc-body>*:first-child{margin-top:0}
+.md-h{margin:18px 0 7px;color:#1f4652;line-height:1.4;scroll-margin-top:8px}
+.md-h1{font-size:16px;border-bottom:2px solid #dceaee;padding-bottom:6px}
+.md-h2{font-size:14px;border-bottom:1px solid #e6eff2;padding-bottom:4px}
+.md-h3{font-size:12.5px;color:#2f5a86}
+.doc-body h5{margin:12px 0 5px;font-size:12px;color:#43616b}
+.doc-body p{margin:7px 0}
+.doc-body ul,.doc-body ol{margin:6px 0;padding-left:22px}
+.doc-body li{margin:2px 0}
+.doc-body li.md-task{list-style:none;margin-left:-18px}
+.md-check{display:inline-block;width:11px;height:11px;border:1.5px solid #b7c8ce;border-radius:3px;
+  margin-right:7px;vertical-align:-1px}
+.md-check.on{background:#0a7a54;border-color:#0a7a54}
+.doc-body code{background:#f2f7f8;border:1px solid #e2ecef;border-radius:4px;padding:0 4px;
+  font-family:Consolas,"Yu Gothic UI",monospace;font-size:11px;color:#1f5568}
+/* 全体の pre はログ表示用に高さ455pxで固定されている。仕様書のコードは中身ぶんだけにする。 */
+.md-code{height:auto;max-height:none;margin:8px 0;padding:10px 12px;background:#f7fafb;
+  border:1px solid #e2ecef;border-radius:8px;overflow-x:auto;position:relative;line-height:1.6}
+.md-code code{background:none;border:0;padding:0;font-size:11px;color:#2b4a55;white-space:pre}
+.md-code[data-lang]::after{content:attr(data-lang);position:absolute;top:5px;right:9px;
+  font-size:9px;font-weight:800;color:#a5b8bf;letter-spacing:.04em}
+.md-quote{margin:8px 0;padding:6px 0 6px 12px;border-left:3px solid #cfe0e5;color:#6b8089;font-size:11.5px}
+.md-hr{border:0;border-top:1px solid #e6eff2;margin:16px 0}
+.md-tablebox{overflow-x:auto;margin:8px 0}
+.md-table{border-collapse:collapse;font-size:11px;min-width:100%}
+.md-table th,.md-table td{border:1px solid #e2ecef;padding:5px 9px;text-align:left;vertical-align:top}
+.md-table th{background:#f4f9fa;color:#31505d;font-weight:800;white-space:nowrap}
+.md-table td code{white-space:nowrap}
+/* 原本 / 整理 / 要確認 の別は、この資料を読むうえでいちばん大事な区別なので印にする */
+.md-tag{display:inline-block;font-size:9.5px;font-weight:800;border-radius:4px;padding:1px 6px;
+  margin:0 2px;vertical-align:1px;white-space:nowrap}
+.t-orig{background:#e4f4ec;color:#0a7a54}
+.t-plan{background:#eef2f4;color:#5b7c86}
+.t-check{background:#fdf0da;color:#8a6320}
+@media(max-width:1080px){.doc-shell{grid-template-columns:1fr}.doc-side{position:static}}
