@@ -1,5 +1,5 @@
 ﻿from __future__ import annotations
-import atexit, calendar, configparser, csv, gc, json, logging, os, re, shutil, socket, sqlite3, struct, subprocess, sys, tempfile, threading, time, traceback, uuid, webbrowser
+import atexit, calendar, configparser, contextlib, csv, gc, json, logging, os, re, shutil, socket, sqlite3, struct, subprocess, sys, tempfile, threading, time, traceback, uuid, webbrowser
 from collections import deque
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -25,10 +25,17 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.33.1'; APP_VERSION_TITLE='実行直後の実績表示'; APP_RELEASED_AT='2026-08-08'
-BUILD_VERSION=f'{APP_VERSION}-calc'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.34.0'; APP_VERSION_TITLE='実行中の進捗を工程ごとに刻む'; APP_RELEASED_AT='2026-08-08'
+BUILD_VERSION=f'{APP_VERSION}-tick'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
+{'version':'1.34.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'実行中の行が、工程ごとに細かく動くようになりました。これまでは問い合わせ実行と保存の間、合わせて所要の約88%が無変化でした。',
+'保存（受信）中は、出来ていくファイルの大きさを0.4秒ごとに見て「6.8MB / 約11.2MB · 664KB/s · 残り7秒」と実測を出します。バーも実測で伸びます。分割・競争のときは全パートを合算します。',
+'問い合わせ実行中は測れるものが無いため、前回の実績と見比べて「9秒 / 前回 18秒」と出します。これは見当なのでバーを縞模様にし、実測と見分けられるようにしました（影実行のバーと同じ約束）。',
+'工程を5つの点（接続・問い合わせ・受信・変換・公開）で並べ、現在地を光らせます。文字を読まなくても、いまどこかが分かります。',
+'DLLの中で数十秒止まっている間も画面を動かすため、別スレッドから状態だけを書き出す仕掛けを入れました。抽出処理そのものには触れていません（見ているのはファイルの大きさだけで、中身は読みません）。',
+]},
 {'version':'1.33.1','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
 '実行が終わってから一覧に実績（所要・件数・転送量・転送速度）が出るまで、最大60秒かかっていたのを直しました。実績の取得が60秒ごとの定期処理まかせだったためです。1件終わるたびに取りに行くようにしました。',
 'それでも記録の保存と読み直しにわずかな間があるため、その間は「集計中」のバッジを出します。無言のまま待たせません。',
@@ -2425,6 +2432,99 @@ def run_inspect_worker(job,cfg,user,pw,server,want,timeout=180):
   try:shutil.rmtree(work,ignore_errors=True)
   except Exception:pass
 
+# ---- 実行中のラインを動かし続ける ----------------------------------------
+# 問い合わせ実行(NaviExecuteCatalog)と保存(NaviSaveData)は、DLLの中で数十秒止まる。
+# その間、呼び出した側は1行も進めないので、画面は固まって見える。
+# そこで別スレッドから状態だけを書き出す。ctypesはDLL呼び出しのあいだGILを手放すので、
+# 本体が止まっていてもこのスレッドは動ける。抽出そのものには一切触れない。
+
+LINE_STATE={'session':'API接続','execute':'問い合わせ実行','transfer':'受信・保存','convert':'変換・検証','publish':'公開'}
+LINE_PHASES={'session':(5,20),'execute':(20,55),'transfer':(55,80),'convert':(80,92),'publish':(92,100)}
+LINE_STEPS=['session','execute','transfer','convert','publish']
+
+def line_percent(phase,progress=0.0):
+ lo,hi=LINE_PHASES.get(phase,(0,100))
+ return round(lo+(hi-lo)*max(0.0,min(1.0,float(progress or 0))),1)
+
+def fmt_mb(n):
+ n=float(n or 0)
+ return f'{n/1024/1024:.1f}MB' if n>=1024*1024 else f'{max(0,int(n))//1024}KB'
+
+def _line_tick(line,job,phase,make,elapsed,note=''):
+ """別プロセスを待っている側から、1回ぶんの進み具合を書き出す。"""
+ try:
+  prog,detail=make(elapsed)
+  guess=prog is None
+  if guess:prog=min(0.9,elapsed/60.0)
+  update_parallel_line(line,job=job.get('name'),job_id=job.get('id'),state=LINE_STATE.get(phase,phase),
+                       percent=line_percent(phase,prog),detail=(detail+(' · '+note if note else '')),
+                       elapsed=round(elapsed,1),phase=phase,measured=not guess)
+ except Exception:pass
+
+def _split_expect_bytes(job,cfg,rne_path):
+ """分割なしで取ったときのバイト数の見込み。分割の分母を作るのに使う。"""
+ try:
+  m=(load_job_runs().get(job.get('id')) or {}).get('metrics') or {}
+  if m.get('transfer_bytes') and not m.get('split_parts'):return int(m['transfer_bytes'])
+ except Exception:pass
+ try:return split_expected_bytes(rne_path,job,cfg)
+ except Exception:return 0
+
+@contextlib.contextmanager
+def line_ticker(line,job,phase,make,interval=0.4):
+ """DLLが返ってくるまでの間、0.4秒ごとに進み具合を書き出す。
+
+ make(elapsed) は (0..1の進み具合, 画面に出す文字) を返す。測れないときは進み具合に
+ None を返すこと。呼び出し側は「見当」として扱い、工程の9割で頭打ちにする。
+ """
+ stop=threading.Event();started=time.perf_counter()
+ def run():
+  while not stop.wait(interval):
+   try:
+    el=time.perf_counter()-started
+    prog,detail=make(el)
+    guess=prog is None
+    if guess:prog=min(0.9,el/60.0)
+    update_parallel_line(line,job=job.get('name'),job_id=job.get('id'),state=LINE_STATE.get(phase,phase),
+                         percent=line_percent(phase,prog),detail=detail,elapsed=round(el,1),
+                         phase=phase,measured=not guess)
+   except Exception:pass
+ t=threading.Thread(target=run,daemon=True,name=f'tick-{phase}');t.start()
+ try:yield
+ finally:
+  stop.set()
+  try:t.join(timeout=1.0)
+  except Exception:pass
+
+def growing_file_tick(path,expected_bytes,label='受信'):
+ """書き出され続けているファイルの大きさから、進み具合と速さを出す。
+
+ これが唯一の実測。ファイルがまだ無い＝サーバー側の準備中なので、そこは測れないと返す。
+ path はリストでもよい（分割のときは全パートを合算する）。
+ """
+ paths=[path] if isinstance(path,(str,Path)) else list(path or [])
+ def make(elapsed):
+  got=0
+  for x in paths:
+   try:got+=Path(x).stat().st_size
+   except Exception:pass
+  if not got:return None,f'{label}待ち {elapsed:.0f}秒'
+  kbs=got/1024/max(0.1,elapsed)
+  if expected_bytes:
+   prog=min(0.99,got/float(expected_bytes))
+   rest=max(0.0,(expected_bytes-got)/1024/max(1.0,kbs))
+   return prog,f'{fmt_mb(got)} / 約{fmt_mb(expected_bytes)} · {kbs:,.0f}KB/s · 残り{rest:.0f}秒'
+  return None,f'{fmt_mb(got)} · {kbs:,.0f}KB/s'
+ return make
+
+def elapsed_tick(expected_seconds,label,note=''):
+ """測れない工程。前回の実績と見比べて出す。進み具合は None（＝見当）で返す。"""
+ def make(elapsed):
+  if expected_seconds and expected_seconds>0:
+   return min(0.9,elapsed/float(expected_seconds)),f'{label} {elapsed:.0f}秒 / 前回 {float(expected_seconds):.0f}秒'+(f' · {note}' if note else '')
+  return None,f'{label} {elapsed:.0f}秒'+(f' · {note}' if note else '')
+ return make
+
 def process_split_part(j,cfg,user,pw,server,out_csv,drop_columns,part_label=''):
  """列分割の1パートを実行してCSVへ保存する。drop_columns が空なら分割なしの実行。
 
@@ -2516,9 +2616,15 @@ def run_split_extraction(j,cfg,user,pw,server,work,chosen,dest_csv,line='',stats
          'out_csv':Path(work)/f'part{p["index"]}.csv'} for p in parts]
  timeout=int((cfg.get('settings') or {}).get('split_trial_timeout_seconds',1800) or 1800)
  started=time.perf_counter()
- update_parallel_line(line,job=j['name'],job_id=j['id'],state=f'{total}分割で抽出',percent=40,detail=f'{total}プロセス同時')
+ update_parallel_line(line,job=j['name'],job_id=j['id'],state=f'{total}分割で受信',percent=line_percent('transfer',0),
+                      detail=f'{total}プロセス同時',phase='transfer')
  t=phase_log('split_extract',job=j['name'],line=line,parts=total)
- results=_spawn_split_parts(j,cfg,user,pw,server,Path(work),specs,timeout)
+ # パートのファイルを合算して進み具合を出す。1パートが運ぶ割合は分かっているので、見込みも出せる。
+ want=int((_split_expect_bytes(j,cfg,rp) or 0)*split_transfer_ratio(chosen['columns'],[],total)) or 0
+ tick=growing_file_tick([str(x['out_csv']) for x in specs],want)
+ results=_spawn_racers(j,cfg,user,pw,server,Path(work),specs,timeout,
+                       on_tick=lambda el,st:_line_tick(line,j,'transfer',tick,el,
+                                                       f'{sum(1 for x in st if x["done"])}/{total}パート'))
  bad=[r for r in results if not r.get('ok')]
  if bad:raise RuntimeError('分割抽出に失敗: '+'; '.join(f'{r.get("part")}: {r.get("error")}' for r in bad))
  run_elapsed=time.perf_counter()-started
@@ -2566,6 +2672,7 @@ def run_race_extraction(j,cfg,user,pw,server,work,chosen,dest_csv,line='',stats=
  update_parallel_line(line,job=j['name'],job_id=j['id'],state=f'競争（1本 対 {total}分割）',percent=40,
                       detail=f'{total+1}プロセス同時')
  log.info('RACE_START line=%s job=%s rne=%s racers=%s（分割なし1本 ＋ %s分割）',line,j['name'],rp,total+1,total)
+ racetick=growing_file_tick([str(x['out_csv']) for x in specs],0)
  # どちらかの側が出そろった時点で決着。負けた側はそこで降ろす。
  # 分割側はこのあと結合の時間（実測で3〜6秒）を払う。それでも待たせないのは、
  # パートが出そろった時点で分割なしはまだ大きく遅れているため（負けた側だから遅れている）。
@@ -2573,7 +2680,9 @@ def run_race_extraction(j,cfg,user,pw,server,work,chosen,dest_csv,line='',stats=
   if any(r.get('group')=='normal' and r.get('ok') for r in done):return True
   return sum(1 for r in done if r.get('group')=='split' and r.get('ok'))>=total
  t=phase_log('race_extract',job=j['name'],line=line,racers=total+1)
- results=_spawn_racers(j,cfg,user,pw,server,Path(work),specs,timeout,stop_when=settled)
+ results=_spawn_racers(j,cfg,user,pw,server,Path(work),specs,timeout,stop_when=settled,
+                       on_tick=lambda el,st:_line_tick(line,j,'transfer',racetick,el,
+                                                       f'{sum(1 for x in st if x["done"])}/{total+1}本 決着'))
  run_elapsed=time.perf_counter()-started
  normal=next((r for r in results if r.get('group')=='normal'),{})
  pres=[r for r in results if r.get('group')=='split']
@@ -2685,16 +2794,27 @@ def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,
      t=phase_log('api_open_catalog',job=j['name'],line=line_name);handle,api_elapsed=api_client.open_catalog(api_rne);phase_log('api_open_catalog',t,job=j['name'],line=line_name,handle=handle,api_elapsed=f'{api_elapsed:.2f}s',strategy='original_fullpath')
     finally:os.chdir(previous_cwd)
    if (j.get('period') or {}).get('enabled'):update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='期間指定',percent=30,detail='相対期間を適用');apply_dynamic_period(api_client,handle,j,datetime.now(),line=line_name)
-   update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='問い合わせ実行',percent=35,detail='API execute');t=phase_log('api_execute_catalog',job=j['name'],line=line_name);api_number,api_elapsed=api_client.execute(handle);phase_log('api_execute_catalog',t,job=j['name'],line=line_name,number=api_number,api_elapsed=f'{api_elapsed:.2f}s',rows_per_sec=f'{api_number/api_elapsed:.0f}' if api_elapsed>0 else '0')
+   # 前回の実績。工程ごとの見込みに使う（無ければ見当なしで、秒だけを刻む）。
+   _tm=load_rne_timing(rp) or {};_lastrun=(load_job_runs().get(j['id']) or {}).get('metrics') or {}
+   _expect_bytes=int(_lastrun.get('transfer_bytes') or 0) or split_expected_bytes(rp,j,cfg)
+   _expect_rows=_tm.get('rows') or 0
+   update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='問い合わせ実行',percent=line_percent('execute',0),detail='サーバー側で問い合わせを実行中',phase='execute')
+   t=phase_log('api_execute_catalog',job=j['name'],line=line_name)
+   with line_ticker(line_name,j,'execute',elapsed_tick(_tm.get('execute'),'問い合わせ実行',f'前回 {int(_expect_rows):,}件' if _expect_rows else '')):
+    api_number,api_elapsed=api_client.execute(handle)
+   phase_log('api_execute_catalog',t,job=j['name'],line=line_name,number=api_number,api_elapsed=f'{api_elapsed:.2f}s',rows_per_sec=f'{api_number/api_elapsed:.0f}' if api_elapsed>0 else '0')
    t=phase_log('api_get_dimensions',job=j['name'],line=line_name);expected_rows,expected_cols=api_client.dimensions(handle);phase_log('api_get_dimensions',t,job=j['name'],line=line_name,rows=expected_rows,columns=expected_cols)
    api_direct_output=False
    if fmt=='xlsx':
-    update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='XLSX保存',percent=58,detail='直接出力')
+    update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='受信・保存',percent=line_percent('transfer',0),detail='XLSXを直接受信',phase='transfer')
     try:
      if db.exists():
       try:db.unlink()
       except:pass
-     save_wall_started=time.perf_counter();t=phase_log('api_save_xlsx_direct',job=j['name'],line=line_name,target=db,repeat='NAVI_NONREPEAT',ftype='NAVI_XLSX');save_elapsed=api_client.save_xlsx(handle,db);save_wall_elapsed=time.perf_counter()-save_wall_started;phase_log('api_save_xlsx_direct',t,job=j['name'],line=line_name,api_elapsed=f'{save_elapsed:.2f}s',wall_elapsed=f'{save_wall_elapsed:.2f}s',size=db.stat().st_size if db.exists() else 0,throughput_kb_s=f'{(db.stat().st_size/1024/save_wall_elapsed):.1f}' if db.exists() and save_wall_elapsed>0 else '0')
+     save_wall_started=time.perf_counter();t=phase_log('api_save_xlsx_direct',job=j['name'],line=line_name,target=db,repeat='NAVI_NONREPEAT',ftype='NAVI_XLSX')
+     with line_ticker(line_name,j,'transfer',growing_file_tick(db,_expect_bytes)):
+      save_elapsed=api_client.save_xlsx(handle,db)
+     save_wall_elapsed=time.perf_counter()-save_wall_started;phase_log('api_save_xlsx_direct',t,job=j['name'],line=line_name,api_elapsed=f'{save_elapsed:.2f}s',wall_elapsed=f'{save_wall_elapsed:.2f}s',size=db.stat().st_size if db.exists() else 0,throughput_kb_s=f'{(db.stat().st_size/1024/save_wall_elapsed):.1f}' if db.exists() and save_wall_elapsed>0 else '0')
      if not db.is_file() or db.stat().st_size<=0:raise RuntimeError(f'API直接XLSXが作成されませんでした: {db}')
      v=phase_log('api_direct_xlsx_validation',job=j['name'],line=line_name,file=db,mode='fast_header_only');verify_xlsx_fast(db,expected_cols);phase_log('api_direct_xlsx_validation',v,job=j['name'],line=line_name,mode='fast_header_only',rows=expected_rows,columns=expected_cols,size=db.stat().st_size)
      api_direct_output=True;intermediate=db;nr,nc=int(expected_rows),int(expected_cols)
@@ -2705,18 +2825,21 @@ def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,
       if db.exists():db.unlink()
      except:pass
    if not api_direct_output:
-    update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='CSV保存',percent=58,detail='API保存')
+    update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='受信・保存',percent=line_percent('transfer',0),detail='受信待ち',phase='transfer')
     api_csv=dde_work/f'navi_{job_index}_{stamp}.csv'
-    t=phase_log('api_save_csv',job=j['name'],line=line_name);save_elapsed=api_client.save_csv(handle,api_csv);phase_log('api_save_csv',t,job=j['name'],line=line_name,api_elapsed=f'{save_elapsed:.2f}s',**save_metrics(api_csv,save_elapsed,expected_rows))
+    t=phase_log('api_save_csv',job=j['name'],line=line_name)
+    with line_ticker(line_name,j,'transfer',growing_file_tick(api_csv,_expect_bytes)):
+     save_elapsed=api_client.save_csv(handle,api_csv)
+    phase_log('api_save_csv',t,job=j['name'],line=line_name,api_elapsed=f'{save_elapsed:.2f}s',**save_metrics(api_csv,save_elapsed,expected_rows))
     if not api_csv.is_file() or api_csv.stat().st_size<=0:raise RuntimeError(f'API中間CSVが作成されませんでした: {api_csv}')
     intermediate=api_csv
    t=phase_log('api_close_catalog',job=j['name'],line=line_name);api_client.close_catalog();phase_log('api_close_catalog',t,job=j['name'],line=line_name)
-  update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='変換・検証',percent=75,detail=fmt)
+  update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='変換・検証',percent=line_percent('convert',0),detail=f'{fmt.upper()}へ変換中 · {int(expected_rows or 0):,}件',phase='convert')
   if api_direct_output:
    t=phase_log('format_conversion',job=j['name'],line=line_name,format=fmt,mode='api_direct_xlsx');phase_log('format_conversion',t,job=j['name'],line=line_name,format=fmt,mode='api_direct_xlsx',rows=nr,columns=nc)
   else:
    t=phase_log('format_conversion',job=j['name'],line=line_name,format=fmt);nr,nc=export_data(intermediate,db,j,bool(cfg['settings']['reject_zero_rows']),expected_rows,expected_cols);phase_log('format_conversion',t,job=j['name'],line=line_name,format=fmt,rows=nr,columns=nc)
-  update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='公開',percent=90,detail=str(target));t=phase_log('publish',job=j['name'],line=line_name);pub=publish(db,target,backup,int(cfg['settings']['backup_generations']),backup_enabled=bool(cfg['settings'].get('backup_enabled',True)),retention_days=int(cfg['settings'].get('backup_retention_days',30)),generation_limit_enabled=bool(cfg['settings'].get('backup_generation_limit_enabled',True)),backup_mode=str(cfg['settings'].get('backup_mode','generations')));phase_log('publish',t,job=j['name'],line=line_name,published=pub['published'])
+  update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='公開',percent=line_percent('publish',0),detail=f'{Path(target).name} へ公開中',phase='publish');t=phase_log('publish',job=j['name'],line=line_name);pub=publish(db,target,backup,int(cfg['settings']['backup_generations']),backup_enabled=bool(cfg['settings'].get('backup_enabled',True)),retention_days=int(cfg['settings'].get('backup_retention_days',30)),generation_limit_enabled=bool(cfg['settings'].get('backup_generation_limit_enabled',True)),backup_mode=str(cfg['settings'].get('backup_mode','generations')));phase_log('publish',t,job=j['name'],line=line_name,published=pub['published'])
   total=time.perf_counter()-job_started
   update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='完了',percent=100,detail=f'{nr}件/{nc}列',elapsed=round(total,1));log.info('PARALLEL_JOB_RESULT line=%s job=%s format=%s rows=%s columns=%s elapsed=%.2fs target=%s published=%s',line_name,j['name'],fmt,nr,nc,total,target,pub['published'])
   log.info('JOB_PROFILE line=%s job=%s rows=%s columns=%s %s',line_name,j['name'],nr,nc,phase_profile_summary())

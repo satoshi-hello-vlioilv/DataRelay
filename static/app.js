@@ -1,4 +1,4 @@
-const UI_BUILD='1.33.1-calc';
+const UI_BUILD='1.34.0-tick';
 let cfg,editing=null,editingRule=null,sortDir=1,scheduleInfo={},rowLive={},rowQueue={},statusFailCount=0,serverLostShown=false;const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)],E=s=>String(s??'').replace(/[&<>"']/g,x=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[x]));const uid=()=>crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random();function toast(t){$('#toast').textContent=t;$('#toast').style.display='block';setTimeout(()=>$('#toast').style.display='none',2500)}function dirty(){$('#dirty').textContent='未保存の変更があります'}$$('nav button').forEach(b=>b.onclick=()=>{$$('nav button,section').forEach(x=>x.classList.remove('on'));b.classList.add('on');$('#'+b.dataset.p).classList.add('on');if(b.dataset.p==='logs')loadLog();if(b.dataset.p==='calendar')openCalendar();if(b.dataset.p==='viewer')loadViewerJobs()});
 const paths={navigator_api_dll:['Navigator API DLL','file',[['DLLファイル','*.dll'],['すべて','*.*']]],symnavi_exe:['SymNavi.exe','file',[['実行ファイル','*.exe'],['すべて','*.*']]],symnavim_conf:['symnavim.conf','file',[['CONFファイル','*.conf'],['すべて','*.*']]],symnavim_def:['symnavim.def','file',[['DEFファイル','*.def'],['すべて','*.*']]],accdb_template:['ACCDB空テンプレート','file',[['Access Database','*.accdb'],['すべて','*.*']]],rne_folder:['RNE基本フォルダー','folder'],default_output_folder:['既定の出力先','folder'],backup_folder:['バックアップ先','folder']};
 let waitingTimer=null,waitingStarted=0;function currentEngine(){return $('#extract-engine')?.value||cfg?.settings?.extract_engine||'api'}function waitingEngineLabel(context='common'){if(context==='api'||(context==='engine'&&currentEngine()==='api'))return 'NAVIGATOR API';if(context==='dde'||(context==='engine'&&currentEngine()==='dde'))return 'DDE COMPATIBILITY';return 'COMMON OPERATION'}function showWaiting(title='確認中',detail='処理を続行しています...',context='common'){let d=$('#waiting-dialog');$('#waiting-engine').textContent=waitingEngineLabel(context);$('#waiting-title').textContent=title;$('#waiting-detail').textContent=detail;waitingStarted=Date.now();clearInterval(waitingTimer);let tick=()=>{let sec=Math.floor((Date.now()-waitingStarted)/1000);$('#waiting-elapsed').textContent=`経過 ${String(Math.floor(sec/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`};tick();waitingTimer=setInterval(tick,1000);if(!d.open)d.showModal()}function updateWaiting(title,detail,context){if(title)$('#waiting-title').textContent=title;if(detail)$('#waiting-detail').textContent=detail;if(context)$('#waiting-engine').textContent=waitingEngineLabel(context)}function hideWaiting(){clearInterval(waitingTimer);waitingTimer=null;let d=$('#waiting-dialog');if(d?.open)d.close()}async function convertPath(input,mode){showWaiting('パス変換中',mode==='relative'?'アプリフォルダー基準へ変換しています...':'実際の絶対パスを解決しています...');try{let r=await fetch('/api/path-convert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({value:input.value,mode})}),d=await r.json();if(!r.ok)return toast(d.error);input.value=d.value;updatePathBadge(input);dirty()}finally{hideWaiting()}}function updatePathBadge(input){let badge=input.closest('label')?.querySelector('.path-badge');if(!badge)return;let relative=input.value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(input.value);badge.textContent=relative?'相対パス / 基準: アプリフォルダー':'絶対パス';badge.className='path-badge '+(relative?'path-kind-relative':'path-kind-absolute')}function isRelativePath(value){return !!value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(value)}function enhancePathInput(input,kind='folder'){if(!input||input.dataset.pathEnhanced)return;input.dataset.pathEnhanced='1';let tools=document.createElement('div');tools.className='path-tools compact-path-tools';tools.innerHTML='<button type="button" class="pathmode path-toggle" title="絶対パスと相対パスを切り替えます"></button><small class="path-badge"></small>';input.closest('label')?.appendChild(tools);let toggle=tools.querySelector('.path-toggle');function refresh(){let relative=isRelativePath(input.value);toggle.textContent=relative?'相対 → 絶対':'絶対 → 相対';toggle.dataset.mode=relative?'absolute':'relative';updatePathBadge(input)}toggle.onclick=async()=>{await convertPath(input,toggle.dataset.mode);refresh()};input.addEventListener('input',refresh);input._refreshPathControl=refresh;refresh()}async function browse(kind,initial,types){showWaiting('参照画面を準備中','設定中のパスを解決して、その場所から開きます...');try{let url=kind==='folder'?'/api/pick-folder':'/api/pick-file',r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({initial,types})}),d=await r.json();if(!r.ok)toast(d.error);return d.path||''}finally{hideWaiting()}}
@@ -357,7 +357,7 @@ function scheduleRowHtml(j,info){
 }
 function rowProgressCell(j){
  let info=scheduleInfo[j.id];
- return `<div class="rowprogress" data-jobid="${j.id}"><div class="rp-schedule"><div class="rp-plan">${scheduleRowHtml(j,info)}</div>${lastMetricsRow(info,j.id)}</div><div class="rp-live"><div class="rp-live-top"><span class="rp-state"></span><time class="rp-elapsed"></time></div><div class="rp-track"><i class="rp-bar"></i></div><div class="rp-detail"></div></div></div>`;
+ return `<div class="rowprogress" data-jobid="${j.id}"><div class="rp-schedule"><div class="rp-plan">${scheduleRowHtml(j,info)}</div>${lastMetricsRow(info,j.id)}</div><div class="rp-live"><div class="rp-live-top"><span class="rp-state"></span><span class="rp-dots"></span><time class="rp-elapsed"></time></div><div class="rp-track"><i class="rp-bar"></i></div><div class="rp-detail"></div></div></div>`;
 }
 async function loadSchedulePreview(){try{let d=await fetch('/api/schedule-preview').then(r=>r.json());scheduleInfo=Object.fromEntries((d.items||[]).map(x=>[x.id,x]));applyScheduleCells()}catch{}}
 function applyScheduleCells(){$$('.rowprogress').forEach(el=>{if(el.classList.contains('is-running')||el.classList.contains('is-wait')||el.classList.contains('is-done')||el.classList.contains('is-error'))return;let j=cfg?.jobs?.find(x=>x.id===el.dataset.jobid);if(!j)return;let info=scheduleInfo[j.id];
@@ -378,7 +378,7 @@ function applyRowLiveProgress(s){
   (s.parallel_lines||[]).forEach(x=>{if(!x.job_id||!x.job)return;let cls=jobStateClass(x.state);
    if(cls==='is-done'){runCompletedIds.add(x.job_id);runDoneMeta[x.job_id]={cls:'is-done',state:x.state||'完了',detail:x.detail||'処理が完了しました',elapsed:x.elapsed||0,percent:100};}
    else if(cls==='is-error'){runFailedIds.add(x.job_id);runDoneMeta[x.job_id]={cls:'is-error',state:x.state||'失敗',detail:x.detail||'',elapsed:x.elapsed||0,percent:100};}
-   else{runningInfo[x.job_id]={cls:'is-running',state:x.state||'',detail:x.detail||'',elapsed:x.elapsed||0,percent:x.percent||0};}
+   else{runningInfo[x.job_id]={cls:'is-running',state:x.state||'',detail:x.detail||'',elapsed:x.elapsed||0,percent:x.percent||0,phase:x.phase||'',measured:!!x.measured};}
   });
  }else if(s.running&&s.current_job_id){
   let cls=s.step==='error'?'is-error':(s.step==='complete'?'is-done':'is-running');
@@ -425,6 +425,12 @@ function applyRowQueueProgress(d){
  (d.items||[]).forEach(item=>{if(item.state!=='waiting')return;(item.job_ids||[]).forEach(id=>{if(!(id in rowQueue)||item.position<rowQueue[id])rowQueue[id]=item.position})});
  paintRowProgress();
 }
+// 工程を小さな点で並べ、いまどこかを示す。文字を読まなくても位置が分かる。
+const LINE_STEPS=[['session','接続'],['execute','問い合わせ'],['transfer','受信'],['convert','変換'],['publish','公開']];
+function stepDotsHtml(phase){
+ let at=LINE_STEPS.findIndex(x=>x[0]===phase);
+ return LINE_STEPS.map((x,i)=>`<i class="rp-dot${at<0?'':i<at?' done':i===at?' now':''}" title="${x[1]}"></i>`).join('');
+}
 function paintRowProgress(){
  $$('.rowprogress').forEach(el=>{
   let id=el.dataset.jobid,live=rowLive[id];
@@ -433,14 +439,19 @@ function paintRowProgress(){
    el.classList.add(live.cls);
    el.querySelector('.rp-state').textContent=live.state;
    el.querySelector('.rp-elapsed').textContent=live.elapsed?hhmmss(live.elapsed):'';
-   el.querySelector('.rp-bar').style.width=Math.max(0,Math.min(100,Number(live.percent)||0))+'%';
+   let bar=el.querySelector('.rp-bar');
+   bar.style.width=Math.max(0,Math.min(100,Number(live.percent)||0))+'%';
+   // 実測で伸びているのか、経過時間からの見当なのかを見分けられるようにする（影実行のバーと同じ約束）。
+   bar.classList.toggle('guess',live.cls==='is-running'&&live.measured===false);
    el.querySelector('.rp-detail').textContent=live.detail;
+   let dots=el.querySelector('.rp-dots');if(dots)dots.innerHTML=live.cls==='is-running'?stepDotsHtml(live.phase):'';
    el.title='クリックで進捗を表示';
   }else if(rowQueue[id]){
    el.classList.add('is-wait');
    el.querySelector('.rp-state').textContent='実行キュー待ち';
    el.querySelector('.rp-elapsed').textContent='';
    el.querySelector('.rp-bar').style.width='0%';
+   let qd=el.querySelector('.rp-dots');if(qd)qd.innerHTML='';
    el.querySelector('.rp-detail').textContent=`${rowQueue[id]}番目に実行予定`;
    el.title='クリックで進捗を表示';
   }else{
