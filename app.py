@@ -25,10 +25,19 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.36.0'; APP_VERSION_TITLE='行分割・行×列を影実行で測る'; APP_RELEASED_AT='2026-08-08'
-BUILD_VERSION=f'{APP_VERSION}-rowtrial'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.36.1'; APP_VERSION_TITLE='所要時間の内訳を3つに分ける'; APP_RELEASED_AT='2026-08-08'
+BUILD_VERSION=f'{APP_VERSION}-breakdown'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
+{'version':'1.36.1','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'実測により、これまで「転送」と呼んでいたものが2つの別物だと分かりました。内訳を3つに分けて表示します。サーバー側で結果を作る / 受信（回線）/ 整形・書き出し（手元のCPU）です。',
+'重要な訂正: これまで「回線の上限」として使っていた値は、実は回線ではなくDLLのCSV整形速度でした。保存(NaviSaveData)の秒数から求めていたためです。実測では受信331KB/s に対し整形809KB/s で、2.4倍違います。',
+'受信は NaviExecuteCatalog(DOWNLOADNOW) の中で起きています。転送なしの実行(DOWNLOADLATER)との差が受信時間です。SIKALOTでは サーバー側16秒(25%) / 受信34秒(53%) / 整形14秒(22%) でした。',
+'行×列の組み合わせが失敗する不具合を2件修正しました。① 行の条件に使う列が列パートから外れており、条件を付ける相手が見つかりませんでした（NAVI_ERROR_DATAITEM）。この列は全パートに残すようにしました。',
+'② 片側だけの範囲条件（以下 / より大きい）が NAVI_ERROR_VALUE で弾かれていました。列全体の最小と最大を使い、常に両端を埋めた範囲にしました。それでも通らない場合に備え、複数の形を順に試し、通った形をログに残します。',
+'影実行の進捗ログを間引きました。0.4秒ごとに出ていたため1回で数百行になり、肝心の実測値が埋もれていました。工程が変わったときと10秒ごとだけにします。',
+'パートごとのログに、実際の行数と見込みの差、受信と整形それぞれの速度を出します。答え合わせに使えます。',
+]},
 {'version':'1.36.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
 '影実行で「列分割 / 行分割 / 行×列」の3方式を選べるようにしました。理論値と実測を突き合わせるための測定機能です。出力ファイルは更新しません。',
 '行分割は NaviChangeConditionDI の範囲条件で担当する行だけに絞ります。区切りの値は直近の出力から自動で求めます（サーバーには触れずに算出）。',
@@ -1231,23 +1240,22 @@ def row_condition_calls(cand,include_empty_in=0):
  """
  if not cand or cand.get('method')!='range':return None
  NAVI_RANGE,NAVI_NULL=0x2,0x4
- NAVI_UNDER,NAVI_BETWEEN,NAVI_OVER=0x1,0x2,0x4
+ NAVI_BETWEEN=0x2
  INCLUDE,NOTINCLUDE=0x0,0x1
  g=cand['groups'];n=len(g);calls=[]
+ lo=str(g[0]['from']);hi=str(g[-1]['to'])      # 列全体の最小と最大。端の組もこれで挟む。
  for i,part in enumerate(g):
   first,last=(i==0),(i==n-1)
   cond=NAVI_RANGE|(NAVI_NULL if cand.get('has_empty') and i==include_empty_in else 0)
-  rng=NAVI_UNDER if first else (NAVI_OVER if last else NAVI_BETWEEN)
-  calls.append({'part':i+1,'column':cand['column'],'condition':cond,'range':rng,
-                'lcheck':(NOTINCLUDE if not first else INCLUDE),
-                'lvalue':'' if first else str(part['from']),
-                'rcheck':INCLUDE,'rvalue':'' if last else str(part['to']),
+  left=lo if first else str(part['from'])
+  right=hi if last else str(part['to'])
+  calls.append({'part':i+1,'column':cand['column'],'condition':cond,'range':NAVI_BETWEEN,
+                'lcheck':(INCLUDE if first else NOTINCLUDE),'lvalue':left,
+                'rcheck':INCLUDE,'rvalue':right,
                 'rows':part['rows'],
-                'text':('≦ '+str(part['to']) if first else
-                        ('＞ '+str(part['from']) if last else
-                         '＞ '+str(part['from'])+' かつ ≦ '+str(part['to'])))
+                'text':('≧ ' if first else '＞ ')+left+' かつ ≦ '+right
                        +(' または 空値' if cond&NAVI_NULL else '')})
- return {'column':cand['column'],'calls':calls,
+ return {'column':cand['column'],'calls':calls,'low':lo,'high':hi,
          'covers_empty':bool(cand.get('has_empty')),'expected_rows':sum(x['rows'] for x in calls)}
 
 def balance_groups(counts,parts):
@@ -2838,19 +2846,27 @@ def process_split_part(j,cfg,user,pw,server,out_csv,drop_columns,part_label='',r
   if row_condition:
    # 担当する行だけに絞る。ここが効かないと同じ行を何度も取ってしまうので、失敗は必ず例外にする。
    t=time.perf_counter();applied=api.apply_row_condition(handle,row_condition);stage['row_condition']=applied
-   log.info('SPLIT_PART_ROWCOND part=%s 列=%s condition=0x%x range=0x%x 下限=%r(%s) 上限=%r(%s) elapsed=%.2fs',
-            part_label,applied['column'],applied['condition'],applied['range'],
-            row_condition.get('lvalue',''),'含む' if not row_condition.get('lcheck') else '含まない',
-            row_condition.get('rvalue',''),'含む' if not row_condition.get('rcheck') else '含まない',
-            time.perf_counter()-t)
+   log.info('SPLIT_PART_ROWCOND part=%s 列=%s 通った形=%s condition=0x%x range=0x%x 下限=%r(%s) 上限=%r(%s) 見込み行数=%s elapsed=%.2fs',
+            part_label,applied['column'],applied.get('form','?'),applied['condition'],applied['range'],
+            applied.get('lvalue',''),'含む' if not row_condition.get('lcheck') else '含まない',
+            applied.get('rvalue',''),'含む' if not row_condition.get('rcheck') else '含まない',
+            row_condition.get('rows'),time.perf_counter()-t)
+   for x in (applied.get('tried') or []):log.info('SPLIT_PART_ROWCOND_TRIED part=%s %s',part_label,x)
   t=time.perf_counter();rows,_=api.execute(handle);exec_elapsed=time.perf_counter()-t
   expected_rows,expected_cols=api.dimensions(handle)
   t=time.perf_counter();api.save_csv(handle,Path(out_csv));save_elapsed=time.perf_counter()-t
   api.close_catalog()
   size=Path(out_csv).stat().st_size if Path(out_csv).is_file() else 0
   total=time.perf_counter()-started
-  log.info('SPLIT_PART_DONE part=%s dropped=%s rows=%s cols=%s size=%s execute=%.2fs save=%.2fs total=%.2fs',
-           part_label,stage['dropped'],expected_rows,expected_cols,size,exec_elapsed,save_elapsed,total)
+  # 実行(DOWNLOADNOW)にはサーバー側の処理とダウンロードの両方が含まれる。保存は手元の整形。
+  want=(row_condition or {}).get('rows')
+  log.info('SPLIT_PART_DONE part=%s dropped=%s rows=%s%s cols=%s size=%s(%.1fMB) '
+           '実行=%.2fs(サーバー+受信 %.0fKB/s) 保存=%.2fs(整形 %.0fKB/s) 合計=%.2fs',
+           part_label,stage['dropped'],expected_rows,
+           (f'(見込み{want} 差{int(expected_rows)-int(want):+d})' if want else ''),
+           expected_cols,size,size/1024/1024,
+           exec_elapsed,(size/1024/exec_elapsed) if exec_elapsed>0 else 0,
+           save_elapsed,(size/1024/save_elapsed) if save_elapsed>0 else 0,total)
   return {'ok':True,'part':part_label,'file':str(out_csv),'rows':expected_rows,'cols':expected_cols,'size':size,
           'execute_elapsed':round(exec_elapsed,2),'save_elapsed':round(save_elapsed,2),'elapsed':round(total,2),
           'dropped':stage['dropped'],'row_condition':bool(row_condition)}
@@ -4245,8 +4261,18 @@ def _split_trial_run(data,c,job):
                              '「行の分割可否を調べる」で候補を確認してください（範囲で区切れる列が要ります）')
   row_cand=cands[0]
   if not row_cand.get('api'):return dict(ok=False,error='行の条件を組み立てられませんでした')
-  log.info('SPLIT_TRIAL_ROWPLAN rne=%s mode=%s 列=%s 偏り=%s 並び=%s 区切り=%s',
-           rp,mode,row_cand['column'],row_cand['balance'],row_cand.get('order'),row_cand.get('cuts'))
+  log.info('SPLIT_TRIAL_ROWPLAN rne=%s mode=%s 列=%s 偏り=%s 並び=%s 区切り=%s 値域=%r〜%r',
+           rp,mode,row_cand['column'],row_cand['balance'],row_cand.get('order'),row_cand.get('cuts'),
+           row_cand['groups'][0]['from'],row_cand['groups'][-1]['to'])
+  if mode=='grid':
+   # 行の条件を付ける列は、どの列パートにも残す。外してしまうと、そのパートでは
+   # 条件を付ける相手が見つからない（NAVI_ERROR_DATAITEM）。錨と同じ扱いにする。
+   if row_cand['column'] in set(removable) and row_cand['column'] not in anchors:
+    anchors=list(anchors)+[row_cand['column']]
+    # 錨が増えたので列の割り当てを作り直す。ここを忘れると、その列を外したパートが出てしまう。
+    plan,keys=plan_column_split(columns,removable,parts,weights,anchors)
+    log.info('SPLIT_TRIAL_ROWKEEP rne=%s 行の条件に使う列「%s」を全パートに残し、列の割り当てを作り直しました（keep=%s）',
+             rp,row_cand['column'],[len(x['keep']) for x in plan])
  work=LOCAL_RUNTIME/('split_trial_'+datetime.now().strftime('%Y%m%d_%H%M%S'));work.mkdir(parents=True,exist_ok=True)
  user,pw,server,_=creds(resolve_path(c['symnavim_conf']))
  log.info('SPLIT_TRIAL_START rne=%s job=%s mode=%s 列%s分割 行%s分割 columns=%s removable=%s keys=%s transfer_ratio=%.2f',
@@ -4467,8 +4493,13 @@ def split_expected_bytes(rne_path,job,cfg):
  except Exception:pass
  return 0
 
+_split_stage_logged={'text':'','at':0.0}
 def split_trial_stage(stage,phase='',progress=None,**extra):
- """進み具合を書き込む。phase を渡すと、その工程の受け持ち範囲へ progress(0..1)を割り当てる。"""
+ """進み具合を書き込む。phase を渡すと、その工程の受け持ち範囲へ progress(0..1)を割り当てる。
+
+ 画面へは毎回書くが、ログは工程が変わったときと10秒ごとだけにする。0.4秒ごとに出すと
+ 1回の影実行で数百行になり、肝心の実測値が埋もれてしまうため。
+ """
  lo,hi,_=SPLIT_TRIAL_PHASES.get(phase or '',(None,None,''))
  fields=dict(extra)
  if lo is not None:
@@ -4476,7 +4507,9 @@ def split_trial_stage(stage,phase='',progress=None,**extra):
   fields['percent']=round(pct,1);fields['phase']=phase
  with split_trial_lock:
   split_trial_state.update(stage=stage,elapsed=round(time.time()-(split_trial_state.get('started') or time.time()),1),**fields)
- log.info('SPLIT_TRIAL_STAGE %s',stage)
+ head=stage.split('（')[0];now=time.time()
+ if head!=_split_stage_logged['text'] or now-_split_stage_logged['at']>=10:
+  _split_stage_logged.update(text=head,at=now);log.info('SPLIT_TRIAL_STAGE %s',stage)
 
 def split_trial_tick(phase,stage,paths,expected_bytes,elapsed,expected_seconds=None,note=''):
  """走っている最中の進み具合を更新する。
@@ -4544,11 +4577,19 @@ def row_split_plan():
    else:probe_error=ins.get('error') or '内訳を測れませんでした'
   except Exception as e:
    probe_error=str(e);log.exception('ROW_SPLIT_PROBE_FAILED rne=%s',rp)
+ # 前回の実行で運んだバイト数を足す。速度（KB/s）を出すのに要る。
+ lastm=(load_job_runs().get(job['id']) or {}).get('metrics') or {}
+ if timing and lastm.get('transfer_bytes') and not lastm.get('split_parts'):
+  timing=dict(timing,bytes=int(lastm['transfer_bytes']))
  breakdown=row_split_breakdown(timing,deferred)
  if deferred:
-  log.info('ROW_SPLIT_PROBE rne=%s 転送なしの実行=%.2fs 行数=%s / 通常の実行=%ss 保存=%ss → サーバー側=%ss 転送=%ss',
-           rp,deferred['execute_seconds'],deferred['rows'],(timing or {}).get('execute'),(timing or {}).get('save'),
-           breakdown.get('server_seconds'),breakdown.get('transfer_seconds'))
+  # 転送なしの実行は行数を返さない（受信して初めて分かる）。行数は前回の実行の実績を使う。
+  log.info('ROW_SPLIT_PROBE rne=%s 転送なしの実行=%.2fs（返り行数=%s ※受信前なので0のことがある） '
+           '通常の実行=%ss 保存=%ss → サーバー側=%ss 受信=%ss(%s KB/s) 整形=%ss(%s KB/s) 行数=%s',
+           rp,deferred['execute_seconds'],deferred.get('rows'),
+           (timing or {}).get('execute'),(timing or {}).get('save'),
+           breakdown.get('server_seconds'),breakdown.get('download_seconds'),breakdown.get('download_kbs'),
+           breakdown.get('format_seconds'),breakdown.get('format_kbs'),breakdown.get('rows'))
  return jsonify(ok=True,rne=str(rp),job=job['name'],parts=parts,columns=len(columns),fixed=len(fixed),
                 removable_count=len(removable),
                 candidates=(cand or {}).get('candidates',[]),examined=(cand or {}).get('examined',0),
@@ -4566,12 +4607,21 @@ def row_split_breakdown(timing,deferred):
  t=timing or {};ex=float(t.get('execute') or 0);sv=float(t.get('save') or 0);total=ex+sv
  if not total:return {'known':False}
  if not deferred:return {'known':False,'execute':round(ex,2),'save':round(sv,2)}
- srv=max(0.0,min(total,float(deferred.get('execute_seconds') or 0)))
- tr=max(0.0,total-srv)
- return {'known':True,'execute':round(ex,2),'save':round(sv,2),'total':round(total,2),
-         'server_seconds':round(srv,2),'transfer_seconds':round(tr,2),
-         'server_share':round(srv/total,3),'transfer_share':round(tr/total,3),
-         'rows':deferred.get('rows')}
+ srv=max(0.0,min(ex,float(deferred.get('execute_seconds') or 0)))
+ dl=max(0.0,ex-srv)                      # 通常の実行のうち、サーバー側の処理を除いた残り＝受信
+ rows=t.get('rows') or deferred.get('rows') or 0
+ out={'known':True,'execute':round(ex,2),'save':round(sv,2),'total':round(total,2),
+      'server_seconds':round(srv,2),'download_seconds':round(dl,2),'format_seconds':round(sv,2),
+      'server_share':round(srv/total,3),'download_share':round(dl/total,3),'format_share':round(sv/total,3),
+      'rows':rows,
+      # 旧来の呼び出し口。受信＋整形をまとめて「転送」と呼んでいたが、中身は別物なので内訳も返す。
+      'transfer_seconds':round(dl+sv,2),'transfer_share':round((dl+sv)/total,3)}
+ b=t.get('bytes') or 0
+ if b:
+  out['bytes']=int(b)
+  out['download_kbs']=round(b/1024/dl,1) if dl>0 else None
+  out['format_kbs']=round(b/1024/sv,1) if sv>0 else None
+ return out
 
 @app.post('/api/column-split-trial')
 def column_split_trial_start():

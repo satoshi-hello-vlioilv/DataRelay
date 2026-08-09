@@ -745,24 +745,53 @@ class NavigatorApi:
         self._check('NaviChangeConditionDI',rc,f'condition=0x{int(condition):x} range=0x{int(rng):x} l={lvalue!r} r={rvalue!r}')
         return True
 
+    def row_condition_forms(self,spec):
+        """条件の渡し方の候補を、確からしい順に並べる。
+
+        NaviChangeConditionDI の引数の意味は宣言からは完全には読み取れない。実測で
+        NAVI_ERROR_VALUE(0x18) が返る形があるため、いくつか試して通る形を見つける。
+        どれが通ったかはログに残し、以後の設計判断に使う。
+        """
+        cond=int(spec.get('condition') or NAVI_RANGE)
+        lo=str(spec.get('lvalue') or '');hi=str(spec.get('rvalue') or '')
+        lchk=int(spec.get('lcheck') or NAVI_INCLUDE);rchk=int(spec.get('rcheck') or NAVI_INCLUDE)
+        forms=[
+            ('両端で挟む',dict(condition=cond,rng=NAVI_BETWEEN,lcheck=lchk,lvalue=lo,rcheck=rchk,rvalue=hi)),
+            ('両端で挟む(境界を両方含む)',dict(condition=cond,rng=NAVI_BETWEEN,lcheck=NAVI_INCLUDE,lvalue=lo,
+                                              rcheck=NAVI_INCLUDE,rvalue=hi)),
+            ('範囲のみ(condition=RANGE単独)',dict(condition=NAVI_RANGE,rng=NAVI_BETWEEN,lcheck=lchk,lvalue=lo,
+                                                  rcheck=rchk,rvalue=hi)),
+            ('keyに列名を渡す',dict(condition=cond,key='',rng=NAVI_BETWEEN,lcheck=lchk,lvalue=lo,
+                                    rcheck=rchk,rvalue=hi,search=NAVI_COMPLETE,nonmatch=NAVI_NONMATCH)),
+        ]
+        return forms
+
     def apply_row_condition(self,h_catalog,spec):
         """1パートぶんの行の条件を適用する。実行前に呼ぶこと。
 
-        spec は row_condition_calls が組み立てた形（column / condition / range / lcheck / lvalue /
-        rcheck / rvalue）。対象の列が見つからない、または条件を設定できない場合は例外にする。
+        対象の列が見つからない、またはどの形でも条件を設定できない場合は例外にする。
         黙って全件を取ってしまうと、結合したときに行が重複するため。
+        通った形は戻り値の form に入れて持ち帰る（どの渡し方が正解かを実測で確かめるため）。
         """
         if not self.supports_row_split():
             raise RuntimeError('このDLLは NaviChangeConditionDI を公開していません')
         name=str(spec.get('column') or '')
         h=self.get_data_item(h_catalog,name,locate=NAVI_DATA)
         if not h:
-            raise NavigatorApiError('行分割:列の取得',NAVI_ERROR,f'列「{name}」のハンドルが0です')
-        self.change_condition_di(h,int(spec.get('condition') or NAVI_RANGE),
-                                 rng=int(spec.get('range') or 0),
-                                 lcheck=int(spec.get('lcheck') or NAVI_INCLUDE),lvalue=str(spec.get('lvalue') or ''),
-                                 rcheck=int(spec.get('rcheck') or NAVI_INCLUDE),rvalue=str(spec.get('rvalue') or ''))
-        return {'column':name,'handle':h,'condition':int(spec.get('condition') or 0),'range':int(spec.get('range') or 0)}
+            raise NavigatorApiError('行分割:列の取得',NAVI_ERROR,
+                                    f'列「{name}」のハンドルが0です。'
+                                    'この列がパートから外されていると起きます（行の条件に使う列は全パートに残す必要があります）')
+        tried=[]
+        for label,kw in self.row_condition_forms(spec):
+            try:
+                self.change_condition_di(h,**kw)
+                return {'column':name,'handle':h,'form':label,'tried':tried,
+                        'condition':int(kw.get('condition') or 0),'range':int(kw.get('rng') or 0),
+                        'lvalue':kw.get('lvalue',''),'rvalue':kw.get('rvalue','')}
+            except Exception as e:
+                tried.append(f'{label}: {e}')
+        raise NavigatorApiError('行分割:条件の設定',NAVI_ERROR,
+                                f'列「{name}」に条件を設定できませんでした。試した形: '+' / '.join(tried))
 
     def apply_column_split(self,h_catalog,drop_names):
         """担当外の列をカタログから外す。実行前に呼ぶこと。
