@@ -25,10 +25,17 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.35.0'; APP_VERSION_TITLE='行分割の下調べ'; APP_RELEASED_AT='2026-08-08'
-BUILD_VERSION=f'{APP_VERSION}-rows'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.35.1'; APP_VERSION_TITLE='工程の点が光らない不具合'; APP_RELEASED_AT='2026-08-08'
+BUILD_VERSION=f'{APP_VERSION}-dots'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
+{'version':'1.35.1','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'実行中の行に出る工程の点（接続・問い合わせ・受信・変換・公開）が、灰色のまま光らない不具合を修正しました。',
+'原因は受け渡しです。ワーカーは工程を書き出していましたが、親プロセスが画面へ渡すときに項目を決め打ちで拾い直していたため、あとから増えた工程(phase)と実測かどうか(measured)を捨てていました。',
+'拾い直しをやめ、ワーカーが書いた項目はそのまま渡すようにしました。今後項目が増えても落ちません。親が決めるのは所要時間と対象IDだけです。',
+'接続・期間指定の段階にも工程の印を付けたので、実行の最初から点が正しい位置を指します。',
+'画面のテストが実際の経路を通っていなかったため、この不具合を見逃していました。/api/status と同じ形から通しで確かめるテストを追加しています。',
+]},
 {'version':'1.35.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
 '行分割（データを上下に分けて同時に取る）が使えるかどうかを調べる機能を追加しました。対象を編集 → RNEを調べる →「行の分割可否を調べる」。実行も公開も行いません。',
 '分割点は自動で見つけます。直近の出力ファイルを1回読み、どの列をどこで区切ると行数が最も均等になるかを算出します。サーバーには触れません。',
@@ -2923,7 +2930,7 @@ def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,
   common_intermediate='API_DIRECT_XLSX' if fmt=='xlsx' else 'CSV'
   planned=db if fmt=='xlsx' else dde_work/f'navi_{job_index}_{stamp}.csv'
   phase_profile_add('job_preflight',max(0.0,time.perf_counter()-_preflight_started-_pending_elapsed))
-  update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='開始',percent=5,detail=fmt);log.info('PARALLEL_JOB_START line=%s job=%s index=%s/%s format=%s target=%s',line_name,j['name'],job_index,total_jobs,fmt,target)
+  update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='開始',percent=line_percent('session',0),detail=fmt,phase='session');log.info('PARALLEL_JOB_START line=%s job=%s index=%s/%s format=%s target=%s',line_name,j['name'],job_index,total_jobs,fmt,target)
   log.info('PIPELINE job=%s engine=api parallel_line=%s common_intermediate=%s format=%s planned_intermediate=%s converted=%s target=%s',j['name'],line_name,common_intermediate,fmt,planned,db,target)
   # 分割して取るか、そのまま取るか。判断は保存済みの裏付けだけで行い、ここでは測定しない。
   split_used=None;split_reason='';intermediate=None;api_direct_output=False;race_winner='';run_stats={}
@@ -2952,7 +2959,7 @@ def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,
     shutil.rmtree(split_work,ignore_errors=True)
   if intermediate is None:
    _dll_started=time.perf_counter();api_client=NavigatorApi(resolve_path(cfg['symnavi_exe']),log,resolve_path(cfg.get('navigator_api_dll')) if cfg.get('navigator_api_dll') else None,base_dir=BASE);phase_profile_add('api_load_dll',time.perf_counter()-_dll_started)
-   update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='API接続',percent=10,detail='セッション接続');session_started=time.perf_counter();session_elapsed=api_client.open_session(user,pw,server);phase_profile_add('api_open_session',session_elapsed);log.info('PARALLEL_API_SESSION line=%s job=%s dll=%s elapsed=%.2fs is_opened=1',line_name,j['name'],api_client.dll_path,session_elapsed)
+   update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='API接続',percent=line_percent('session',0.4),detail='セッション接続',phase='session');session_started=time.perf_counter();session_elapsed=api_client.open_session(user,pw,server);phase_profile_add('api_open_session',session_elapsed);log.info('PARALLEL_API_SESSION line=%s job=%s dll=%s elapsed=%.2fs is_opened=1',line_name,j['name'],api_client.dll_path,session_elapsed)
    profiles=api_data_source_profiles(resolve_path(cfg['symnavim_conf']))
    if not any(p.get('kind')=='oracle' for p in profiles):
     profiles.insert(0,{'section':'NavigatorCredentialFallback','kind':'oracle','user':user,'password':pw,'server':'','option':'','resource':'','resource_kind':'0','credential_source':'navigator_session'})
@@ -2969,7 +2976,7 @@ def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,
      log.info('APIカタログ読込条件 line=%s dll=%s cwd=%s catalog_full=%s catalog_name=%s extension=%s size=%s mtime_ns=%s strategy=original_fullpath',line_name,api_client.dll_path,os.getcwd(),api_rne,api_rne.name,api_rne.suffix,rne_stat.st_size,rne_stat.st_mtime_ns)
      t=phase_log('api_open_catalog',job=j['name'],line=line_name);handle,api_elapsed=api_client.open_catalog(api_rne);phase_log('api_open_catalog',t,job=j['name'],line=line_name,handle=handle,api_elapsed=f'{api_elapsed:.2f}s',strategy='original_fullpath')
     finally:os.chdir(previous_cwd)
-   if (j.get('period') or {}).get('enabled'):update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='期間指定',percent=30,detail='相対期間を適用');apply_dynamic_period(api_client,handle,j,datetime.now(),line=line_name)
+   if (j.get('period') or {}).get('enabled'):update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='期間指定',percent=line_percent('session',0.9),detail='相対期間を適用',phase='session');apply_dynamic_period(api_client,handle,j,datetime.now(),line=line_name)
    # 前回の実績。工程ごとの見込みに使う（無ければ見当なしで、秒だけを刻む）。
    _tm=load_rne_timing(rp) or {};_lastrun=(load_job_runs().get(j['id']) or {}).get('metrics') or {}
    _expect_bytes=int(_lastrun.get('transfer_bytes') or 0) or split_expected_bytes(rp,j,cfg)
@@ -3061,6 +3068,20 @@ def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,
    except:pass
 
 
+def relay_worker_line(line,job,worker_status,elapsed,pid=0):
+ """ワーカーが書いた状態を、そのまま画面のラインへ渡す。
+
+ 決め打ちで項目を拾い直さないこと。以前ここで列挙していたため、あとから増えた項目
+ （工程の点=phase、実測かどうか=measured）が画面まで届かず、点が光らなかった。
+ 親が決めるのは所要時間と対象IDだけで、あとはワーカーの言うとおりにする。
+ """
+ relay={k:v for k,v in (worker_status or {}).items() if k not in ('line','elapsed','updated_at','job_id')}
+ relay.setdefault('state','処理中');relay.setdefault('percent',0);relay.setdefault('detail','')
+ relay['job']=relay.get('job') or (job or {}).get('name','')
+ if pid:relay.setdefault('pid',pid)
+ update_parallel_line(line,job_id=(job or {}).get('id',''),elapsed=elapsed,**relay)
+ return relay
+
 def _read_worker_json(path,default=None):
  try:return json.loads(Path(path).read_text(encoding='utf-8'))
  except Exception:return default
@@ -3139,7 +3160,8 @@ def run_api_process_batch(jobs,cfg,user,pw,server,dde_work,backup,max_lines,trig
   for slot,item in list(active.items()):
    worker_status=_read_worker_json(item['status'])
    if worker_status:
-    update_parallel_line(item['line'],job=worker_status.get('job') or item['job']['name'],job_id=item['job']['id'],state=worker_status.get('state','処理中'),percent=worker_status.get('percent',0),detail=worker_status.get('detail',''),elapsed=round(time.perf_counter()-item['started'],1),pid=worker_status.get('pid',item['proc'].pid))
+    relay_worker_line(item['line'],item['job'],worker_status,
+                      round(time.perf_counter()-item['started'],1),item['proc'].pid)
    rc=item['proc'].poll()
    if rc is None:continue
    result=_read_worker_json(item['result'],{'ok':False,'job':item['job']['name'],'error':f'Worker終了コード {rc}','elapsed':time.perf_counter()-item['started']})
