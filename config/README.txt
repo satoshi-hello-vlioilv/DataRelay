@@ -207,6 +207,32 @@ NaviToSQLite Minimal
       　 理由を画面に表示します。応答が無い場合も一定時間（既定180秒）で打ち切ります。
   - 通常の実行（抽出・出力・公開）には影響しません。以前から独立プロセスで動いています。
 
+行分割の条件を実際のAPI引数まで（1.35.2）:
+  - 「行の分割可否を調べる」のボタンが、押しても何も起きない不具合を修正しました。
+    1.35.0で画面の高さを詰めた際に、描画の関数と押したときの処理ごと消してしまい、
+    ボタンだけが残っていました。ボタンを押すところから確かめるテストを追加しています。
+
+  - SymNaviApi.bas の定数で、条件の指定に必要なものが揃いました。
+      condition … NAVI_MATCH(0x1) / NAVI_RANGE(0x2) / NAVI_NULL(0x4) / NAVI_EXCEPTNULL(0x8)
+      range     … NAVI_UNDER(0x1) / NAVI_BETWEEN(0x2) / NAVI_OVER(0x4)
+      lcheck,rcheck … NAVI_INCLUDE(0x0) / NAVI_NOTINCLUDE(0x1)
+      search    … NAVI_COMPLETE(0) / NAVI_FROMSTART(1) / NAVI_PARTIAL(2) /
+                  NAVI_FROMEND(3) / NAVI_NOLOAD(4) / NAVI_LIKESEARCH(5)
+
+  - 区切りの値から、NaviChangeConditionDI へ渡す実際の引数まで組み立てて表示します。
+    2分割なら、こうなります。
+      1組目: condition=0x2 range=0x1(以下)      rvalue=区切りの値 rcheck=0(含む)
+      2組目: condition=0x2 range=0x4(より大きい) lvalue=区切りの値 lcheck=1(含まない)
+    2組目の下限を「含まない」にすることで、境目の値を二重に数えません。
+    3分割以上では、真ん中の組が NAVI_BETWEEN(0x2) になります。
+
+  - 空の値がある列は、1組目の条件に NAVI_NULL(0x4) を足して拾います。
+    範囲条件だけでは空値がどの組にも入らず、行が落ちるためです。
+    これで全組の和がちょうど全体になります。
+
+  - 訂正: NAVI_REPEAT(0x4) は表側・表頭の繰り返し表示の指定であって、
+    保存の追記ではありませんでした（1.35.0で推測として書いた内容は誤りです）。
+
 工程の点が光らない不具合（1.35.1）:
   - 実行中の行に出る工程の点（接続・問い合わせ・受信・変換・公開）が、
     灰色のまま光らない不具合を修正しました（1.34.0で入れた表示です）。

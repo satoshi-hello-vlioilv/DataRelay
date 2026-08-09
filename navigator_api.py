@@ -25,6 +25,26 @@ NAVI_COND=0x3
 NAVI_DATA=0x4
 NAVI_IN_DISP=0x0
 NAVI_LABEL=0x0
+# データ項目の集計条件（NaviChangeConditionDI の condition。ビットで組み合わせる）
+NAVI_MATCH=0x1        # 値を指定して一致するものを求める
+NAVI_RANGE=0x2        # 範囲を指定して求める
+NAVI_NULL=0x4         # NULL値
+NAVI_EXCEPTNULL=0x8   # NULL以外すべて
+# 範囲の形（同 range）
+NAVI_UNDER=0x1        # 上限だけ（rvalue 以下）
+NAVI_BETWEEN=0x2      # 下限と上限で挟む
+NAVI_OVER=0x4         # 下限だけ（lvalue 以上）
+# 境界値を含むか（同 lcheck / rcheck）
+NAVI_INCLUDE=0x0
+NAVI_NOTINCLUDE=0x1
+# 一致のさせ方（同 search）
+NAVI_COMPLETE=0x0     # 完全一致
+NAVI_FROMSTART=0x1    # 前方一致
+NAVI_PARTIAL=0x2      # 部分一致
+NAVI_FROMEND=0x3      # 後方一致
+NAVI_NOLOAD=0x4       # データベースから読み込まない
+NAVI_LIKESEARCH=0x5   # LIKE句に指定
+NAVI_NONMATCH=0x2     # 一致しないカテゴリーをロードする（同 nonmatch）
 # 管理ポイントの種類（NaviGetControlPointType）
 NAVI_CONTROLPOINT_MASTER=0x1
 NAVI_CONTROLPOINT_ALLVALUE=0x2
