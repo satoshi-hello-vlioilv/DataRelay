@@ -841,10 +841,6 @@ tr:has(.rowprogress.is-running) td{background:#f6fcfd}tr:has(.rowprogress.is-err
 .period-cp-pick:hover{background:#d8eef1;border-color:#a4d3dc}
 /* RNEの中身を調べる（入力データ欄） */
 .rne-inspect{display:grid;gap:8px;margin-top:2px}
-.rne-inspect-head{display:grid;grid-template-columns:auto minmax(0,1fr);gap:9px;align-items:start}
-.rne-inspect-head button{white-space:nowrap}
-.rne-inspect-head small{font-size:10.5px;color:#7a8b91;line-height:1.5}
-.rne-inspect-head small b{color:#43616b}
 .rne-inspect-result{border:1px solid #dbe7ea;border-radius:8px;background:#f4f9fa;padding:9px 11px;display:grid;gap:8px}
 .ri-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));gap:7px}
 .ri-card{background:#fff;border:1px solid #dbe7ea;border-radius:7px;padding:7px 9px;display:grid;gap:1px}
@@ -1173,31 +1169,70 @@ body > main{max-width:1620px;padding-left:12px;padding-right:12px}
 /* 1: 基本と入出力 —— 名称と用途を上に、入力・出力を左右に並べる */
 .editor-pane[data-etab="basic"] .io-columns{margin-top:10px}
 
-/* 5: RNEを調べる —— 2つの調査を左右に並べ、結果が縦に伸びても片側で完結させる */
-.inspect-lead{margin:0 0 8px;font-size:11.5px;color:#5b6f79;line-height:1.5}
-.inspect-lead b{color:#31505d}
-.split-run-box{background:#f6f9fa;border:1px solid #e0e9ed;border-radius:8px;padding:8px 12px;margin:0 0 10px;display:grid;gap:5px}
-.split-run-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
-.split-run-head b{font-size:12.5px;color:#31505d}
-.split-run-box>small{font-size:11px;color:#5b6f79;line-height:1.6}
-.split-run-state{border-left:3px solid #cdd9de;padding:5px 0 5px 10px;font-size:11.5px;color:#5b6f79;line-height:1.5;
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}   /* 1行に収める。詳細はマウスで出す */
+/* 5: RNEを調べる —— 左に手順のレール、右にその手順の中身。
+   機能を足すたびにボタンと説明が並んで散らかっていたので、
+   ①中身を読む ②分け方を探す ③速さを試す ④本番の動作 の順に畳み直した。
+   画面に同時に出る操作は1手順ぶんだけになる。 */
+.insp{display:grid;grid-template-columns:238px minmax(0,1fr);gap:16px;align-items:start}
+.insp-rail{display:grid;gap:6px;align-content:start}
+.insp-step{display:grid;grid-template-columns:26px minmax(0,1fr);gap:1px 10px;align-items:center;
+  text-align:left;font:inherit;color:#31505d;background:#fff;border:1px solid #e0e9ed;border-radius:10px;
+  padding:9px 11px;cursor:pointer;transition:border-color .15s,background .15s,box-shadow .15s}
+.insp-step:hover{border-color:#a9cfd8;background:#fbfdfe}
+.insp-step.on{border-color:#0b6570;background:#f2fafb;box-shadow:0 1px 0 rgba(11,101,112,.09)}
+.is-no{grid-row:1/3;width:26px;height:26px;border-radius:50%;display:grid;place-items:center;font-style:normal;
+  font-size:12px;font-weight:800;background:#eaf2f4;color:#5b7c86;transition:background .15s,color .15s}
+.insp-step.on .is-no{background:#0b6570;color:#fff}
+.insp-step.done .is-no{background:#dff1ea;color:#0a7a54}
+.insp-step.done.on .is-no{background:#0a7a54;color:#fff}
+.is-txt{display:grid;gap:0;min-width:0}
+.is-txt b{font-size:12.5px;font-weight:800;line-height:1.35}
+.is-txt small{font-size:10px;color:#8497a0;line-height:1.35}
+/* 状態はレールに出す。どこまで進んだかを、開かなくても一目で分かるようにするため。 */
+.is-state{grid-column:2;font-style:normal;font-size:10px;font-weight:800;color:#93a4ab;margin-top:2px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.is-state.ok{color:#0a7a54}
+.is-state.ng{color:#b23a30}
+.is-state.run{color:#166b83}
+
+.insp-pane{display:grid;min-width:0}
+.insp-panel{display:none;gap:10px;min-width:0;align-content:start}
+.insp-panel.on{display:grid}
+.ip-head{display:grid;gap:3px}
+.ip-head>b{font-size:13.5px;font-weight:800;color:#1f4652}
+.ip-head small{font-size:11px;color:#6b8089;line-height:1.65}
+.ip-head small b{color:#31505d}
+.ip-act{display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+  background:#f6f9fa;border:1px solid #e0e9ed;border-radius:10px;padding:9px 11px}
+.ip-act button{white-space:nowrap}
+.ip-hint{font-size:10.5px;color:#8497a0}
+.ip-note{margin:0;font-size:10.5px;color:#7a8b91;line-height:1.65}
+.ip-note b{color:#43616b}
+/* 何も無い枠を空白のまま置くと壊れて見える。何が出るかを先に書いておく。 */
+.ip-empty{margin:0;padding:16px 14px;border:1px dashed #d7e3e8;border-radius:10px;background:#fbfdfe;
+  font-size:11px;color:#93a4ab;text-align:center}
+.ip-empty[hidden]{display:none}
+.ip-seg{display:inline-flex;background:#eef4f6;border:1px solid #dde8ec;border-radius:9px;padding:2px;gap:2px;justify-self:start}
+.ip-seg button{background:transparent;border:0;border-radius:7px;padding:5px 15px;cursor:pointer;
+  font:inherit;font-size:11.5px;font-weight:800;color:#5b7c86;transition:background .15s,color .15s}
+.ip-seg button.on{background:#fff;color:#0b6570;box-shadow:0 1px 2px rgba(20,60,70,.13)}
+.ip-sub{display:none;gap:10px}
+.ip-sub.on{display:grid}
+.insp .ri-chips{max-height:260px}
+
+/* 本番の動作。幅が取れるようになったので、1行に押し込めず全部そのまま見せる。 */
+.split-run-state{display:grid;gap:3px;border-left:3px solid #cdd9de;padding:6px 0 6px 11px}
+.split-run-state b{font-size:12px;font-weight:800;color:#43616b;line-height:1.5}
+.split-run-state span{font-size:10.5px;color:#8497a0;line-height:1.55}
 .split-run-state.is-on{border-left-color:#2e8b6f}
 .split-run-state.is-on b{color:#226b55}
 .split-run-state.is-off{border-left-color:#c0a25a}
+.split-run-state.is-off b{color:#7d642a}
 .trial-race{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:#5b6f79;white-space:nowrap}
 .trial-race input{margin:0}
-.inspect-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px 16px;align-items:start}
-.inspect-grid>.rne-inspect-head{margin:0}
-.inspect-grid>.rne-inspect-head:nth-of-type(1){grid-column:1;grid-row:1}
-.inspect-grid>#m-rne-inspect-result{grid-column:1;grid-row:2}
-.inspect-grid>.rne-inspect-head:nth-of-type(2){grid-column:2;grid-row:1}
-.inspect-grid>#m-column-plan-result{grid-column:2;grid-row:2}
-.inspect-grid .rne-inspect-head{display:grid;grid-template-columns:1fr;gap:5px;align-content:start;background:#f6f9fa;border:1px solid #e0e9ed;border-radius:8px;padding:8px 10px}
-.inspect-grid .rne-inspect-head button{justify-self:start}
-.inspect-grid .ri-chips{max-height:260px}
-@media(max-width:1080px){.inspect-grid{grid-template-columns:1fr}
- .inspect-grid>*{grid-column:1!important;grid-row:auto!important}}
+@media(max-width:1080px){.insp{grid-template-columns:1fr}
+ .insp-rail{grid-template-columns:repeat(4,1fr);gap:6px}
+ .is-state{display:none}}
 
 /* hidden属性は display:none を意味するが、クラス側の display 指定に負けて表示され続けていた。
    バッジや結果パネルが空のまま出ていた原因。属性がある間は必ず隠す。 */
@@ -1227,7 +1262,7 @@ body > main{max-width:1620px;padding-left:12px;padding-right:12px}
 /* 実測が始まる前の見当は縞模様にして、確かな値と見分けられるようにする。 */
 .tp-bar.guess{background-image:repeating-linear-gradient(115deg,#8fcbd6 0 7px,#b6dde5 7px 14px);animation:cq-run-move 1.1s linear infinite;background-size:200% 100%}
 .tp-guess{color:#8a7440}
-.trial-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.trial-parts[hidden]{display:none!important}
 .trial-parts{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:800;color:#43616b}
 .trial-parts select{width:auto;height:31px;padding:3px 8px;font-size:12px}
 #m-split-trial-result[hidden]{display:none!important}
