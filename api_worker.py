@@ -23,11 +23,11 @@ def main():
         atomic_json(os.environ['NAVI_WORKER_RESULT'],result)
         return 0 if result.get('ok') else 2
     if payload.get('split_part'):
-        # 列分割の1パート。担当外の列を外して問い合わせ、CSVへ保存するだけを行う。
+        # 分割の1パート。担当外の列を外し、担当する行だけに絞って問い合わせ、CSVへ保存する。
         from app import process_split_part
         sp=payload['split_part']
         result=process_split_part(payload['job'],payload['cfg'],payload['user'],payload['password'],payload['server'],
-                                  Path(sp['out_csv']),sp.get('drop') or [],sp.get('label') or '')
+                                  Path(sp['out_csv']),sp.get('drop') or [],sp.get('label') or '',sp.get('row'))
         atomic_json(os.environ['NAVI_WORKER_RESULT'],result)
         return 0 if result.get('ok') else 2
     from app import process_api_parallel_job

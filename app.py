@@ -25,10 +25,18 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.35.2'; APP_VERSION_TITLE='行分割の条件を実際のAPI引数まで'; APP_RELEASED_AT='2026-08-08'
-BUILD_VERSION=f'{APP_VERSION}-cond'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.36.0'; APP_VERSION_TITLE='行分割・行×列を影実行で測る'; APP_RELEASED_AT='2026-08-08'
+BUILD_VERSION=f'{APP_VERSION}-rowtrial'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
+{'version':'1.36.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'影実行で「列分割 / 行分割 / 行×列」の3方式を選べるようにしました。理論値と実測を突き合わせるための測定機能です。出力ファイルは更新しません。',
+'行分割は NaviChangeConditionDI の範囲条件で担当する行だけに絞ります。区切りの値は直近の出力から自動で求めます（サーバーには触れずに算出）。',
+'行×列は、行の各組について列の各パートを作ります。片の数は 行×列 です。結合は、行の組ごとに横へつないでから縦に積みます。',
+'行の結合は縦に積むだけです。値の突き合わせが要らないぶん、列分割の結合（実測3.65〜5.54秒）よりずっと安く済みます。',
+'種類の違う試行は混ぜません。「列2分割」と「行2分割」は意味が違うため、速度比の平均には列分割だけを使います。',
+'本番の実行はこれまで通り列分割のみです。行分割・行×列は測定のみで、割り当ての保存もしません。',
+]},
 {'version':'1.35.2','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
 '「行の分割可否を調べる」のボタンが押しても何も起きない不具合を修正しました。1.35.0で画面を詰めた際に、描画の関数ごと消してしまっていました（ボタンだけが残っていました）。ボタンを押すところから確かめるテストを追加しています。',
 'いただいた SymNaviApi.bas の定数で、条件の指定に必要なものがすべて揃いました。区切りの値から NaviChangeConditionDI へ渡す実際の引数まで組み立てて表示します。',
@@ -976,6 +984,54 @@ class SplitRowsetMismatch(ValueError):
  def __init__(self,message,first_rows=0,other_rows=0,part=''):
   super().__init__(message);self.first_rows=first_rows;self.other_rows=other_rows;self.part=part
 
+def merge_row_parts(part_files,dest,encoding='cp932'):
+ """行分割の結果を縦に積む。見出しは1回だけ書く。
+
+ 列分割の突き合わせと違い、こちらは値を照合しない。行は重複しないので、順に足すだけでよい。
+ そのぶん安い（実測で3.65〜5.54秒かかっていた結合が、ほぼ只になる）。
+ ただし見出しが1つでも食い違えば、列の対応が崩れているので必ず例外にする。
+ """
+ files=[Path(x) for x in part_files]
+ if not files:raise ValueError('結合するパートがありません')
+ head=None;rows=0
+ dest=Path(dest);dest.parent.mkdir(parents=True,exist_ok=True)
+ with dest.open('w',encoding=encoding,newline='') as out:
+  w=csv.writer(out)
+  for i,f in enumerate(files):
+   with f.open('r',encoding=encoding,newline='') as h:
+    rd=csv.reader(h);hd=next(rd,None)
+    if hd is None:raise ValueError(f'{f.name} が空です')
+    if head is None:
+     head=hd;w.writerow(head)
+    elif hd!=head:
+     raise ValueError(f'{f.name} の見出しが1つ目と違います（{len(hd)}列 対 {len(head)}列）。'
+                      '行分割では全パートが同じ列を返すはずです')
+    for r in rd:
+     w.writerow(r);rows+=1
+ return rows,len(head or [])
+
+def plan_row_split(cand,parts):
+ """行分割の割り当て。候補（範囲の区切り）から、パートごとの条件を作る。"""
+ calls=(row_condition_calls(cand) or {}).get('calls') or []
+ if len(calls)!=parts:return None
+ return [{'index':i+1,'row':c,'expect_rows':c['rows']} for i,c in enumerate(calls)]
+
+def plan_grid_split(cand,row_parts,column_plan):
+ """行×列の組み合わせ。行の各組について、列の各パートを作る。
+
+ 片の数は row_parts × 列パート数。1片が運ぶ量は「行の割合 × 列の割合」まで小さくなるが、
+ 固定列は列パートごとに複製されるので、合計で運ぶ量は列分割と同じだけ増える。
+ そこが行だけで分けたときとの違いで、まさにそれを測りたい。
+ """
+ rows=plan_row_split(cand,row_parts)
+ if not rows or not column_plan:return None
+ out=[]
+ for r in rows:
+  for c in column_plan:
+   out.append({'index':len(out)+1,'row_group':r['index'],'col_group':c['index'],
+               'row':r['row'],'drop':list(c.get('drop') or []),'keep':list(c.get('keep') or [])})
+ return out
+
 def duplicate_columns(columns):
  """同じ名前が2回以上現れる列を返す。
 
@@ -1642,7 +1698,8 @@ def load_split_trials(rne_path=None):
  """
  try:
   with settings_connection() as c:
-   q="SELECT parts,observed_speedup FROM split_trials WHERE identical=1 AND observed_speedup IS NOT NULL AND detail NOT LIKE 'race:%'"
+   q=("SELECT parts,observed_speedup FROM split_trials WHERE identical=1 AND observed_speedup IS NOT NULL"
+      " AND detail NOT LIKE 'race:%' AND detail NOT LIKE 'row:%' AND detail NOT LIKE 'grid:%'")
    rows=list(c.execute(q+' AND rne_key=?',(_rne_key(rne_path),))) if rne_path else list(c.execute(q))
  except Exception:
   return []
@@ -2750,8 +2807,11 @@ def elapsed_tick(expected_seconds,label,note=''):
   return None,f'{label} {elapsed:.0f}秒'+(f' · {note}' if note else '')
  return make
 
-def process_split_part(j,cfg,user,pw,server,out_csv,drop_columns,part_label=''):
- """列分割の1パートを実行してCSVへ保存する。drop_columns が空なら分割なしの実行。
+def process_split_part(j,cfg,user,pw,server,out_csv,drop_columns,part_label='',row_condition=None):
+ """1パートを実行してCSVへ保存する。担当外の列を外し、担当する行だけに絞る。
+
+ drop_columns も row_condition も空なら、分割なしの実行になる。
+ 両方を指定すれば「行も列も分けた1片」になり、行×列の組み合わせがそのまま作れる。
 
  通常の実行経路とは分けてある。ここは比較のための素の実行だけを行い、
  出力形式の変換も公開も行わない。RNEファイルは変更しない。
@@ -2775,6 +2835,14 @@ def process_split_part(j,cfg,user,pw,server,out_csv,drop_columns,part_label=''):
   if drop_columns:
    t=time.perf_counter();removed=api.apply_column_split(handle,drop_columns);stage['dropped']=len(removed)
    log.info('SPLIT_PART_REMOVE part=%s removed=%s elapsed=%.2fs',part_label,len(removed),time.perf_counter()-t)
+  if row_condition:
+   # 担当する行だけに絞る。ここが効かないと同じ行を何度も取ってしまうので、失敗は必ず例外にする。
+   t=time.perf_counter();applied=api.apply_row_condition(handle,row_condition);stage['row_condition']=applied
+   log.info('SPLIT_PART_ROWCOND part=%s 列=%s condition=0x%x range=0x%x 下限=%r(%s) 上限=%r(%s) elapsed=%.2fs',
+            part_label,applied['column'],applied['condition'],applied['range'],
+            row_condition.get('lvalue',''),'含む' if not row_condition.get('lcheck') else '含まない',
+            row_condition.get('rvalue',''),'含む' if not row_condition.get('rcheck') else '含まない',
+            time.perf_counter()-t)
   t=time.perf_counter();rows,_=api.execute(handle);exec_elapsed=time.perf_counter()-t
   expected_rows,expected_cols=api.dimensions(handle)
   t=time.perf_counter();api.save_csv(handle,Path(out_csv));save_elapsed=time.perf_counter()-t
@@ -2784,7 +2852,8 @@ def process_split_part(j,cfg,user,pw,server,out_csv,drop_columns,part_label=''):
   log.info('SPLIT_PART_DONE part=%s dropped=%s rows=%s cols=%s size=%s execute=%.2fs save=%.2fs total=%.2fs',
            part_label,stage['dropped'],expected_rows,expected_cols,size,exec_elapsed,save_elapsed,total)
   return {'ok':True,'part':part_label,'file':str(out_csv),'rows':expected_rows,'cols':expected_cols,'size':size,
-          'execute_elapsed':round(exec_elapsed,2),'save_elapsed':round(save_elapsed,2),'elapsed':round(total,2),'dropped':stage['dropped']}
+          'execute_elapsed':round(exec_elapsed,2),'save_elapsed':round(save_elapsed,2),'elapsed':round(total,2),
+          'dropped':stage['dropped'],'row_condition':bool(row_condition)}
  except Exception as e:
   log.error('SPLIT_PART_FAILED part=%s error=%s',part_label,e)
   return {'ok':False,'part':part_label,'error':str(e),'elapsed':round(time.perf_counter()-started,2)}
@@ -4041,7 +4110,8 @@ def _spawn_racers(job,cfg,user,pw,server,work,jobs_spec,timeout=1800,stop_when=N
  for spec in jobs_spec:
   d=work/f'part{spec["index"]}';d.mkdir(parents=True,exist_ok=True)
   payload={'job':job,'cfg':cfg,'user':user,'password':pw,'server':server,
-           'split_part':{'out_csv':str(spec['out_csv']),'drop':spec['drop'],'label':spec['label']}}
+           'split_part':{'out_csv':str(spec['out_csv']),'drop':spec['drop'],'label':spec['label'],
+                         'row':spec.get('row')}}
   pp=d/'payload.json';pp.write_text(json.dumps(payload,ensure_ascii=False),encoding='utf-8')
   env=os.environ.copy();env['NAVI_WORKER_RESULT']=str(d/'result.json');env['NAVI_WORKER_LINE']=spec['label']
   env['NAVI_WORKER_SPAWN_AT']=repr(time.time())
@@ -4156,17 +4226,50 @@ def _split_trial_run(data,c,job):
                  '直近の出力ファイルがあれば錨を探せます。1回実行してから再度お試しください。',
                  rowset_mismatch=True,known=True)
  if not keys:return dict(ok=False,error='全パートに残る列（結合キー）がないため、結合できません')
+ # 行分割・行×列の組み合わせ。列の割り当てはここまでで出来ているので、行の条件を足す。
+ mode=str(data.get('mode') or 'column').lower()
+ if mode not in ('column','row','grid'):mode='column'
+ row_cand=None;row_parts=max(2,min(4,int(data.get('row_parts') or 2)))
+ if mode in ('row','grid'):
+  try:
+   op=_viewer_output_path(job,c)
+   if not op.is_file():
+    return dict(ok=False,error='行分割には直近の出力ファイルが要ります（区切りの値をそこから求めます）。1回実行してからお試しください')
+   rs=row_split_candidates(op,job,columns,removable,row_parts)
+  except Exception as e:
+   log.exception('SPLIT_TRIAL_ROWCAND_FAILED rne=%s',rp);return dict(ok=False,error=f'行の区切りを求められませんでした: {e}')
+  want=str(data.get('row_column') or '')
+  cands=[x for x in (rs or {}).get('candidates',[]) if x['method']=='range' and (not want or x['column']==want)]
+  if not cands:
+   return dict(ok=False,error=f'{row_parts}分割できる列が見つかりませんでした。'
+                             '「行の分割可否を調べる」で候補を確認してください（範囲で区切れる列が要ります）')
+  row_cand=cands[0]
+  if not row_cand.get('api'):return dict(ok=False,error='行の条件を組み立てられませんでした')
+  log.info('SPLIT_TRIAL_ROWPLAN rne=%s mode=%s 列=%s 偏り=%s 並び=%s 区切り=%s',
+           rp,mode,row_cand['column'],row_cand['balance'],row_cand.get('order'),row_cand.get('cuts'))
  work=LOCAL_RUNTIME/('split_trial_'+datetime.now().strftime('%Y%m%d_%H%M%S'));work.mkdir(parents=True,exist_ok=True)
  user,pw,server,_=creds(resolve_path(c['symnavim_conf']))
- log.info('SPLIT_TRIAL_START rne=%s job=%s parts=%s columns=%s removable=%s keys=%s transfer_ratio=%.2f',
-          rp,job['name'],len(plan),len(columns),len(removable),len(keys),split_transfer_ratio(columns,removable,len(plan)))
+ log.info('SPLIT_TRIAL_START rne=%s job=%s mode=%s 列%s分割 行%s分割 columns=%s removable=%s keys=%s transfer_ratio=%.2f',
+          rp,job['name'],mode,len(plan) if mode!='row' else 1,row_parts if mode!='column' else 1,
+          len(columns),len(removable),len(keys),split_transfer_ratio(columns,removable,len(plan)))
  try:
   # 1) 分割なし。比較の基準であり、所要時間の基準でもある。
   base_csv=work/'normal.csv';t=time.perf_counter()
   trial_timeout=int(c['settings'].get('split_trial_timeout_seconds',1800) or 1800)
   race=bool(data.get('race'));results=None;split_run=None
-  part_specs=[{'index':p['index'],'label':f'パート{p["index"]}/{len(plan)}','group':'split',
-               'drop':p['drop'],'out_csv':work/f'part{p["index"]}.csv'} for p in plan]
+  if mode=='row':
+   rp_plan=plan_row_split(row_cand,row_parts)
+   part_specs=[{'index':x['index'],'label':f'行{x["index"]}/{row_parts}','group':'split','drop':[],
+                'row':x['row'],'row_group':x['index'],'out_csv':work/f'row{x["index"]}.csv'} for x in rp_plan]
+  elif mode=='grid':
+   grid=plan_grid_split(row_cand,row_parts,plan)
+   part_specs=[{'index':g['index'],'label':f'行{g["row_group"]}×列{g["col_group"]}','group':'split',
+                'drop':g['drop'],'row':g['row'],'row_group':g['row_group'],'col_group':g['col_group'],
+                'out_csv':work/f'g{g["row_group"]}_{g["col_group"]}.csv'} for g in grid]
+  else:
+   part_specs=[{'index':p['index'],'label':f'パート{p["index"]}/{len(plan)}','group':'split',
+                'drop':p['drop'],'out_csv':work/f'part{p["index"]}.csv'} for p in plan]
+  pieces=len(part_specs)
   # 進み具合の目安。前回の出力の大きさと、前回の所要時間があれば、それを使う。
   # どちらも無い初回は経過時間だけで見当をつける（バーは9割で止まり、嘘をつかない）。
   expect_bytes=split_expected_bytes(rp,job,c)
@@ -4237,15 +4340,29 @@ def _split_trial_run(data,c,job):
    return dict(ok=False,error='分割実行に失敗しました: '+'; '.join(f'{r.get("part")}: {r.get("error")}' for r in bad),
                   parts=len(plan),results=results)
   # 3) 結合して、分割なしの結果と突き合わせる。
-  split_trial_stage(f'結合中（{len(plan)}パートを横につなぎます）',phase='merge',progress=0)
+  how={'column':f'{pieces}パートを横につなぎます','row':f'{pieces}パートを縦に積みます',
+       'grid':f'{pieces}片を横につないでから縦に積みます'}[mode]
+  split_trial_stage(f'結合中（{how}）',phase='merge',progress=0)
   merged=work/'merged.csv';t=time.perf_counter()
   try:
-   mrows,mcols=merge_column_parts([r['file'] for r in results],merged,keys,columns)
+   if mode=='row':
+    # 行は重複しないので、順に積むだけ。値の突き合わせは要らない。
+    mrows,mcols=merge_row_parts([r['file'] for r in results],merged)
+   elif mode=='grid':
+    # まず行の組ごとに横へつなぎ、そのあと縦に積む。
+    byrow={}
+    for spec,r in zip(part_specs,results):byrow.setdefault(spec['row_group'],[]).append(r['file'])
+    stitched=[]
+    for g in sorted(byrow):
+     out=work/f'rowgroup{g}.csv';merge_column_parts(byrow[g],out,keys,columns);stitched.append(out)
+    mrows,mcols=merge_row_parts(stitched,merged)
+   else:
+    mrows,mcols=merge_column_parts([r['file'] for r in results],merged,keys,columns)
   except SplitRowsetMismatch as me:
    # 列を外すと返る行が変わる問い合わせ。速さ以前に分割が成立しないので、以後は勧めない。
    log.warning('SPLIT_TRIAL_ROWSET_MISMATCH rne=%s parts=%s rows=%s error=%s',rp,len(plan),[r.get('rows') for r in results],me)
-   record_split_trial(rp,job,len(plan),None,None,normal_elapsed,None,False,
-                      detail=f'rowset first={me.first_rows} other={me.other_rows} part={me.part}')
+   record_split_trial(rp,job,pieces,None,None,normal_elapsed,None,False,
+                      detail=f'{mode}: rowset first={me.first_rows} other={me.other_rows} part={me.part}')
    return dict(ok=False,error=str(me),parts=len(plan),results=results,rowset_mismatch=True,
                   part_rows=[{'part':r.get('part'),'rows':r.get('rows'),'cols':r.get('cols')} for r in results],
                   normal_rows=base.get('rows'))
@@ -4268,18 +4385,22 @@ def _split_trial_run(data,c,job):
            'fixed_share':(split_payload_profile(columns,removable,weights) or {}).get('fixed_share')}
   # 競争させた回は、両者が同じ回線を奪い合った値なので、単独で測った値と混ぜてはいけない。
   # 印を付けて残し、回線の見積もりと速度比の平均からは外す。
-  metrics['race']=race
-  speedup=record_split_trial(rp,job,len(plan),mrows,mcols,normal_elapsed,split_elapsed,identical,
-                             ('race: ' if race else '')+detail,metrics)
+  metrics['race']=race;metrics['mode']=mode
+  if mode!='column':metrics['row_column']=row_cand['column'];metrics['row_parts']=row_parts
+  # 種類の違う試行を混ぜない。'列2分割' と '行2分割' は意味が違うので、平均を取ると嘘になる。
+  tag=('race: ' if race else '')+('' if mode=='column' else f'{mode}: ')
+  speedup=record_split_trial(rp,job,pieces,mrows,mcols,normal_elapsed,split_elapsed,identical,tag+detail,metrics)
   # 結果が一致した割り当ては、速さに関わらず保存する。「自動」は速さの裏付けも見るが、
   # 「競争」は速さを問わない（遅ければ競争に負けて捨てられるだけ）。
   # 実行時に測り直さないで済むよう、担当列の割り当てそのものを保存する。
   min_sp=float(c['settings'].get('split_min_speedup',1.05) or 1.05)
   plan_saved=False
-  if identical:
+  if identical and mode=='column':
    # 競争中の速度比は回線の奪い合いで沈むので、裏付けとしては記録しない（自動には使わせない）。
    plan_saved=save_split_plan(rp,columns,len(plan),plan,keys,anchors,None if race else speedup,mrows,mcols,
                               source='race' if race else 'trial')
+  elif identical:
+   log.info('SPLIT_PLAN_NOT_SAVED rne=%s mode=%s 本番の実行はまだ列分割にしか対応していません（測定のみ）',rp,mode)
   else:
    log.info('SPLIT_PLAN_NOT_SAVED rne=%s parts=%s identical=%s speedup=%s 結果が一致しないため保存しません',
             rp,len(plan),identical,f'{speedup:.2f}' if speedup else '-')
@@ -4289,7 +4410,10 @@ def _split_trial_run(data,c,job):
            [(p['parts'],p['base_kbs'],p['aggregate_kbs'],p['sigma']) for p in lp['points']])
   log.info('SPLIT_TRIAL_RESULT rne=%s parts=%s identical=%s normal=%.2fs split=%.2fs(実行%.2fs+結合%.2fs) speedup=%s',
            rp,len(plan),identical,normal_elapsed,split_elapsed,split_run,merge_elapsed,f'{speedup:.2f}' if speedup else '-')
-  return dict(ok=True,rne=str(rp),job=job['name'],parts=len(plan),identical=identical,
+  return dict(ok=True,rne=str(rp),job=job['name'],parts=pieces,identical=identical,mode=mode,
+                 row_parts=row_parts if mode!='column' else 0,column_parts=len(plan) if mode!='row' else 1,
+                 row_column=(row_cand or {}).get('column',''),row_balance=(row_cand or {}).get('balance'),
+                 row_order=(row_cand or {}).get('order',''),row_cuts=(row_cand or {}).get('cuts',[]),
                  rows=mrows,cols=mcols,key_count=len(keys),
                  normal_elapsed=round(normal_elapsed,2),split_elapsed=round(split_elapsed,2),
                  split_run_elapsed=round(split_run,2),merge_elapsed=round(merge_elapsed,2),

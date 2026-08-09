@@ -1,4 +1,4 @@
-const UI_BUILD='1.35.2-cond';
+const UI_BUILD='1.36.0-rowtrial';
 let cfg,editing=null,editingRule=null,sortDir=1,scheduleInfo={},rowLive={},rowQueue={},statusFailCount=0,serverLostShown=false;const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)],E=s=>String(s??'').replace(/[&<>"']/g,x=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[x]));const uid=()=>crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random();function toast(t){$('#toast').textContent=t;$('#toast').style.display='block';setTimeout(()=>$('#toast').style.display='none',2500)}function dirty(){$('#dirty').textContent='未保存の変更があります'}$$('nav button').forEach(b=>b.onclick=()=>{$$('nav button,section').forEach(x=>x.classList.remove('on'));b.classList.add('on');$('#'+b.dataset.p).classList.add('on');if(b.dataset.p==='logs')loadLog();if(b.dataset.p==='calendar')openCalendar();if(b.dataset.p==='viewer')loadViewerJobs()});
 const paths={navigator_api_dll:['Navigator API DLL','file',[['DLLファイル','*.dll'],['すべて','*.*']]],symnavi_exe:['SymNavi.exe','file',[['実行ファイル','*.exe'],['すべて','*.*']]],symnavim_conf:['symnavim.conf','file',[['CONFファイル','*.conf'],['すべて','*.*']]],symnavim_def:['symnavim.def','file',[['DEFファイル','*.def'],['すべて','*.*']]],accdb_template:['ACCDB空テンプレート','file',[['Access Database','*.accdb'],['すべて','*.*']]],rne_folder:['RNE基本フォルダー','folder'],default_output_folder:['既定の出力先','folder'],backup_folder:['バックアップ先','folder']};
 let waitingTimer=null,waitingStarted=0;function currentEngine(){return $('#extract-engine')?.value||cfg?.settings?.extract_engine||'api'}function waitingEngineLabel(context='common'){if(context==='api'||(context==='engine'&&currentEngine()==='api'))return 'NAVIGATOR API';if(context==='dde'||(context==='engine'&&currentEngine()==='dde'))return 'DDE COMPATIBILITY';return 'COMMON OPERATION'}function showWaiting(title='確認中',detail='処理を続行しています...',context='common'){let d=$('#waiting-dialog');$('#waiting-engine').textContent=waitingEngineLabel(context);$('#waiting-title').textContent=title;$('#waiting-detail').textContent=detail;waitingStarted=Date.now();clearInterval(waitingTimer);let tick=()=>{let sec=Math.floor((Date.now()-waitingStarted)/1000);$('#waiting-elapsed').textContent=`経過 ${String(Math.floor(sec/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`};tick();waitingTimer=setInterval(tick,1000);if(!d.open)d.showModal()}function updateWaiting(title,detail,context){if(title)$('#waiting-title').textContent=title;if(detail)$('#waiting-detail').textContent=detail;if(context)$('#waiting-engine').textContent=waitingEngineLabel(context)}function hideWaiting(){clearInterval(waitingTimer);waitingTimer=null;let d=$('#waiting-dialog');if(d?.open)d.close()}async function convertPath(input,mode){showWaiting('パス変換中',mode==='relative'?'アプリフォルダー基準へ変換しています...':'実際の絶対パスを解決しています...');try{let r=await fetch('/api/path-convert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({value:input.value,mode})}),d=await r.json();if(!r.ok)return toast(d.error);input.value=d.value;updatePathBadge(input);dirty()}finally{hideWaiting()}}function updatePathBadge(input){let badge=input.closest('label')?.querySelector('.path-badge');if(!badge)return;let relative=input.value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(input.value);badge.textContent=relative?'相対パス / 基準: アプリフォルダー':'絶対パス';badge.className='path-badge '+(relative?'path-kind-relative':'path-kind-absolute')}function isRelativePath(value){return !!value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(value)}function enhancePathInput(input,kind='folder'){if(!input||input.dataset.pathEnhanced)return;input.dataset.pathEnhanced='1';let tools=document.createElement('div');tools.className='path-tools compact-path-tools';tools.innerHTML='<button type="button" class="pathmode path-toggle" title="絶対パスと相対パスを切り替えます"></button><small class="path-badge"></small>';input.closest('label')?.appendChild(tools);let toggle=tools.querySelector('.path-toggle');function refresh(){let relative=isRelativePath(input.value);toggle.textContent=relative?'相対 → 絶対':'絶対 → 相対';toggle.dataset.mode=relative?'absolute':'relative';updatePathBadge(input)}toggle.onclick=async()=>{await convertPath(input,toggle.dataset.mode);refresh()};input.addEventListener('input',refresh);input._refreshPathControl=refresh;refresh()}async function browse(kind,initial,types){showWaiting('参照画面を準備中','設定中のパスを解決して、その場所から開きます...');try{let url=kind==='folder'?'/api/pick-folder':'/api/pick-file',r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({initial,types})}),d=await r.json();if(!r.ok)toast(d.error);return d.path||''}finally{hideWaiting()}}
@@ -902,9 +902,10 @@ function splitTrialRender(d){
    :[`結果が一致しませんでした`,E(cp.reason||'分割した結果と分割なしの結果が違います')])
   :faster?[`${r.speedup}倍 速くなりました`,`結果は分割なしと完全に一致し、所要時間が ${r.normal_elapsed}秒 から ${r.split_elapsed}秒 へ短縮しました`]
   :['速くなりませんでした',`結果は一致しましたが、所要時間は ${r.normal_elapsed}秒 に対し ${r.split_elapsed}秒 でした。この分割数では得になりません`];
+ let how=r.mode==='row'?`行${r.row_parts}分割`:r.mode==='grid'?`行${r.row_parts}×列${r.column_parts}（${r.parts}片）`:`${r.parts}分割`;
  let body=`<div class="ri-cards">`
   +`<div class="ri-card"><span>分割なし</span><b>${r.normal_elapsed}s</b><small>${(r.normal_size/1024/1024).toFixed(2)} MB</small></div>`
-  +`<div class="ri-card"><span>${r.parts}分割</span><b>${r.split_elapsed}s</b><small>実行 ${r.split_run_elapsed}s ＋ 結合 ${r.merge_elapsed}s</small></div>`
+  +`<div class="ri-card"><span>${E(how)}</span><b>${r.split_elapsed}s</b><small>実行 ${r.split_run_elapsed}s ＋ 結合 ${r.merge_elapsed}s</small></div>`
   +`<div class="ri-card"><span>速度比</span><b>${r.speedup?r.speedup+'x':'—'}</b><small>転送量 ${r.transfer_ratio}倍</small></div>`
   +`<div class="ri-card"><span>結果の一致</span><b>${r.identical?'一致':(cp.content_identical?'内容一致':'不一致')}</b><small>${r.rows}行 ${r.cols}列</small></div></div>`
   +`<p class="${r.identical&&faster?'ri-ok':'ri-ng'}">${E(verdict[0])}</p><p class="ri-note">${E(verdict[1])}</p>`
@@ -914,6 +915,9 @@ function splitTrialRender(d){
   +cp.samples.map(x=>x.columns.map(c=>`<span class="ri-chip unnamed">${E(c.name)}<em>${E(String(c.a).slice(0,18))} → ${E(String(c.b).slice(0,18))}</em></span>`).join('')).join('')+`</div></details>`;
  if(r.results?.length)body+=`<details class="ri-list"><summary>パートごとの内訳（${r.results.length}件）</summary><div class="ri-chips">`
   +r.results.map(x=>`<span class="ri-chip">${E(x.part)}<em>${x.cols}列 / ${x.elapsed}s / ${(x.size/1024/1024).toFixed(2)}MB</em></span>`).join('')+`</div></details>`;
+ if(r.mode&&r.mode!=='column')body+=`<p class="ri-note">行の区切り: <b>${E(r.row_column||'')}</b> で ${(r.row_cuts||[]).map(v=>E(String(v))).join(' / ')}`
+  +`（偏り ${r.row_balance} / ${r.row_order==='numeric'?'数として比較':'文字として比較'}）。`
+  +`行は重複しないので、合計で運ぶ量は分割なしと同じです${r.mode==='grid'?'が、列の固定分は片ごとに複製されます':''}。</p>`;
  if(r.trials?.length)body+=`<p class="ri-note">これまでの実測: `+r.trials.map(t=>`${t.parts}分割 ${t.observed_speedup.toFixed(2)}倍（${t.samples}回）`).join(' / ')+`</p>`;
  if(r.race){
   let win=r.race_winner==='split'?`${r.parts}分割`:'分割なし';
@@ -939,10 +943,11 @@ if($('#m-split-trial'))$('#m-split-trial').onclick=async()=>{
  if(!editing?.id||!cfg.jobs.some(j=>j.id===editing.id)){if(rb){rb.hidden=false;rb.innerHTML=`<p class="ri-ng">先に「設定を反映」で対象を保存してください。</p>`}return}
  let parts=Number($('#m-split-parts')?.value||0);
  let race=!!$('#m-split-race')?.checked;
+ let mode=$('#m-split-mode-trial')?.value||'column',rowParts=Number($('#m-row-trial-parts')?.value||2);
  try{
-  let r=await fetch('/api/column-split-trial',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_id:editing.id,parts,race})}),d=await r.json();
+  let r=await fetch('/api/column-split-trial',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_id:editing.id,parts,race,mode,row_parts:rowParts})}),d=await r.json();
   if(!d.ok){if(rb){rb.hidden=false;rb.innerHTML=`<p class="ri-ng">開始できませんでした。</p><p class="ri-note">${E(d.error||'')}</p>`}return}
-  toast(race?'競争させる影実行を開始しました。実行中も他の機能を使えます':'影実行を開始しました。実行中も他の機能を使えます');
+  toast(`${({column:'列分割',row:'行分割',grid:'行×列'})[mode]}の影実行を開始しました。実行中も他の機能を使えます`);
   splitTrialRender({running:true,job:d.job,stage:'準備中',elapsed:0});
   if(splitTrialTimer)clearInterval(splitTrialTimer);
   splitTrialTimer=setInterval(splitTrialPoll,2000);splitTrialPoll();
