@@ -1,4 +1,4 @@
-const UI_BUILD='1.34.0-tick';
+const UI_BUILD='1.35.0-rows';
 let cfg,editing=null,editingRule=null,sortDir=1,scheduleInfo={},rowLive={},rowQueue={},statusFailCount=0,serverLostShown=false;const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)],E=s=>String(s??'').replace(/[&<>"']/g,x=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[x]));const uid=()=>crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random();function toast(t){$('#toast').textContent=t;$('#toast').style.display='block';setTimeout(()=>$('#toast').style.display='none',2500)}function dirty(){$('#dirty').textContent='未保存の変更があります'}$$('nav button').forEach(b=>b.onclick=()=>{$$('nav button,section').forEach(x=>x.classList.remove('on'));b.classList.add('on');$('#'+b.dataset.p).classList.add('on');if(b.dataset.p==='logs')loadLog();if(b.dataset.p==='calendar')openCalendar();if(b.dataset.p==='viewer')loadViewerJobs()});
 const paths={navigator_api_dll:['Navigator API DLL','file',[['DLLファイル','*.dll'],['すべて','*.*']]],symnavi_exe:['SymNavi.exe','file',[['実行ファイル','*.exe'],['すべて','*.*']]],symnavim_conf:['symnavim.conf','file',[['CONFファイル','*.conf'],['すべて','*.*']]],symnavim_def:['symnavim.def','file',[['DEFファイル','*.def'],['すべて','*.*']]],accdb_template:['ACCDB空テンプレート','file',[['Access Database','*.accdb'],['すべて','*.*']]],rne_folder:['RNE基本フォルダー','folder'],default_output_folder:['既定の出力先','folder'],backup_folder:['バックアップ先','folder']};
 let waitingTimer=null,waitingStarted=0;function currentEngine(){return $('#extract-engine')?.value||cfg?.settings?.extract_engine||'api'}function waitingEngineLabel(context='common'){if(context==='api'||(context==='engine'&&currentEngine()==='api'))return 'NAVIGATOR API';if(context==='dde'||(context==='engine'&&currentEngine()==='dde'))return 'DDE COMPATIBILITY';return 'COMMON OPERATION'}function showWaiting(title='確認中',detail='処理を続行しています...',context='common'){let d=$('#waiting-dialog');$('#waiting-engine').textContent=waitingEngineLabel(context);$('#waiting-title').textContent=title;$('#waiting-detail').textContent=detail;waitingStarted=Date.now();clearInterval(waitingTimer);let tick=()=>{let sec=Math.floor((Date.now()-waitingStarted)/1000);$('#waiting-elapsed').textContent=`経過 ${String(Math.floor(sec/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`};tick();waitingTimer=setInterval(tick,1000);if(!d.open)d.showModal()}function updateWaiting(title,detail,context){if(title)$('#waiting-title').textContent=title;if(detail)$('#waiting-detail').textContent=detail;if(context)$('#waiting-engine').textContent=waitingEngineLabel(context)}function hideWaiting(){clearInterval(waitingTimer);waitingTimer=null;let d=$('#waiting-dialog');if(d?.open)d.close()}async function convertPath(input,mode){showWaiting('パス変換中',mode==='relative'?'アプリフォルダー基準へ変換しています...':'実際の絶対パスを解決しています...');try{let r=await fetch('/api/path-convert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({value:input.value,mode})}),d=await r.json();if(!r.ok)return toast(d.error);input.value=d.value;updatePathBadge(input);dirty()}finally{hideWaiting()}}function updatePathBadge(input){let badge=input.closest('label')?.querySelector('.path-badge');if(!badge)return;let relative=input.value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(input.value);badge.textContent=relative?'相対パス / 基準: アプリフォルダー':'絶対パス';badge.className='path-badge '+(relative?'path-kind-relative':'path-kind-absolute')}function isRelativePath(value){return !!value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(value)}function enhancePathInput(input,kind='folder'){if(!input||input.dataset.pathEnhanced)return;input.dataset.pathEnhanced='1';let tools=document.createElement('div');tools.className='path-tools compact-path-tools';tools.innerHTML='<button type="button" class="pathmode path-toggle" title="絶対パスと相対パスを切り替えます"></button><small class="path-badge"></small>';input.closest('label')?.appendChild(tools);let toggle=tools.querySelector('.path-toggle');function refresh(){let relative=isRelativePath(input.value);toggle.textContent=relative?'相対 → 絶対':'絶対 → 相対';toggle.dataset.mode=relative?'absolute':'relative';updatePathBadge(input)}toggle.onclick=async()=>{await convertPath(input,toggle.dataset.mode);refresh()};input.addEventListener('input',refresh);input._refreshPathControl=refresh;refresh()}async function browse(kind,initial,types){showWaiting('参照画面を準備中','設定中のパスを解決して、その場所から開きます...');try{let url=kind==='folder'?'/api/pick-folder':'/api/pick-file',r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({initial,types})}),d=await r.json();if(!r.ok)toast(d.error);return d.path||''}finally{hideWaiting()}}
@@ -767,25 +767,24 @@ let splitTrialTimer=null;
 // 本番の実行で分割が使われるかどうか。使われない場合は、その理由をそのまま出す。
 function renderRuntimeSplit(rs){
  let box=$('#m-split-run-state');if(!box)return;
- if(!rs){box.className='split-run-state';box.innerHTML='「列の分割可否を調べる」を実行すると、次に実行したときどうなるかを表示します。';return}
+ if(!rs){box.className='split-run-state';box.textContent='「列の分割可否を調べる」を実行すると、次に実行したときどうなるかを表示します。';box.title='';return}
  let saved=(rs.saved||[]).filter(p=>!p.stale);
- let lines=[];
+ let mode=({auto:'自動',race:'競争させる',force:'常に分割',off:'使わない'})[rs.mode]||rs.mode;
+ let line,detail=[];
  if(rs.active){
   box.className='split-run-state is-on';
-  lines.push(rs.mode==='race'
-   ?`<b>次に実行すると、分割なし1本と${rs.parts}分割を同時に走らせ、先に終わった方を採用します。</b>`
-   :`<b>次に実行すると ${rs.parts}分割で取得します。</b>`);
-  if(rs.mode==='race')lines.push(`同時プロセスは ${rs.parts+1} 本になります。負けた方は中断して捨てます。`);
-  if(rs.observed_speedup)lines.push(`裏付け: 影実行で ${rs.observed_speedup.toFixed(2)}倍（${E(rs.proven_at||'')}）`);
+  line=rs.mode==='race'
+   ?`次に実行すると、分割なし1本と${rs.parts}分割を同時に走らせ、先に終わった方を採用します（同時プロセス ${rs.parts+1} 本）`
+   :`次に実行すると ${rs.parts}分割で取得します`+(rs.observed_speedup?`（裏付け ${rs.observed_speedup.toFixed(2)}倍）`:'');
+  if(rs.proven_at)detail.push(`裏付けを得た日時: ${rs.proven_at}`);
  }else{
   box.className='split-run-state is-off';
-  lines.push(`<b>次に実行すると分割せず1本で取得します。</b>`);
-  if(rs.reason)lines.push(E(rs.reason));
+  line=`次に実行すると分割せず1本で取得します`+(rs.reason?` — ${rs.reason}`:'');
  }
- lines.push(`動作の設定: ${({auto:'自動',race:'競争させる',force:'常に分割',off:'使わない'})[rs.mode]||rs.mode} ／ この対象を単独で実行したときに使えるライン: ${rs.budget}本`);
- if(saved.length)lines.push('保存済みの割り当て: '+saved.map(p=>`${p.parts}分割（${p.speedup?p.speedup.toFixed(2)+'倍':'—'} / ${p.columns}列）`).join('、'));
- else lines.push(`保存済みの割り当てはありません。影実行で結果が一致し、かつ ${rs.min_speedup}倍以上速かったときに保存されます。`);
- box.innerHTML=lines.map(x=>`<p>${x}</p>`).join('');
+ detail.push(`動作の設定: ${mode}`,`単独で実行したときに使えるライン: ${rs.budget}本`);
+ detail.push(saved.length?'保存済みの割り当て: '+saved.map(p=>`${p.parts}分割（${p.speedup?p.speedup.toFixed(2)+'倍':'速さの裏付けなし'} / ${p.columns}列）`).join('、')
+   :`保存済みの割り当てはありません。影実行で結果が一致すると保存されます（「自動」はさらに ${rs.min_speedup}倍以上の短縮が必要）。`);
+ box.textContent=line;box.title=[line].concat(detail).join('\n');
 }
 
 const PHASE_LABEL={weights:'① 列の重みを測定',normal:'② 分割なしを実行',split:'③ 分割を並列実行',

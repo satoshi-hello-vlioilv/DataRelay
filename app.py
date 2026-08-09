@@ -25,10 +25,18 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.34.0'; APP_VERSION_TITLE='実行中の進捗を工程ごとに刻む'; APP_RELEASED_AT='2026-08-08'
-BUILD_VERSION=f'{APP_VERSION}-tick'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.35.0'; APP_VERSION_TITLE='行分割の下調べ'; APP_RELEASED_AT='2026-08-08'
+BUILD_VERSION=f'{APP_VERSION}-rows'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
+{'version':'1.35.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'行分割（データを上下に分けて同時に取る）が使えるかどうかを調べる機能を追加しました。対象を編集 → RNEを調べる →「行の分割可否を調べる」。実行も公開も行いません。',
+'分割点は自動で見つけます。直近の出力ファイルを1回読み、どの列をどこで区切ると行数が最も均等になるかを算出します。サーバーには触れません。',
+'データ項目は範囲条件（NaviChangeConditionDI の lvalue / rvalue）で区切れるため、値の種類が多い列ほど正確に半分にできます。管理ポイントはカテゴリ指定（NaviChangeConditionCP）なので値の組分けになります。',
+'数字だけの列は数として並べて区切ります（文字順では 999 と 1898 の前後が逆になるため）。サーバー側の比較方法によっては境目がずれるので、その旨を画面に明示します。',
+'「所要時間の内訳も測る」を選ぶと、転送せずに問い合わせだけを実行し（NAVI_DOWNLOADLATER）、サーバー側で結果を作る時間と転送の時間を切り分けます。1バイトも受信しません。行分割が効くかどうかは、この内訳でほぼ決まります。',
+'行分割そのものはまだ実装していません。比較演算子に渡す定数が未確認のためです。',
+]},
 {'version':'1.34.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
 '実行中の行が、工程ごとに細かく動くようになりました。これまでは問い合わせ実行と保存の間、合わせて所要の約88%が無変化でした。',
 '保存（受信）中は、出来ていくファイルの大きさを0.4秒ごとに見て「6.8MB / 約11.2MB · 664KB/s · 残り7秒」と実測を出します。バーも実測で伸びます。分割・競争のときは全パートを合算します。',
@@ -1020,6 +1028,163 @@ def column_weights(path,job,columns):
  total=sum(size) or 1
  return {'rows':rows,'total_bytes':total,'masks':{names[k]:mask[k] for k in range(n)},
          'columns':{names[k]:{'bytes':size[k],'share':size[k]/total,'filled':filled[k],'fill_ratio':filled[k]/rows} for k in range(n)}}
+
+# ---- 行分割の下調べ --------------------------------------------------------
+# 行を分けるには、サーバーへ渡せる<述語>が要る。APIに「k行目からm行目」は無いので
+# （NaviDownLoadData は前へ進むだけのカーソルで、開始位置の引数が無い）、
+# 「この列がこの値の行」という条件で分けるしかない。
+# ただし分割点を人が決める必要は無い。直前の出力ファイルを1回読めば、どの列をどう割ると
+# 最も均等になるかは、サーバーに触らずに分かる。列の重みを測るのと同じやり方。
+
+def column_samples(path,job,columns,exact_limit=5000,sample_limit=4000):
+ """直近の出力から、列ごとの値の分布を1回の走査で集める。
+
+ 値の種類が exact_limit までなら正確に数える。それを超えた列は、その時点から
+ 一定数の標本だけを残す（種類が多い列こそ範囲条件で半分に割るのに向くので、諦めない）。
+ 標本から求めた区切りは1%程度ずれ得るが、実際の行数はサーバー側で数え直して確かめる。
+ """
+ import random as _rnd
+ path=Path(path);fmt=normalize_output_format(job.get('output_format'),path.name)
+ names=list(columns);n=len(names)
+ counts=[{} for _ in range(n)];sample=[None]*n;seen=[0]*n;rows=0;rng=_rnd.Random(20260808)
+ def feed(vals):
+  nonlocal rows
+  rows+=1
+  for i,v in enumerate(vals):
+   v='' if v is None else str(v)
+   seen[i]+=1
+   if sample[i] is None:
+    c=counts[i]
+    if v in c:c[v]+=1
+    elif len(c)<exact_limit:c[v]=1
+    else:
+     # 種類が多すぎた。ここからは標本に切り替える（それまでの値も種として入れておく）。
+     sample[i]=list(c.keys())[:sample_limit];c.clear();sample[i].append(v)
+   else:
+    sm=sample[i]
+    if len(sm)<sample_limit:sm.append(v)
+    else:
+     k=rng.randrange(seen[i])
+     if k<sample_limit:sm[k]=v
+ if fmt=='sqlite3':
+  with sqlite3.connect(path) as conn:
+   table=str(job.get('table') or '')
+   tables=[r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE '_更新情報' ORDER BY name")]
+   if table not in tables:table=tables[0] if tables else ''
+   if not table:return None
+   cols=[x[1] for x in conn.execute(f'PRAGMA table_info({qi(table)})')]
+   pos={c:cols.index(c) for c in names if c in cols}
+   if not pos:return None
+   idx=[pos.get(c) for c in names]
+   for r in conn.execute(f'SELECT * FROM {qi(table)}'):
+    feed([(r[i] if i is not None and i<len(r) else None) for i in idx])
+ elif fmt in ('csv','txt'):
+  delimiter=',' if fmt=='csv' else '\t'
+  done=False
+  for enc in ('utf-8-sig','cp932','utf-8'):
+   try:
+    with path.open('r',encoding=enc,newline='') as h:
+     rd=csv.reader(h,delimiter=delimiter);head=next(rd,[])
+     pos={c:head.index(c) for c in names if c in head}
+     if not pos:return None
+     idx=[pos.get(c) for c in names]
+     for row in rd:feed([(row[i] if i is not None and i<len(row) else None) for i in idx])
+    done=True;break
+   except UnicodeDecodeError:continue
+  if not done:return None
+ else:
+  return None
+ out={}
+ for i,name in enumerate(names):
+  if sample[i] is not None:out[name]={'exact':False,'values':sample[i],'distinct':None}
+  elif counts[i]:out[name]={'exact':True,'counts':counts[i],'distinct':len(counts[i])}
+ return {'rows':rows,'columns':out}
+
+_NUMERIC_RE=re.compile(r'^-?\d{1,18}(\.\d+)?$')
+def _looks_numeric(v):
+ return bool(_NUMERIC_RE.match(str(v).strip()))
+
+def range_cuts(info,rows,parts):
+ """値を大小で並べ、行数が揃うところで parts 個へ区切る。
+
+ 区切りは「この値以下」「この値より大きい」の形にする（NaviChangeConditionDI の
+ lvalue / rvalue にそのまま渡せる形）。並び順は文字列として比べる。サーバー側が
+ 数値として比べる列では境目がずれ得るので、実際の行数は必ず数え直して確かめること。
+ """
+ # 数字だけの列は、数として並べないと境目が狂う（'999' と '1898' は文字順では逆）。
+ # ただしサーバーが数として比べるか文字として比べるかは分からないので、どちらで並べたかを持ち帰る。
+ src=list(info['counts'].items()) if info.get('exact') else [(v,1) for v in info['values']]
+ numeric=bool(src) and all(_looks_numeric(v) for v,_ in src if v!='')
+ key=(lambda kv:(kv[0]=='',float(kv[0] or 0))) if numeric else (lambda kv:kv[0])
+ if info.get('exact'):
+  items=sorted(src,key=key)
+  total=sum(c for _,c in items)
+ else:
+  vals=sorted(src,key=key);total=len(vals)
+  items=[];prev=None
+  for v,_ in vals:
+   if v==prev:items[-1]=(v,items[-1][1]+1)
+   else:items.append((v,1));prev=v
+ if len(items)<parts or total<=0:return None
+ want=total/parts;cuts=[];acc=0;got=[]
+ for v,c in items:
+  acc+=c
+  if len(cuts)<parts-1 and acc>=want*(len(cuts)+1):
+   cuts.append(v);got.append(acc)
+ if len(cuts)<parts-1:return None
+ got.append(total)
+ sizes=[got[0]]+[got[i]-got[i-1] for i in range(1,len(got))]
+ scale=(rows/total) if total else 1                          # 標本のときは全体の行数へ引き伸ばす
+ sizes=[int(round(x*scale)) for x in sizes]
+ lo=items[0][0];hi=items[-1][0]
+ bounds=[]
+ for k in range(parts):
+  left=lo if k==0 else cuts[k-1]
+  right=cuts[k] if k<parts-1 else hi
+  bounds.append({'from':left,'to':right,'from_open':k>0,'rows':sizes[k],
+                 'share':round(sizes[k]/max(1,sum(sizes)),4)})
+ return {'cuts':cuts,'groups':bounds,'balance':round(max(sizes)/(sum(sizes)/parts),3),
+         'exact':bool(info.get('exact')),'distinct':info.get('distinct'),
+         'order':'numeric' if numeric else 'text'}
+
+def balance_groups(counts,parts):
+ """値を parts 個の組へ、行数がなるべく揃うように配る。重い値から順に軽い組へ入れる。"""
+ groups=[[] for _ in range(parts)];load=[0]*parts
+ for v,c in sorted(counts.items(),key=lambda kv:-kv[1]):
+  k=load.index(min(load));groups[k].append(v);load[k]+=c
+ return groups,load
+
+def row_split_candidates(path,job,columns,removable,parts=2,max_values=200,top=8):
+ """行を parts 個へ分ける候補を、直近の出力から探して良い順に返す。サーバーには触れない。
+
+ 分け方は列の素性で2通りある。
+   データ項目（分割して取れる列） … NaviChangeConditionDI に範囲条件がある（lvalue/rvalue）。
+                                    値の種類が多い列ほど、中央付近で正確に半分にできる。
+   管理ポイント（必ず残る列）     … NaviChangeConditionCP はカテゴリ指定なので、値の組分けになる。
+ """
+ got=column_samples(path,job,columns)
+ if not got or not got.get('rows'):return None
+ rows=got['rows'];rem=set(removable);out=[]
+ for name,info in (got.get('columns') or {}).items():
+  if name in rem:
+   r=range_cuts(info,rows,parts)
+   if not r:continue
+   out.append({'column':name,'method':'range','balance':r['balance'],'exact':r['exact'],
+               'distinct':r['distinct'],'cuts':r['cuts'],'groups':r['groups'],'rows':rows,
+               'order':r['order'],'empty_rows':(info.get('counts') or {}).get('',0)})
+  else:
+   if not info.get('exact'):continue                         # 種類が多すぎる管理ポイントは列挙できない
+   counts=info['counts']
+   if len(counts)<parts or len(counts)>max_values:continue
+   groups,load=balance_groups(counts,parts)
+   if min(load)<=0:continue
+   out.append({'column':name,'method':'category','balance':round(max(load)/(rows/parts),3),'exact':True,
+               'distinct':len(counts),'rows':rows,'empty_rows':counts.get('',0),
+               'groups':[{'values':g,'rows':l,'share':round(l/rows,4)} for g,l in zip(groups,load)]})
+ for x in out:x['has_empty']=bool(x.get('empty_rows'))
+ # 均等な順。同じなら、範囲条件で書ける方（データ項目）を優先する。
+ out.sort(key=lambda x:(x['balance'],0 if x['method']=='range' else 1,0 if x.get('order')!='numeric' else 1))
+ return {'rows':rows,'parts':parts,'candidates':out[:top],'examined':len(got.get('columns') or {})}
 
 def pick_anchor_columns(removable,weights,limit=3):
  """全パートに残す「錨」の列を選ぶ。担当列がすべて空の行は結果から落ちるため、
@@ -2388,6 +2553,17 @@ def process_catalog_inspect(j,cfg,user,pw,server,want=None):
                   'data_item_count':len(lay['data_items']),'control_point_count':len(lay['control_points'])}
    out['data_items']=lay['data_items'];out['di_diag']=getattr(api,'di_diag','')
    fields,why=api.field_number(handle);out['field_count']=fields;out['field_why']=why
+  if 'timing' in want:
+   # 転送せずに問い合わせだけを実行し、サーバー側で結果を作るのにかかる時間を測る。
+   # 通常の実行(DOWNLOADNOW)との差が、そのまま転送に費やされている時間になる。
+   # 行分割が効くかどうかは、この内訳でほぼ決まる（実行が主なら行を減らせば縮む見込みがあり、
+   # 転送が主なら縮むのは転送だけで、回線の上限に頭を押さえられる）。
+   if (j.get('period') or {}).get('enabled'):
+    try:apply_dynamic_period(api,handle,j,datetime.now(),line='probe')
+    except Exception as pe:out['period_error']=str(pe)
+   n,el=api.execute_deferred(handle)
+   api.terminate_download(handle)
+   out['deferred']={'rows':int(n),'execute_seconds':round(el,2)}
   out['column_split_ready']=api.supports_column_split()
   try:api.close_catalog()
   except Exception:pass
@@ -4135,6 +4311,79 @@ def split_trial_tick(phase,stage,paths,expected_bytes,elapsed,expected_seconds=N
   prog=min(0.9,float(elapsed)/120.0);detail=f'{elapsed:.0f}秒経過'
  split_trial_stage(f'{stage}（{detail}{"・"+note if note else ""}）',phase=phase,progress=prog,
                    bytes=got,expected_bytes=int(expected_bytes or 0),note=note)
+
+@app.post('/api/row-split-plan')
+def row_split_plan():
+ """行分割の下調べ。分割できる列を探し、実行と転送の内訳を測る。
+
+ 出力ファイルには一切触れない。サーバーへ行くのは内訳の測定だけで、それも転送は発生させない
+ （NAVI_DOWNLOADLATER で問い合わせだけ実行し、受信を始めずに降りる）。
+ """
+ data=request.get_json(force=True) or {};c=load()
+ job=next((x for x in c['jobs'] if x['id']==data.get('job_id')),None) if data.get('job_id') else None
+ if not job:return jsonify(ok=False,error='保存済みの対象を選んでください'),200
+ try:rp=resolve_rne_path(job,c)
+ except Exception as e:return jsonify(ok=False,error=f'RNEパスの解決に失敗しました: {e}'),200
+ if not Path(rp).is_file():return jsonify(ok=False,error=f'RNEが見つかりません: {rp}'),200
+ parts=max(2,min(4,int(data.get('parts') or 2)))
+ started=time.perf_counter()
+ state,cached=column_cache_state(rp)
+ if not cached or not cached.get('columns'):
+  return jsonify(ok=False,error='先に「列の分割可否を調べる」を実行してください（列定義が未取得です）'),200
+ columns=cached['columns']
+ classify=cached.get('classify') or []
+ removable=[x['name'] for x in classify if x.get('removable')]
+ fixed=[x['name'] for x in classify if not x.get('removable')]
+ # 1) どの列でどう割ると均等になるか。直近の出力を読むだけで、サーバーには触れない。
+ cand=None;cand_error=''
+ try:
+  op=_viewer_output_path(job,c)
+  if op.is_file():cand=row_split_candidates(op,job,columns,removable,parts)
+  else:cand_error='直近の出力ファイルがありません。1回実行すると候補を探せます'
+ except Exception as e:
+  cand_error=str(e);log.warning('ROW_SPLIT_CANDIDATES_FAILED rne=%s error=%s',rp,e)
+ if cand:
+  log.info('ROW_SPLIT_CANDIDATES rne=%s 調べた列=%s 候補=%s 最良=%s',rp,cand['examined'],len(cand['candidates']),
+           (cand['candidates'][0]['column']+f" 偏り{cand['candidates'][0]['balance']}") if cand['candidates'] else '(なし)')
+ # 2) 所要時間の内訳。ここだけサーバーへ行く（転送はしない）。
+ timing=load_rne_timing(rp);deferred=None;probe_error=''
+ if data.get('probe'):
+  try:
+   user,pw,server,_=creds(resolve_path(c['symnavim_conf']))
+   ins=run_inspect_worker(dict(job,_read_names=False),c,user,pw,server,['timing'],
+                          timeout=int(c['settings'].get('split_trial_timeout_seconds',1800) or 1800))
+   if ins.get('ok') and ins.get('deferred'):deferred=ins['deferred']
+   else:probe_error=ins.get('error') or '内訳を測れませんでした'
+  except Exception as e:
+   probe_error=str(e);log.exception('ROW_SPLIT_PROBE_FAILED rne=%s',rp)
+ breakdown=row_split_breakdown(timing,deferred)
+ if deferred:
+  log.info('ROW_SPLIT_PROBE rne=%s 転送なしの実行=%.2fs 行数=%s / 通常の実行=%ss 保存=%ss → サーバー側=%ss 転送=%ss',
+           rp,deferred['execute_seconds'],deferred['rows'],(timing or {}).get('execute'),(timing or {}).get('save'),
+           breakdown.get('server_seconds'),breakdown.get('transfer_seconds'))
+ return jsonify(ok=True,rne=str(rp),job=job['name'],parts=parts,columns=len(columns),fixed=len(fixed),
+                removable_count=len(removable),
+                candidates=(cand or {}).get('candidates',[]),examined=(cand or {}).get('examined',0),
+                sample_rows=(cand or {}).get('rows',0),candidate_error=cand_error,
+                timing=timing,deferred=deferred,probe_error=probe_error,breakdown=breakdown,
+                link=split_link_profile(rp),elapsed=round(time.perf_counter()-started,2))
+
+def row_split_breakdown(timing,deferred):
+ """所要時間を「サーバー側で結果を作る時間」と「転送の時間」へ分ける。
+
+ 通常の実行(DOWNLOADNOW)は結果を作って送るところまでを含む。転送なしの実行(DOWNLOADLATER)は
+ 作るところまで。差が転送。行分割で縮む見込みがあるのはサーバー側で、転送は回線の上限に頭を
+ 押さえられる（ただし行分割は運ぶ量そのものを減らすので、そこは列分割より有利）。
+ """
+ t=timing or {};ex=float(t.get('execute') or 0);sv=float(t.get('save') or 0);total=ex+sv
+ if not total:return {'known':False}
+ if not deferred:return {'known':False,'execute':round(ex,2),'save':round(sv,2)}
+ srv=max(0.0,min(total,float(deferred.get('execute_seconds') or 0)))
+ tr=max(0.0,total-srv)
+ return {'known':True,'execute':round(ex,2),'save':round(sv,2),'total':round(total,2),
+         'server_seconds':round(srv,2),'transfer_seconds':round(tr,2),
+         'server_share':round(srv/total,3),'transfer_share':round(tr/total,3),
+         'rows':deferred.get('rows')}
 
 @app.post('/api/column-split-trial')
 def column_split_trial_start():
