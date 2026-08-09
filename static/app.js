@@ -1,4 +1,4 @@
-const UI_BUILD='1.39.0-rowcond';
+const UI_BUILD='1.40.0-measure';
 let cfg,editing=null,editingRule=null,sortDir=1,scheduleInfo={},rowLive={},rowQueue={},statusFailCount=0,serverLostShown=false;const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)],E=s=>String(s??'').replace(/[&<>"']/g,x=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[x]));const uid=()=>crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random();function toast(t){$('#toast').textContent=t;$('#toast').style.display='block';setTimeout(()=>$('#toast').style.display='none',2500)}function dirty(){$('#dirty').textContent='未保存の変更があります'}$$('nav button').forEach(b=>b.onclick=()=>{$$('nav button,section').forEach(x=>x.classList.remove('on'));b.classList.add('on');$('#'+b.dataset.p).classList.add('on');if(b.dataset.p==='logs')loadLog();if(b.dataset.p==='calendar')openCalendar();if(b.dataset.p==='viewer')loadViewerJobs()});
 const paths={navigator_api_dll:['Navigator API DLL','file',[['DLLファイル','*.dll'],['すべて','*.*']]],symnavi_exe:['SymNavi.exe','file',[['実行ファイル','*.exe'],['すべて','*.*']]],symnavim_conf:['symnavim.conf','file',[['CONFファイル','*.conf'],['すべて','*.*']]],symnavim_def:['symnavim.def','file',[['DEFファイル','*.def'],['すべて','*.*']]],accdb_template:['ACCDB空テンプレート','file',[['Access Database','*.accdb'],['すべて','*.*']]],rne_folder:['RNE基本フォルダー','folder'],default_output_folder:['既定の出力先','folder'],backup_folder:['バックアップ先','folder']};
 let waitingTimer=null,waitingStarted=0;function currentEngine(){return $('#extract-engine')?.value||cfg?.settings?.extract_engine||'api'}function waitingEngineLabel(context='common'){if(context==='api'||(context==='engine'&&currentEngine()==='api'))return 'NAVIGATOR API';if(context==='dde'||(context==='engine'&&currentEngine()==='dde'))return 'DDE COMPATIBILITY';return 'COMMON OPERATION'}function showWaiting(title='確認中',detail='処理を続行しています...',context='common'){let d=$('#waiting-dialog');$('#waiting-engine').textContent=waitingEngineLabel(context);$('#waiting-title').textContent=title;$('#waiting-detail').textContent=detail;waitingStarted=Date.now();clearInterval(waitingTimer);let tick=()=>{let sec=Math.floor((Date.now()-waitingStarted)/1000);$('#waiting-elapsed').textContent=`経過 ${String(Math.floor(sec/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`};tick();waitingTimer=setInterval(tick,1000);if(!d.open)d.showModal()}function updateWaiting(title,detail,context){if(title)$('#waiting-title').textContent=title;if(detail)$('#waiting-detail').textContent=detail;if(context)$('#waiting-engine').textContent=waitingEngineLabel(context)}function hideWaiting(){clearInterval(waitingTimer);waitingTimer=null;let d=$('#waiting-dialog');if(d?.open)d.close()}async function convertPath(input,mode){showWaiting('パス変換中',mode==='relative'?'アプリフォルダー基準へ変換しています...':'実際の絶対パスを解決しています...');try{let r=await fetch('/api/path-convert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({value:input.value,mode})}),d=await r.json();if(!r.ok)return toast(d.error);input.value=d.value;updatePathBadge(input);dirty()}finally{hideWaiting()}}function updatePathBadge(input){let badge=input.closest('label')?.querySelector('.path-badge');if(!badge)return;let relative=input.value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(input.value);badge.textContent=relative?'相対パス / 基準: アプリフォルダー':'絶対パス';badge.className='path-badge '+(relative?'path-kind-relative':'path-kind-absolute')}function isRelativePath(value){return !!value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(value)}function enhancePathInput(input,kind='folder'){if(!input||input.dataset.pathEnhanced)return;input.dataset.pathEnhanced='1';let tools=document.createElement('div');tools.className='path-tools compact-path-tools';tools.innerHTML='<button type="button" class="pathmode path-toggle" title="絶対パスと相対パスを切り替えます"></button><small class="path-badge"></small>';input.closest('label')?.appendChild(tools);let toggle=tools.querySelector('.path-toggle');function refresh(){let relative=isRelativePath(input.value);toggle.textContent=relative?'相対 → 絶対':'絶対 → 相対';toggle.dataset.mode=relative?'absolute':'relative';updatePathBadge(input)}toggle.onclick=async()=>{await convertPath(input,toggle.dataset.mode);refresh()};input.addEventListener('input',refresh);input._refreshPathControl=refresh;refresh()}async function browse(kind,initial,types){showWaiting('参照画面を準備中','設定中のパスを解決して、その場所から開きます...');try{let url=kind==='folder'?'/api/pick-folder':'/api/pick-file',r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({initial,types})}),d=await r.json();if(!r.ok)toast(d.error);return d.path||''}finally{hideWaiting()}}
@@ -835,8 +835,26 @@ function planAxis(axis){
 // 方式に関係のない選択肢は出さない。列分割のときに「行」の数を選べても意味がないため。
 function syncTrialControls(){
  let m=$('#m-split-mode-trial')?.value||'column';
- $$('.trial-parts[data-need]').forEach(l=>{l.hidden=!(l.dataset.need===m||m==='grid')});
+ let meas=$('#m-split-measure')?.value||'split';
+ // 測るものが「分割なしだけ」なら、方式も分割数も競争も意味がない。出さない。
+ $$('.insp-panel[data-istep="trial"] [data-when]').forEach(l=>{
+  l.hidden=(l.dataset.when==='split'&&meas==='normal')||(l.dataset.when==='both'&&meas!=='both')});
+ $$('.trial-parts[data-need]').forEach(l=>{
+  if(meas==='normal'){l.hidden=true;return}
+  l.hidden=!(l.dataset.need===m||m==='grid')});
+ let btn=$('#m-split-trial');
+ if(btn)btn.textContent=({normal:'分割なしを測る',split:'分割を測る',both:'両方つづけて測る'})[meas]||'影実行を開始';
  let n=$('#trial-need');if(!n)return;
+ if(meas==='normal'){
+  n.innerHTML='分割なしで1本だけ実行し、<b>基準として保存</b>します。'
+   +'この値は「分割だけ」を測ったときの比較相手になります。<b>出力ファイルは更新しません</b>。';
+  return;
+ }
+ if(meas==='both'){
+  n.innerHTML='分割なしと分割ありを<b>続けて</b>実行し、その場で比べます。1回で2回ぶんの時間がかかります。'
+   +'<b>出力ファイルは更新しません</b>。';
+  return;
+ }
  // 下調べが済んでいるかを見て、案内を「まだ足りない」から「準備できた」へ切り替える。
  let done=m==='grid'?(inspPlan.column?.tone==='ok'&&inspPlan.row?.tone==='ok'):inspPlan[m]?.tone==='ok';
  let ready=({column:'列の割り当てができています。',row:'行の区切りができています。行分割はいまのところ測定専用です。',
@@ -849,6 +867,7 @@ function syncTrialControls(){
 $$('.insp-step').forEach(b=>b.onclick=()=>inspGo(b.dataset.istep));
 $$('#plan-axis button').forEach(b=>b.onclick=()=>planAxis(b.dataset.axis));
 if($('#m-split-mode-trial'))$('#m-split-mode-trial').onchange=syncTrialControls;
+if($('#m-split-measure'))$('#m-split-measure').onchange=syncTrialControls;
 syncTrialControls();
 
 /* RNEの中身を調べる：管理ポイント（行の軸）とデータ項目（出力される列）をまとめて見せる。
@@ -1089,7 +1108,8 @@ const PHASE_LABEL={weights:'① 列の重みを測定',normal:'② 分割なし�
 // 分割したぶんだけ棒を並べ、片ごとに「工程」と「書けたバイト数」を出す。
 const PART_STEPS=['接続','RNEを開く','担当外の列を外す','行の条件を設定','問い合わせを実行','CSVへ保存','完了'];
 function partProgressHtml(list){
- if(!Array.isArray(list)||list.length<2)return '';
+ // 1本のときも出す。分割なしを測っているときこそ、いま何をしているのかが知りたい。
+ if(!Array.isArray(list)||!list.length)return '';
  return `<div class="pp-list">`+list.map(x=>{
   let pct=Math.max(0,Math.min(100,Number(x.percent||0)));
   let idx=Number(x.step_index||0);
@@ -1150,19 +1170,43 @@ function splitTrialRender(d){
   inspEmpty('trial',true);inspState('trial','失敗','ng');
   return;
  }
+ if(r.measure==='normal'){
+  // 基準の測定。比べる相手ではなく、これ自身が比べられる側になる。
+  let mb=(r.normal_size||0)/1024/1024;
+  let ex=Number(r.normal_execute||0),sv=Number(r.normal_save||0);
+  let nb=`<div class="ri-cards">`
+   +`<div class="ri-card"><span>分割なし 合計</span><b>${r.normal_elapsed}s</b><small>${mb.toFixed(2)} MB</small></div>`
+   +`<div class="ri-card"><span>実行（サーバー＋受信）</span><b>${ex.toFixed(1)}s</b><small>${ex?Math.round(r.normal_size/1024/ex).toLocaleString():'—'} KB/s</small></div>`
+   +`<div class="ri-card"><span>保存（整形）</span><b>${sv.toFixed(1)}s</b><small>${sv?Math.round(r.normal_size/1024/sv).toLocaleString():'—'} KB/s</small></div>`
+   +`<div class="ri-card"><span>件数</span><b>${Number(r.rows||0).toLocaleString()}</b><small>${r.cols}列</small></div></div>`
+   +`<p class="ri-ok">基準として保存しました</p>`
+   +`<p class="ri-note">次に「分割だけ」を測ると、この値と比べます。分割のたびに分割なしを走らせ直す必要はありません。`
+   +`ただし回線の混み具合は時間帯で変わるので、間があいたら測り直してください。</p>`
+   +`<p class="ri-note">出力ファイルは更新していません（影実行）。</p>`;
+  inspEmpty('trial',true);
+  inspState('trial',`基準 ${r.normal_elapsed}s · ${Number(r.rows||0).toLocaleString()}件`,'ok');
+  rb.innerHTML=nb;return;
+ }
  let faster=r.speedup&&r.speedup>1.05,cp=r.compare||{};
- let verdict=!r.identical?(cp.content_identical
+ let verdict=!r.compared?['測りました（比較していません）',
+    `所要時間は ${r.split_elapsed}秒 でした。比べる相手が無いので、速いかどうかも結果が正しいかも判定していません。`
+    +`「分割なしだけ」を1度実行すると、次から比較できます`]
+  :!r.identical?(cp.content_identical
    ?['内容は一致しました（並び順のみ相違）','行の中身はすべて一致しています。行の並び順だけが分割なしと違います']
    :[`結果が一致しませんでした`,E(cp.reason||'分割した結果と分割なしの結果が違います')])
   :faster?[`${r.speedup}倍 速くなりました`,`結果は分割なしと完全に一致し、所要時間が ${r.normal_elapsed}秒 から ${r.split_elapsed}秒 へ短縮しました`]
   :['速くなりませんでした',`結果は一致しましたが、所要時間は ${r.normal_elapsed}秒 に対し ${r.split_elapsed}秒 でした。この分割数では得になりません`];
  let how=r.how||(r.mode==='row'?`行${r.row_parts}分割`:r.mode==='grid'?`行${r.row_parts}×列${r.column_parts}（${r.parts}片）`:`列${r.parts}分割`);
  let body=`<div class="ri-cards">`
-  +`<div class="ri-card"><span>分割なし</span><b>${r.normal_elapsed}s</b><small>${(r.normal_size/1024/1024).toFixed(2)} MB</small></div>`
+  +`<div class="ri-card"><span>分割なし${r.baseline_used?'（保存済み）':''}</span><b>${r.normal_elapsed??'—'}${r.normal_elapsed?'s':''}</b>`
+   +`<small>${r.normal_size?(r.normal_size/1024/1024).toFixed(2)+' MB':'測っていません'}</small></div>`
   +`<div class="ri-card"><span>${E(how)}</span><b>${r.split_elapsed}s</b><small>実行 ${r.split_run_elapsed}s ＋ 結合 ${r.merge_elapsed}s</small></div>`
   +`<div class="ri-card"><span>速度比</span><b>${r.speedup?r.speedup+'x':'—'}</b><small>転送量 ${r.transfer_ratio}倍</small></div>`
   +`<div class="ri-card"><span>結果の一致</span><b>${r.identical?'一致':(cp.content_identical?'内容一致':'不一致')}</b><small>${r.rows}行 ${r.cols}列</small></div></div>`
   +`<p class="${r.identical&&faster?'ri-ok':'ri-ng'}">${E(verdict[0])}</p><p class="ri-note">${E(verdict[1])}</p>`
+  +(r.baseline_used&&r.baseline?`<p class="ri-note">比べた相手は<b>保存済みの基準</b>です（${E(r.baseline.taken_at||'')}`
+     +`${r.baseline.age_days!=null?` / ${r.baseline.age_days}日前`:''} ／ ${r.baseline.rows?Number(r.baseline.rows).toLocaleString()+'件':''}）。`
+     +`回線の混み具合が違う時間帯どうしの比較になるため、速度比は目安です。同時に測りたいときは「両方つづけて」を選んでください。</p>`:'')
   +`<p class="ri-note">出力ファイルは更新していません（影実行）。結合キーは ${r.key_count} 列です。</p>`;
  if(cp.reason)body+=`<p class="ri-note">比較: ${E(cp.reason)}（行 ${cp.rows_a} 対 ${cp.rows_b} / 並び順一致 ${cp.order_match?'はい':'いいえ'}）</p>`;
  if(cp.count_match===false)body+=`<p class="ri-ng">結合結果の行数が分割なしと違います（${Number(cp.duplicated_rows||0).toLocaleString()}行 多い）。`
@@ -1203,10 +1247,14 @@ if($('#m-split-trial'))$('#m-split-trial').onclick=async()=>{
  let parts=Number($('#m-split-parts')?.value||0);
  let race=!!$('#m-split-race')?.checked;
  let mode=$('#m-split-mode-trial')?.value||'column',rowParts=Number($('#m-row-trial-parts')?.value||2);
+ let measure=$('#m-split-measure')?.value||'split';
+ if(race)measure='both';
  try{
-  let r=await fetch('/api/column-split-trial',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_id:editing.id,parts,race,mode,row_parts:rowParts})}),d=await r.json();
+  let r=await fetch('/api/column-split-trial',{method:'POST',headers:{'Content-Type':'application/json'},
+       body:JSON.stringify({job_id:editing.id,parts,race,mode,row_parts:rowParts,measure})}),d=await r.json();
   if(!d.ok){if(rb){rb.hidden=false;rb.innerHTML=`<p class="ri-ng">開始できませんでした。</p><p class="ri-note">${E(d.error||'')}</p>`}inspEmpty('trial',true);inspState('trial','開始できません','ng');return}
-  toast(`${({column:'列分割',row:'行分割',grid:'行×列'})[mode]}の影実行を開始しました。実行中も他の機能を使えます`);
+  toast(`${({normal:'分割なし（基準）',split:({column:'列分割',row:'行分割',grid:'行×列'})[mode],
+             both:`分割なしと${({column:'列分割',row:'行分割',grid:'行×列'})[mode]}`})[measure]}の測定を開始しました。実行中も他の機能を使えます`);
   inspGo('trial');inspEmpty('trial',true);inspState('trial','開始しました','run');
   splitTrialRender({running:true,job:d.job,stage:'準備中',elapsed:0});
   if(splitTrialTimer)clearInterval(splitTrialTimer);

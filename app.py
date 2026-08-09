@@ -25,8 +25,8 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.39.0'; APP_VERSION_TITLE='行の条件が効かない問題と、分割数の表示'; APP_RELEASED_AT='2026-08-08'
-BUILD_VERSION=f'{APP_VERSION}-rowcond'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.40.0'; APP_VERSION_TITLE='測るものを選べるようにする'; APP_RELEASED_AT='2026-08-08'
+BUILD_VERSION=f'{APP_VERSION}-measure'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリに同梱する仕様書。ここに登録したものだけが画面から開ける。
 # 画面からはこのidしか受け取らないので、任意のパスを読ませることはできない。
 DOCS=[
@@ -43,6 +43,14 @@ def docs_dir():
 
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
+{'version':'1.40.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'影実行で「何を測るか」を選べるようにしました。分割だけ / 分割なしだけ（基準を測る）/ 両方つづけて（比較）の3つです。既定は「分割だけ」で、毎回分割なしがセットで走ることはなくなりました。',
+'「分割なしだけ」で測った結果は基準として保存され、以後「分割だけ」を測ったときの比較相手になります。1回あたりの所要時間が半分になります。',
+'保存済みの基準と比べた場合は、いつ測った基準かと「別の時間帯どうしの比較なので速度比は目安」であることを明記します。同時に測りたいときは「両方つづけて」を選んでください。',
+'競争は「同じ回線を奪い合わせる」測り方そのものなので、選ぶと自動的に「両方つづけて」になります。',
+'分割なしの実行にも、分割ありと同じデータバーを出します。いまどの工程か・何MB書けたか・何行返ったかが分かります。',
+'「分割なしだけ」を選ぶと、方式・分割数・競争の選択欄は消えます。その測定に関係がないためです。ボタンの文言も測るものに合わせて変わります。',
+]},
 {'version':'1.39.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
 '【重要な不具合】行分割で、行の条件がまったく効いていませんでした。条件の設定自体は成功（rc=OK）していたため気づけず、全パートが全件を返し、結合結果が分割数ぶんに膨れていました（2分割で28,552行、3分割で42,828行）。',
 'さらに悪いことに、その結果を「内容は一致」と報告していました。突き合わせを固定列の値をキーにした対応表で行っていたため、同じ行が何度入っていても片方に潰れていたためです。行数そのものも見るようにしました。',
@@ -1072,6 +1080,49 @@ def merge_row_parts(part_files,dest,encoding='cp932'):
     for r in rd:
      w.writerow(r);rows+=1
  return rows,len(head or [])
+
+# 「分割なし」の測定結果は取っておく。毎回セットで走らせると1回あたり2倍の時間がかかるうえ、
+# 回線の混み具合が違う時間帯の値を比べることになる。基準は基準として1回測り、あとで使い回す。
+def split_baseline_dir(rne_path):
+ # _rne_key はフルパスなので、そのままではフォルダー名に使えない。短く畳んで名前にする。
+ import hashlib
+ name=hashlib.sha1(_rne_key(rne_path).encode('utf-8',errors='replace')).hexdigest()[:16]
+ d=LOCAL_RUNTIME/'split_baseline'/f'{Path(rne_path).stem}_{name}';d.mkdir(parents=True,exist_ok=True);return d
+
+def save_split_baseline(rne_path,job,csv_path,base,columns,elapsed):
+ d=split_baseline_dir(rne_path)
+ try:shutil.copy2(str(csv_path),str(d/'normal.csv'))
+ except Exception:
+  log.exception('SPLIT_BASELINE_COPY_FAILED rne=%s',rne_path);return None
+ meta={'rne':str(rne_path),'job':str((job or {}).get('name') or ''),'rows':base.get('rows'),'cols':base.get('cols'),
+       'size':base.get('size'),'elapsed':round(float(elapsed or 0),2),
+       'execute':base.get('execute_elapsed'),'save':base.get('save_elapsed'),
+       'columns':list(columns or []),'taken_at':datetime.now().isoformat(timespec='seconds')}
+ (d/'meta.json').write_text(json.dumps(meta,ensure_ascii=False),encoding='utf-8')
+ log.info('SPLIT_BASELINE_SAVE rne=%s rows=%s cols=%s size=%s elapsed=%.2fs path=%s',
+          rne_path,meta['rows'],meta['cols'],meta['size'],meta['elapsed'],d/'normal.csv')
+ return meta
+
+def load_split_baseline(rne_path):
+ d=split_baseline_dir(rne_path);m=d/'meta.json';f=d/'normal.csv'
+ if not (m.is_file() and f.is_file()):return None
+ try:meta=json.loads(m.read_text(encoding='utf-8'))
+ except Exception:
+  log.warning('SPLIT_BASELINE_BROKEN rne=%s',rne_path);return None
+ meta['file']=str(f)
+ try:meta['age_days']=round((datetime.now()-datetime.fromisoformat(meta.get('taken_at') or '')).total_seconds()/86400,1)
+ except Exception:meta['age_days']=None
+ return meta
+
+SPLIT_MEASURE=('both','split','normal')
+def normalize_measure(value,race=False):
+ """何を測るか。both=分割なしと分割ありを続けて / split=分割だけ / normal=分割なしだけ。
+
+ 競争は「同じ回線を奪い合わせて決着を見る」測り方そのものなので、必ず両方を同時に走らせる。
+ """
+ v=str(value or 'both').lower()
+ if race:return 'both'
+ return v if v in SPLIT_MEASURE else 'both'
 
 def split_how_label(mode,col_parts,row_parts):
  """何をどう分けているかの呼び名。列と行を取り違えないよう、表示はすべてここを通す。"""
@@ -4367,8 +4418,9 @@ def _split_trial_run(data,c,job):
  # 行分割・行×列の組み合わせ。列の割り当てはここまでで出来ているので、行の条件を足す。
  mode=str(data.get('mode') or 'column').lower()
  if mode not in ('column','row','grid'):mode='column'
+ measure=normalize_measure(data.get('measure'),bool(data.get('race')))
  row_cand=None;row_parts=max(2,min(4,int(data.get('row_parts') or 2)))
- if mode in ('row','grid'):
+ if mode in ('row','grid') and measure!='normal':
   try:
    op=_viewer_output_path(job,c)
    if not op.is_file():
@@ -4405,6 +4457,27 @@ def _split_trial_run(data,c,job):
   base_csv=work/'normal.csv';t=time.perf_counter()
   trial_timeout=int(c['settings'].get('split_trial_timeout_seconds',1800) or 1800)
   race=bool(data.get('race'));results=None;split_run=None
+  baseline=load_split_baseline(rp)
+  if measure=='normal':
+   # 基準だけを測る。比較も結合もしない。この値をあとで「分割だけ」の比較に使う。
+   split_trial_stage('分割なしを実行中（基準を測ります）',phase='normal',progress=0,parts=1)
+   base=_spawn_racers(job,c,user,pw,server,work,
+                      [{'index':0,'label':'分割なし','group':'normal','drop':[],'out_csv':base_csv}],trial_timeout,
+                      on_tick=lambda el,st:split_trial_tick('normal','分割なしを実行中',[str(base_csv)],expect_bytes,el,expect_seconds,states=st))[0]
+   normal_elapsed=time.perf_counter()-t
+   if not base.get('ok'):return dict(ok=False,measure='normal',error=f'分割なしの実行に失敗しました: {base.get("error")}')
+   try:actual=read_header_names(base_csv,{'output_format':'csv'})
+   except Exception:actual=[]
+   if actual:columns=actual;save_column_cache(rp,columns,rows=base.get('rows'),source='trial',job=job)
+   meta=save_split_baseline(rp,job,base_csv,base,columns,normal_elapsed)
+   size=int(base.get('size') or 0)
+   log.info('SPLIT_TRIAL_RESULT rne=%s 分割なしのみ rows=%s cols=%s size=%s 実行=%.2fs 保存=%.2fs 合計=%.2fs',
+            rp,base.get('rows'),base.get('cols'),size,base.get('execute_elapsed') or 0,base.get('save_elapsed') or 0,normal_elapsed)
+   return dict(ok=True,measure='normal',rne=str(rp),job=job['name'],how='分割なし（基準）',
+                  rows=base.get('rows'),cols=base.get('cols'),normal_size=size,
+                  normal_elapsed=round(normal_elapsed,2),
+                  normal_execute=base.get('execute_elapsed'),normal_save=base.get('save_elapsed'),
+                  baseline=meta,results=[base],trials=load_split_trials(rp))
   if mode=='row':
    rp_plan=plan_row_split(row_cand,row_parts)
    part_specs=[{'index':x['index'],'label':f'行{x["index"]}/{row_parts}','group':'split','drop':[],
@@ -4445,16 +4518,29 @@ def _split_trial_run(data,c,job):
    split_run=max((r.get('finished_at') or 0) for r in results) if results else 0
    log.info('SPLIT_TRIAL_RACE_ORDER rne=%s %s',rp,' / '.join(
     f"{r.get('part')}={r.get('finished_at')}s" for r in sorted(allr,key=lambda r:r.get('finished_at') or 0)))
+  elif measure=='split':
+   # 分割だけを測る。基準は前に測って取ってあるものを使う（無ければ比較しないで測るだけ）。
+   base={'ok':True,'part':'分割なし（保存済み）','rows':(baseline or {}).get('rows'),'cols':(baseline or {}).get('cols'),
+         'size':(baseline or {}).get('size') or 0,'execute_elapsed':(baseline or {}).get('execute'),
+         'save_elapsed':(baseline or {}).get('save'),'stored':True}
+   normal_elapsed=float((baseline or {}).get('elapsed') or 0)
+   if baseline:
+    base_csv=Path(baseline['file'])
+    if baseline.get('columns'):columns=list(baseline['columns']);keys=[x for x in columns if x not in set(removable)]
+    log.info('SPLIT_TRIAL_BASELINE rne=%s 保存済みの基準を使います rows=%s size=%s elapsed=%.2fs 取得=%s（%s日前）',
+             rp,baseline.get('rows'),baseline.get('size'),normal_elapsed,baseline.get('taken_at'),baseline.get('age_days'))
+   else:
+    log.info('SPLIT_TRIAL_BASELINE rne=%s 保存済みの基準がありません。比較せず分割だけを測ります',rp)
   else:
    split_trial_stage(f'分割なしを実行中（{split_how_label(mode,col_parts,row_parts)}と比較します）',phase='normal',progress=0,parts=pieces)
    base=_spawn_racers(job,c,user,pw,server,work,[{'index':0,'label':'分割なし','group':'normal','drop':[],'out_csv':base_csv}],trial_timeout,
-                      on_tick=lambda el,st:split_trial_tick('normal','分割なしを実行中',[str(base_csv)],expect_bytes,el,expect_seconds))[0]
+                      on_tick=lambda el,st:split_trial_tick('normal','分割なしを実行中',[str(base_csv)],expect_bytes,el,expect_seconds,states=st))[0]
    normal_elapsed=time.perf_counter()-t
   if not base.get('ok'):return dict(ok=False,error=f'分割なしの実行に失敗しました: {base.get("error")}')
   # 列の並び順は、たった今実行した「分割なし」の見出し行を正とする。
   # 直近の出力ファイルはRNEを差し替えた直後だと古く、列数が食い違う（178対177）。
   try:
-   actual=read_header_names(base_csv,{'output_format':'csv'})
+   actual=read_header_names(base_csv,{'output_format':'csv'}) if not base.get('stored') else []
   except Exception as he:
    actual=[];log.warning('SPLIT_TRIAL_HEADER_FAILED rne=%s error=%s',rp,he)
   if actual and actual!=columns:
@@ -4536,15 +4622,23 @@ def _split_trial_run(data,c,job):
    log.warning('SPLIT_TRIAL_MERGE_FAILED rne=%s error=%s',rp,me)
    return dict(ok=False,error=f'結合に失敗しました: {me}',parts=pieces,results=results)
   merge_elapsed=time.perf_counter()-t;split_elapsed=split_run+merge_elapsed
-  split_trial_stage('結果を比較中（分割なしと1行ずつ突き合わせます）',phase='compare',progress=0)
-  cmp=compare_csv_content(base_csv,merged,keys)
+  # 比べる相手が無い場合（基準を1度も測っていない「分割だけ」）は、測るところまでで終える。
+  compared=Path(base_csv).is_file()
+  if compared:
+   split_trial_stage('結果を比較中（分割なしと1行ずつ突き合わせます）'
+                     +('' if not base.get('stored') else '［保存済みの基準］'),phase='compare',progress=0)
+   cmp=compare_csv_content(base_csv,merged,keys)
+  else:
+   cmp={'reason':'比べる相手がありません（「分割なしだけ」を1度実行すると、次から比較できます）',
+        'rows_a':None,'rows_b':mrows,'content_identical':False,'count_match':None}
   identical=bool(cmp.get('content_identical'))     # 並び順の違いは不一致としない
   log.info('SPLIT_TRIAL_COMPARE rne=%s byte_identical=%s content_identical=%s order_match=%s diff_rows=%s diff_cells=%s only_normal=%s only_merged=%s reason=%s',
            rp,cmp.get('byte_identical'),cmp.get('content_identical'),cmp.get('order_match'),
            cmp.get('diff_rows'),cmp.get('diff_cells'),cmp.get('only_in_a'),cmp.get('only_in_b'),cmp.get('reason'))
   for sm in (cmp.get('samples') or [])[:3]:
    log.info('SPLIT_TRIAL_DIFF key=%s %s',sm['key'],'; '.join(f"{c['name']}: 分割なし={c['a']!r} 結合={c['b']!r}" for c in sm['columns']))
-  a=base_csv.read_bytes();b=merged.read_bytes()
+  a=base_csv.read_bytes() if compared else b''
+  b=merged.read_bytes()
   detail='' if identical else f'diff_rows={cmp.get("diff_rows")} diff_cells={cmp.get("diff_cells")}'
   metrics={'normal_bytes':base.get('size'),'normal_save':base.get('save_elapsed'),'normal_execute':base.get('execute_elapsed'),
            'parts':[{'bytes':r.get('size'),'save':r.get('save_elapsed'),'execute':r.get('execute_elapsed'),'cols':r.get('cols')} for r in results],
@@ -4554,14 +4648,21 @@ def _split_trial_run(data,c,job):
   metrics['race']=race;metrics['mode']=mode
   if mode!='column':metrics['row_column']=row_cand['column'];metrics['row_parts']=row_parts
   # 種類の違う試行を混ぜない。'列2分割' と '行2分割' は意味が違うので、平均を取ると嘘になる。
-  tag=('race: ' if race else '')+('' if mode=='column' else f'{mode}: ')
-  speedup=record_split_trial(rp,job,pieces,mrows,mcols,normal_elapsed,split_elapsed,identical,tag+detail,metrics)
+  tag=('race: ' if race else '')+('' if mode=='column' else f'{mode}: ')+('baseline: ' if base.get('stored') else '')
+  speedup=(record_split_trial(rp,job,pieces,mrows,mcols,normal_elapsed,split_elapsed,identical,tag+detail,metrics)
+           if normal_elapsed else None)
+  if not normal_elapsed:
+   log.info('SPLIT_TRIAL rne=%s %s 片数=%s split=%.2fs（基準が無いため速度比は出しません）',
+            rp,split_how_label(mode,col_parts,row_parts),pieces,split_elapsed)
+  # 実際に走らせた「分割なし」は基準として取っておく。次からは「分割だけ」で測れる。
+  if measure=='both' and not base.get('stored'):
+   save_split_baseline(rp,job,base_csv,base,columns,normal_elapsed)
   # 結果が一致した割り当ては、速さに関わらず保存する。「自動」は速さの裏付けも見るが、
   # 「競争」は速さを問わない（遅ければ競争に負けて捨てられるだけ）。
   # 実行時に測り直さないで済むよう、担当列の割り当てそのものを保存する。
   min_sp=float(c['settings'].get('split_min_speedup',1.05) or 1.05)
   plan_saved=False
-  if identical and mode=='column':
+  if identical and mode=='column' and normal_elapsed:
    # 競争中の速度比は回線の奪い合いで沈むので、裏付けとしては記録しない（自動には使わせない）。
    plan_saved=save_split_plan(rp,columns,col_parts,plan,keys,anchors,None if race else speedup,mrows,mcols,
                               source='race' if race else 'trial')
@@ -4577,12 +4678,15 @@ def _split_trial_run(data,c,job):
   log.info('SPLIT_TRIAL_RESULT rne=%s %s 片数=%s identical=%s normal=%.2fs split=%.2fs(実行%.2fs+結合%.2fs) speedup=%s 行数=分割なし%s/結合%s',
            rp,split_how_label(mode,col_parts,row_parts),pieces,identical,normal_elapsed,split_elapsed,split_run,merge_elapsed,
            f'{speedup:.2f}' if speedup else '-',cmp.get('rows_a'),cmp.get('rows_b'))
-  return dict(ok=True,rne=str(rp),job=job['name'],parts=pieces,identical=identical,mode=mode,
+  return dict(ok=True,measure=measure,compared=compared,baseline_used=bool(base.get('stored')),
+                 baseline=(baseline if base.get('stored') else None),
+                 rne=str(rp),job=job['name'],parts=pieces,identical=identical,mode=mode,
                  row_parts=row_parts if mode!='column' else 0,column_parts=col_parts,how=split_how_label(mode,col_parts,row_parts),
                  row_column=(row_cand or {}).get('column',''),row_balance=(row_cand or {}).get('balance'),
                  row_order=(row_cand or {}).get('order',''),row_cuts=(row_cand or {}).get('cuts',[]),
                  rows=mrows,cols=mcols,key_count=len(keys),
-                 normal_elapsed=round(normal_elapsed,2),split_elapsed=round(split_elapsed,2),
+                 normal_elapsed=round(normal_elapsed,2) if normal_elapsed else None,
+                 split_elapsed=round(split_elapsed,2),
                  split_run_elapsed=round(split_run,2),merge_elapsed=round(merge_elapsed,2),
                  speedup=round(speedup,2) if speedup else None,
                  transfer_ratio=round(split_expected_share(mode,columns,removable,col_parts,row_parts)*pieces,2),
@@ -4700,7 +4804,7 @@ def split_trial_tick(phase,stage,paths,expected_bytes,elapsed,expected_seconds=N
   prog=min(0.9,float(elapsed)/120.0);detail=f'{elapsed:.0f}秒経過'
  split_trial_stage(f'{stage}（{detail}{"・"+note if note else ""}）',phase=phase,progress=prog,
                    bytes=got,expected_bytes=int(expected_bytes or 0),note=note,
-                   part_progress=split_part_progress(paths,states or [],expected_bytes) if len(paths)>1 else [])
+                   part_progress=split_part_progress(paths,states or [],expected_bytes))
 
 @app.post('/api/row-split-plan')
 def row_split_plan():
