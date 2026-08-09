@@ -25,10 +25,38 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.37.0'; APP_VERSION_TITLE='RNEを調べるを4つの手順に整理'; APP_RELEASED_AT='2026-08-08'
-BUILD_VERSION=f'{APP_VERSION}-inspect'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.38.0'; APP_VERSION_TITLE='Navigator APIの仕様書をアプリに載せる'; APP_RELEASED_AT='2026-08-08'
+BUILD_VERSION=f'{APP_VERSION}-docs'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+# アプリに同梱する仕様書。ここに登録したものだけが画面から開ける。
+# 画面からはこのidしか受け取らないので、任意のパスを読ませることはできない。
+DOCS=[
+{'id':'navigator-api','file':'Navigator_API.md','title':'Navigator API リファレンス',
+ 'summary':'SymNaviA.dll が公開する関数・定数・呼び出し順序の一次資料。'
+           'このアプリの抽出処理（navigator_api.py）と、列分割・行分割の条件指定はこの仕様に沿っています。',
+ 'source':'Navigator Visual Basic Interface API 9.6.0 / FUJITSU Interstage Navigator Server V9.4.1'},
+]
+def docs_dir():
+ # Windowsでは Config と config は同じ場所を指す。Linuxでの検証時だけ綴りが分かれるので両方見る。
+ for d in (CONFIG_DIR/'docs',BASE/'config'/'docs'):
+  if d.is_dir():return d
+ return CONFIG_DIR/'docs'
+
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
+{'version':'1.38.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'Navigator API の仕様書（SymNaviA.dll の関数・定数・呼び出し順序）をアプリに同梱し、共通設定の「仕様書」から読めるようにしました。config\\docs\\Navigator_API.md です。',
+'このアプリの抽出処理と、列分割・行分割の条件指定はこの仕様に沿っています。実装で迷ったときの一次資料としてそのまま参照できます。',
+'資料の中の [原本]（富士通の宣言・ガイドに明記）/ [整理]（今回の用途に合わせた方針）/ [要確認]（実機確認が必要）の別を色分けして表示します。この3つの区別がこの資料でいちばん重要なためです。',
+'章立てから目次を作り、クリックでその位置へ飛べます。表・囲みコード・箇条書きもそのまま読める形に整えます。',
+'読めるのは登録済みの資料だけで、画面から任意のファイルを指定することはできません。',
+]},
+{'version':'1.37.0','date':APP_RELEASED_AT,'title':'RNEを調べるを4つの手順に整理','notes':[
+'「RNEを調べる」を、①中身を読む ②分け方を探す ③速さを試す ④本番の動作 の4つの手順に畳み直しました。やれることは変わりません。',
+'一度に見える操作は1手順ぶんだけになりました。以前は4つのボタンと6つの選択欄が同時に並んでいました。',
+'結果は必ず同じ場所に出ます。どこまで進んだかは左の手順一覧に短く残ります（例: 列 114/178本を分割可 / 行 2分割可）。',
+'②で「列で分ける」「行で分ける」を切り替えると③の方式も追従し、③では方式に関係のない選択欄を出しません。',
+'不具合修正: 「列の分割可否を調べる」が 1.24.0 以降、押すたびに必ず「調査中にエラーが発生しました」になっていました。判定の色分けで未定義の変数を見ていたためです。',
+]},
 {'version':'1.36.1','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
 '実測により、これまで「転送」と呼んでいたものが2つの別物だと分かりました。内訳を3つに分けて表示します。サーバー側で結果を作る / 受信（回線）/ 整形・書き出し（手元のCPU）です。',
 '重要な訂正: これまで「回線の上限」として使っていた値は、実は回線ではなくDLLのCSV整形速度でした。保存(NaviSaveData)の秒数から求めていたためです。実測では受信331KB/s に対し整形809KB/s で、2.4倍違います。',
@@ -5113,6 +5141,38 @@ def instance_info():
  r=app.make_response(jsonify(app=APP_ID,instance_id=INSTANCE_ID,display_name='SymfoNavi Data Hub',build_version=BUILD_VERSION,pid=os.getpid(),port=PORT,path=str(BASE)))
  # 起動待ちモーダル(loading.html)がfile://から状態を確認できるよう、ローカル情報に限りCORSを許可する。
  r.headers['Access-Control-Allow-Origin']='*'; r.headers['Cache-Control']='no-store'; return r
+
+# 仕様書の一覧。実体が無くても一覧には出し、「見つかりません」と言えるようにする。
+@app.get('/api/docs')
+def docs_list():
+ out=[]
+ for d in DOCS:
+  path=docs_dir()/d['file']
+  try:st=path.stat()
+  except OSError:st=None
+  out.append({'id':d['id'],'title':d['title'],'summary':d['summary'],'source':d['source'],
+              'file':d['file'],'path':str(path),'available':bool(st),
+              'bytes':st.st_size if st else 0,
+              'updated_at':datetime.fromtimestamp(st.st_mtime).strftime('%Y-%m-%d %H:%M') if st else ''})
+ return jsonify(ok=True,docs=out)
+
+@app.get('/api/docs/<doc_id>')
+def docs_read(doc_id):
+ d=next((x for x in DOCS if x['id']==doc_id),None)
+ if not d:
+  log.warning('DOC_UNKNOWN id=%s',doc_id)
+  return jsonify(ok=False,error='登録されていない仕様書です'),404
+ path=docs_dir()/d['file']
+ if not path.is_file():
+  log.warning('DOC_MISSING id=%s path=%s',doc_id,path)
+  return jsonify(ok=False,error=f'{path} が見つかりません。配布物に含まれているか確認してください。'),404
+ try:text=path.read_text(encoding='utf-8')
+ except Exception as e:
+  log.exception('DOC_READ_FAILED id=%s path=%s',doc_id,path)
+  return jsonify(ok=False,error=str(e)),500
+ log.info('DOC_READ id=%s bytes=%s lines=%s',doc_id,len(text.encode('utf-8')),text.count(chr(10))+1)
+ return jsonify(ok=True,id=d['id'],title=d['title'],summary=d['summary'],source=d['source'],
+                path=str(path),text=text)
 
 @app.get('/api/version')
 def version_info():

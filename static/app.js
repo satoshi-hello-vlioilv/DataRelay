@@ -1,4 +1,4 @@
-const UI_BUILD='1.37.0-inspect';
+const UI_BUILD='1.38.0-docs';
 let cfg,editing=null,editingRule=null,sortDir=1,scheduleInfo={},rowLive={},rowQueue={},statusFailCount=0,serverLostShown=false;const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)],E=s=>String(s??'').replace(/[&<>"']/g,x=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[x]));const uid=()=>crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random();function toast(t){$('#toast').textContent=t;$('#toast').style.display='block';setTimeout(()=>$('#toast').style.display='none',2500)}function dirty(){$('#dirty').textContent='未保存の変更があります'}$$('nav button').forEach(b=>b.onclick=()=>{$$('nav button,section').forEach(x=>x.classList.remove('on'));b.classList.add('on');$('#'+b.dataset.p).classList.add('on');if(b.dataset.p==='logs')loadLog();if(b.dataset.p==='calendar')openCalendar();if(b.dataset.p==='viewer')loadViewerJobs()});
 const paths={navigator_api_dll:['Navigator API DLL','file',[['DLLファイル','*.dll'],['すべて','*.*']]],symnavi_exe:['SymNavi.exe','file',[['実行ファイル','*.exe'],['すべて','*.*']]],symnavim_conf:['symnavim.conf','file',[['CONFファイル','*.conf'],['すべて','*.*']]],symnavim_def:['symnavim.def','file',[['DEFファイル','*.def'],['すべて','*.*']]],accdb_template:['ACCDB空テンプレート','file',[['Access Database','*.accdb'],['すべて','*.*']]],rne_folder:['RNE基本フォルダー','folder'],default_output_folder:['既定の出力先','folder'],backup_folder:['バックアップ先','folder']};
 let waitingTimer=null,waitingStarted=0;function currentEngine(){return $('#extract-engine')?.value||cfg?.settings?.extract_engine||'api'}function waitingEngineLabel(context='common'){if(context==='api'||(context==='engine'&&currentEngine()==='api'))return 'NAVIGATOR API';if(context==='dde'||(context==='engine'&&currentEngine()==='dde'))return 'DDE COMPATIBILITY';return 'COMMON OPERATION'}function showWaiting(title='確認中',detail='処理を続行しています...',context='common'){let d=$('#waiting-dialog');$('#waiting-engine').textContent=waitingEngineLabel(context);$('#waiting-title').textContent=title;$('#waiting-detail').textContent=detail;waitingStarted=Date.now();clearInterval(waitingTimer);let tick=()=>{let sec=Math.floor((Date.now()-waitingStarted)/1000);$('#waiting-elapsed').textContent=`経過 ${String(Math.floor(sec/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`};tick();waitingTimer=setInterval(tick,1000);if(!d.open)d.showModal()}function updateWaiting(title,detail,context){if(title)$('#waiting-title').textContent=title;if(detail)$('#waiting-detail').textContent=detail;if(context)$('#waiting-engine').textContent=waitingEngineLabel(context)}function hideWaiting(){clearInterval(waitingTimer);waitingTimer=null;let d=$('#waiting-dialog');if(d?.open)d.close()}async function convertPath(input,mode){showWaiting('パス変換中',mode==='relative'?'アプリフォルダー基準へ変換しています...':'実際の絶対パスを解決しています...');try{let r=await fetch('/api/path-convert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({value:input.value,mode})}),d=await r.json();if(!r.ok)return toast(d.error);input.value=d.value;updatePathBadge(input);dirty()}finally{hideWaiting()}}function updatePathBadge(input){let badge=input.closest('label')?.querySelector('.path-badge');if(!badge)return;let relative=input.value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(input.value);badge.textContent=relative?'相対パス / 基準: アプリフォルダー':'絶対パス';badge.className='path-badge '+(relative?'path-kind-relative':'path-kind-absolute')}function isRelativePath(value){return !!value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(value)}function enhancePathInput(input,kind='folder'){if(!input||input.dataset.pathEnhanced)return;input.dataset.pathEnhanced='1';let tools=document.createElement('div');tools.className='path-tools compact-path-tools';tools.innerHTML='<button type="button" class="pathmode path-toggle" title="絶対パスと相対パスを切り替えます"></button><small class="path-badge"></small>';input.closest('label')?.appendChild(tools);let toggle=tools.querySelector('.path-toggle');function refresh(){let relative=isRelativePath(input.value);toggle.textContent=relative?'相対 → 絶対':'絶対 → 相対';toggle.dataset.mode=relative?'absolute':'relative';updatePathBadge(input)}toggle.onclick=async()=>{await convertPath(input,toggle.dataset.mode);refresh()};input.addEventListener('input',refresh);input._refreshPathControl=refresh;refresh()}async function browse(kind,initial,types){showWaiting('参照画面を準備中','設定中のパスを解決して、その場所から開きます...');try{let url=kind==='folder'?'/api/pick-folder':'/api/pick-file',r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({initial,types})}),d=await r.json();if(!r.ok)toast(d.error);return d.path||''}finally{hideWaiting()}}
@@ -276,7 +276,129 @@ function bindV29LogWorkspace(){['log-filter-text','log-filter-kind','log-filter-
 bindV29LogWorkspace();
 
 /* V30: categorized settings navigation and in-app version management */
-function bindSettingsNav(){$$('#settings-nav .settings-navbtn').forEach(b=>b.onclick=()=>{$$('#settings-nav .settings-navbtn').forEach(x=>x.classList.remove('on'));b.classList.add('on');$$('.settings-pane').forEach(x=>x.classList.remove('on'));document.querySelector(`.settings-pane[data-cat="${b.dataset.cat}"]`)?.classList.add('on')})}
+function bindSettingsNav(){$$('#settings-nav .settings-navbtn').forEach(b=>b.onclick=()=>{$$('#settings-nav .settings-navbtn').forEach(x=>x.classList.remove('on'));b.classList.add('on');$$('.settings-pane').forEach(x=>x.classList.remove('on'));document.querySelector(`.settings-pane[data-cat="${b.dataset.cat}"]`)?.classList.add('on');if(b.dataset.cat==='docs')loadDocs()})}
+/* ============================================================
+   仕様書ビュー。同梱のMarkdownをアプリの中で読む。
+   外部ライブラリは使えないので、この文書に実際に出てくる記法だけを自前で描く
+   （見出し・表・囲みコード・箇条書き・引用・水平線・強調・インラインコード）。
+   先にすべてエスケープしてから組み立てるので、文書側のHTMLは実行されない。
+   ============================================================ */
+const MD_TAG={'原本':'orig','整理':'plan','要確認':'check'};
+function mdInline(t){
+ t=E(t);
+ t=t.replace(/`([^`]+)`/g,(m,c)=>`<code>${c}</code>`);
+ t=t.replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>');
+ // [原本] [整理] [要確認] は読み分けの要なので、地の文と混ぜずに印にする
+ t=t.replace(/\[(原本|整理|要確認)([^\]]*)\]/g,(m,k,rest)=>`<span class="md-tag t-${MD_TAG[k]}">${k}${rest}</span>`);
+ return t;
+}
+function mdRender(src){
+ let lines=String(src||'').replace(/\r\n?/g,'\n').split('\n'),out=[],toc=[],i=0,hid=0;
+ const flushList=(items,ordered)=>`<${ordered?'ol':'ul'}>${items.join('')}</${ordered?'ol':'ul'}>`;
+ while(i<lines.length){
+  let ln=lines[i];
+  // 囲みコード
+  let fence=ln.match(/^```(\w*)\s*$/);
+  if(fence){
+   let body=[];i++;
+   while(i<lines.length&&!/^```/.test(lines[i])){body.push(lines[i]);i++}
+   i++;
+   out.push(`<pre class="md-code"${fence[1]?` data-lang="${E(fence[1])}"`:''}><code>${E(body.join('\n'))}</code></pre>`);
+   continue;
+  }
+  // 表（次の行が区切りなら表とみなす）
+  if(/^\s*\|/.test(ln)&&i+1<lines.length&&/^\s*\|[\s:|-]+\|\s*$/.test(lines[i+1])){
+   const cells=r=>r.trim().replace(/^\||\|$/g,'').split('|').map(x=>x.trim());
+   let head=cells(ln),rows=[];i+=2;
+   while(i<lines.length&&/^\s*\|/.test(lines[i])){rows.push(cells(lines[i]));i++}
+   out.push(`<div class="md-tablebox"><table class="md-table"><thead><tr>`
+    +head.map(c=>`<th>${mdInline(c)}</th>`).join('')+`</tr></thead><tbody>`
+    +rows.map(r=>`<tr>`+r.map(c=>`<td>${mdInline(c)}</td>`).join('')+`</tr>`).join('')
+    +`</tbody></table></div>`);
+   continue;
+  }
+  // 見出し
+  let h=ln.match(/^(#{1,6})\s+(.*)$/);
+  if(h){
+   let lv=h[1].length,id='md-h'+(++hid),txt=h[2].replace(/\s*#+\s*$/,'');
+   if(lv<=3)toc.push({id,level:lv,text:txt.replace(/`/g,'')});
+   out.push(`<h${Math.min(lv+1,5)} id="${id}" class="md-h md-h${lv}">${mdInline(txt)}</h${Math.min(lv+1,5)}>`);
+   i++;continue;
+  }
+  // 水平線
+  if(/^\s*(---+|\*\*\*+)\s*$/.test(ln)){out.push('<hr class="md-hr">');i++;continue}
+  // 引用
+  if(/^\s*>\s?/.test(ln)){
+   let body=[];
+   while(i<lines.length&&/^\s*>\s?/.test(lines[i])){body.push(lines[i].replace(/^\s*>\s?/,''));i++}
+   out.push(`<blockquote class="md-quote">${body.map(x=>mdInline(x)).join('<br>')}</blockquote>`);
+   continue;
+  }
+  // 箇条書き（2スペースごとの入れ子まで）
+  if(/^\s*([-*+]|\d+\.)\s+/.test(ln)){
+   let ordered=/^\s*\d+\./.test(ln),stack=[[]],depth=[0];
+   while(i<lines.length&&/^\s*([-*+]|\d+\.)\s+/.test(lines[i])){
+    let m=lines[i].match(/^(\s*)([-*+]|\d+\.)\s+(.*)$/),ind=Math.floor(m[1].length/2),txt=m[3];
+    // チェックリストは印を先に外し、本文を組み立ててから戻す（先に混ぜるとエスケープされる）
+    let box=txt.match(/^\[([ xX])\]\s*/);
+    if(box)txt=txt.slice(box[0].length);
+    while(ind>depth[depth.length-1]){stack.push([]);depth.push(ind)}
+    while(ind<depth[depth.length-1]){let done=stack.pop();depth.pop();
+     let up=stack[stack.length-1];up[up.length-1]=up[up.length-1].replace(/<\/li>$/,flushList(done,false)+'</li>')}
+    stack[stack.length-1].push(`<li${box?' class="md-task"':''}>`
+     +(box?`<i class="md-check${/[xX]/.test(box[1])?' on':''}"></i>`:'')+mdInline(txt)+`</li>`);
+    i++;
+   }
+   while(stack.length>1){let done=stack.pop();let up=stack[stack.length-1];
+    up[up.length-1]=up[up.length-1].replace(/<\/li>$/,flushList(done,false)+'</li>')}
+   out.push(flushList(stack[0],ordered));
+   continue;
+  }
+  // 段落（空行まで）
+  if(!ln.trim()){i++;continue}
+  let para=[];
+  while(i<lines.length&&lines[i].trim()&&!/^(#{1,6}\s|```|\s*\||\s*>|\s*([-*+]|\d+\.)\s|\s*---+\s*$)/.test(lines[i])){para.push(lines[i]);i++}
+  if(para.length)out.push(`<p>${para.map(mdInline).join('<br>')}</p>`);
+  else{out.push(`<p>${mdInline(ln)}</p>`);i++}
+ }
+ return {html:out.join(''),toc};
+}
+let docsLoaded=false,docCurrent='';
+async function loadDocs(force){
+ let box=$('#doc-list');if(!box)return;
+ if(docsLoaded&&!force)return;
+ try{
+  let d=await fetch('/api/docs').then(r=>r.json());
+  docsLoaded=true;
+  box.innerHTML=(d.docs||[]).map(x=>`<button type="button" class="doc-item" data-doc="${E(x.id)}"${x.available?'':' disabled'}>`
+   +`<b>${E(x.title)}</b><small>${E(x.summary)}</small>`
+   +`<em>${x.available?`${Math.round(x.bytes/1024).toLocaleString()} KB · ${E(x.updated_at)}`:'配布物に見つかりません'}</em></button>`).join('')
+   ||'<p class="hint">登録されている仕様書がありません。</p>';
+  box.querySelectorAll('.doc-item').forEach(b=>b.onclick=()=>openDoc(b.dataset.doc));
+  let first=box.querySelector('.doc-item:not([disabled])');
+  if(first&&!docCurrent)openDoc(first.dataset.doc);
+ }catch{box.innerHTML='<p class="hint">仕様書の一覧を取得できませんでした。</p>'}
+}
+async function openDoc(id){
+ let head=$('#doc-head'),body=$('#doc-body'),toc=$('#doc-toc');if(!body)return;
+ docCurrent=id;
+ $$('#doc-list .doc-item').forEach(b=>b.classList.toggle('on',b.dataset.doc===id));
+ body.innerHTML='<p class="hint">読み込み中...</p>';
+ try{
+  let d=await fetch('/api/docs/'+encodeURIComponent(id)).then(r=>r.json());
+  if(!d.ok){head.innerHTML='';body.innerHTML=`<p class="ri-ng">${E(d.error||'読み込めませんでした')}</p>`;
+   toc.innerHTML='';$('.doc-toc-label').hidden=true;return}
+  let m=mdRender(d.text);
+  head.innerHTML=`<h3>${E(d.title)}</h3><p class="doc-source">${E(d.source)}</p><p class="doc-path">${E(d.path)}</p>`;
+  body.innerHTML=m.html;
+  toc.innerHTML=m.toc.map(t=>`<a href="#${t.id}" class="doc-tocitem lv${t.level}" data-to="${t.id}">${E(t.text)}</a>`).join('');
+  $('.doc-toc-label').hidden=!m.toc.length;
+  toc.querySelectorAll('.doc-tocitem').forEach(a=>a.onclick=e=>{e.preventDefault();
+   document.getElementById(a.dataset.to)?.scrollIntoView({block:'start',behavior:'smooth'})});
+  body.scrollTop=0;
+ }catch{body.innerHTML='<p class="ri-ng">読み込み中にエラーが発生しました。</p>'}
+}
+
 function renderChangelog(list){return (list||[]).map(e=>`<div class="changelog-entry"><div class="changelog-head"><b>${E(e.version)}</b>${e.date?`<time>${E(e.date)}</time>`:''}</div><div class="changelog-title">${E(e.title)}</div><ul>${(e.notes||[]).map(n=>`<li>${E(n)}</li>`).join('')}</ul></div>`).join('')}
 async function loadVersion(){try{let d=await fetch('/api/version').then(r=>r.json()),meta=`ビルド: ${d.build_version}`+(d.released_at?` / リリース日: ${d.released_at}`:'');if($('#version-badge'))$('#version-badge').textContent='ver '+d.version;if($('#version-current'))$('#version-current').textContent=`${d.version} ${d.title}`;if($('#version-meta'))$('#version-meta').textContent=meta;if($('#version-changelog'))$('#version-changelog').innerHTML=renderChangelog(d.changelog);if($('#settings-version-summary'))$('#settings-version-summary').innerHTML=`<div class="version-current-badge"><b>${E(d.version)}</b><span>${E(d.title)}</span></div><p class="hint">${E(meta)}</p>`;if($('#settings-version-changelog'))$('#settings-version-changelog').innerHTML=renderChangelog(d.changelog)}catch{if($('#version-badge'))$('#version-badge').textContent='ver ?'}}
 if($('#version-badge'))$('#version-badge').onclick=()=>{if(!$('#version-dialog').open)$('#version-dialog').showModal()};
