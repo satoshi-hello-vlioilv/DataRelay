@@ -1,4 +1,4 @@
-const UI_BUILD='1.40.0-measure';
+const UI_BUILD='1.41.0-axis';
 let cfg,editing=null,editingRule=null,sortDir=1,scheduleInfo={},rowLive={},rowQueue={},statusFailCount=0,serverLostShown=false;const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)],E=s=>String(s??'').replace(/[&<>"']/g,x=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[x]));const uid=()=>crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random();function toast(t){$('#toast').textContent=t;$('#toast').style.display='block';setTimeout(()=>$('#toast').style.display='none',2500)}function dirty(){$('#dirty').textContent='未保存の変更があります'}$$('nav button').forEach(b=>b.onclick=()=>{$$('nav button,section').forEach(x=>x.classList.remove('on'));b.classList.add('on');$('#'+b.dataset.p).classList.add('on');if(b.dataset.p==='logs')loadLog();if(b.dataset.p==='calendar')openCalendar();if(b.dataset.p==='viewer')loadViewerJobs()});
 const paths={navigator_api_dll:['Navigator API DLL','file',[['DLLファイル','*.dll'],['すべて','*.*']]],symnavi_exe:['SymNavi.exe','file',[['実行ファイル','*.exe'],['すべて','*.*']]],symnavim_conf:['symnavim.conf','file',[['CONFファイル','*.conf'],['すべて','*.*']]],symnavim_def:['symnavim.def','file',[['DEFファイル','*.def'],['すべて','*.*']]],accdb_template:['ACCDB空テンプレート','file',[['Access Database','*.accdb'],['すべて','*.*']]],rne_folder:['RNE基本フォルダー','folder'],default_output_folder:['既定の出力先','folder'],backup_folder:['バックアップ先','folder']};
 let waitingTimer=null,waitingStarted=0;function currentEngine(){return $('#extract-engine')?.value||cfg?.settings?.extract_engine||'api'}function waitingEngineLabel(context='common'){if(context==='api'||(context==='engine'&&currentEngine()==='api'))return 'NAVIGATOR API';if(context==='dde'||(context==='engine'&&currentEngine()==='dde'))return 'DDE COMPATIBILITY';return 'COMMON OPERATION'}function showWaiting(title='確認中',detail='処理を続行しています...',context='common'){let d=$('#waiting-dialog');$('#waiting-engine').textContent=waitingEngineLabel(context);$('#waiting-title').textContent=title;$('#waiting-detail').textContent=detail;waitingStarted=Date.now();clearInterval(waitingTimer);let tick=()=>{let sec=Math.floor((Date.now()-waitingStarted)/1000);$('#waiting-elapsed').textContent=`経過 ${String(Math.floor(sec/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`};tick();waitingTimer=setInterval(tick,1000);if(!d.open)d.showModal()}function updateWaiting(title,detail,context){if(title)$('#waiting-title').textContent=title;if(detail)$('#waiting-detail').textContent=detail;if(context)$('#waiting-engine').textContent=waitingEngineLabel(context)}function hideWaiting(){clearInterval(waitingTimer);waitingTimer=null;let d=$('#waiting-dialog');if(d?.open)d.close()}async function convertPath(input,mode){showWaiting('パス変換中',mode==='relative'?'アプリフォルダー基準へ変換しています...':'実際の絶対パスを解決しています...');try{let r=await fetch('/api/path-convert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({value:input.value,mode})}),d=await r.json();if(!r.ok)return toast(d.error);input.value=d.value;updatePathBadge(input);dirty()}finally{hideWaiting()}}function updatePathBadge(input){let badge=input.closest('label')?.querySelector('.path-badge');if(!badge)return;let relative=input.value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(input.value);badge.textContent=relative?'相対パス / 基準: アプリフォルダー':'絶対パス';badge.className='path-badge '+(relative?'path-kind-relative':'path-kind-absolute')}function isRelativePath(value){return !!value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(value)}function enhancePathInput(input,kind='folder'){if(!input||input.dataset.pathEnhanced)return;input.dataset.pathEnhanced='1';let tools=document.createElement('div');tools.className='path-tools compact-path-tools';tools.innerHTML='<button type="button" class="pathmode path-toggle" title="絶対パスと相対パスを切り替えます"></button><small class="path-badge"></small>';input.closest('label')?.appendChild(tools);let toggle=tools.querySelector('.path-toggle');function refresh(){let relative=isRelativePath(input.value);toggle.textContent=relative?'相対 → 絶対':'絶対 → 相対';toggle.dataset.mode=relative?'absolute':'relative';updatePathBadge(input)}toggle.onclick=async()=>{await convertPath(input,toggle.dataset.mode);refresh()};input.addEventListener('input',refresh);input._refreshPathControl=refresh;refresh()}async function browse(kind,initial,types){showWaiting('参照画面を準備中','設定中のパスを解決して、その場所から開きます...');try{let url=kind==='folder'?'/api/pick-folder':'/api/pick-file',r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({initial,types})}),d=await r.json();if(!r.ok)toast(d.error);return d.path||''}finally{hideWaiting()}}
@@ -1013,7 +1013,7 @@ if($('#m-row-split'))$('#m-row-split').onclick=async()=>{
  let rb=$('#m-row-split-result');
  if(!editing?.id||!cfg.jobs.some(j=>j.id===editing.id)){if(rb){rb.hidden=false;rb.innerHTML=`<p class="ri-ng">先に「設定を反映」で対象を保存してください。</p>`}return}
  let parts=Number($('#m-row-parts')?.value||2),probe=!!$('#m-row-probe')?.checked;
- showWaiting('行の分割を調べています',probe?'分割できる列を探し、転送せずに問い合わせだけを実行して内訳を測ります...':'直近の出力から分割できる列を探しています...','api');
+ showWaiting('行の分割を調べています',probe?'RNEから行の軸を読み、転送せずに問い合わせだけを実行して内訳を測ります...':'RNEを開いて、行を絞れる軸（管理ポイント）を読んでいます...','api');
  try{
   let r=await fetch('/api/row-split-plan',{method:'POST',headers:{'Content-Type':'application/json'},
        body:JSON.stringify({job_id:editing.id,parts,probe})}),d=await r.json();
@@ -1021,13 +1021,44 @@ if($('#m-row-split'))$('#m-row-split').onclick=async()=>{
   if(!d.ok){if(rb)rb.innerHTML=`<p class="ri-ng">調べられませんでした。</p><p class="ri-note">${E(d.error||'')}</p>`;inspEmpty('row',true);inspPlanState('row','行 調べられません','ng');return}
   if(rb)rb.innerHTML=rowSplitRender(d);
   inspEmpty('row',true);
-  let c0=(d.candidates||[])[0];
-  inspPlanState('row',c0?`行 ${d.parts}分割可（${c0.column}）`:'行 区切れる列なし',c0?'ok':'ng');
+  let ax=d.axis;
+  inspPlanState('row',ax?`行 ${d.parts}分割可（${ax.name}）`:'行 使える軸なし',ax?'ok':'ng');
  }catch(x){if(rb){rb.hidden=false;rb.innerHTML=`<p class="ri-ng">調査中にエラーが発生しました。</p>`}inspEmpty('row',true);inspPlanState('row','行 エラー','ng')}
  finally{hideWaiting()}
 };
+// 行を絞れるのは管理ポイントだけ（出力される列に条件を付けても1行も絞れない）。
+// どの軸が使えるかを、置かれている場所（表側／表頭／条件）ごとに出す。
+function axisListHtml(d){
+ let ax=d.axes||[],pick=d.axis;
+ if(!ax.length){
+  return `<p class="ri-ng">行を分けられる軸（管理ポイント）を読み取れませんでした</p>`
+   +`<p class="ri-note">${E(d.axes_error||'このRNEには管理ポイントがありません')}</p>`;
+ }
+ let usable=ax.filter(x=>x.usable&&x.enough);
+ let head=pick
+  ?`<p class="ri-ok">「${E(pick.name)}」で ${d.parts}分割できます（${E(pick.location)}の${pick.index+1}番目 / ${E(pick.type_name)}）</p>`
+   +`<p class="ri-note">${E(pick.reason)}。明細データの問い合わせなら<b>表側</b>に必ず軸があるので、`
+   +`このRNEに限らず同じやり方で分けられます。直近の出力ファイルは要りません。</p>`
+  :`<p class="ri-ng">${d.parts}分割できる軸がありませんでした</p>`
+   +`<p class="ri-note">${d.parts}種類以上の値を持つ管理ポイントか、期間が設定された時間型が要ります。</p>`;
+ let rows=ax.map(x=>{
+  let good=x.usable&&x.enough,me=pick&&x.location===pick.location&&x.index===pick.index;
+  let val=x.is_time?`期間 ${E((x.period||{}).from||'?')}〜${E((x.period||{}).to||'?')}`
+        :(x.category_count!=null?`値 ${Number(x.category_count).toLocaleString()}種`:'値を読めません');
+  return `<span class="ri-chip${me?' istime':(good?'':' unnamed')}">${me?'★ ':''}${E(x.location)}${x.index+1} ${E(x.name)}`
+   +`<em>${E(x.type_name)} / ${val}${good?'':' / '+E(x.reason)}</em></span>`;
+ }).join('');
+ return head+`<div class="ri-chips">${rows}</div>`
+  +`<p class="ri-note">★ が次に使う軸です。表側 → 表頭 → 条件 の順に、先頭から使える軸を選びます。`
+  +`値は<b>サーバーのマスタから</b>読んでいます（${usable.length}本が使えます）。</p>`
+  +(pick&&!pick.is_time&&(pick.categories||[]).length
+    ?`<details class="ri-list"><summary>「${E(pick.name)}」の値（先頭 ${pick.categories.length}件）</summary>`
+     +`<div class="ri-chips">${pick.categories.slice(0,60).map(v=>`<span class="ri-chip">${E(v)}</span>`).join('')}</div>`
+     +`<p class="ri-note">これを ${d.parts}組へ順に配ります。組ごとの行数はサーバーに聞くまで分からないので、`
+     +`偏りは実行後の行数で確かめます。</p></details>`:'');
+}
 function rowSplitRender(d){
- let b=d.breakdown||{},body='';
+ let b=d.breakdown||{},body=axisListHtml(d);
  // 行分割の見込み。行は重複しないので運ぶ量は増えず、転送は「回線の伸びしろ」の範囲で縮む。
  // サーバー側が縮むかは条件を付けて測るまで分からないので、縮まない場合と分割数ぶん縮む場合の幅で出す。
  let est=(()=>{
@@ -1057,23 +1088,13 @@ function rowSplitRender(d){
  }
  let cs=d.candidates||[];
  if(!cs.length){
-  body+=`<p class="ri-ng">${d.parts}分割できる列が見つかりませんでした。</p>`
-   +`<p class="ri-note">${E(d.candidate_error||`調べた列の中に、条件として書けるものがありませんでした。`)}</p>`;
+  if(d.candidate_error)body+=`<p class="ri-note">列側の参考情報: ${E(d.candidate_error)}</p>`;
   return body;
  }
+ // ここから下は「出力される列」から見た参考情報。行を絞る力は無い（データ欄には条件が効かない）。
+ body+=`<details class="ri-list"><summary>参考: 出力される列から見た区切り（行は絞れません）</summary>`;
  // 絞り込みの条件が付くのは条件欄の項目だけ。ここを外すと、条件は rc=OK でも1行も絞られない。
- let usable=cs.filter(x=>x.in_condition);
- let ci=d.condition_items||[];
- if(!usable.length){
-  body+=`<p class="ri-ng">区切りに使える列はありますが、<b>行を絞れる見込みがありません</b></p>`
-   +`<p class="ri-note">候補はどれも<b>出力される列（データ欄）</b>です。絞り込みの条件が付くのは`
-   +`<b>条件欄</b>の項目だけで、データ欄の項目に同じ条件を設定しても rc=OK が返るだけで1行も絞られません`
-   +`（2026-08-10の実測。全パートが全件を返しました）。</p>`
-   +(ci.length?`<p class="ri-note">このRNEの条件欄にある項目（${ci.length}件）: ${ci.slice(0,20).map(E).join('、')}`
-      +`${ci.length>20?` ほか${ci.length-20}`:''}。この中に区切れる列があれば行分割が使えます。</p>`
-     :`<p class="ri-note">このRNEには条件欄のデータ項目がありません。RNE側で区切りに使う項目を条件欄へ置くと、行分割が使えるようになります。</p>`);
- }
- body+=`<p class="ri-ok">${d.parts}分割できます。最も均等なのは「${E(cs[0].column)}」です</p>`
+ body+=`<p class="ri-note">最も均等に割れるのは「${E(cs[0].column)}」です</p>`
   +`<p class="ri-note">直近の出力 ${Number(d.sample_rows).toLocaleString()}行 を読んで、${d.columns}列のうち ${d.examined} 列を調べました`
   +`（データ項目 ${d.removable_count} 本は範囲で区切れます。管理ポイント ${d.fixed} 本はカテゴリの組分けになります）。`
   +`偏りは「いちばん重い組が、均等だった場合の何倍か」です（1.00 が完全に均等）。サーバーには触れていません。</p>`;
@@ -1098,7 +1119,8 @@ function rowSplitRender(d){
   if(x.has_empty)warn+=`<p class="ri-note">空の値が ${Number(x.empty_rows).toLocaleString()}行 あります。${x.api?'1組目の条件に NAVI_NULL を足して拾います。':'条件で拾い漏らすと行が落ちるため、実装時はどれかの組へ必ず含めます。'}</p>`;
   return `<details class="ri-list"${i?'':' open'}>${head}${rows}${warn}</details>`;
  }).join('');
- body+=`<p class="ri-note">次の段階では、この条件をRNEへ一時的に適用して、各組の行数の合計が全体と一致するかを<b>転送なしで</b>確かめます。</p>`;
+ body+=`<p class="ri-note">これらは出力される列（データ欄）なので、条件を付けても1行も絞れません。`
+  +`均等に割れる場所の目安としてのみ見てください。</p></details>`;
  return body;
 }
 
@@ -1215,9 +1237,13 @@ function splitTrialRender(d){
   +cp.samples.map(x=>x.columns.map(c=>`<span class="ri-chip unnamed">${E(c.name)}<em>${E(String(c.a).slice(0,18))} → ${E(String(c.b).slice(0,18))}</em></span>`).join('')).join('')+`</div></details>`;
  if(r.results?.length)body+=`<details class="ri-list"><summary>パートごとの内訳（${r.results.length}件）</summary><div class="ri-chips">`
   +r.results.map(x=>`<span class="ri-chip">${E(x.part)}<em>${x.cols}列 / ${x.elapsed}s / ${(x.size/1024/1024).toFixed(2)}MB</em></span>`).join('')+`</div></details>`;
- if(r.mode&&r.mode!=='column')body+=`<p class="ri-note">行の区切り: <b>${E(r.row_column||'')}</b> で ${(r.row_cuts||[]).map(v=>E(String(v))).join(' / ')}`
-  +`（偏り ${r.row_balance} / ${r.row_order==='numeric'?'数として比較':'文字として比較'}）。`
-  +`行は重複しないので、合計で運ぶ量は分割なしと同じです${r.mode==='grid'?'が、列の固定分は片ごとに複製されます':''}。</p>`;
+ if(r.mode&&r.mode!=='column'){
+  let ra=r.row_axis||{};
+  body+=`<p class="ri-note">行の軸: <b>${E(r.row_column||'')}</b>（${E(r.row_location||'')}${ra.index!=null?ra.index+1:''} / ${E(r.row_type||'')}）`
+   +(ra.is_time?`。期間 ${E((ra.period||{}).from||'')}〜${E((ra.period||{}).to||'')} を ${r.row_parts}つに割りました。`
+              :`。${ra.category_count!=null?Number(ra.category_count).toLocaleString()+'種の値':'値'}を ${r.row_parts}組へ配りました。`)
+   +`行は重複しないので、合計で運ぶ量は分割なしと同じです${r.mode==='grid'?'が、列の固定分は片ごとに複製されます':''}。</p>`;
+ }
  if(r.trials?.length)body+=`<p class="ri-note">これまでの実測: `+r.trials.map(t=>`${t.parts}分割 ${t.observed_speedup.toFixed(2)}倍（${t.samples}回）`).join(' / ')+`</p>`;
  if(r.race){
   let win=r.race_winner==='split'?`${r.parts}分割`:'分割なし';
