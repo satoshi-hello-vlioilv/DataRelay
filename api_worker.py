@@ -27,7 +27,8 @@ def main():
         from app import process_split_part
         sp=payload['split_part']
         result=process_split_part(payload['job'],payload['cfg'],payload['user'],payload['password'],payload['server'],
-                                  Path(sp['out_csv']),sp.get('drop') or [],sp.get('label') or '',sp.get('row'))
+                                  Path(sp['out_csv']),sp.get('drop') or [],sp.get('label') or '',sp.get('row'),
+                                  sp.get('row_axis'))
         atomic_json(os.environ['NAVI_WORKER_RESULT'],result)
         return 0 if result.get('ok') else 2
     from app import process_api_parallel_job

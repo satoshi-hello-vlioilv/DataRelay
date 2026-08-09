@@ -25,8 +25,8 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.40.0'; APP_VERSION_TITLE='測るものを選べるようにする'; APP_RELEASED_AT='2026-08-08'
-BUILD_VERSION=f'{APP_VERSION}-measure'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.41.0'; APP_VERSION_TITLE='行分割の軸を管理ポイントにする'; APP_RELEASED_AT='2026-08-08'
+BUILD_VERSION=f'{APP_VERSION}-axis'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリに同梱する仕様書。ここに登録したものだけが画面から開ける。
 # 画面からはこのidしか受け取らないので、任意のパスを読ませることはできない。
 DOCS=[
@@ -43,6 +43,15 @@ def docs_dir():
 
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
+{'version':'1.41.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'行分割の軸を「出力される列」から「管理ポイント」へ変えました。行を絞れるのは管理ポイントだけで、出力される列（データ欄）に条件を付けてもDLLは正常終了を返すだけで1行も絞りません（2026-08-10の実測）。',
+'軸はRNEから直接読みます。表側 → 表頭 → 条件 の順に、先頭から使える軸を選びます。明細データの問い合わせなら表側に必ず1つ以上あるので、どのRNEでも同じやり方で分けられます。',
+'直近の出力ファイルが無くても行分割の下調べができるようになりました。軸が取り得る値（カテゴリ）はサーバーのマスタから読みます。',
+'管理番号系の軸は「値をN組へ順に配る」形で分けます（NaviChangeCategory）。時間型の軸は「期間をN等分する」形で分けます（NaviChangePeriod）。年月日でも月度でも扱えます。',
+'「行の分割可否を調べる」は、読み取れた軸を 表側／表頭／条件 ごとに一覧し、使えない軸には理由（値が1種しかない・期間が未設定など）を付けます。次に使う軸には★が付きます。',
+'どの形で絞れたか（NaviChangeCategory の渡し方3通りのうちどれか）はログに残します。1件も絞れていない場合は、これまでどおり行数で見破って結合前に中止します。',
+'この変更で「行を調べる」はRNEを開くようになりました（接続はしますが、データは1バイトも受信しません）。',
+]},
 {'version':'1.40.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
 '影実行で「何を測るか」を選べるようにしました。分割だけ / 分割なしだけ（基準を測る）/ 両方つづけて（比較）の3つです。既定は「分割だけ」で、毎回分割なしがセットで走ることはなくなりました。',
 '「分割なしだけ」で測った結果は基準として保存され、以後「分割だけ」を測ったときの比較相手になります。1回あたりの所要時間が半分になります。',
@@ -1142,6 +1151,93 @@ def split_expected_share(mode,columns,removable,col_parts,row_parts=1,weights=No
  if mode=='row':return 1.0/rp
  ratio=split_transfer_ratio(columns,removable,cp,weights)
  return ratio/rp if mode=='grid' else ratio
+
+# ---- 行分割の軸（管理ポイント）--------------------------------------------
+# 出力される列（データ欄）に条件を付けても1行も絞れない。絞れるのは管理ポイントで、
+# 明細データの問い合わせなら表側に必ず1つ以上ある。どのRNEでも使える道はこれだけ。
+AXIS_PRIORITY={'表側':0,'表頭':1,'条件':2}
+
+def axis_usable(a):
+ """その軸で行を分けられるか。理由も返す。"""
+ if a.get('is_time'):
+  pr=a.get('period') or {}
+  if pr.get('from') and pr.get('to'):return True,'期間で区切る'
+  return False,'期間が設定されていません'
+ n=a.get('category_count')
+ if n is None:return False,(a.get('category_error') or '値の数を読めません')
+ if int(n)<2:return False,f'値が{n}種しかありません'
+ if not a.get('categories'):return False,(a.get('category_error') or '値を読めません')
+ return True,f'{n}種の値を組に分ける'
+
+def pick_row_axis(axes,parts=2,prefer=''):
+ """行分割に使う軸を選ぶ。表側の先頭を最優先にする（明細データなら必ず在る）。
+
+ 名前を指定されたときはそれを優先する。使えない軸は理由を付けて外す。
+ """
+ ranked=[]
+ for a in (axes or []):
+  ok,why=axis_usable(a)
+  n=int(a.get('category_count') or 0)
+  ranked.append(dict(a,usable=ok,reason=why,
+                     rank=(0 if prefer and a.get('name')==prefer else 1,
+                           AXIS_PRIORITY.get(a.get('location'),9),int(a.get('index') or 0)),
+                     enough=(a.get('is_time') or n>=parts)))
+ ranked.sort(key=lambda x:x['rank'])
+ best=next((x for x in ranked if x['usable'] and x['enough']),None)
+ return best,ranked
+
+def plan_axis_split(axis,parts):
+ """軸をパートへ割り当てる。時間型は期間を等分し、それ以外は値を順に配る。
+
+ 値の配り方は「順番に均す」だけにする。どの値が何行あるかはサーバーに聞くしかなく、
+ 直近の出力に頼ると出力の無いRNEで使えなくなるため。偏りは実行後の行数で分かる。
+ """
+ parts=max(2,int(parts))
+ if axis.get('is_time'):
+  pr=axis.get('period') or {}
+  cuts=split_period_range(pr.get('from'),pr.get('to'),parts)
+  if not cuts:return None
+  return [{'index':i+1,'row_axis':{'kind':'period','column':axis['name'],'locate':axis['locate'],
+                                   'location':axis['location'],'index':axis['index'],
+                                   'from':f,'to':t,'total_rows':0}} for i,(f,t) in enumerate(cuts)]
+ vals=[str(x) for x in (axis.get('categories') or [])]
+ if len(vals)<parts:return None
+ groups=[vals[i::parts] for i in range(parts)]      # 順に配る（値の種類だけは必ず均等になる）
+ if any(not g for g in groups):return None
+ return [{'index':i+1,'row_axis':{'kind':'category','column':axis['name'],'locate':axis['locate'],
+                                  'location':axis['location'],'index':axis['index'],
+                                  'values':g,'others':[v for v in vals if v not in set(g)],
+                                  'total_rows':0}} for i,g in enumerate(groups)]
+
+def split_period_range(start,end,parts):
+ """YYYYMMDD の期間を parts 等分する。月度指定（末尾00）はその形のまま返す。"""
+ start=str(start or '');end=str(end or '')
+ if len(start)!=8 or len(end)!=8 or not start.isdigit() or not end.isdigit():return None
+ month=start.endswith('00') and end.endswith('00')
+ try:
+  if month:
+   a=int(start[:4])*12+int(start[4:6])-1;b=int(end[:4])*12+int(end[4:6])-1
+   if b<=a:return None
+   step=(b-a+1)/parts
+   out=[]
+   for i in range(parts):
+    lo=a+int(round(i*step));hi=a+int(round((i+1)*step))-1
+    if i==parts-1:hi=b
+    if hi<lo:return None
+    out.append((f'{lo//12:04d}{lo%12+1:02d}00',f'{hi//12:04d}{hi%12+1:02d}00'))
+   return out
+  a=datetime.strptime(start,'%Y%m%d');b=datetime.strptime(end,'%Y%m%d')
+  days=(b-a).days
+  if days<parts:return None
+  out=[]
+  for i in range(parts):
+   lo=a+timedelta(days=int(round(i*days/parts)))
+   hi=(a+timedelta(days=int(round((i+1)*days/parts))-1)) if i<parts-1 else b
+   if hi<lo:return None
+   out.append((lo.strftime('%Y%m%d'),hi.strftime('%Y%m%d')))
+  return out
+ except Exception:
+  return None
 
 def plan_row_split(cand,parts):
  """行分割の割り当て。候補（範囲の区切り）から、パートごとの条件を作る。"""
@@ -2794,6 +2890,17 @@ def process_catalog_inspect(j,cfg,user,pw,server,want=None):
   if 'points' in want:
    pts=api.list_time_control_points(handle,read_names=read_names)
    out['points']=pts;out['time_points']=[p for p in pts if p.get('is_time')]
+  if 'axes' in want:
+   # 行を絞れるのは管理ポイントだけ。どこに何が置かれているか（表側／表頭／条件）と、
+   # その軸が取り得る値まで読む。直近の出力ファイルが無くても行分割の下調べができる。
+   cats=int((cfg.get('settings') or {}).get('row_axis_category_limit',400) or 400)
+   axes=api.list_control_points(handle,read_names=read_names,with_categories=cats)
+   out['axes']=axes
+   for a in axes:
+    log.info('ROW_AXIS %s#%s 名前=%s 型=%s 値の数=%s 期間=%s%s',a['location'],a['index']+1,a['name'],
+             a['type_name'],a.get('category_count'),a.get('period'),
+             (' 読めた値='+' | '.join(a.get('categories') or [])[:120]) if a.get('categories') else
+             (' 値の読み取り='+a['category_error'] if a.get('category_error') else ''))
   if 'items' in want:
    lay=api.column_layout(handle,columns=known,read_names=read_names)
    out['layout']={'removable':[x['name'] for x in lay['removable']],'fixed':[x['name'] for x in lay['fixed']],
@@ -2949,7 +3056,7 @@ def elapsed_tick(expected_seconds,label,note=''):
   return None,f'{label} {elapsed:.0f}秒'+(f' · {note}' if note else '')
  return make
 
-def process_split_part(j,cfg,user,pw,server,out_csv,drop_columns,part_label='',row_condition=None):
+def process_split_part(j,cfg,user,pw,server,out_csv,drop_columns,part_label='',row_condition=None,row_axis=None):
  """1パートを実行してCSVへ保存する。担当外の列を外し、担当する行だけに絞る。
 
  drop_columns も row_condition も空なら、分割なしの実行になる。
@@ -2991,6 +3098,20 @@ def process_split_part(j,cfg,user,pw,server,out_csv,drop_columns,part_label='',r
    step('担当外の列を外す')
    t=time.perf_counter();removed=api.apply_column_split(handle,drop_columns);stage['dropped']=len(removed)
    log.info('SPLIT_PART_REMOVE part=%s removed=%s elapsed=%.2fs',part_label,len(removed),time.perf_counter()-t)
+  if row_axis:
+   # 管理ポイントで絞る。出力される列（データ欄）と違い、ここは実際に行が減る。
+   step('行の軸で絞る')
+   t=time.perf_counter()
+   applied=(api.apply_row_period(handle,row_axis) if row_axis.get('kind')=='period'
+            else api.apply_row_categories(handle,row_axis))
+   stage['row_condition']=applied
+   log.info('SPLIT_PART_ROWAXIS part=%s 軸=%s(%s %s番目) 種類=%s 通った形=%s つかみ方=%s %s elapsed=%.2fs',
+            part_label,applied['column'],row_axis.get('location'),int(row_axis.get('index') or 0)+1,
+            row_axis.get('kind'),applied.get('form'),applied.get('how'),
+            (f"期間={applied.get('from')}〜{applied.get('to')}" if row_axis.get('kind')=='period'
+             else f"担当={applied.get('values')}種 / 外した={applied.get('others')}種"),
+            time.perf_counter()-t)
+   for x in (applied.get('tried') or []):log.info('SPLIT_PART_ROWAXIS_TRIED part=%s %s',part_label,x)
   if row_condition:
    # 担当する行だけに絞る。ここが効かないと同じ行を何度も取ってしまうので、失敗は必ず例外にする。
    step('行の条件を設定')
@@ -3022,6 +3143,18 @@ def process_split_part(j,cfg,user,pw,server,out_csv,drop_columns,part_label='',r
   # 行の条件が本当に効いたかを、返ってきた行数で確かめる。rc=OK でも1行も絞られないことがあり
   # （データ欄の項目に条件を付けた場合）、そのまま結合すると同じ行を分割数ぶん重複させてしまう。
   applied_row=stage.get('row_condition') or {}
+  # 軸で絞ったつもりが全件返っていないか。データ欄への条件が空振りした前例があるので必ず確かめる。
+  if row_axis and not row_condition:
+   full=int(row_axis.get('total_rows') or 0)
+   if full and int(expected_rows)>=full*0.95:
+    return {'ok':False,'part':part_label,'row_condition_ineffective':True,
+            'rows':expected_rows,'expected_rows':int(full/max(1,int(row_axis.get('parts') or 2))),
+            'row_column':applied_row.get('column',''),'row_locate':row_axis.get('location',''),
+            'row_form':applied_row.get('form',''),
+            'error':f'行の軸「{applied_row.get("column","")}」で絞れませんでした。'
+                    f'{applied_row.get("form","?")} で設定できたのに、全体{full}行に対して{expected_rows}行'
+                    '（ほぼ全件）が返っています。',
+            'elapsed':round(total,2)}
   if row_condition and want:
    full=int(row_condition.get('total_rows') or 0)
    if int(expected_rows)>=int(want)*1.5 and (not full or int(expected_rows)>=full*0.95):
@@ -4297,7 +4430,7 @@ def _spawn_racers(job,cfg,user,pw,server,work,jobs_spec,timeout=1800,stop_when=N
   d=work/f'part{spec["index"]}';d.mkdir(parents=True,exist_ok=True)
   payload={'job':job,'cfg':cfg,'user':user,'password':pw,'server':server,
            'split_part':{'out_csv':str(spec['out_csv']),'drop':spec['drop'],'label':spec['label'],
-                         'row':spec.get('row')}}
+                         'row':spec.get('row'),'row_axis':spec.get('row_axis')}}
   pp=d/'payload.json';pp.write_text(json.dumps(payload,ensure_ascii=False),encoding='utf-8')
   env=os.environ.copy();env['NAVI_WORKER_RESULT']=str(d/'result.json');env['NAVI_WORKER_LINE']=spec['label']
   env['NAVI_WORKER_STATUS']=str(d/'status.json')
@@ -4408,7 +4541,7 @@ def _split_trial_run(data,c,job):
                                     trials,load_rne_timing(rp),weights,c['settings'],split_link_profile(rp))
   if parts<2:parts=2                              # 明示的な試行なので、推奨が1でも2で測る
  plan,keys=plan_column_split(columns,removable,parts,weights,anchors)
- if len(plan)<2:return dict(ok=False,error='この列構成では分割できません')
+ if len(plan)<2 and mode!='row':return dict(ok=False,error='この列構成では分割できません')
  if split_incompatible(rp) and not anchors and not data.get('force'):
   return dict(ok=False,error='このRNEは、列を外すと返ってくる行そのものが変わることが確認済みです。'
                  '行をつなぎ留める錨の列も立てられないため、列分割は使えません。'
@@ -4419,34 +4552,32 @@ def _split_trial_run(data,c,job):
  mode=str(data.get('mode') or 'column').lower()
  if mode not in ('column','row','grid'):mode='column'
  measure=normalize_measure(data.get('measure'),bool(data.get('race')))
- row_cand=None;row_parts=max(2,min(4,int(data.get('row_parts') or 2)))
+ row_axis=None;row_axis_all=[];row_parts=max(2,min(4,int(data.get('row_parts') or 2)))
  if mode in ('row','grid') and measure!='normal':
+  # 行を絞れるのは管理ポイントだけ。RNEから軸を読み、表側の先頭を既定にする。
+  # 直近の出力ファイルに頼らないので、どのRNEでもここまでは同じように進める。
   try:
-   op=_viewer_output_path(job,c)
-   if not op.is_file():
-    return dict(ok=False,error='行分割には直近の出力ファイルが要ります（区切りの値をそこから求めます）。1回実行してからお試しください')
-   rs=row_split_candidates(op,job,columns,removable,row_parts)
+   user0,pw0,server0,_=creds(resolve_path(c['symnavim_conf']))
+   ins=run_inspect_worker(dict(job,_read_names=True),c,user0,pw0,server0,['axes'],
+                          timeout=int(c['settings'].get('split_trial_timeout_seconds',1800) or 1800))
+   row_axis_all=(ins.get('axes') or []) if ins.get('ok') else []
+   if not ins.get('ok'):log.warning('SPLIT_TRIAL_AXES_FAILED rne=%s error=%s',rp,ins.get('error'))
   except Exception as e:
-   log.exception('SPLIT_TRIAL_ROWCAND_FAILED rne=%s',rp);return dict(ok=False,error=f'行の区切りを求められませんでした: {e}')
-  want=str(data.get('row_column') or '')
-  cands=[x for x in (rs or {}).get('candidates',[]) if x['method']=='range' and (not want or x['column']==want)]
-  if not cands:
-   return dict(ok=False,error=f'{row_parts}分割できる列が見つかりませんでした。'
-                             '「行の分割可否を調べる」で候補を確認してください（範囲で区切れる列が要ります）')
-  row_cand=cands[0]
-  if not row_cand.get('api'):return dict(ok=False,error='行の条件を組み立てられませんでした')
-  log.info('SPLIT_TRIAL_ROWPLAN rne=%s mode=%s 列=%s 偏り=%s 並び=%s 区切り=%s 値域=%r〜%r',
-           rp,mode,row_cand['column'],row_cand['balance'],row_cand.get('order'),row_cand.get('cuts'),
-           row_cand['groups'][0]['from'],row_cand['groups'][-1]['to'])
-  if mode=='grid':
-   # 行の条件を付ける列は、どの列パートにも残す。外してしまうと、そのパートでは
-   # 条件を付ける相手が見つからない（NAVI_ERROR_DATAITEM）。錨と同じ扱いにする。
-   if row_cand['column'] in set(removable) and row_cand['column'] not in anchors:
-    anchors=list(anchors)+[row_cand['column']]
-    # 錨が増えたので列の割り当てを作り直す。ここを忘れると、その列を外したパートが出てしまう。
-    plan,keys=plan_column_split(columns,removable,parts,weights,anchors)
-    log.info('SPLIT_TRIAL_ROWKEEP rne=%s 行の条件に使う列「%s」を全パートに残し、列の割り当てを作り直しました（keep=%s）',
-             rp,row_cand['column'],[len(x['keep']) for x in plan])
+   log.exception('SPLIT_TRIAL_AXES_FAILED rne=%s',rp);row_axis_all=[]
+  row_axis,ranked=pick_row_axis(row_axis_all,row_parts,str(data.get('row_column') or ''))
+  for x in ranked:
+   log.info('SPLIT_TRIAL_AXIS 候補 %s#%s %s 型=%s 値=%s 使える=%s（%s）',x['location'],x['index']+1,x['name'],
+            x['type_name'],x.get('category_count'),x['usable'] and x['enough'],x['reason'])
+  if not row_axis:
+   return dict(ok=False,axes=ranked,
+               error='行を分けられる管理ポイントが見つかりませんでした。'
+                     f'{row_parts}分割するには、表側・表頭・条件のどれかに「{row_parts}種類以上の値を持つ管理ポイント」'
+                     'または「期間が設定された時間型」が要ります。'
+                     +('（読み取れた軸: '+'、'.join(f"{x['location']}/{x['name']}（{x['reason']}）" for x in ranked[:6])+'）'
+                       if ranked else '（管理ポイントを1つも読み取れませんでした）'))
+  log.info('SPLIT_TRIAL_AXIS_PICK rne=%s 軸=%s（%s %s番目 / %s）値=%s 期間=%s',
+           rp,row_axis['name'],row_axis['location'],row_axis['index']+1,row_axis['type_name'],
+           row_axis.get('category_count'),row_axis.get('period'))
  work=LOCAL_RUNTIME/('split_trial_'+datetime.now().strftime('%Y%m%d_%H%M%S'));work.mkdir(parents=True,exist_ok=True)
  user,pw,server,_=creds(resolve_path(c['symnavim_conf']))
  log.info('SPLIT_TRIAL_START rne=%s job=%s mode=%s 列%s分割 行%s分割 columns=%s removable=%s keys=%s transfer_ratio=%.2f',
@@ -4478,15 +4609,25 @@ def _split_trial_run(data,c,job):
                   normal_elapsed=round(normal_elapsed,2),
                   normal_execute=base.get('execute_elapsed'),normal_save=base.get('save_elapsed'),
                   baseline=meta,results=[base],trials=load_split_trials(rp))
+  if mode in ('row','grid'):
+   ap=plan_axis_split(row_axis,row_parts)
+   if not ap:
+    why=('期間が短すぎます' if row_axis.get('is_time')
+         else f'値が{row_axis.get("category_count")}種しかありません')
+    return dict(ok=False,error=f'「{row_axis["name"]}」を{row_parts}つに分けられませんでした（{why}）')
+   total_rows=int((load_rne_timing(rp) or {}).get('rows') or 0)
+   for x in ap:x['row_axis']['total_rows']=total_rows;x['row_axis']['parts']=row_parts
   if mode=='row':
-   rp_plan=plan_row_split(row_cand,row_parts)
    part_specs=[{'index':x['index'],'label':f'行{x["index"]}/{row_parts}','group':'split','drop':[],
-                'row':x['row'],'row_group':x['index'],'out_csv':work/f'row{x["index"]}.csv'} for x in rp_plan]
+                'row_axis':x['row_axis'],'row_group':x['index'],'out_csv':work/f'row{x["index"]}.csv'} for x in ap]
   elif mode=='grid':
-   grid=plan_grid_split(row_cand,row_parts,plan)
-   part_specs=[{'index':g['index'],'label':f'行{g["row_group"]}×列{g["col_group"]}','group':'split',
-                'drop':g['drop'],'row':g['row'],'row_group':g['row_group'],'col_group':g['col_group'],
-                'out_csv':work/f'g{g["row_group"]}_{g["col_group"]}.csv'} for g in grid]
+   part_specs=[]
+   for x in ap:
+    for cpart in plan:
+     part_specs.append({'index':len(part_specs)+1,'label':f'行{x["index"]}×列{cpart["index"]}','group':'split',
+                        'drop':list(cpart.get('drop') or []),'row_axis':x['row_axis'],
+                        'row_group':x['index'],'col_group':cpart['index'],
+                        'out_csv':work/f'g{x["index"]}_{cpart["index"]}.csv'})
   else:
    part_specs=[{'index':p['index'],'label':f'パート{p["index"]}/{len(plan)}','group':'split',
                 'drop':p['drop'],'out_csv':work/f'part{p["index"]}.csv'} for p in plan]
@@ -4578,11 +4719,11 @@ def _split_trial_run(data,c,job):
   bad=[r for r in results if not r.get('ok')]
   if any(r.get('row_condition_ineffective') for r in bad):
    log.warning('SPLIT_TRIAL_ROWCOND_INEFFECTIVE rne=%s 列=%s 返った行数=%s（見込み %s）',
-               rp,(row_cand or {}).get('column'),[r.get('rows') for r in bad],[r.get('expected_rows') for r in bad])
+               rp,(row_axis or {}).get('name'),[r.get('rows') for r in bad],[r.get('expected_rows') for r in bad])
    record_split_trial(rp,job,pieces,None,None,normal_elapsed,None,False,
-                      detail=f'{mode}: 行の条件が効かず全件が返りました 列={(row_cand or {}).get("column")}')
+                      detail=f'{mode}: 行の軸で絞れず全件が返りました 軸={(row_axis or {}).get("name")}')
    return dict(ok=False,row_condition_ineffective=True,parts=pieces,results=results,
-                  row_column=(row_cand or {}).get('column',''),normal_rows=base.get('rows'),
+                  row_column=(row_axis or {}).get('name',''),normal_rows=base.get('rows'),
                   part_rows=[{'part':r.get('part'),'rows':r.get('rows'),'expected':r.get('expected_rows'),
                               'locate':r.get('row_locate',''),'form':r.get('row_form','')} for r in results],
                   error='行の条件が効きませんでした。条件の設定そのものは成功しています（rc=OK）が、'
@@ -4646,7 +4787,7 @@ def _split_trial_run(data,c,job):
   # 競争させた回は、両者が同じ回線を奪い合った値なので、単独で測った値と混ぜてはいけない。
   # 印を付けて残し、回線の見積もりと速度比の平均からは外す。
   metrics['race']=race;metrics['mode']=mode
-  if mode!='column':metrics['row_column']=row_cand['column'];metrics['row_parts']=row_parts
+  if mode!='column':metrics['row_column']=(row_axis or {}).get('name','');metrics['row_parts']=row_parts
   # 種類の違う試行を混ぜない。'列2分割' と '行2分割' は意味が違うので、平均を取ると嘘になる。
   tag=('race: ' if race else '')+('' if mode=='column' else f'{mode}: ')+('baseline: ' if base.get('stored') else '')
   speedup=(record_split_trial(rp,job,pieces,mrows,mcols,normal_elapsed,split_elapsed,identical,tag+detail,metrics)
@@ -4682,8 +4823,8 @@ def _split_trial_run(data,c,job):
                  baseline=(baseline if base.get('stored') else None),
                  rne=str(rp),job=job['name'],parts=pieces,identical=identical,mode=mode,
                  row_parts=row_parts if mode!='column' else 0,column_parts=col_parts,how=split_how_label(mode,col_parts,row_parts),
-                 row_column=(row_cand or {}).get('column',''),row_balance=(row_cand or {}).get('balance'),
-                 row_order=(row_cand or {}).get('order',''),row_cuts=(row_cand or {}).get('cuts',[]),
+                 row_column=(row_axis or {}).get('name',''),row_axis=(dict(row_axis,categories=(row_axis.get('categories') or [])[:12]) if row_axis else None),
+                 row_location=(row_axis or {}).get('location',''),row_type=(row_axis or {}).get('type_name',''),
                  rows=mrows,cols=mcols,key_count=len(keys),
                  normal_elapsed=round(normal_elapsed,2) if normal_elapsed else None,
                  split_elapsed=round(split_elapsed,2),
@@ -4821,9 +4962,27 @@ def row_split_plan():
  if not Path(rp).is_file():return jsonify(ok=False,error=f'RNEが見つかりません: {rp}'),200
  parts=max(2,min(4,int(data.get('parts') or 2)))
  started=time.perf_counter()
+ # 行を絞れるのは管理ポイントだけ。まずRNEから軸を読む。ここは直近の出力に依存しないので、
+ # どのRNEでも同じように調べられる。
+ axes=[];axes_error='';axis=None;ranked=[]
+ try:
+  user,pw,server,_=creds(resolve_path(c['symnavim_conf']))
+  ins=run_inspect_worker(dict(job,_read_names=True),c,user,pw,server,['axes'],
+                         timeout=int(c['settings'].get('split_trial_timeout_seconds',1800) or 1800))
+  if ins.get('ok'):axes=ins.get('axes') or []
+  else:axes_error=ins.get('error') or '管理ポイントを読み取れませんでした'
+ except Exception as e:
+  axes_error=str(e);log.exception('ROW_AXES_FAILED rne=%s',rp)
+ parts0=max(2,min(4,int(data.get('parts') or 2)))
+ axis,ranked=pick_row_axis(axes,parts0)
+ log.info('ROW_AXES rne=%s 読めた軸=%s 使える=%s 既定=%s',rp,len(axes),
+          sum(1 for x in ranked if x['usable'] and x['enough']),(axis or {}).get('name','(なし)'))
  state,cached=column_cache_state(rp)
  if not cached or not cached.get('columns'):
-  return jsonify(ok=False,error='先に「列の分割可否を調べる」を実行してください（列定義が未取得です）'),200
+  return jsonify(ok=True,rne=str(rp),job=job['name'],parts=parts0,axes=ranked,axis=axis,axes_error=axes_error,
+                 columns=0,fixed=0,removable_count=0,candidates=[],examined=0,sample_rows=0,
+                 candidate_error='列定義が未取得です（手順2の「列を調べる」を実行すると、列の情報も出せます）',
+                 breakdown={'known':False},condition_items=[]),200
  columns=cached['columns']
  classify=cached.get('classify') or []
  removable=[x['name'] for x in classify if x.get('removable')]
@@ -4868,6 +5027,7 @@ def row_split_plan():
            breakdown.get('format_seconds'),breakdown.get('format_kbs'),breakdown.get('rows'))
  return jsonify(ok=True,rne=str(rp),job=job['name'],parts=parts,columns=len(columns),fixed=len(fixed),
                 removable_count=len(removable),
+                axes=ranked,axis=axis,axes_error=axes_error,
                 condition_items=cond_items,
                 candidates=[dict(x,in_condition=(x['column'] in set(cond_items))) for x in (cand or {}).get('candidates',[])],
                 examined=(cand or {}).get('examined',0),
