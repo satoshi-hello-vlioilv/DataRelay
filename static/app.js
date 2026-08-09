@@ -1,4 +1,4 @@
-const UI_BUILD='1.36.0-rowtrial';
+const UI_BUILD='1.39.0-rowcond';
 let cfg,editing=null,editingRule=null,sortDir=1,scheduleInfo={},rowLive={},rowQueue={},statusFailCount=0,serverLostShown=false;const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)],E=s=>String(s??'').replace(/[&<>"']/g,x=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[x]));const uid=()=>crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random();function toast(t){$('#toast').textContent=t;$('#toast').style.display='block';setTimeout(()=>$('#toast').style.display='none',2500)}function dirty(){$('#dirty').textContent='未保存の変更があります'}$$('nav button').forEach(b=>b.onclick=()=>{$$('nav button,section').forEach(x=>x.classList.remove('on'));b.classList.add('on');$('#'+b.dataset.p).classList.add('on');if(b.dataset.p==='logs')loadLog();if(b.dataset.p==='calendar')openCalendar();if(b.dataset.p==='viewer')loadViewerJobs()});
 const paths={navigator_api_dll:['Navigator API DLL','file',[['DLLファイル','*.dll'],['すべて','*.*']]],symnavi_exe:['SymNavi.exe','file',[['実行ファイル','*.exe'],['すべて','*.*']]],symnavim_conf:['symnavim.conf','file',[['CONFファイル','*.conf'],['すべて','*.*']]],symnavim_def:['symnavim.def','file',[['DEFファイル','*.def'],['すべて','*.*']]],accdb_template:['ACCDB空テンプレート','file',[['Access Database','*.accdb'],['すべて','*.*']]],rne_folder:['RNE基本フォルダー','folder'],default_output_folder:['既定の出力先','folder'],backup_folder:['バックアップ先','folder']};
 let waitingTimer=null,waitingStarted=0;function currentEngine(){return $('#extract-engine')?.value||cfg?.settings?.extract_engine||'api'}function waitingEngineLabel(context='common'){if(context==='api'||(context==='engine'&&currentEngine()==='api'))return 'NAVIGATOR API';if(context==='dde'||(context==='engine'&&currentEngine()==='dde'))return 'DDE COMPATIBILITY';return 'COMMON OPERATION'}function showWaiting(title='確認中',detail='処理を続行しています...',context='common'){let d=$('#waiting-dialog');$('#waiting-engine').textContent=waitingEngineLabel(context);$('#waiting-title').textContent=title;$('#waiting-detail').textContent=detail;waitingStarted=Date.now();clearInterval(waitingTimer);let tick=()=>{let sec=Math.floor((Date.now()-waitingStarted)/1000);$('#waiting-elapsed').textContent=`経過 ${String(Math.floor(sec/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`};tick();waitingTimer=setInterval(tick,1000);if(!d.open)d.showModal()}function updateWaiting(title,detail,context){if(title)$('#waiting-title').textContent=title;if(detail)$('#waiting-detail').textContent=detail;if(context)$('#waiting-engine').textContent=waitingEngineLabel(context)}function hideWaiting(){clearInterval(waitingTimer);waitingTimer=null;let d=$('#waiting-dialog');if(d?.open)d.close()}async function convertPath(input,mode){showWaiting('パス変換中',mode==='relative'?'アプリフォルダー基準へ変換しています...':'実際の絶対パスを解決しています...');try{let r=await fetch('/api/path-convert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({value:input.value,mode})}),d=await r.json();if(!r.ok)return toast(d.error);input.value=d.value;updatePathBadge(input);dirty()}finally{hideWaiting()}}function updatePathBadge(input){let badge=input.closest('label')?.querySelector('.path-badge');if(!badge)return;let relative=input.value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(input.value);badge.textContent=relative?'相対パス / 基準: アプリフォルダー':'絶対パス';badge.className='path-badge '+(relative?'path-kind-relative':'path-kind-absolute')}function isRelativePath(value){return !!value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(value)}function enhancePathInput(input,kind='folder'){if(!input||input.dataset.pathEnhanced)return;input.dataset.pathEnhanced='1';let tools=document.createElement('div');tools.className='path-tools compact-path-tools';tools.innerHTML='<button type="button" class="pathmode path-toggle" title="絶対パスと相対パスを切り替えます"></button><small class="path-badge"></small>';input.closest('label')?.appendChild(tools);let toggle=tools.querySelector('.path-toggle');function refresh(){let relative=isRelativePath(input.value);toggle.textContent=relative?'相対 → 絶対':'絶対 → 相対';toggle.dataset.mode=relative?'absolute':'relative';updatePathBadge(input)}toggle.onclick=async()=>{await convertPath(input,toggle.dataset.mode);refresh()};input.addEventListener('input',refresh);input._refreshPathControl=refresh;refresh()}async function browse(kind,initial,types){showWaiting('参照画面を準備中','設定中のパスを解決して、その場所から開きます...');try{let url=kind==='folder'?'/api/pick-folder':'/api/pick-file',r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({initial,types})}),d=await r.json();if(!r.ok)toast(d.error);return d.path||''}finally{hideWaiting()}}
@@ -122,7 +122,7 @@ async function copyTextValue(v,label){try{await navigator.clipboard.writeText(v|
 async function openJobOutput(j){try{let r=await fetch('/api/open-path',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:j.output_folder||cfg.default_output_folder})}),d=await r.json();toast(r.ok&&d.ok?'出力先を開きました':d.error||'出力先を開けませんでした')}catch{toast('出力先を開けませんでした')}}
 function duplicateJob(j){let n=structuredClone(j);n.id=uid();n.name+=' コピー';n.schedules=(n.schedules||[]).map(r=>({...r,id:uid(),enabled:false}));cfg.jobs.splice(cfg.jobs.indexOf(j)+1,0,n);render();dirty()}
 if($('#job-context-menu')){$('#job-context-menu').onclick=e=>{let a=e.target.closest('[data-action]');if(!a||!contextJob)return;let j=contextJob,act=a.dataset.action;hideJobContextMenu();if(act==='edit')openEditor(j);else if(act==='run')runJobs([j.id]);else if(act==='open-output')openJobOutput(j);else if(act==='viewer'){document.querySelector('[data-p="viewer"]')?.click();setTimeout(()=>{let sel=$('#viewer-job');if(sel){sel.value=j.id;sel.dispatchEvent(new Event('change'))}},100)}else if(act==='copy-rne')copyTextValue(j.rne_path||j.rne,'RNEパス');else if(act==='copy-output')copyTextValue(j.output_folder||cfg.default_output_folder,'出力先');else if(act==='duplicate')duplicateJob(j);else if(act==='toggle'){j.enabled=!j.enabled;render();dirty();toast(j.enabled?'有効にしました':'無効にしました')}else if(act==='delete')deleteJob(j)};document.addEventListener('click',e=>{if(!e.target.closest('#job-context-menu'))hideJobContextMenu()});document.addEventListener('keydown',e=>{if(e.key==='Escape')hideJobContextMenu()});window.addEventListener('blur',hideJobContextMenu)}
-function openEditor(job){editing=structuredClone(job||{id:uid(),name:'新しい対象',enabled:true,rne:'NEW.RNE',rne_path:cfg.rne_folder+'\\NEW.RNE',output_folder:cfg.default_output_folder,output_format:'sqlite3',output_file:'NEW.sqlite3',table:'仕掛',sheet:'Page1',type:'詳細データ',naming_mode:'fixed',output_pattern:'',comment:'',split_mode:'auto',period:{enabled:false,control_point:'',unit:'month',from_offset:-1,to_offset:0},schedules:[]});$('#modal-title').textContent=job?'対象を編集':'対象を追加';$('#m-id').value=editing.id;$('#m-name').value=editing.name;$('#m-enabled').checked=editing.enabled;$('#m-rne-path').value=editing.rne_path||'';$('#m-output').value=editing.output_folder||cfg.default_output_folder;editing.output_format=normalizeFormat(editing.output_format);$('#m-format').value=editing.output_format;$('#m-output-file').value=editing.output_file;$('#m-table').value=editing.table;$('#m-sheet').value=editing.sheet;$('#m-type').value=editing.type;if($('#m-comment'))$('#m-comment').value=editing.comment||'';if($('#m-split-mode'))$('#m-split-mode').value=editing.split_mode||'auto';syncOutputExtension();initNaming(editing);setPeriodUI(editing.period);renderRuntimeSplit(null);['#m-rne-inspect-result','#m-column-plan-result','#m-split-trial-result'].forEach(id=>{let e=$(id);if(e){e.hidden=true;e.innerHTML=''}});splitTrialPoll();rulesRender();updatePeriodBadge();setEditorTab('basic');$('#editor').showModal()}
+function openEditor(job){editing=structuredClone(job||{id:uid(),name:'新しい対象',enabled:true,rne:'NEW.RNE',rne_path:cfg.rne_folder+'\\NEW.RNE',output_folder:cfg.default_output_folder,output_format:'sqlite3',output_file:'NEW.sqlite3',table:'仕掛',sheet:'Page1',type:'詳細データ',naming_mode:'fixed',output_pattern:'',comment:'',split_mode:'auto',period:{enabled:false,control_point:'',unit:'month',from_offset:-1,to_offset:0},schedules:[]});$('#modal-title').textContent=job?'対象を編集':'対象を追加';$('#m-id').value=editing.id;$('#m-name').value=editing.name;$('#m-enabled').checked=editing.enabled;$('#m-rne-path').value=editing.rne_path||'';$('#m-output').value=editing.output_folder||cfg.default_output_folder;editing.output_format=normalizeFormat(editing.output_format);$('#m-format').value=editing.output_format;$('#m-output-file').value=editing.output_file;$('#m-table').value=editing.table;$('#m-sheet').value=editing.sheet;$('#m-type').value=editing.type;if($('#m-comment'))$('#m-comment').value=editing.comment||'';if($('#m-split-mode'))$('#m-split-mode').value=editing.split_mode||'auto';syncOutputExtension();initNaming(editing);setPeriodUI(editing.period);renderRuntimeSplit(null);inspReset();splitTrialPoll();rulesRender();updatePeriodBadge();setEditorTab('basic');$('#editor').showModal()}
 $('#m-format').onchange=()=>{syncOutputExtension();if(currentNamingMode()==='template')refreshNamePreview()};$('#m-rne-check').onclick=async()=>{showWaiting('RNEファイル確認中','設定場所と周辺フォルダーを検索しています...');try{let temp={item:'rne',job_id:editing.id,label:editing.rne,configured:$('#m-rne-path').value,resolved:$('#m-rne-path').value,candidates:[],ok:false};let r=await fetch('/api/path-check',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({item:'rne',job_id:editing.id,value:$('#m-rne-path').value,expected_name:$('#m-rne-path').value.split(/[\\/]/).pop()})}),d=await r.json();if(r.ok)showPathResult(d);else toast(d.error)}finally{hideWaiting()}};$('#m-rne-pick').onclick=async()=>{let p=await browse('file',$('#m-rne-path').value,[['RNEファイル','*.RNE'],['すべて','*.*']]);if(p){let i=$('#m-rne-path'),wasRel=i.value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(i.value);i.value=p;if(wasRel)await convertPath(i,'relative');updatePathBadge(i);i._refreshPathControl?.()}};$('#m-output-pick').onclick=async()=>{let p=await browse('folder',$('#m-output').value);if(p){let i=$('#m-output'),wasRel=i.value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(i.value);i.value=p;if(wasRel)await convertPath(i,'relative');updatePathBadge(i)}};enhancePathInput($('#m-rne-path'),'file');enhancePathInput($('#m-output'),'folder');$('#add-rule').onclick=()=>openRule({id:uid(),enabled:true,name:'実行ルール',type:'daily',time:'06:00'},true);$('#apply').onclick=async e=>{e.preventDefault();syncOutputExtension();const f=normalizeFormat($('#m-format').value),file=canonicalOutputFile($('#m-output-file').value,f),updated={...editing,name:$('#m-name').value.trim(),enabled:$('#m-enabled').checked,rne_path:$('#m-rne-path').value.trim(),rne:$('#m-rne-path').value.trim().split(/[\\/]/).pop(),output_folder:$('#m-output').value.trim(),output_format:f,output_file:file,table:$('#m-table').value.trim(),sheet:$('#m-sheet').value.trim(),type:$('#m-type').value,naming_mode:currentNamingMode(),output_pattern:$('#m-output-pattern').value.trim(),comment:($('#m-comment')?.value||'').trim(),split_mode:($('#m-split-mode')?.value||'auto'),period:currentPeriod()};let i=cfg.jobs.findIndex(j=>j.id===updated.id);if(i<0)cfg.jobs.unshift(updated);else cfg.jobs[i]=updated;let payload=structuredClone(cfg);delete payload.credential_status;showWaiting('設定を保存中',`${formatName(f)} / ${file}`);try{let r=await fetch('/api/config',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),d=await r.json();if(!r.ok)throw Error(d.error||'設定保存失敗');$('#editor').close();await init();toast(`保存完了: ${formatName(f)} / ${file}`)}catch(x){toast(x.message)}finally{hideWaiting()}};
 /* V35: dynamic output filename builder */
 let namePreviewTimer=null;
@@ -276,7 +276,129 @@ function bindV29LogWorkspace(){['log-filter-text','log-filter-kind','log-filter-
 bindV29LogWorkspace();
 
 /* V30: categorized settings navigation and in-app version management */
-function bindSettingsNav(){$$('#settings-nav .settings-navbtn').forEach(b=>b.onclick=()=>{$$('#settings-nav .settings-navbtn').forEach(x=>x.classList.remove('on'));b.classList.add('on');$$('.settings-pane').forEach(x=>x.classList.remove('on'));document.querySelector(`.settings-pane[data-cat="${b.dataset.cat}"]`)?.classList.add('on')})}
+function bindSettingsNav(){$$('#settings-nav .settings-navbtn').forEach(b=>b.onclick=()=>{$$('#settings-nav .settings-navbtn').forEach(x=>x.classList.remove('on'));b.classList.add('on');$$('.settings-pane').forEach(x=>x.classList.remove('on'));document.querySelector(`.settings-pane[data-cat="${b.dataset.cat}"]`)?.classList.add('on');if(b.dataset.cat==='docs')loadDocs()})}
+/* ============================================================
+   仕様書ビュー。同梱のMarkdownをアプリの中で読む。
+   外部ライブラリは使えないので、この文書に実際に出てくる記法だけを自前で描く
+   （見出し・表・囲みコード・箇条書き・引用・水平線・強調・インラインコード）。
+   先にすべてエスケープしてから組み立てるので、文書側のHTMLは実行されない。
+   ============================================================ */
+const MD_TAG={'原本':'orig','整理':'plan','要確認':'check'};
+function mdInline(t){
+ t=E(t);
+ t=t.replace(/`([^`]+)`/g,(m,c)=>`<code>${c}</code>`);
+ t=t.replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>');
+ // [原本] [整理] [要確認] は読み分けの要なので、地の文と混ぜずに印にする
+ t=t.replace(/\[(原本|整理|要確認)([^\]]*)\]/g,(m,k,rest)=>`<span class="md-tag t-${MD_TAG[k]}">${k}${rest}</span>`);
+ return t;
+}
+function mdRender(src){
+ let lines=String(src||'').replace(/\r\n?/g,'\n').split('\n'),out=[],toc=[],i=0,hid=0;
+ const flushList=(items,ordered)=>`<${ordered?'ol':'ul'}>${items.join('')}</${ordered?'ol':'ul'}>`;
+ while(i<lines.length){
+  let ln=lines[i];
+  // 囲みコード
+  let fence=ln.match(/^```(\w*)\s*$/);
+  if(fence){
+   let body=[];i++;
+   while(i<lines.length&&!/^```/.test(lines[i])){body.push(lines[i]);i++}
+   i++;
+   out.push(`<pre class="md-code"${fence[1]?` data-lang="${E(fence[1])}"`:''}><code>${E(body.join('\n'))}</code></pre>`);
+   continue;
+  }
+  // 表（次の行が区切りなら表とみなす）
+  if(/^\s*\|/.test(ln)&&i+1<lines.length&&/^\s*\|[\s:|-]+\|\s*$/.test(lines[i+1])){
+   const cells=r=>r.trim().replace(/^\||\|$/g,'').split('|').map(x=>x.trim());
+   let head=cells(ln),rows=[];i+=2;
+   while(i<lines.length&&/^\s*\|/.test(lines[i])){rows.push(cells(lines[i]));i++}
+   out.push(`<div class="md-tablebox"><table class="md-table"><thead><tr>`
+    +head.map(c=>`<th>${mdInline(c)}</th>`).join('')+`</tr></thead><tbody>`
+    +rows.map(r=>`<tr>`+r.map(c=>`<td>${mdInline(c)}</td>`).join('')+`</tr>`).join('')
+    +`</tbody></table></div>`);
+   continue;
+  }
+  // 見出し
+  let h=ln.match(/^(#{1,6})\s+(.*)$/);
+  if(h){
+   let lv=h[1].length,id='md-h'+(++hid),txt=h[2].replace(/\s*#+\s*$/,'');
+   if(lv<=3)toc.push({id,level:lv,text:txt.replace(/`/g,'')});
+   out.push(`<h${Math.min(lv+1,5)} id="${id}" class="md-h md-h${lv}">${mdInline(txt)}</h${Math.min(lv+1,5)}>`);
+   i++;continue;
+  }
+  // 水平線
+  if(/^\s*(---+|\*\*\*+)\s*$/.test(ln)){out.push('<hr class="md-hr">');i++;continue}
+  // 引用
+  if(/^\s*>\s?/.test(ln)){
+   let body=[];
+   while(i<lines.length&&/^\s*>\s?/.test(lines[i])){body.push(lines[i].replace(/^\s*>\s?/,''));i++}
+   out.push(`<blockquote class="md-quote">${body.map(x=>mdInline(x)).join('<br>')}</blockquote>`);
+   continue;
+  }
+  // 箇条書き（2スペースごとの入れ子まで）
+  if(/^\s*([-*+]|\d+\.)\s+/.test(ln)){
+   let ordered=/^\s*\d+\./.test(ln),stack=[[]],depth=[0];
+   while(i<lines.length&&/^\s*([-*+]|\d+\.)\s+/.test(lines[i])){
+    let m=lines[i].match(/^(\s*)([-*+]|\d+\.)\s+(.*)$/),ind=Math.floor(m[1].length/2),txt=m[3];
+    // チェックリストは印を先に外し、本文を組み立ててから戻す（先に混ぜるとエスケープされる）
+    let box=txt.match(/^\[([ xX])\]\s*/);
+    if(box)txt=txt.slice(box[0].length);
+    while(ind>depth[depth.length-1]){stack.push([]);depth.push(ind)}
+    while(ind<depth[depth.length-1]){let done=stack.pop();depth.pop();
+     let up=stack[stack.length-1];up[up.length-1]=up[up.length-1].replace(/<\/li>$/,flushList(done,false)+'</li>')}
+    stack[stack.length-1].push(`<li${box?' class="md-task"':''}>`
+     +(box?`<i class="md-check${/[xX]/.test(box[1])?' on':''}"></i>`:'')+mdInline(txt)+`</li>`);
+    i++;
+   }
+   while(stack.length>1){let done=stack.pop();let up=stack[stack.length-1];
+    up[up.length-1]=up[up.length-1].replace(/<\/li>$/,flushList(done,false)+'</li>')}
+   out.push(flushList(stack[0],ordered));
+   continue;
+  }
+  // 段落（空行まで）
+  if(!ln.trim()){i++;continue}
+  let para=[];
+  while(i<lines.length&&lines[i].trim()&&!/^(#{1,6}\s|```|\s*\||\s*>|\s*([-*+]|\d+\.)\s|\s*---+\s*$)/.test(lines[i])){para.push(lines[i]);i++}
+  if(para.length)out.push(`<p>${para.map(mdInline).join('<br>')}</p>`);
+  else{out.push(`<p>${mdInline(ln)}</p>`);i++}
+ }
+ return {html:out.join(''),toc};
+}
+let docsLoaded=false,docCurrent='';
+async function loadDocs(force){
+ let box=$('#doc-list');if(!box)return;
+ if(docsLoaded&&!force)return;
+ try{
+  let d=await fetch('/api/docs').then(r=>r.json());
+  docsLoaded=true;
+  box.innerHTML=(d.docs||[]).map(x=>`<button type="button" class="doc-item" data-doc="${E(x.id)}"${x.available?'':' disabled'}>`
+   +`<b>${E(x.title)}</b><small>${E(x.summary)}</small>`
+   +`<em>${x.available?`${Math.round(x.bytes/1024).toLocaleString()} KB · ${E(x.updated_at)}`:'配布物に見つかりません'}</em></button>`).join('')
+   ||'<p class="hint">登録されている仕様書がありません。</p>';
+  box.querySelectorAll('.doc-item').forEach(b=>b.onclick=()=>openDoc(b.dataset.doc));
+  let first=box.querySelector('.doc-item:not([disabled])');
+  if(first&&!docCurrent)openDoc(first.dataset.doc);
+ }catch{box.innerHTML='<p class="hint">仕様書の一覧を取得できませんでした。</p>'}
+}
+async function openDoc(id){
+ let head=$('#doc-head'),body=$('#doc-body'),toc=$('#doc-toc');if(!body)return;
+ docCurrent=id;
+ $$('#doc-list .doc-item').forEach(b=>b.classList.toggle('on',b.dataset.doc===id));
+ body.innerHTML='<p class="hint">読み込み中...</p>';
+ try{
+  let d=await fetch('/api/docs/'+encodeURIComponent(id)).then(r=>r.json());
+  if(!d.ok){head.innerHTML='';body.innerHTML=`<p class="ri-ng">${E(d.error||'読み込めませんでした')}</p>`;
+   toc.innerHTML='';$('.doc-toc-label').hidden=true;return}
+  let m=mdRender(d.text);
+  head.innerHTML=`<h3>${E(d.title)}</h3><p class="doc-source">${E(d.source)}</p><p class="doc-path">${E(d.path)}</p>`;
+  body.innerHTML=m.html;
+  toc.innerHTML=m.toc.map(t=>`<a href="#${t.id}" class="doc-tocitem lv${t.level}" data-to="${t.id}">${E(t.text)}</a>`).join('');
+  $('.doc-toc-label').hidden=!m.toc.length;
+  toc.querySelectorAll('.doc-tocitem').forEach(a=>a.onclick=e=>{e.preventDefault();
+   document.getElementById(a.dataset.to)?.scrollIntoView({block:'start',behavior:'smooth'})});
+  body.scrollTop=0;
+ }catch{body.innerHTML='<p class="ri-ng">読み込み中にエラーが発生しました。</p>'}
+}
+
 function renderChangelog(list){return (list||[]).map(e=>`<div class="changelog-entry"><div class="changelog-head"><b>${E(e.version)}</b>${e.date?`<time>${E(e.date)}</time>`:''}</div><div class="changelog-title">${E(e.title)}</div><ul>${(e.notes||[]).map(n=>`<li>${E(n)}</li>`).join('')}</ul></div>`).join('')}
 async function loadVersion(){try{let d=await fetch('/api/version').then(r=>r.json()),meta=`ビルド: ${d.build_version}`+(d.released_at?` / リリース日: ${d.released_at}`:'');if($('#version-badge'))$('#version-badge').textContent='ver '+d.version;if($('#version-current'))$('#version-current').textContent=`${d.version} ${d.title}`;if($('#version-meta'))$('#version-meta').textContent=meta;if($('#version-changelog'))$('#version-changelog').innerHTML=renderChangelog(d.changelog);if($('#settings-version-summary'))$('#settings-version-summary').innerHTML=`<div class="version-current-badge"><b>${E(d.version)}</b><span>${E(d.title)}</span></div><p class="hint">${E(meta)}</p>`;if($('#settings-version-changelog'))$('#settings-version-changelog').innerHTML=renderChangelog(d.changelog)}catch{if($('#version-badge'))$('#version-badge').textContent='ver ?'}}
 if($('#version-badge'))$('#version-badge').onclick=()=>{if(!$('#version-dialog').open)$('#version-dialog').showModal()};
@@ -667,6 +789,68 @@ if($('#m-period-detect'))$('#m-period-detect').onclick=async()=>{
  finally{hideWaiting()}
 };
 
+/* ============================================================
+   RNEを調べる：4つの手順（①中身を読む ②分け方を探す ③速さを試す ④本番の動作）。
+   機能を足すたびにボタンと説明が横並びに増えて散らかっていたので、左のレールで順番を示し、
+   結果は必ず右の同じ場所へ出す形に畳み直した。同時に見える操作は1手順ぶんだけ。
+   ============================================================ */
+let inspPlan={column:null,row:null};
+function inspGo(step){
+ $$('.insp-step').forEach(b=>{let on=b.dataset.istep===step;b.classList.toggle('on',on);b.setAttribute('aria-selected',on)});
+ $$('.insp-panel').forEach(x=>x.classList.toggle('on',x.dataset.istep===step));
+}
+// 手順の状態はレールに出す。開かなくても、どこまで進んだかが分かるようにするため。
+function inspState(step,text,tone=''){
+ let b=document.querySelector(`.insp-step[data-istep="${step}"]`);if(!b)return;
+ let e=b.querySelector('.is-state');
+ if(e){e.textContent=text;e.className='is-state'+(tone?' '+tone:'')}
+ b.classList.toggle('done',tone==='ok');
+}
+// 手順2は列と行の2本立てなので、両方の結果を1行にまとめて出す。
+function inspPlanState(axis,text,tone){
+ inspPlan[axis]={text,tone};
+ let v=[inspPlan.column,inspPlan.row].filter(Boolean);
+ if(!v.length)return inspState('plan','未実行','');
+ inspState('plan',v.map(x=>x.text).join(' / '),
+  v.some(x=>x.tone==='ng')?'ng':(v.some(x=>x.tone==='ok')?'ok':''));
+ syncTrialControls();
+}
+function inspEmpty(name,hide){let e=document.querySelector(`.ip-empty[data-empty="${name}"]`);if(e)e.hidden=!!hide}
+function inspReset(){
+ ['#m-rne-inspect-result','#m-column-plan-result','#m-row-split-result','#m-split-trial-result']
+  .forEach(id=>{let e=$(id);if(e){e.hidden=true;e.innerHTML=''}});
+ $$('.ip-empty').forEach(e=>e.hidden=false);
+ inspPlan={column:null,row:null};
+ inspState('read','未実行');inspState('plan','未実行');inspState('trial','未実行');
+ inspGo('read');planAxis('column');
+}
+// 列/行の切り替え。探した軸をそのまま手順3の既定にして、選び直す手間をなくす。
+function planAxis(axis){
+ $$('#plan-axis button').forEach(b=>b.classList.toggle('on',b.dataset.axis===axis));
+ $$('.ip-sub').forEach(x=>x.classList.toggle('on',x.dataset.axis===axis));
+ let t=$('#m-split-mode-trial');
+ if(t&&t.value!=='grid'&&t.value!==axis)t.value=axis;
+ syncTrialControls();
+}
+// 方式に関係のない選択肢は出さない。列分割のときに「行」の数を選べても意味がないため。
+function syncTrialControls(){
+ let m=$('#m-split-mode-trial')?.value||'column';
+ $$('.trial-parts[data-need]').forEach(l=>{l.hidden=!(l.dataset.need===m||m==='grid')});
+ let n=$('#trial-need');if(!n)return;
+ // 下調べが済んでいるかを見て、案内を「まだ足りない」から「準備できた」へ切り替える。
+ let done=m==='grid'?(inspPlan.column?.tone==='ok'&&inspPlan.row?.tone==='ok'):inspPlan[m]?.tone==='ok';
+ let ready=({column:'列の割り当てができています。',row:'行の区切りができています。行分割はいまのところ測定専用です。',
+  grid:'列と行の両方がそろっています。片の数は 行×列 になります。行×列はいまのところ測定専用です。'})[m];
+ let todo=({column:'先に手順2の「列を調べる」を実行してください。',
+  row:'先に手順2の「行を調べる」を実行してください。行分割はいまのところ測定専用です。',
+  grid:'先に手順2で「列を調べる」と「行を調べる」の両方を実行してください。片の数は 行×列 になります。'})[m];
+ n.innerHTML=(done?ready:todo)+'<b>出力ファイルは更新しません</b>（比較するだけで、結果は公開しません）。';
+}
+$$('.insp-step').forEach(b=>b.onclick=()=>inspGo(b.dataset.istep));
+$$('#plan-axis button').forEach(b=>b.onclick=()=>planAxis(b.dataset.axis));
+if($('#m-split-mode-trial'))$('#m-split-mode-trial').onchange=syncTrialControls;
+syncTrialControls();
+
 /* RNEの中身を調べる：管理ポイント（行の軸）とデータ項目（出力される列）をまとめて見せる。
    時間管理ポイントの検出は「抽出期間」タブ側の目的に絞ってあるので、RNE全体の把握はこちらで行う。 */
 if($('#m-rne-inspect'))$('#m-rne-inspect').onclick=async()=>{
@@ -675,7 +859,7 @@ if($('#m-rne-inspect'))$('#m-rne-inspect').onclick=async()=>{
  try{
   let r=await fetch('/api/period-control-points',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_id:editing?.id,rne_path:$('#m-rne-path')?.value||''})}),d=await r.json();
   if(rb)rb.hidden=false;
-  if(!d.ok){if(rb)rb.innerHTML=`<p class="ri-ng">RNEを読み取れませんでした。</p><p class="ri-note">${E(d.error||'')}</p>`;return}
+  if(!d.ok){if(rb)rb.innerHTML=`<p class="ri-ng">RNEを読み取れませんでした。</p><p class="ri-note">${E(d.error||'')}</p>`;inspEmpty('read',true);inspState('read','読み取れません','ng');return}
   let cps=d.points||[],tps=d.time_points||[],items=d.data_items||[],cols=d.output_columns||[];
   let cards=[
    `<div class="ri-card"><span>出力される列</span><b>${cols.length||'—'}</b><small>${cols.length?'直近の出力ファイルの見出し':'未取得'}</small></div>`,
@@ -690,7 +874,9 @@ if($('#m-rne-inspect'))$('#m-rne-inspect').onclick=async()=>{
    +`<p class="ri-note">通常の実行には影響しませんが、この状態では列分割は行えません。RNE側で列名を分けてください。</p>`;
   body+=`<p class="ri-note">「出力される列」は直近の出力ファイルから読んだ確実な一覧です。「データ項目」はRNEから直接数えた参考値で、公式マニュアルに記載のない関数を使っているため一致しないことがあります。</p>`;
   if(rb)rb.innerHTML=body;
- }catch(x){if(rb){rb.hidden=false;rb.innerHTML=`<p class="ri-ng">解析中にエラーが発生しました。</p>`}}
+  inspEmpty('read',true);
+  inspState('read',`出力${cols.length||'—'}列 · 管理${cps.length} · 項目${items.length}`,'ok');
+ }catch(x){if(rb){rb.hidden=false;rb.innerHTML=`<p class="ri-ng">解析中にエラーが発生しました。</p>`}inspEmpty('read',true);inspState('read','エラー','ng')}
  finally{hideWaiting()}
 };
 
@@ -704,20 +890,22 @@ if($('#m-column-plan'))$('#m-column-plan').onclick=async()=>{
  try{
   let r=await fetch('/api/column-plan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_id:editing.id})}),d=await r.json();
   if(rb)rb.hidden=false;
-  if(!d.ok){if(rb)rb.innerHTML=`<p class="ri-ng">調べられませんでした。</p><p class="ri-note">${E(d.error||'')}</p>`;return}
+  if(!d.ok){if(rb)rb.innerHTML=`<p class="ri-ng">調べられませんでした。</p><p class="ri-note">${E(d.error||'')}</p>`;inspEmpty('column',true);inspPlanState('column','列 調べられません','ng');return}
   let rem=d.removable_count||0,fix=d.fixed_count||0;
   let total=(rem+fix)||d.column_count||0;
   let pct=total?Math.round(rem/total*100):0;
-  let verdict=!total?['判定できず','列を数えられませんでした']
-   :rem<2?['分割の効果は見込めません',`分割して取得できる列が ${rem} 本しかありません`]
-   :pct<30?['効果は限定的です',`分割できるのは全体の ${pct}% です。残り ${fix} 本は全パートに必ず含まれます`]
-   :['分割の効果が見込めます',`${rem} 本を分けられます（全体の ${pct}%）。${fix} 本は全パートに残り、結合キーになります`];
+  // 3つ目の要素は良し悪し。以前ここで未定義の変数を見ていて、押すたびに必ず例外になり
+  // 「調査中にエラーが発生しました」しか出ていなかった（1.37.0で修正）。
+  let verdict=!total?['判定できず','列を数えられませんでした',false]
+   :rem<2?['分割の効果は見込めません',`分割して取得できる列が ${rem} 本しかありません`,false]
+   :pct<30?['効果は限定的です',`分割できるのは全体の ${pct}% です。残り ${fix} 本は全パートに必ず含まれます`,false]
+   :['分割の効果が見込めます',`${rem} 本を分けられます（全体の ${pct}%）。${fix} 本は全パートに残り、結合キーになります`,true];
   let body=`<div class="ri-cards">`
    +`<div class="ri-card"><span>列の合計</span><b>${total}</b><small>${d.basis==='layout'?'RNEから直接数えた値':E(SOURCE_LABEL[d.source]||d.source||'—')}</small></div>`
    +`<div class="ri-card"><span>分割できる列</span><b>${rem}</b><small>データ項目（削除可）</small></div>`
    +`<div class="ri-card"><span>必ず残る列</span><b>${fix}</b><small>管理ポイント由来</small></div>`
    +`<div class="ri-card"><span>分割可能な割合</span><b>${pct}%</b><small>所要 ${d.elapsed}秒</small></div></div>`
-   +`<p class="${!d.incompatible&&cut!=null&&cut>=15?'ri-ok':'ri-ng'}">${E(verdict[0])}</p><p class="ri-note">${E(verdict[1])}</p>`;
+   +`<p class="${verdict[2]&&!d.incompatible?'ri-ok':'ri-ng'}">${E(verdict[0])}</p><p class="ri-note">${E(verdict[1])}</p>`;
   if(d.recommended_parts>1)body+=`<p class="ri-note">推奨する分割数: ${d.recommended_parts}（見込み ${d.predicted_gain}倍）</p>`;
   let pf=d.payload;
   if(pf&&pf.unit==='bytes'&&pf.total){
@@ -755,7 +943,9 @@ if($('#m-column-plan'))$('#m-column-plan').onclick=async()=>{
   if(fix)body+=`<details class="ri-list"><summary>全パートに必ず残る列（${fix}件）</summary><div class="ri-chips">${d.fixed.map(x=>`<span class="ri-chip istime">${E(x)}</span>`).join('')}</div></details>`;
   if(rb)rb.innerHTML=body;
   renderRuntimeSplit(d.runtime_split);
- }catch(x){if(rb){rb.hidden=false;rb.innerHTML=`<p class="ri-ng">調査中にエラーが発生しました。</p>`}}
+  inspEmpty('column',true);
+  inspPlanState('column',rem<2?`列 分割不可（${rem}本）`:`列 ${rem}/${total}本を分割可`,rem<2?'ng':'ok');
+ }catch(x){if(rb){rb.hidden=false;rb.innerHTML=`<p class="ri-ng">調査中にエラーが発生しました。</p>`}inspEmpty('column',true);inspPlanState('column','列 エラー','ng')}
  finally{hideWaiting()}
 };
 
@@ -767,24 +957,36 @@ let splitTrialTimer=null;
 // 本番の実行で分割が使われるかどうか。使われない場合は、その理由をそのまま出す。
 function renderRuntimeSplit(rs){
  let box=$('#m-split-run-state');if(!box)return;
- if(!rs){box.className='split-run-state';box.textContent='「列の分割可否を調べる」を実行すると、次に実行したときどうなるかを表示します。';box.title='';return}
+ if(!rs){
+  box.className='split-run-state';
+  box.innerHTML='<b>まだ調べていません</b><span>手順2の「列を調べる」を実行すると、次に本番で実行したときどうなるかをここに表示します。</span>';
+  inspState('run','—','');return;
+ }
  let saved=(rs.saved||[]).filter(p=>!p.stale);
  let mode=({auto:'自動',race:'競争させる',force:'常に分割',off:'使わない'})[rs.mode]||rs.mode;
- let line,detail=[];
+ let line,chip,tone,detail=[];
  if(rs.active){
   box.className='split-run-state is-on';
-  line=rs.mode==='race'
-   ?`次に実行すると、分割なし1本と${rs.parts}分割を同時に走らせ、先に終わった方を採用します（同時プロセス ${rs.parts+1} 本）`
-   :`次に実行すると ${rs.parts}分割で取得します`+(rs.observed_speedup?`（裏付け ${rs.observed_speedup.toFixed(2)}倍）`:'');
+  if(rs.mode==='race'){
+   line=`分割なし1本と${rs.parts}分割を同時に走らせ、先に終わった方を採用します（同時プロセス ${rs.parts+1} 本）`;
+   chip=`競争 · ${rs.parts}分割`;
+  }else{
+   line=`${rs.parts}分割で取得します`+(rs.observed_speedup?`（裏付け ${rs.observed_speedup.toFixed(2)}倍）`:'');
+   chip=`${mode} · ${rs.parts}分割`;
+  }
+  tone='ok';
   if(rs.proven_at)detail.push(`裏付けを得た日時: ${rs.proven_at}`);
  }else{
   box.className='split-run-state is-off';
-  line=`次に実行すると分割せず1本で取得します`+(rs.reason?` — ${rs.reason}`:'');
+  line=`分割せず1本で取得します`+(rs.reason?` — ${rs.reason}`:'');
+  chip=`${mode} · 分割しない`;tone='';
  }
- detail.push(`動作の設定: ${mode}`,`単独で実行したときに使えるライン: ${rs.budget}本`);
- detail.push(saved.length?'保存済みの割り当て: '+saved.map(p=>`${p.parts}分割（${p.speedup?p.speedup.toFixed(2)+'倍':'速さの裏付けなし'} / ${p.columns}列）`).join('、')
-   :`保存済みの割り当てはありません。影実行で結果が一致すると保存されます（「自動」はさらに ${rs.min_speedup}倍以上の短縮が必要）。`);
- box.textContent=line;box.title=[line].concat(detail).join('\n');
+ detail.push(`動作の設定: ${mode}／単独で実行したときに使えるライン: ${rs.budget}本`);
+ detail.push(saved.length
+  ?'保存済みの割り当て: '+saved.map(p=>`${p.parts}分割（${p.speedup?p.speedup.toFixed(2)+'倍':'速さの裏付けなし'} / ${p.columns}列）`).join('、')
+  :`保存済みの割り当てはありません。手順3で結果が一致すると保存されます（「自動」はさらに ${rs.min_speedup}倍以上の短縮が必要）。`);
+ box.innerHTML=`<b>次に実行すると ${E(line)}</b>`+detail.map(x=>`<span>${E(x)}</span>`).join('');
+ inspState('run',chip,tone);
 }
 
 // 行分割の下調べ。分割できる列の候補と、所要時間の内訳を出す。
@@ -797,9 +999,12 @@ if($('#m-row-split'))$('#m-row-split').onclick=async()=>{
   let r=await fetch('/api/row-split-plan',{method:'POST',headers:{'Content-Type':'application/json'},
        body:JSON.stringify({job_id:editing.id,parts,probe})}),d=await r.json();
   if(rb)rb.hidden=false;
-  if(!d.ok){if(rb)rb.innerHTML=`<p class="ri-ng">調べられませんでした。</p><p class="ri-note">${E(d.error||'')}</p>`;return}
+  if(!d.ok){if(rb)rb.innerHTML=`<p class="ri-ng">調べられませんでした。</p><p class="ri-note">${E(d.error||'')}</p>`;inspEmpty('row',true);inspPlanState('row','行 調べられません','ng');return}
   if(rb)rb.innerHTML=rowSplitRender(d);
- }catch(x){if(rb){rb.hidden=false;rb.innerHTML=`<p class="ri-ng">調査中にエラーが発生しました。</p>`}}
+  inspEmpty('row',true);
+  let c0=(d.candidates||[])[0];
+  inspPlanState('row',c0?`行 ${d.parts}分割可（${c0.column}）`:'行 区切れる列なし',c0?'ok':'ng');
+ }catch(x){if(rb){rb.hidden=false;rb.innerHTML=`<p class="ri-ng">調査中にエラーが発生しました。</p>`}inspEmpty('row',true);inspPlanState('row','行 エラー','ng')}
  finally{hideWaiting()}
 };
 function rowSplitRender(d){
@@ -813,17 +1018,19 @@ function rowSplitRender(d){
   return {lo:(b.total/(b.server_seconds+tr)).toFixed(2),hi:(b.total/(b.server_seconds/d.parts+tr)).toFixed(2)};
  })();
  if(b.known){
-  let srv=Math.round(b.server_share*100),tr=100-srv;
+  let srv=Math.round(b.server_share*100),dl=Math.round(b.download_share*100),fm=Math.round(b.format_share*100);
   body+=`<div class="ri-cards">`
    +`<div class="ri-card"><span>サーバー側で結果を作る</span><b>${b.server_seconds}s</b><small>全体の ${srv}%</small></div>`
-   +`<div class="ri-card"><span>転送</span><b>${b.transfer_seconds}s</b><small>全体の ${tr}%</small></div>`
-   +`<div class="ri-card"><span>合計</span><b>${b.total}s</b><small>${Number(b.rows||0).toLocaleString()}行</small></div>`
+   +`<div class="ri-card"><span>受信（回線）</span><b>${b.download_seconds}s</b><small>${dl}%${b.download_kbs?` · ${Math.round(b.download_kbs).toLocaleString()}KB/s`:''}</small></div>`
+   +`<div class="ri-card"><span>整形・書き出し</span><b>${b.format_seconds}s</b><small>${fm}%${b.format_kbs?` · ${Math.round(b.format_kbs).toLocaleString()}KB/s`:''}</small></div>`
    +`<div class="ri-card"><span>${d.parts}分割の見込み</span><b>${est.lo}〜${est.hi}x</b><small>実行が縮まない〜分割数ぶん縮む</small></div></div>`
-   +`<p class="${srv>=40?'ri-ok':'ri-ng'}">${srv>=40
-     ?`サーバー側が ${srv}% を占めます。行を減らせば、ここが縮む見込みがあります`
-     :`ほとんど（${tr}%）が転送です。行を分けても縮むのは転送だけで、回線の上限に頭を押さえられます`}</p>`
+   +`<p class="ri-ok">行を分ければ、受信（${dl}%）と整形（${fm}%）はどちらも行数に比例して縮みます。`
+   +`合わせて ${dl+fm}% です。サーバー側（${srv}%）も縮むかどうかが、測って確かめたい点です。</p>`
    +`<p class="ri-note">転送せずに問い合わせだけを実行した時間（${b.server_seconds}秒）が、サーバー側で結果を作るのにかかった時間です。`
-   +`通常の実行と保存の合計（${b.total}秒）との差が転送になります。1バイトも受信していません。</p>`;
+   +`通常の実行（${b.execute}秒）との差 ${b.download_seconds}秒 が受信、そのあとの保存（${b.save}秒）が手元での整形です。`
+   +`合計 ${b.total}秒 ／ ${Number(b.rows||0).toLocaleString()}行。この測定では1バイトも受信していません。</p>`
+   +(b.format_kbs&&b.download_kbs?`<p class="ri-note">受信 ${Math.round(b.download_kbs)}KB/s に対し整形は ${Math.round(b.format_kbs)}KB/s。`
+     +`整形は手元のCPU仕事なので、並列に走らせれば台数ぶん縮みます。受信は回線しだいです。</p>`:'');
  }else if(d.probe_error){
   body+=`<p class="ri-ng">所要時間の内訳を測れませんでした。</p><p class="ri-note">${E(d.probe_error)}</p>`;
  }else{
@@ -835,6 +1042,18 @@ function rowSplitRender(d){
    +`<p class="ri-note">${E(d.candidate_error||`調べた列の中に、条件として書けるものがありませんでした。`)}</p>`;
   return body;
  }
+ // 絞り込みの条件が付くのは条件欄の項目だけ。ここを外すと、条件は rc=OK でも1行も絞られない。
+ let usable=cs.filter(x=>x.in_condition);
+ let ci=d.condition_items||[];
+ if(!usable.length){
+  body+=`<p class="ri-ng">区切りに使える列はありますが、<b>行を絞れる見込みがありません</b></p>`
+   +`<p class="ri-note">候補はどれも<b>出力される列（データ欄）</b>です。絞り込みの条件が付くのは`
+   +`<b>条件欄</b>の項目だけで、データ欄の項目に同じ条件を設定しても rc=OK が返るだけで1行も絞られません`
+   +`（2026-08-10の実測。全パートが全件を返しました）。</p>`
+   +(ci.length?`<p class="ri-note">このRNEの条件欄にある項目（${ci.length}件）: ${ci.slice(0,20).map(E).join('、')}`
+      +`${ci.length>20?` ほか${ci.length-20}`:''}。この中に区切れる列があれば行分割が使えます。</p>`
+     :`<p class="ri-note">このRNEには条件欄のデータ項目がありません。RNE側で区切りに使う項目を条件欄へ置くと、行分割が使えるようになります。</p>`);
+ }
  body+=`<p class="ri-ok">${d.parts}分割できます。最も均等なのは「${E(cs[0].column)}」です</p>`
   +`<p class="ri-note">直近の出力 ${Number(d.sample_rows).toLocaleString()}行 を読んで、${d.columns}列のうち ${d.examined} 列を調べました`
   +`（データ項目 ${d.removable_count} 本は範囲で区切れます。管理ポイント ${d.fixed} 本はカテゴリの組分けになります）。`
@@ -842,6 +1061,7 @@ function rowSplitRender(d){
  body+=cs.map((x,i)=>{
   let head=`<summary>${E(x.column)}<em> 偏り ${x.balance} / ${x.method==='range'?'範囲で区切る':'カテゴリを組分け'}`
    +`${x.distinct?` / 値 ${Number(x.distinct).toLocaleString()}種`:' / 値は多数'}${x.exact?'':'（標本から推定）'}</em>`
+   +`${x.in_condition?' <b class="ri-ok-in">条件欄</b>':' <b class="ri-warn-in">データ欄のみ・絞れません</b>'}`
    +`${x.order==='numeric'?' <b class="ri-warn-in">数値として比較</b>':''}${x.has_empty?' <b class="ri-warn-in">空値あり</b>':''}</summary>`;
   let rows=x.method==='range'
    ? `<div class="ri-chips">`+x.groups.map((g,k)=>`<span class="ri-chip">${k+1}組目<em>`
@@ -865,6 +1085,22 @@ function rowSplitRender(d){
 
 const PHASE_LABEL={weights:'① 列の重みを測定',normal:'② 分割なしを実行',split:'③ 分割を並列実行',
  race:'②③ 競争（同時実行）',merge:'④ 結合',compare:'⑤ 結果を比較'};
+// 1本にまとめた棒では、どの片が遅れているのかも、いま何をしているのかも分からない。
+// 分割したぶんだけ棒を並べ、片ごとに「工程」と「書けたバイト数」を出す。
+const PART_STEPS=['接続','RNEを開く','担当外の列を外す','行の条件を設定','問い合わせを実行','CSVへ保存','完了'];
+function partProgressHtml(list){
+ if(!Array.isArray(list)||list.length<2)return '';
+ return `<div class="pp-list">`+list.map(x=>{
+  let pct=Math.max(0,Math.min(100,Number(x.percent||0)));
+  let idx=Number(x.step_index||0);
+  let dots=PART_STEPS.map((s,i)=>`<i class="pp-dot${x.done?' done':(i+1===idx?' on':(i+1<idx?' done':''))}" title="${E(s)}"></i>`).join('');
+  return `<div class="pp-row${x.done?' is-done':''}">`
+   +`<div class="pp-head"><b>${E(x.part||'')}</b><span class="pp-step">${dots}<em>${E(x.step||'')}</em></span>`
+   +`<span class="pp-num">${x.bytes?(x.bytes/1024/1024).toFixed(1)+' MB':'—'}${x.rows?` · ${Number(x.rows).toLocaleString()}行`:''}</span>`
+   +`<b class="pp-pct">${pct.toFixed(0)}%</b></div>`
+   +`<div class="pp-track"><i class="pp-bar${x.bytes?'':' guess'}" style="width:${pct}%"></i></div></div>`;
+ }).join('')+`</div>`;
+}
 function splitTrialRender(d){
  let rb=$('#m-split-trial-result');if(!rb)return;
  rb.hidden=false;
@@ -875,10 +1111,13 @@ function splitTrialRender(d){
   let pct=Math.max(0,Math.min(100,Number(d.percent||0)));
   let byBytes=Number(d.bytes||0)>0&&Number(d.expected_bytes||0)>0;
   let phase=PHASE_LABEL[d.phase]||'';
+  inspEmpty('trial',true);
+  inspState('trial',`実行中 ${pct.toFixed(0)}%`+(phase?` · ${phase.replace(/^[①-⑤]+\s*/,'')}`:''),'run');
   rb.innerHTML=`<p class="ri-note"><b>${E(d.job||'')}</b> の影実行を実行中です（経過 ${fmtSeconds(d.elapsed||0)}）</p>`
    +`<div class="tp-head"><span class="tp-phase">${E(phase)}</span><b class="tp-pct">${pct.toFixed(0)}%</b></div>`
    +`<div class="tp-track"><i class="tp-bar${byBytes?'':' guess'}" style="width:${pct}%"></i></div>`
    +`<p class="ri-note">${E(d.stage||'準備中')}</p>`
+   +partProgressHtml(d.part_progress)
    +(byBytes?'':`<p class="ri-note tp-guess">まだ受信が始まっていないため、ここまでは経過時間からの見当です（実際に届き始めると実測に切り替わります）。</p>`)
    +`<p class="ri-note">この画面は閉じても構いません。実行中も他の機能を使えます。詳しい経過は「ログ・診断」で確認できます。</p>`;
   return;
@@ -886,6 +1125,20 @@ function splitTrialRender(d){
  let r=d.result;if(!r)return;
  if(!r.ok){
   let extra='';
+  if(r.row_condition_ineffective){
+   rb.innerHTML=`<p class="ri-ng">行の条件が効きませんでした（この列では行を分けられません）</p>`
+    +`<p class="ri-note">${E(r.error||'')}</p>`
+    +`<div class="ri-cards">`
+    +`<div class="ri-card"><span>分割なし</span><b>${Number(r.normal_rows||0).toLocaleString()}</b><small>行</small></div>`
+    +(r.part_rows||[]).map(x=>`<div class="ri-card"><span>${E(x.part)}</span><b>${Number(x.rows||0).toLocaleString()}</b>`
+      +`<small>見込み ${Number(x.expected||0).toLocaleString()}行${x.locate?` / ${E(x.locate)}`:''}</small></div>`).join('')
+    +`</div>`
+    +`<p class="ri-note">絞り込みの条件は<b>条件欄</b>の項目に付くものです。出力される列（データ欄）に同じ条件を設定しても、`
+    +`rc=OK が返るだけで1行も絞られません。「${E(r.row_column||'')}」が条件欄にあるかを、手順1の「中身を読む」で確認してください。</p>`
+    +`<p class="ri-note">結合はしていません。出力ファイルも更新していません。</p>`;
+   inspEmpty('trial',true);inspState('trial','行の条件が効かない','ng');
+   return;
+  }
   if(r.rowset_mismatch&&r.part_rows?.length)extra=`<div class="ri-cards">`
     +`<div class="ri-card"><span>分割なし</span><b>${r.normal_rows??'—'}</b><small>行</small></div>`
     +r.part_rows.map(x=>`<div class="ri-card"><span>${E(x.part)}</span><b>${x.rows}</b><small>行 / ${x.cols}列</small></div>`).join('')+`</div>`;
@@ -894,6 +1147,7 @@ function splitTrialRender(d){
     +`<p class="ri-note">RNE側で列名を分ける（別名を付ける）と、分割できるようになります。</p>`;
   if(r.rowset_mismatch)extra+=`<p class="ri-note">結果は公開していません。既存の出力ファイルは無事です。</p>`;
   rb.innerHTML=`<p class="ri-ng">${r.duplicates?.length?'同じ名前の列があるため分割できません':(r.rowset_mismatch?'このRNEでは列分割を使えません':'試せませんでした。')}</p><p class="ri-note">${E(r.error||'')}</p>${extra}`;
+  inspEmpty('trial',true);inspState('trial','失敗','ng');
   return;
  }
  let faster=r.speedup&&r.speedup>1.05,cp=r.compare||{};
@@ -902,7 +1156,7 @@ function splitTrialRender(d){
    :[`結果が一致しませんでした`,E(cp.reason||'分割した結果と分割なしの結果が違います')])
   :faster?[`${r.speedup}倍 速くなりました`,`結果は分割なしと完全に一致し、所要時間が ${r.normal_elapsed}秒 から ${r.split_elapsed}秒 へ短縮しました`]
   :['速くなりませんでした',`結果は一致しましたが、所要時間は ${r.normal_elapsed}秒 に対し ${r.split_elapsed}秒 でした。この分割数では得になりません`];
- let how=r.mode==='row'?`行${r.row_parts}分割`:r.mode==='grid'?`行${r.row_parts}×列${r.column_parts}（${r.parts}片）`:`${r.parts}分割`;
+ let how=r.how||(r.mode==='row'?`行${r.row_parts}分割`:r.mode==='grid'?`行${r.row_parts}×列${r.column_parts}（${r.parts}片）`:`列${r.parts}分割`);
  let body=`<div class="ri-cards">`
   +`<div class="ri-card"><span>分割なし</span><b>${r.normal_elapsed}s</b><small>${(r.normal_size/1024/1024).toFixed(2)} MB</small></div>`
   +`<div class="ri-card"><span>${E(how)}</span><b>${r.split_elapsed}s</b><small>実行 ${r.split_run_elapsed}s ＋ 結合 ${r.merge_elapsed}s</small></div>`
@@ -911,6 +1165,8 @@ function splitTrialRender(d){
   +`<p class="${r.identical&&faster?'ri-ok':'ri-ng'}">${E(verdict[0])}</p><p class="ri-note">${E(verdict[1])}</p>`
   +`<p class="ri-note">出力ファイルは更新していません（影実行）。結合キーは ${r.key_count} 列です。</p>`;
  if(cp.reason)body+=`<p class="ri-note">比較: ${E(cp.reason)}（行 ${cp.rows_a} 対 ${cp.rows_b} / 並び順一致 ${cp.order_match?'はい':'いいえ'}）</p>`;
+ if(cp.count_match===false)body+=`<p class="ri-ng">結合結果の行数が分割なしと違います（${Number(cp.duplicated_rows||0).toLocaleString()}行 多い）。`
+  +`同じ行が複数のパートに入っています。</p>`;
  if(cp.samples?.length)body+=`<details class="ri-list"><summary>違いの例（${cp.samples.length}件）</summary><div class="ri-chips">`
   +cp.samples.map(x=>x.columns.map(c=>`<span class="ri-chip unnamed">${E(c.name)}<em>${E(String(c.a).slice(0,18))} → ${E(String(c.b).slice(0,18))}</em></span>`).join('')).join('')+`</div></details>`;
  if(r.results?.length)body+=`<details class="ri-list"><summary>パートごとの内訳（${r.results.length}件）</summary><div class="ri-chips">`
@@ -925,6 +1181,9 @@ function splitTrialRender(d){
   if(r.race_order?.length)body+=`<div class="ri-chips">`+r.race_order.map((x,i)=>`<span class="ri-chip">${i+1}着 ${E(x.part)}<em>${x.at}s</em></span>`).join('')+`</div>`;
   body+=`<p class="ri-note">この値は同じ回線を奪い合った結果です。運ぶ量が多い分割なしの側がより強く痛むため、速度比は分割に有利へ振れます（実測相当の値で 1.11倍 対 1.29倍、伸びしろは 1.44倍 対 2.56倍）。単独で測った値と混ぜると分割しすぎる方向へ狂うので、回線の見積もりと速度比の平均からは除いています。</p>`;
  }
+ inspEmpty('trial',true);
+ inspState('trial',`${E(how)} ${r.speedup?r.speedup+'x':'—'} · ${r.identical?'一致':(cp.content_identical?'内容一致':'不一致')}`,
+  r.identical&&faster?'ok':'ng');
  if(r.plan_saved)body+=`<p class="ri-ok">この ${r.parts}分割の割り当てを保存しました。`
   +(r.split_mode==='off'?'この対象は「使わない」設定のため、本番では分割しません。設定を「自動」にすると使われます。'
    :`次の本番実行から、この割り当てで ${r.parts}分割で取得します（実行時に測り直しはしません）。`)+`</p>`;
@@ -946,8 +1205,9 @@ if($('#m-split-trial'))$('#m-split-trial').onclick=async()=>{
  let mode=$('#m-split-mode-trial')?.value||'column',rowParts=Number($('#m-row-trial-parts')?.value||2);
  try{
   let r=await fetch('/api/column-split-trial',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_id:editing.id,parts,race,mode,row_parts:rowParts})}),d=await r.json();
-  if(!d.ok){if(rb){rb.hidden=false;rb.innerHTML=`<p class="ri-ng">開始できませんでした。</p><p class="ri-note">${E(d.error||'')}</p>`}return}
+  if(!d.ok){if(rb){rb.hidden=false;rb.innerHTML=`<p class="ri-ng">開始できませんでした。</p><p class="ri-note">${E(d.error||'')}</p>`}inspEmpty('trial',true);inspState('trial','開始できません','ng');return}
   toast(`${({column:'列分割',row:'行分割',grid:'行×列'})[mode]}の影実行を開始しました。実行中も他の機能を使えます`);
+  inspGo('trial');inspEmpty('trial',true);inspState('trial','開始しました','run');
   splitTrialRender({running:true,job:d.job,stage:'準備中',elapsed:0});
   if(splitTrialTimer)clearInterval(splitTrialTimer);
   splitTrialTimer=setInterval(splitTrialPoll,2000);splitTrialPoll();

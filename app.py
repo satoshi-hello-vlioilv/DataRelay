@@ -25,10 +25,56 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.36.0'; APP_VERSION_TITLE='行分割・行×列を影実行で測る'; APP_RELEASED_AT='2026-08-08'
-BUILD_VERSION=f'{APP_VERSION}-rowtrial'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.39.0'; APP_VERSION_TITLE='行の条件が効かない問題と、分割数の表示'; APP_RELEASED_AT='2026-08-08'
+BUILD_VERSION=f'{APP_VERSION}-rowcond'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+# アプリに同梱する仕様書。ここに登録したものだけが画面から開ける。
+# 画面からはこのidしか受け取らないので、任意のパスを読ませることはできない。
+DOCS=[
+{'id':'navigator-api','file':'Navigator_API.md','title':'Navigator API リファレンス',
+ 'summary':'SymNaviA.dll が公開する関数・定数・呼び出し順序の一次資料。'
+           'このアプリの抽出処理（navigator_api.py）と、列分割・行分割の条件指定はこの仕様に沿っています。',
+ 'source':'Navigator Visual Basic Interface API 9.6.0 / FUJITSU Interstage Navigator Server V9.4.1'},
+]
+def docs_dir():
+ # Windowsでは Config と config は同じ場所を指す。Linuxでの検証時だけ綴りが分かれるので両方見る。
+ for d in (CONFIG_DIR/'docs',BASE/'config'/'docs'):
+  if d.is_dir():return d
+ return CONFIG_DIR/'docs'
+
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
+{'version':'1.39.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'【重要な不具合】行分割で、行の条件がまったく効いていませんでした。条件の設定自体は成功（rc=OK）していたため気づけず、全パートが全件を返し、結合結果が分割数ぶんに膨れていました（2分割で28,552行、3分割で42,828行）。',
+'さらに悪いことに、その結果を「内容は一致」と報告していました。突き合わせを固定列の値をキーにした対応表で行っていたため、同じ行が何度入っていても片方に潰れていたためです。行数そのものも見るようにしました。',
+'原因: 絞り込みの条件は「条件欄」の項目に付くものです。出力される列（データ欄）の項目に同じ条件を設定しても、DLLは正常終了を返すだけで1行も絞りません。条件欄→データ欄の順に探すようにしました。',
+'歯止め: 実行のたびに、返ってきた行数が見込みとかけ離れていないかを確かめます。ほぼ全件が返った場合はその場で中止し、結合しません。',
+'行の分割可否を調べると、候補の列が「条件欄」にあるか「データ欄のみ」かを表示します。データ欄のみの列では行を絞れません。条件欄にある項目の一覧も出します。',
+'分割数の表示を直しました。行3分割なのに「2分割を並列実行中」と出るなど、列の割り当ての数（既定2）を表示していた箇所を、実際に走らせる片の数に統一しました。',
+'分割で問い合わせている間、片の数だけデータバーを並べます。片ごとに、いまどの工程か（接続 → RNEを開く → 列を外す → 行の条件 → 問い合わせ → 保存 → 完了）、何MB書けたか、何行返ったかが分かります。',
+]},
+{'version':'1.38.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'Navigator API の仕様書（SymNaviA.dll の関数・定数・呼び出し順序）をアプリに同梱し、共通設定の「仕様書」から読めるようにしました。config\\docs\\Navigator_API.md です。',
+'このアプリの抽出処理と、列分割・行分割の条件指定はこの仕様に沿っています。実装で迷ったときの一次資料としてそのまま参照できます。',
+'資料の中の [原本]（富士通の宣言・ガイドに明記）/ [整理]（今回の用途に合わせた方針）/ [要確認]（実機確認が必要）の別を色分けして表示します。この3つの区別がこの資料でいちばん重要なためです。',
+'章立てから目次を作り、クリックでその位置へ飛べます。表・囲みコード・箇条書きもそのまま読める形に整えます。',
+'読めるのは登録済みの資料だけで、画面から任意のファイルを指定することはできません。',
+]},
+{'version':'1.37.0','date':APP_RELEASED_AT,'title':'RNEを調べるを4つの手順に整理','notes':[
+'「RNEを調べる」を、①中身を読む ②分け方を探す ③速さを試す ④本番の動作 の4つの手順に畳み直しました。やれることは変わりません。',
+'一度に見える操作は1手順ぶんだけになりました。以前は4つのボタンと6つの選択欄が同時に並んでいました。',
+'結果は必ず同じ場所に出ます。どこまで進んだかは左の手順一覧に短く残ります（例: 列 114/178本を分割可 / 行 2分割可）。',
+'②で「列で分ける」「行で分ける」を切り替えると③の方式も追従し、③では方式に関係のない選択欄を出しません。',
+'不具合修正: 「列の分割可否を調べる」が 1.24.0 以降、押すたびに必ず「調査中にエラーが発生しました」になっていました。判定の色分けで未定義の変数を見ていたためです。',
+]},
+{'version':'1.36.1','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'実測により、これまで「転送」と呼んでいたものが2つの別物だと分かりました。内訳を3つに分けて表示します。サーバー側で結果を作る / 受信（回線）/ 整形・書き出し（手元のCPU）です。',
+'重要な訂正: これまで「回線の上限」として使っていた値は、実は回線ではなくDLLのCSV整形速度でした。保存(NaviSaveData)の秒数から求めていたためです。実測では受信331KB/s に対し整形809KB/s で、2.4倍違います。',
+'受信は NaviExecuteCatalog(DOWNLOADNOW) の中で起きています。転送なしの実行(DOWNLOADLATER)との差が受信時間です。SIKALOTでは サーバー側16秒(25%) / 受信34秒(53%) / 整形14秒(22%) でした。',
+'行×列の組み合わせが失敗する不具合を2件修正しました。① 行の条件に使う列が列パートから外れており、条件を付ける相手が見つかりませんでした（NAVI_ERROR_DATAITEM）。この列は全パートに残すようにしました。',
+'② 片側だけの範囲条件（以下 / より大きい）が NAVI_ERROR_VALUE で弾かれていました。列全体の最小と最大を使い、常に両端を埋めた範囲にしました。それでも通らない場合に備え、複数の形を順に試し、通った形をログに残します。',
+'影実行の進捗ログを間引きました。0.4秒ごとに出ていたため1回で数百行になり、肝心の実測値が埋もれていました。工程が変わったときと10秒ごとだけにします。',
+'パートごとのログに、実際の行数と見込みの差、受信と整形それぞれの速度を出します。答え合わせに使えます。',
+]},
 {'version':'1.36.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
 '影実行で「列分割 / 行分割 / 行×列」の3方式を選べるようにしました。理論値と実測を突き合わせるための測定機能です。出力ファイルは更新しません。',
 '行分割は NaviChangeConditionDI の範囲条件で担当する行だけに絞ります。区切りの値は直近の出力から自動で求めます（サーバーには触れずに算出）。',
@@ -637,6 +683,8 @@ def ensure_schema_upgrades():
   if 'split_mode' not in cols:c.execute("ALTER TABLE jobs ADD COLUMN split_mode TEXT NOT NULL DEFAULT 'auto'")
   rc=[r['name'] for r in c.execute('PRAGMA table_info(rne_columns)')]
   if rc and 'classify_json' not in rc:c.execute("ALTER TABLE rne_columns ADD COLUMN classify_json TEXT NOT NULL DEFAULT ''")
+  # 条件欄のデータ項目。絞り込みの条件が付くのはここにある項目だけなので、行分割の判断に要る。
+  if rc and 'condition_json' not in rc:c.execute("ALTER TABLE rne_columns ADD COLUMN condition_json TEXT NOT NULL DEFAULT ''")
   st=[r['name'] for r in c.execute('PRAGMA table_info(split_trials)')]
   if st and 'metrics' not in st:c.execute("ALTER TABLE split_trials ADD COLUMN metrics TEXT NOT NULL DEFAULT ''")
   jr=[r['name'] for r in c.execute('PRAGMA table_info(job_runs)')]
@@ -909,9 +957,24 @@ def load_column_cache(rne_path):
  except Exception:columns=[]
  try:classify=json.loads(row['classify_json'] or '[]')
  except Exception:classify=[]
+ try:condition=json.loads((row['condition_json'] if 'condition_json' in row.keys() else '') or '[]')
+ except Exception:condition=[]
  return {'rne_path':row['rne_path'],'columns':columns,'column_count':row['column_count'],'row_count':row['row_count'],
          'source':row['source'],'job_id':row['job_id'],'job_name':row['job_name'],'captured_at':row['captured_at'],
-         'stale':stale,'classify':classify}
+         'stale':stale,'classify':classify,'condition':condition}
+
+def save_condition_items(rne_path,names):
+ """条件欄のデータ項目名を覚えておく。行分割で条件を付けられるのはここにある項目だけで、
+ 出力される列（データ欄）に同じ条件を設定しても1行も絞られない（2026-08-10の実測）。"""
+ names=[str(x) for x in (names or []) if str(x).strip()!='']
+ try:
+  with settings_sync_lock, settings_connection() as c:
+   c.execute('UPDATE rne_columns SET condition_json=? WHERE rne_key=?',(json.dumps(names,ensure_ascii=False),_rne_key(rne_path)))
+   _mark_settings_dirty()
+ except Exception:
+  log.exception('CONDITION_ITEMS_SAVE_FAILED rne=%s',rne_path);return False
+ log.info('CONDITION_ITEMS_SAVE rne=%s count=%s names=%s',rne_path,len(names),' | '.join(names[:20]))
+ return True
 
 def save_column_classification(rne_path,classify):
  """列の分類結果（削除できる / 必ず残る）をキャッシュへ書き足す。列名の一覧は触らない。"""
@@ -1010,10 +1073,32 @@ def merge_row_parts(part_files,dest,encoding='cp932'):
      w.writerow(r);rows+=1
  return rows,len(head or [])
 
+def split_how_label(mode,col_parts,row_parts):
+ """何をどう分けているかの呼び名。列と行を取り違えないよう、表示はすべてここを通す。"""
+ if mode=='row':return f'行{row_parts}分割'
+ if mode=='grid':return f'行{row_parts}×列{col_parts}（{row_parts*col_parts}片）'
+ return f'列{col_parts}分割'
+
+def split_expected_share(mode,columns,removable,col_parts,row_parts=1,weights=None):
+ """1片が運ぶ量が、分割なしの何割になるかの見込み。進み具合の分母に使う。
+
+ 列分割 … 固定列が全パートに複製されるので、1片は 1/列数 より大きい（transfer_ratio）。
+          合計は分割なしより増える。
+ 行分割 … 行を分けるだけなので1片は 1/行数。合計は分割なしと同じ。
+ 行×列 … 両方が効いて 1片は transfer_ratio/行数。合計は列分割と同じだけ増える。
+ """
+ rp=max(1,int(row_parts or 1));cp=max(1,int(col_parts or 1))
+ if mode=='row':return 1.0/rp
+ ratio=split_transfer_ratio(columns,removable,cp,weights)
+ return ratio/rp if mode=='grid' else ratio
+
 def plan_row_split(cand,parts):
  """行分割の割り当て。候補（範囲の区切り）から、パートごとの条件を作る。"""
  calls=(row_condition_calls(cand) or {}).get('calls') or []
  if len(calls)!=parts:return None
+ # 全体の行数も持たせる。条件が効かず全件が返ったことを、実行側で見破るために使う。
+ total=int(cand.get('rows') or 0)
+ for c in calls:c['total_rows']=total
  return [{'index':i+1,'row':c,'expect_rows':c['rows']} for i,c in enumerate(calls)]
 
 def plan_grid_split(cand,row_parts,column_plan):
@@ -1231,23 +1316,22 @@ def row_condition_calls(cand,include_empty_in=0):
  """
  if not cand or cand.get('method')!='range':return None
  NAVI_RANGE,NAVI_NULL=0x2,0x4
- NAVI_UNDER,NAVI_BETWEEN,NAVI_OVER=0x1,0x2,0x4
+ NAVI_BETWEEN=0x2
  INCLUDE,NOTINCLUDE=0x0,0x1
  g=cand['groups'];n=len(g);calls=[]
+ lo=str(g[0]['from']);hi=str(g[-1]['to'])      # 列全体の最小と最大。端の組もこれで挟む。
  for i,part in enumerate(g):
   first,last=(i==0),(i==n-1)
   cond=NAVI_RANGE|(NAVI_NULL if cand.get('has_empty') and i==include_empty_in else 0)
-  rng=NAVI_UNDER if first else (NAVI_OVER if last else NAVI_BETWEEN)
-  calls.append({'part':i+1,'column':cand['column'],'condition':cond,'range':rng,
-                'lcheck':(NOTINCLUDE if not first else INCLUDE),
-                'lvalue':'' if first else str(part['from']),
-                'rcheck':INCLUDE,'rvalue':'' if last else str(part['to']),
+  left=lo if first else str(part['from'])
+  right=hi if last else str(part['to'])
+  calls.append({'part':i+1,'column':cand['column'],'condition':cond,'range':NAVI_BETWEEN,
+                'lcheck':(INCLUDE if first else NOTINCLUDE),'lvalue':left,
+                'rcheck':INCLUDE,'rvalue':right,
                 'rows':part['rows'],
-                'text':('≦ '+str(part['to']) if first else
-                        ('＞ '+str(part['from']) if last else
-                         '＞ '+str(part['from'])+' かつ ≦ '+str(part['to'])))
+                'text':('≧ ' if first else '＞ ')+left+' かつ ≦ '+right
                        +(' または 空値' if cond&NAVI_NULL else '')})
- return {'column':cand['column'],'calls':calls,
+ return {'column':cand['column'],'calls':calls,'low':lo,'high':hi,
          'covers_empty':bool(cand.get('has_empty')),'expected_rows':sum(x['rows'] for x in calls)}
 
 def balance_groups(counts,parts):
@@ -1577,11 +1661,18 @@ def compare_csv_content(a_path,b_path,key_columns,encoding='cp932',samples=5):
   if len(diff_rows)<samples:
    diff_rows.append({'key':list(k),'columns':[{'name':ha[i],'a':x[i],'b':y[i]} for i in cols[:samples]]})
  out['diff_rows']=changed;out['diff_cells']=diff_cells;out['samples']=diff_rows
- same=not only_a and not only_b and diff_cells==0
+ # 行数そのものも見る。突き合わせは固定列の値をキーにした辞書で行うため、同じ行が
+ # 何度も入っていても片方に潰れてしまう。行の条件が効かず全パートが全件を返したとき、
+ # 2倍3倍に膨れた結合結果を「内容は一致」と報告していた（2026-08-10の実測で発覚）。
+ out['count_match']=(len(ra)==len(rb))
+ out['duplicated_rows']=max(0,len(rb)-len(ra))
+ same=not only_a and not only_b and diff_cells==0 and out['count_match']
  out['content_identical']=same
  out['identical']=bool(out.get('byte_identical'))
  out['reason']=('完全に一致' if out['identical'] else
                 ('行の並び順だけが違います（内容は一致）' if same else
+                 f'行数が違います（分割なし {len(ra)}行 に対し 結合 {len(rb)}行。'
+                 f'同じ行が {len(rb)/len(ra):.2f}倍 に増えています）' if not out['count_match'] and len(ra) else
                  f'{changed}行の中身が違います（{diff_cells}セル）' if diff_cells else
                  f'行の過不足があります（分割なしのみ {len(only_a)}行 / 結合のみ {len(only_b)}行）'))
  return out
@@ -2819,7 +2910,19 @@ def process_split_part(j,cfg,user,pw,server,out_csv,drop_columns,part_label='',r
  from navigator_api import NavigatorApi
  started=time.perf_counter();api=None;rp=resolve_rne_path(j,cfg)
  stage={'part':part_label,'dropped':0}
+ # 親は書きかけのファイルの大きさしか見られない。どの工程にいるかはここから知らせる。
+ status_path=os.environ.get('NAVI_WORKER_STATUS') or ''
+ def step(name,**extra):
+  stage['step']=name
+  if not status_path:return
+  try:
+   d=dict({'part':part_label,'step':name,'elapsed':round(time.perf_counter()-started,2),
+           'at':time.time()},**extra)
+   tmp=Path(status_path).with_suffix('.tmp');tmp.write_text(json.dumps(d,ensure_ascii=False),encoding='utf-8')
+   os.replace(tmp,status_path)
+  except Exception:pass
  try:
+  step('接続')
   api=NavigatorApi(resolve_path(cfg.get('symnavi_exe','')),log,resolve_path(cfg.get('navigator_api_dll')) if cfg.get('navigator_api_dll') else None,base_dir=BASE)
   api.open_session(user,pw,server)
   profiles=api_data_source_profiles(resolve_path(cfg['symnavim_conf']))
@@ -2831,32 +2934,63 @@ def process_split_part(j,cfg,user,pw,server,out_csv,drop_columns,part_label='',r
    try:
     os.chdir(Path(rp).parent);handle,_=api.open_catalog(Path(rp).resolve())
    finally:os.chdir(prev)
+  step('RNEを開く')
   if (j.get('period') or {}).get('enabled'):apply_dynamic_period(api,handle,j,datetime.now(),line=part_label)
   if drop_columns:
+   step('担当外の列を外す')
    t=time.perf_counter();removed=api.apply_column_split(handle,drop_columns);stage['dropped']=len(removed)
    log.info('SPLIT_PART_REMOVE part=%s removed=%s elapsed=%.2fs',part_label,len(removed),time.perf_counter()-t)
   if row_condition:
    # 担当する行だけに絞る。ここが効かないと同じ行を何度も取ってしまうので、失敗は必ず例外にする。
+   step('行の条件を設定')
    t=time.perf_counter();applied=api.apply_row_condition(handle,row_condition);stage['row_condition']=applied
-   log.info('SPLIT_PART_ROWCOND part=%s 列=%s condition=0x%x range=0x%x 下限=%r(%s) 上限=%r(%s) elapsed=%.2fs',
-            part_label,applied['column'],applied['condition'],applied['range'],
-            row_condition.get('lvalue',''),'含む' if not row_condition.get('lcheck') else '含まない',
-            row_condition.get('rvalue',''),'含む' if not row_condition.get('rcheck') else '含まない',
-            time.perf_counter()-t)
+   log.info('SPLIT_PART_ROWCOND part=%s 列=%s 見つけた場所=%s 通った形=%s condition=0x%x range=0x%x 下限=%r(%s) 上限=%r(%s) 見込み行数=%s elapsed=%.2fs',
+            part_label,applied['column'],applied.get('locate','?'),applied.get('form','?'),applied['condition'],applied['range'],
+            applied.get('lvalue',''),'含む' if not row_condition.get('lcheck') else '含まない',
+            applied.get('rvalue',''),'含む' if not row_condition.get('rcheck') else '含まない',
+            row_condition.get('rows'),time.perf_counter()-t)
+   for x in (applied.get('tried') or []):log.info('SPLIT_PART_ROWCOND_TRIED part=%s %s',part_label,x)
+  step('問い合わせを実行')
   t=time.perf_counter();rows,_=api.execute(handle);exec_elapsed=time.perf_counter()-t
   expected_rows,expected_cols=api.dimensions(handle)
+  step('CSVへ保存',rows=expected_rows,cols=expected_cols)
   t=time.perf_counter();api.save_csv(handle,Path(out_csv));save_elapsed=time.perf_counter()-t
   api.close_catalog()
   size=Path(out_csv).stat().st_size if Path(out_csv).is_file() else 0
   total=time.perf_counter()-started
-  log.info('SPLIT_PART_DONE part=%s dropped=%s rows=%s cols=%s size=%s execute=%.2fs save=%.2fs total=%.2fs',
-           part_label,stage['dropped'],expected_rows,expected_cols,size,exec_elapsed,save_elapsed,total)
+  # 実行(DOWNLOADNOW)にはサーバー側の処理とダウンロードの両方が含まれる。保存は手元の整形。
+  want=(row_condition or {}).get('rows')
+  log.info('SPLIT_PART_DONE part=%s dropped=%s rows=%s%s cols=%s size=%s(%.1fMB) '
+           '実行=%.2fs(サーバー+受信 %.0fKB/s) 保存=%.2fs(整形 %.0fKB/s) 合計=%.2fs',
+           part_label,stage['dropped'],expected_rows,
+           (f'(見込み{want} 差{int(expected_rows)-int(want):+d})' if want else ''),
+           expected_cols,size,size/1024/1024,
+           exec_elapsed,(size/1024/exec_elapsed) if exec_elapsed>0 else 0,
+           save_elapsed,(size/1024/save_elapsed) if save_elapsed>0 else 0,total)
+  step('完了',rows=expected_rows,cols=expected_cols,size=size)
+  # 行の条件が本当に効いたかを、返ってきた行数で確かめる。rc=OK でも1行も絞られないことがあり
+  # （データ欄の項目に条件を付けた場合）、そのまま結合すると同じ行を分割数ぶん重複させてしまう。
+  applied_row=stage.get('row_condition') or {}
+  if row_condition and want:
+   full=int(row_condition.get('total_rows') or 0)
+   if int(expected_rows)>=int(want)*1.5 and (not full or int(expected_rows)>=full*0.95):
+    return {'ok':False,'part':part_label,'row_condition_ineffective':True,
+            'rows':expected_rows,'expected_rows':want,'row_column':applied_row.get('column',''),
+            'row_locate':applied_row.get('locate',''),'row_form':applied_row.get('form',''),
+            'error':f'行の条件が効きませんでした。「{applied_row.get("column","")}」に条件を設定できた'
+                    f'（{applied_row.get("locate","?")} / {applied_row.get("form","?")}）にもかかわらず、'
+                    f'見込み{want}行に対して{expected_rows}行（ほぼ全件）が返っています。'
+                    'この列では行を絞れないため、結合すると同じ行が重複します。',
+            'elapsed':round(total,2)}
   return {'ok':True,'part':part_label,'file':str(out_csv),'rows':expected_rows,'cols':expected_cols,'size':size,
           'execute_elapsed':round(exec_elapsed,2),'save_elapsed':round(save_elapsed,2),'elapsed':round(total,2),
-          'dropped':stage['dropped'],'row_condition':bool(row_condition)}
+          'dropped':stage['dropped'],'row_condition':bool(row_condition),
+          'expected_rows':want,'row_locate':applied_row.get('locate',''),'row_form':applied_row.get('form','')}
  except Exception as e:
-  log.error('SPLIT_PART_FAILED part=%s error=%s',part_label,e)
-  return {'ok':False,'part':part_label,'error':str(e),'elapsed':round(time.perf_counter()-started,2)}
+  log.error('SPLIT_PART_FAILED part=%s step=%s error=%s',part_label,stage.get('step',''),e)
+  step('失敗',error=str(e))
+  return {'ok':False,'part':part_label,'error':str(e),'step':stage.get('step',''),
+          'elapsed':round(time.perf_counter()-started,2)}
  finally:
   if api:
    try:api.close()
@@ -4045,6 +4179,7 @@ def column_plan():
   return jsonify(ok=False,error=str(e)),200
  if columns and source!='cache':save_column_cache(rp,columns,source=source or 'unknown',job=job)
  if classify:save_column_classification(rp,classify)
+ if layout.get('condition') is not None and columns:save_condition_items(rp,layout.get('condition') or [])
  elif cached and cached.get('classify') and not cached['stale']:classify=cached['classify']
  # 数え上げが成功していればそれを使う。RNEだけで分かる確かな値なので、名前の突き合わせより優先する。
  if layout.get('removable') or layout.get('fixed'):
@@ -4114,10 +4249,11 @@ def _spawn_racers(job,cfg,user,pw,server,work,jobs_spec,timeout=1800,stop_when=N
                          'row':spec.get('row')}}
   pp=d/'payload.json';pp.write_text(json.dumps(payload,ensure_ascii=False),encoding='utf-8')
   env=os.environ.copy();env['NAVI_WORKER_RESULT']=str(d/'result.json');env['NAVI_WORKER_LINE']=spec['label']
+  env['NAVI_WORKER_STATUS']=str(d/'status.json')
   env['NAVI_WORKER_SPAWN_AT']=repr(time.time())
   flags=getattr(subprocess,'CREATE_NO_WINDOW',0)
   procs.append({'spec':spec,'proc':subprocess.Popen([sys.executable,str(BASE/'api_worker.py'),str(pp)],cwd=str(BASE),env=env,creationflags=flags),
-                'result':d/'result.json','done':False})
+                'result':d/'result.json','status':d/'status.json','done':False})
  done={};order=0
  while any(not p['done'] for p in procs):
   now=time.perf_counter()
@@ -4146,7 +4282,9 @@ def _spawn_racers(job,cfg,user,pw,server,work,jobs_spec,timeout=1800,stop_when=N
   if any(not p['done'] for p in procs):
    # 進み具合を知らせる。書きかけのファイルの大きさが唯一の実測なので、それを見てもらう。
    if on_tick:
-    try:on_tick(time.perf_counter()-started,[{'spec':p['spec'],'done':p['done']} for p in procs])
+    try:on_tick(time.perf_counter()-started,[{'spec':p['spec'],'done':p['done'],
+                                              'status':_read_worker_json(p['status'],{}) if p['status'].is_file() else {}}
+                                             for p in procs])
     except Exception:pass
    time.sleep(0.2)
  return [done[s['label']] for s in jobs_spec]
@@ -4245,13 +4383,23 @@ def _split_trial_run(data,c,job):
                              '「行の分割可否を調べる」で候補を確認してください（範囲で区切れる列が要ります）')
   row_cand=cands[0]
   if not row_cand.get('api'):return dict(ok=False,error='行の条件を組み立てられませんでした')
-  log.info('SPLIT_TRIAL_ROWPLAN rne=%s mode=%s 列=%s 偏り=%s 並び=%s 区切り=%s',
-           rp,mode,row_cand['column'],row_cand['balance'],row_cand.get('order'),row_cand.get('cuts'))
+  log.info('SPLIT_TRIAL_ROWPLAN rne=%s mode=%s 列=%s 偏り=%s 並び=%s 区切り=%s 値域=%r〜%r',
+           rp,mode,row_cand['column'],row_cand['balance'],row_cand.get('order'),row_cand.get('cuts'),
+           row_cand['groups'][0]['from'],row_cand['groups'][-1]['to'])
+  if mode=='grid':
+   # 行の条件を付ける列は、どの列パートにも残す。外してしまうと、そのパートでは
+   # 条件を付ける相手が見つからない（NAVI_ERROR_DATAITEM）。錨と同じ扱いにする。
+   if row_cand['column'] in set(removable) and row_cand['column'] not in anchors:
+    anchors=list(anchors)+[row_cand['column']]
+    # 錨が増えたので列の割り当てを作り直す。ここを忘れると、その列を外したパートが出てしまう。
+    plan,keys=plan_column_split(columns,removable,parts,weights,anchors)
+    log.info('SPLIT_TRIAL_ROWKEEP rne=%s 行の条件に使う列「%s」を全パートに残し、列の割り当てを作り直しました（keep=%s）',
+             rp,row_cand['column'],[len(x['keep']) for x in plan])
  work=LOCAL_RUNTIME/('split_trial_'+datetime.now().strftime('%Y%m%d_%H%M%S'));work.mkdir(parents=True,exist_ok=True)
  user,pw,server,_=creds(resolve_path(c['symnavim_conf']))
  log.info('SPLIT_TRIAL_START rne=%s job=%s mode=%s 列%s分割 行%s分割 columns=%s removable=%s keys=%s transfer_ratio=%.2f',
           rp,job['name'],mode,len(plan) if mode!='row' else 1,row_parts if mode!='column' else 1,
-          len(columns),len(removable),len(keys),split_transfer_ratio(columns,removable,len(plan)))
+          len(columns),len(removable),len(keys),split_transfer_ratio(columns,removable,len(plan) if mode!='row' else 1))
  try:
   # 1) 分割なし。比較の基準であり、所要時間の基準でもある。
   base_csv=work/'normal.csv';t=time.perf_counter()
@@ -4269,7 +4417,10 @@ def _split_trial_run(data,c,job):
   else:
    part_specs=[{'index':p['index'],'label':f'パート{p["index"]}/{len(plan)}','group':'split',
                 'drop':p['drop'],'out_csv':work/f'part{p["index"]}.csv'} for p in plan]
-  pieces=len(part_specs)
+  # 表示も記録も「実際に走らせる片の数」で行う。len(plan) は列の割り当ての数で、
+  # 行分割のときは常に既定の2のままになり、3分割なのに「2分割」と出ていた。
+  pieces=len(part_specs);col_parts=len(plan) if mode!='row' else 1
+  with split_trial_lock:split_trial_state.update(mode=mode,pieces=pieces,parts=pieces)
   # 進み具合の目安。前回の出力の大きさと、前回の所要時間があれば、それを使う。
   # どちらも無い初回は経過時間だけで見当をつける（バーは9割で止まり、嘘をつかない）。
   expect_bytes=split_expected_bytes(rp,job,c)
@@ -4278,16 +4429,16 @@ def _split_trial_run(data,c,job):
   if race:
    # 同じ回線を奪い合わせて、実際に何秒で決着するかを測る。どちらも最後まで走らせる。
    # 途中で打ち切ると「負けた方が何秒かかったか」が分からず、比較にならない。
-   log.info('SPLIT_TRIAL_RACE rne=%s racers=%s（分割なし1本 ＋ %s分割）',rp,len(plan)+1,len(plan))
-   racers=len(plan)+1
-   split_trial_stage(f'競争中: 分割なし1本 対 {len(plan)}分割（同時に{racers}プロセス）',phase='race',progress=0,parts=len(plan))
+   log.info('SPLIT_TRIAL_RACE rne=%s racers=%s（分割なし1本 ＋ %s片）',rp,pieces+1,pieces)
+   racers=pieces+1
+   split_trial_stage(f'競争中: 分割なし1本 対 {pieces}片（同時に{racers}プロセス）',phase='race',progress=0,parts=pieces)
    # 競争は分割なしと全パートが同時に書かれるので、期待値は「1本ぶん＋パート合計」。
-   both=(expect_bytes or 0)*(1+split_transfer_ratio(columns,removable,len(plan),weights)*len(plan)) if expect_bytes else 0
+   both=(expect_bytes or 0)*(1+split_expected_share(mode,columns,removable,col_parts,row_parts,weights)*pieces) if expect_bytes else 0
    allr=_spawn_racers(job,c,user,pw,server,work,
                       [{'index':0,'label':'分割なし','group':'normal','drop':[],'out_csv':base_csv}]+part_specs,trial_timeout,
                       on_tick=lambda el,st:split_trial_tick('race',f'競争中（{racers}プロセス同時）',[str(base_csv)]+part_paths,
                                                             both,el,(expect_seconds or 0)*1.6 or None,
-                                                            f'{sum(1 for x in st if x["done"])}/{racers}本 完了'))
+                                                            f'{sum(1 for x in st if x["done"])}/{racers}本 完了',states=st))
    base=next((r for r in allr if r.get('group')=='normal'),{})
    results=[r for r in allr if r.get('group')=='split']
    normal_elapsed=base.get('finished_at') or (time.perf_counter()-t)
@@ -4295,7 +4446,7 @@ def _split_trial_run(data,c,job):
    log.info('SPLIT_TRIAL_RACE_ORDER rne=%s %s',rp,' / '.join(
     f"{r.get('part')}={r.get('finished_at')}s" for r in sorted(allr,key=lambda r:r.get('finished_at') or 0)))
   else:
-   split_trial_stage(f'分割なしを実行中（{len(plan)}分割と比較します）',phase='normal',progress=0,parts=len(plan))
+   split_trial_stage(f'分割なしを実行中（{split_how_label(mode,col_parts,row_parts)}と比較します）',phase='normal',progress=0,parts=pieces)
    base=_spawn_racers(job,c,user,pw,server,work,[{'index':0,'label':'分割なし','group':'normal','drop':[],'out_csv':base_csv}],trial_timeout,
                       on_tick=lambda el,st:split_trial_tick('normal','分割なしを実行中',[str(base_csv)],expect_bytes,el,expect_seconds))[0]
    normal_elapsed=time.perf_counter()-t
@@ -4322,23 +4473,38 @@ def _split_trial_run(data,c,job):
    # 追加された列は分類が無いので固定列として扱う（全パートに残る＝結合に影響しない）。
    keys=[c for c in columns if c not in set(removable)]
   # 2) 分割あり。パートは同時に走らせる（競争のときは 1) で一緒に走り終えている）。
-  log.info('SPLIT_PLAN rne=%s parts=%s anchors=%s keep=%s bytes=%s',rp,len(plan),anchors or '(なし)',
-           [len(p['keep']) for p in plan],[p.get('bytes') for p in plan])
+  if mode!='row':
+   log.info('SPLIT_PLAN rne=%s 列%s分割 anchors=%s keep=%s bytes=%s',rp,col_parts,anchors or '(なし)',
+            [len(p['keep']) for p in plan],[p.get('bytes') for p in plan])
   if results is None:
    # ここからは「分割なし」の実測がある。期待するバイト数も所要時間も、そこから作れる。
-   split_bytes=(base.get('size') or 0)*split_transfer_ratio(columns,removable,len(plan),weights)*len(plan)
-   split_seconds=normal_elapsed*predict_split_gain(columns,removable,len(plan),trials,load_rne_timing(rp),weights,split_link_profile(rp))
-   split_trial_stage(f'{len(plan)}分割を並列実行中（分割なしは {normal_elapsed:.0f}秒）',phase='split',progress=0)
+   split_bytes=(base.get('size') or 0)*split_expected_share(mode,columns,removable,col_parts,row_parts,weights)*pieces
+   split_seconds=(normal_elapsed*predict_split_gain(columns,removable,col_parts,trials,load_rne_timing(rp),weights,split_link_profile(rp))
+                  if mode=='column' else normal_elapsed)
+   how=split_how_label(mode,col_parts,row_parts)
+   split_trial_stage(f'{how}を並列実行中（{pieces}プロセス同時・分割なしは {normal_elapsed:.0f}秒）',phase='split',progress=0)
    t=time.perf_counter()
    results=_spawn_racers(job,c,user,pw,server,work,part_specs,trial_timeout,
-                         on_tick=lambda el,st:split_trial_tick('split',f'{len(plan)}分割を並列実行中',
+                         on_tick=lambda el,st:split_trial_tick('split',f'{how}を並列実行中',
                                                                [str(x['out_csv']) for x in part_specs],split_bytes,el,split_seconds or None,
-                                                               f'{sum(1 for x in st if x["done"])}/{len(plan)}パート 完了'))
+                                                               f'{sum(1 for x in st if x["done"])}/{pieces}片 完了',states=st))
    split_run=time.perf_counter()-t
   bad=[r for r in results if not r.get('ok')]
+  if any(r.get('row_condition_ineffective') for r in bad):
+   log.warning('SPLIT_TRIAL_ROWCOND_INEFFECTIVE rne=%s 列=%s 返った行数=%s（見込み %s）',
+               rp,(row_cand or {}).get('column'),[r.get('rows') for r in bad],[r.get('expected_rows') for r in bad])
+   record_split_trial(rp,job,pieces,None,None,normal_elapsed,None,False,
+                      detail=f'{mode}: 行の条件が効かず全件が返りました 列={(row_cand or {}).get("column")}')
+   return dict(ok=False,row_condition_ineffective=True,parts=pieces,results=results,
+                  row_column=(row_cand or {}).get('column',''),normal_rows=base.get('rows'),
+                  part_rows=[{'part':r.get('part'),'rows':r.get('rows'),'expected':r.get('expected_rows'),
+                              'locate':r.get('row_locate',''),'form':r.get('row_form','')} for r in results],
+                  error='行の条件が効きませんでした。条件の設定そのものは成功しています（rc=OK）が、'
+                        'どのパートもほぼ全件を返しました。結合すると同じ行が'
+                        f'{pieces}倍に増えるため、ここで中止しています。出力ファイルは更新していません。')
   if bad:
    return dict(ok=False,error='分割実行に失敗しました: '+'; '.join(f'{r.get("part")}: {r.get("error")}' for r in bad),
-                  parts=len(plan),results=results)
+                  parts=pieces,results=results)
   # 3) 結合して、分割なしの結果と突き合わせる。
   how={'column':f'{pieces}パートを横につなぎます','row':f'{pieces}パートを縦に積みます',
        'grid':f'{pieces}片を横につないでから縦に積みます'}[mode]
@@ -4360,15 +4526,15 @@ def _split_trial_run(data,c,job):
     mrows,mcols=merge_column_parts([r['file'] for r in results],merged,keys,columns)
   except SplitRowsetMismatch as me:
    # 列を外すと返る行が変わる問い合わせ。速さ以前に分割が成立しないので、以後は勧めない。
-   log.warning('SPLIT_TRIAL_ROWSET_MISMATCH rne=%s parts=%s rows=%s error=%s',rp,len(plan),[r.get('rows') for r in results],me)
+   log.warning('SPLIT_TRIAL_ROWSET_MISMATCH rne=%s %s rows=%s error=%s',rp,split_how_label(mode,col_parts,row_parts),[r.get('rows') for r in results],me)
    record_split_trial(rp,job,pieces,None,None,normal_elapsed,None,False,
                       detail=f'{mode}: rowset first={me.first_rows} other={me.other_rows} part={me.part}')
-   return dict(ok=False,error=str(me),parts=len(plan),results=results,rowset_mismatch=True,
+   return dict(ok=False,error=str(me),parts=pieces,results=results,rowset_mismatch=True,
                   part_rows=[{'part':r.get('part'),'rows':r.get('rows'),'cols':r.get('cols')} for r in results],
                   normal_rows=base.get('rows'))
   except Exception as me:
    log.warning('SPLIT_TRIAL_MERGE_FAILED rne=%s error=%s',rp,me)
-   return dict(ok=False,error=f'結合に失敗しました: {me}',parts=len(plan),results=results)
+   return dict(ok=False,error=f'結合に失敗しました: {me}',parts=pieces,results=results)
   merge_elapsed=time.perf_counter()-t;split_elapsed=split_run+merge_elapsed
   split_trial_stage('結果を比較中（分割なしと1行ずつ突き合わせます）',phase='compare',progress=0)
   cmp=compare_csv_content(base_csv,merged,keys)
@@ -4397,28 +4563,29 @@ def _split_trial_run(data,c,job):
   plan_saved=False
   if identical and mode=='column':
    # 競争中の速度比は回線の奪い合いで沈むので、裏付けとしては記録しない（自動には使わせない）。
-   plan_saved=save_split_plan(rp,columns,len(plan),plan,keys,anchors,None if race else speedup,mrows,mcols,
+   plan_saved=save_split_plan(rp,columns,col_parts,plan,keys,anchors,None if race else speedup,mrows,mcols,
                               source='race' if race else 'trial')
   elif identical:
    log.info('SPLIT_PLAN_NOT_SAVED rne=%s mode=%s 本番の実行はまだ列分割にしか対応していません（測定のみ）',rp,mode)
   else:
-   log.info('SPLIT_PLAN_NOT_SAVED rne=%s parts=%s identical=%s speedup=%s 結果が一致しないため保存しません',
-            rp,len(plan),identical,f'{speedup:.2f}' if speedup else '-')
+   log.info('SPLIT_PLAN_NOT_SAVED rne=%s %s identical=%s speedup=%s 結果が一致しないため保存しません（理由: %s）',
+            rp,split_how_label(mode,col_parts,row_parts),identical,f'{speedup:.2f}' if speedup else '-',cmp.get('reason'))
   lp=split_link_profile(rp)
   log.info('SPLIT_LINK rne=%s 回線の上限=%s KB/s 直近の単一速度=%s KB/s 伸びしろ=%s倍 有効な分割数=%s 実測=%s',
            rp,lp.get('capacity_kbs'),lp.get('base_kbs'),lp.get('headroom'),split_useful_parts(lp),
            [(p['parts'],p['base_kbs'],p['aggregate_kbs'],p['sigma']) for p in lp['points']])
-  log.info('SPLIT_TRIAL_RESULT rne=%s parts=%s identical=%s normal=%.2fs split=%.2fs(実行%.2fs+結合%.2fs) speedup=%s',
-           rp,len(plan),identical,normal_elapsed,split_elapsed,split_run,merge_elapsed,f'{speedup:.2f}' if speedup else '-')
+  log.info('SPLIT_TRIAL_RESULT rne=%s %s 片数=%s identical=%s normal=%.2fs split=%.2fs(実行%.2fs+結合%.2fs) speedup=%s 行数=分割なし%s/結合%s',
+           rp,split_how_label(mode,col_parts,row_parts),pieces,identical,normal_elapsed,split_elapsed,split_run,merge_elapsed,
+           f'{speedup:.2f}' if speedup else '-',cmp.get('rows_a'),cmp.get('rows_b'))
   return dict(ok=True,rne=str(rp),job=job['name'],parts=pieces,identical=identical,mode=mode,
-                 row_parts=row_parts if mode!='column' else 0,column_parts=len(plan) if mode!='row' else 1,
+                 row_parts=row_parts if mode!='column' else 0,column_parts=col_parts,how=split_how_label(mode,col_parts,row_parts),
                  row_column=(row_cand or {}).get('column',''),row_balance=(row_cand or {}).get('balance'),
                  row_order=(row_cand or {}).get('order',''),row_cuts=(row_cand or {}).get('cuts',[]),
                  rows=mrows,cols=mcols,key_count=len(keys),
                  normal_elapsed=round(normal_elapsed,2),split_elapsed=round(split_elapsed,2),
                  split_run_elapsed=round(split_run,2),merge_elapsed=round(merge_elapsed,2),
                  speedup=round(speedup,2) if speedup else None,
-                 transfer_ratio=round(split_transfer_ratio(columns,removable,len(plan)),2),
+                 transfer_ratio=round(split_expected_share(mode,columns,removable,col_parts,row_parts)*pieces,2),
                  normal_size=len(a),merged_size=len(b),results=results,compare=cmp,
                  parts_plan=[{'index':p['index'],'keep':len(p['keep']),'drop':len(p['drop'])} for p in plan],
                  plan_saved=bool(plan_saved),min_speedup=min_sp,split_mode=normalize_split_mode(job.get('split_mode')),
@@ -4440,7 +4607,8 @@ def _split_trial_run(data,c,job):
 # 別スレッドで走らせて、状態だけを画面へ渡す。
 split_trial_lock=threading.Lock()
 split_trial_state={'running':False,'stage':'','job':'','started':0.0,'elapsed':0.0,'result':None,'parts':0,
-                   'percent':0,'phase':'','phase_index':0,'phase_total':4,'bytes':0,'expected_bytes':0,'note':''}
+                   'percent':0,'phase':'','phase_index':0,'phase_total':4,'bytes':0,'expected_bytes':0,'note':'',
+                   'part_progress':[],'mode':'','pieces':0}
 
 # 影実行の進み具合。工程ごとに、全体のどこからどこまでを占めるかを決めておく。
 # 実測できるのは「書き出されつつあるファイルの大きさ」だけなので、進み具合はそこから出す。
@@ -4467,8 +4635,13 @@ def split_expected_bytes(rne_path,job,cfg):
  except Exception:pass
  return 0
 
+_split_stage_logged={'text':'','at':0.0}
 def split_trial_stage(stage,phase='',progress=None,**extra):
- """進み具合を書き込む。phase を渡すと、その工程の受け持ち範囲へ progress(0..1)を割り当てる。"""
+ """進み具合を書き込む。phase を渡すと、その工程の受け持ち範囲へ progress(0..1)を割り当てる。
+
+ 画面へは毎回書くが、ログは工程が変わったときと10秒ごとだけにする。0.4秒ごとに出すと
+ 1回の影実行で数百行になり、肝心の実測値が埋もれてしまうため。
+ """
  lo,hi,_=SPLIT_TRIAL_PHASES.get(phase or '',(None,None,''))
  fields=dict(extra)
  if lo is not None:
@@ -4476,9 +4649,37 @@ def split_trial_stage(stage,phase='',progress=None,**extra):
   fields['percent']=round(pct,1);fields['phase']=phase
  with split_trial_lock:
   split_trial_state.update(stage=stage,elapsed=round(time.time()-(split_trial_state.get('started') or time.time()),1),**fields)
- log.info('SPLIT_TRIAL_STAGE %s',stage)
+ head=stage.split('（')[0];now=time.time()
+ if head!=_split_stage_logged['text'] or now-_split_stage_logged['at']>=10:
+  _split_stage_logged.update(text=head,at=now);log.info('SPLIT_TRIAL_STAGE %s',stage)
 
-def split_trial_tick(phase,stage,paths,expected_bytes,elapsed,expected_seconds=None,note=''):
+SPLIT_PART_STEPS=['接続','RNEを開く','担当外の列を外す','行の条件を設定','問い合わせを実行','CSVへ保存','完了']
+
+def split_part_progress(paths,states,expected_bytes):
+ """パート1本ごとの進み具合。全体を1本の棒にまとめると、どのパートが遅れているのかも、
+ いま何をしているのかも分からない。パートごとに「工程」と「書けたバイト数」を出す。
+
+ 工程はワーカーが status.json に書いたものをそのまま使う。バイト数は書きかけのCSVの
+ 大きさで、これが唯一の実測。分母は全体の見込みをパート数で割った値。
+ """
+ n=max(1,len(paths));each=(float(expected_bytes)/n) if expected_bytes else 0
+ out=[]
+ for i,f in enumerate(paths):
+  try:b=Path(f).stat().st_size
+  except Exception:b=0
+  st=(states[i] if i<len(states) else {}) or {}
+  info=st.get('status') or {}
+  done=bool(st.get('done'))
+  step=('完了' if done else (info.get('step') or '準備中'))
+  pct=100.0 if done else (min(99.0,b/each*100.0) if each and b else 0.0)
+  out.append({'part':(st.get('spec') or {}).get('label') or info.get('part') or f'{i+1}',
+              'step':step,'step_index':(SPLIT_PART_STEPS.index(step)+1) if step in SPLIT_PART_STEPS else 0,
+              'step_total':len(SPLIT_PART_STEPS),'bytes':b,'expected_bytes':int(each),
+              'percent':round(pct,1),'done':done,'rows':info.get('rows') or 0,
+              'elapsed':info.get('elapsed') or 0})
+ return out
+
+def split_trial_tick(phase,stage,paths,expected_bytes,elapsed,expected_seconds=None,note='',states=None):
  """走っている最中の進み具合を更新する。
 
  バイトで測れるならバイトで測る（これが唯一の実測）。まだ1バイトも出ていない間は
@@ -4498,7 +4699,8 @@ def split_trial_tick(phase,stage,paths,expected_bytes,elapsed,expected_seconds=N
  else:
   prog=min(0.9,float(elapsed)/120.0);detail=f'{elapsed:.0f}秒経過'
  split_trial_stage(f'{stage}（{detail}{"・"+note if note else ""}）',phase=phase,progress=prog,
-                   bytes=got,expected_bytes=int(expected_bytes or 0),note=note)
+                   bytes=got,expected_bytes=int(expected_bytes or 0),note=note,
+                   part_progress=split_part_progress(paths,states or [],expected_bytes) if len(paths)>1 else [])
 
 @app.post('/api/row-split-plan')
 def row_split_plan():
@@ -4522,6 +4724,9 @@ def row_split_plan():
  classify=cached.get('classify') or []
  removable=[x['name'] for x in classify if x.get('removable')]
  fixed=[x['name'] for x in classify if not x.get('removable')]
+ # 絞り込みの条件は「条件欄」の項目に付く。出力される列（データ欄）に同じ条件を設定しても
+ # rc=OK が返るだけで1行も絞られない（2026-08-10の実測）。どれが条件欄にあるのかを先に出す。
+ cond_items=[str(x) for x in (cached.get('condition') or [])]
  # 1) どの列でどう割ると均等になるか。直近の出力を読むだけで、サーバーには触れない。
  cand=None;cand_error=''
  try:
@@ -4544,14 +4749,24 @@ def row_split_plan():
    else:probe_error=ins.get('error') or '内訳を測れませんでした'
   except Exception as e:
    probe_error=str(e);log.exception('ROW_SPLIT_PROBE_FAILED rne=%s',rp)
+ # 前回の実行で運んだバイト数を足す。速度（KB/s）を出すのに要る。
+ lastm=(load_job_runs().get(job['id']) or {}).get('metrics') or {}
+ if timing and lastm.get('transfer_bytes') and not lastm.get('split_parts'):
+  timing=dict(timing,bytes=int(lastm['transfer_bytes']))
  breakdown=row_split_breakdown(timing,deferred)
  if deferred:
-  log.info('ROW_SPLIT_PROBE rne=%s 転送なしの実行=%.2fs 行数=%s / 通常の実行=%ss 保存=%ss → サーバー側=%ss 転送=%ss',
-           rp,deferred['execute_seconds'],deferred['rows'],(timing or {}).get('execute'),(timing or {}).get('save'),
-           breakdown.get('server_seconds'),breakdown.get('transfer_seconds'))
+  # 転送なしの実行は行数を返さない（受信して初めて分かる）。行数は前回の実行の実績を使う。
+  log.info('ROW_SPLIT_PROBE rne=%s 転送なしの実行=%.2fs（返り行数=%s ※受信前なので0のことがある） '
+           '通常の実行=%ss 保存=%ss → サーバー側=%ss 受信=%ss(%s KB/s) 整形=%ss(%s KB/s) 行数=%s',
+           rp,deferred['execute_seconds'],deferred.get('rows'),
+           (timing or {}).get('execute'),(timing or {}).get('save'),
+           breakdown.get('server_seconds'),breakdown.get('download_seconds'),breakdown.get('download_kbs'),
+           breakdown.get('format_seconds'),breakdown.get('format_kbs'),breakdown.get('rows'))
  return jsonify(ok=True,rne=str(rp),job=job['name'],parts=parts,columns=len(columns),fixed=len(fixed),
                 removable_count=len(removable),
-                candidates=(cand or {}).get('candidates',[]),examined=(cand or {}).get('examined',0),
+                condition_items=cond_items,
+                candidates=[dict(x,in_condition=(x['column'] in set(cond_items))) for x in (cand or {}).get('candidates',[])],
+                examined=(cand or {}).get('examined',0),
                 sample_rows=(cand or {}).get('rows',0),candidate_error=cand_error,
                 timing=timing,deferred=deferred,probe_error=probe_error,breakdown=breakdown,
                 link=split_link_profile(rp),elapsed=round(time.perf_counter()-started,2))
@@ -4566,12 +4781,21 @@ def row_split_breakdown(timing,deferred):
  t=timing or {};ex=float(t.get('execute') or 0);sv=float(t.get('save') or 0);total=ex+sv
  if not total:return {'known':False}
  if not deferred:return {'known':False,'execute':round(ex,2),'save':round(sv,2)}
- srv=max(0.0,min(total,float(deferred.get('execute_seconds') or 0)))
- tr=max(0.0,total-srv)
- return {'known':True,'execute':round(ex,2),'save':round(sv,2),'total':round(total,2),
-         'server_seconds':round(srv,2),'transfer_seconds':round(tr,2),
-         'server_share':round(srv/total,3),'transfer_share':round(tr/total,3),
-         'rows':deferred.get('rows')}
+ srv=max(0.0,min(ex,float(deferred.get('execute_seconds') or 0)))
+ dl=max(0.0,ex-srv)                      # 通常の実行のうち、サーバー側の処理を除いた残り＝受信
+ rows=t.get('rows') or deferred.get('rows') or 0
+ out={'known':True,'execute':round(ex,2),'save':round(sv,2),'total':round(total,2),
+      'server_seconds':round(srv,2),'download_seconds':round(dl,2),'format_seconds':round(sv,2),
+      'server_share':round(srv/total,3),'download_share':round(dl/total,3),'format_share':round(sv/total,3),
+      'rows':rows,
+      # 旧来の呼び出し口。受信＋整形をまとめて「転送」と呼んでいたが、中身は別物なので内訳も返す。
+      'transfer_seconds':round(dl+sv,2),'transfer_share':round((dl+sv)/total,3)}
+ b=t.get('bytes') or 0
+ if b:
+  out['bytes']=int(b)
+  out['download_kbs']=round(b/1024/dl,1) if dl>0 else None
+  out['format_kbs']=round(b/1024/sv,1) if sv>0 else None
+ return out
 
 @app.post('/api/column-split-trial')
 def column_split_trial_start():
@@ -5063,6 +5287,38 @@ def instance_info():
  r=app.make_response(jsonify(app=APP_ID,instance_id=INSTANCE_ID,display_name='SymfoNavi Data Hub',build_version=BUILD_VERSION,pid=os.getpid(),port=PORT,path=str(BASE)))
  # 起動待ちモーダル(loading.html)がfile://から状態を確認できるよう、ローカル情報に限りCORSを許可する。
  r.headers['Access-Control-Allow-Origin']='*'; r.headers['Cache-Control']='no-store'; return r
+
+# 仕様書の一覧。実体が無くても一覧には出し、「見つかりません」と言えるようにする。
+@app.get('/api/docs')
+def docs_list():
+ out=[]
+ for d in DOCS:
+  path=docs_dir()/d['file']
+  try:st=path.stat()
+  except OSError:st=None
+  out.append({'id':d['id'],'title':d['title'],'summary':d['summary'],'source':d['source'],
+              'file':d['file'],'path':str(path),'available':bool(st),
+              'bytes':st.st_size if st else 0,
+              'updated_at':datetime.fromtimestamp(st.st_mtime).strftime('%Y-%m-%d %H:%M') if st else ''})
+ return jsonify(ok=True,docs=out)
+
+@app.get('/api/docs/<doc_id>')
+def docs_read(doc_id):
+ d=next((x for x in DOCS if x['id']==doc_id),None)
+ if not d:
+  log.warning('DOC_UNKNOWN id=%s',doc_id)
+  return jsonify(ok=False,error='登録されていない仕様書です'),404
+ path=docs_dir()/d['file']
+ if not path.is_file():
+  log.warning('DOC_MISSING id=%s path=%s',doc_id,path)
+  return jsonify(ok=False,error=f'{path} が見つかりません。配布物に含まれているか確認してください。'),404
+ try:text=path.read_text(encoding='utf-8')
+ except Exception as e:
+  log.exception('DOC_READ_FAILED id=%s path=%s',doc_id,path)
+  return jsonify(ok=False,error=str(e)),500
+ log.info('DOC_READ id=%s bytes=%s lines=%s',doc_id,len(text.encode('utf-8')),text.count(chr(10))+1)
+ return jsonify(ok=True,id=d['id'],title=d['title'],summary=d['summary'],source=d['source'],
+                path=str(path),text=text)
 
 @app.get('/api/version')
 def version_info():

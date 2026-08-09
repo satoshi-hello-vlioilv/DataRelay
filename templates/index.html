@@ -1,4 +1,4 @@
-<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SymfoNavi Data Hub</title><link rel="icon" href="/favicon.ico" sizes="any"><link rel="icon" href="/static/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/static/app.css?v=1.36.0-rowtrial"></head><body>
+<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SymfoNavi Data Hub</title><link rel="icon" href="/favicon.ico" sizes="any"><link rel="icon" href="/static/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/static/app.css?v=1.39.0-rowcond"></head><body>
 <header class="appbar"><div class="brand"><div class="brand-title"><h1>SymfoNavi Data Hub</h1><button id="version-badge" class="version-badge" type="button" title="バージョン情報を表示">確認中</button></div></div><div class="appbar-tools"><button type="button" class="runtime ctl" title="実行中の進捗を表示します"><i id="dot"></i><span class="rt-text"><b id="st">読込中</b><span id="sub">状態確認中</span></span></button><div class="ctl-group" role="group" aria-label="実行"><button type="button" id="run-selected" class="ctl ctl-quiet" title="チェックした対象だけを実行します">選択を実行<em id="sel-count" hidden>0</em></button><button type="button" id="run-all" class="ctl ctl-primary" title="有効なすべての対象を実行します">全件実行</button></div><button type="button" id="app-exit" class="ctl ctl-exit" title="アプリを終了します"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" aria-hidden="true"><path d="M12 3.5v8"/><path d="M6.8 6.3a7.5 7.5 0 1 0 10.4 0"/></svg><span>終了</span></button></div></header>
 <main><nav><button class="on" data-p="jobs">対象ファイル</button><button data-p="calendar">カレンダー</button><button data-p="viewer">データビュワー</button><button data-p="paths">共通設定</button><button data-p="logs">ログ・診断</button></nav>
 <section id="jobs" class="on"><div class="commandbar"><div class="searchbox"><span>検索</span><input id="search" placeholder="名称、RNE、出力先、ファイル名"></div><select id="filter-enabled"><option value="all">状態: すべて</option><option value="enabled">有効</option><option value="disabled">無効</option></select><select id="filter-schedule"><option value="all">予定: すべて</option><option value="scheduled">自動実行あり</option><option value="manual">手動のみ</option></select><select id="sort"><option value="order">登録順</option><option value="name">名称順</option><option value="rne">RNE名順</option><option value="output">出力先順</option><option value="schedule">予定数順</option></select><button id="add" class="secondary">新規追加</button></div><div class="listmeta"><span id="summary"></span><div><button id="select-visible" class="textbtn">表示対象を選択</button><button id="clear-selection" class="textbtn">選択解除</button></div></div><aside id="command-queue" class="command-queue"><div class="queue-head"><div><b>実行キュー</b><span id="cq-summary">待機なし</span></div><div id="cq-overall" class="cq-overall" hidden><div><span id="cq-progress-label">全体 0 / 0</span><b id="cq-progress-percent">0%</b></div><div class="cq-progress-track"><i id="cq-progress-bar"></i><i id="cq-progress-run" class="cq-progress-run"></i></div></div><button id="cq-toggle" class="secondary" type="button">一覧</button></div><div id="cq-list" class="cq-list" hidden></div></aside><div class="tablebox"><table class="jobs-table"><thead><tr><th class="c-check"></th><th class="c-state">状態</th><th class="sortable" data-sort="name">管理名称</th><th class="sortable" data-sort="rne">RNEファイル</th><th>出力ファイル</th><th class="sortable" data-sort="output">出力先</th><th class="c-progress">進捗・次回実行</th><th class="c-action">操作</th></tr></thead><tbody id="jobs-body"></tbody></table><div id="empty" class="empty" hidden>条件に一致する対象はありません。</div></div></section>
@@ -19,6 +19,7 @@
 <button class="settings-navbtn on" type="button" data-cat="conn"><i class="settings-badge cat-conn">接</i><span class="settings-navtext"><b>接続とパス</b><small>API・DDE・出力先の場所</small></span></button>
 <button class="settings-navbtn" type="button" data-cat="engine"><i class="settings-badge cat-engine">方</i><span class="settings-navtext"><b>抽出方式</b><small>API並列 / DDE設定を内包</small></span></button>
 <button class="settings-navbtn" type="button" data-cat="safety"><i class="settings-badge cat-safety">安</i><span class="settings-navtext"><b>安全性とバックアップ</b><small>0件保護・世代管理</small></span></button>
+<button class="settings-navbtn" type="button" data-cat="docs"><i class="settings-badge cat-docs">仕</i><span class="settings-navtext"><b>仕様書</b><small>Navigator APIの原典</small></span></button>
 <button class="settings-navbtn" type="button" data-cat="version"><i class="settings-badge cat-version">版</i><span class="settings-navtext"><b>バージョン情報</b><small>更新履歴を確認</small></span></button>
 </nav>
 <div class="settings-content">
@@ -42,6 +43,10 @@
 
 <article class="settings-pane" data-cat="safety"><div class="panelhead"><div><h2>安全性とバックアップ</h2><p>すべてのRNE変換処理へ適用する共通ポリシーです。標準は世代方式・3世代です。</p></div><span id="backup-policy-badge" class="pill">世代方式 / 3世代</span></div><div class="settings-block"><span class="settings-subhead">自動実行の取りこぼし対策</span><div class="setting-intro"><b>推奨: 30分（既定）</b><span>時刻を指定した予定は、その時刻に別の処理が実行中だとその日は実行されません。ここで指定した時間内であれば、手が空いた時点で遅れて実行します。0にすると従来どおり予定時刻の1分間だけを見ます。</span></div><label class="stacked-field"><span>遅延実行の猶予</span><div class="unit-input"><input id="schedule-catchup" type="number" min="0" max="720" step="5"><em>分</em></div></label></div><div class="settings-block backup-settings"><label class="safety-switch backup-master"><input id="backup-enabled" type="checkbox"><span><b>バックアップを有効にする</b><small>公開ファイルを置換する直前に既存ファイルを保存します。</small></span></label><div id="backup-options" class="backup-options"><label class="stacked-field"><span>保持方式</span><select id="backup-mode"><option value="generations">世代数で保持</option><option value="days">保存日数で保持</option><option value="both">世代数と保存日数の両方</option></select></label><label id="backup-generation-field" class="stacked-field"><span>最大世代数</span><div class="unit-input"><input id="gens" type="number" min="1" max="9999"><em>世代</em></div></label><label id="backup-days-field" class="stacked-field"><span>保存期間</span><div class="unit-input"><input id="backup-retention-days" type="number" min="1" max="3650"><em>日</em></div></label><div class="backup-default-note"><b>標準設定</b><span>世代方式で直近3世代を保持</span><button id="backup-reset-default" type="button" class="secondary">標準へ戻す</button></div></div><label class="safety-switch"><input id="zero" type="checkbox"><span>抽出0件時は既存ファイルを更新しない</span></label></div></article>
 
+<article class="settings-pane" data-cat="docs"><div class="panelhead"><div><h2>仕様書</h2><p>このアプリが依存している外部仕様の原典を、アプリの中から読めるようにしたものです。読み取り専用で、内容は配布物に同梱されています。</p></div></div><div class="settings-block doc-shell">
+<aside class="doc-side"><div class="doc-side-label">登録されている仕様書</div><div id="doc-list" class="doc-list"></div><div class="doc-side-label doc-toc-label" hidden>目次</div><nav id="doc-toc" class="doc-toc" aria-label="目次"></nav></aside>
+<div class="doc-main"><div id="doc-head" class="doc-head"></div><div id="doc-body" class="doc-body"><p class="hint">左の一覧から仕様書を選んでください。</p></div></div>
+</div></article>
 <article class="settings-pane" data-cat="version"><div class="panelhead"><div><h2>バージョン情報</h2><p>このアプリの現在のバージョンと更新履歴を確認できます。</p></div></div><div class="settings-block"><div id="settings-version-summary" class="version-summary"></div><div id="settings-version-changelog" class="changelog"></div></div></article>
 
 </div></div></section>
@@ -168,13 +173,60 @@
 <div class="editor-pane" data-etab="schedule">
 <div class="sectiontitle schedule-title"><div><span>自動実行ルール</span><small>複数条件を組み合わせて登録できます。実行時刻・曜日・間隔などを個別に設定できます。</small></div><button id="add-rule" type="button" class="secondary">ルール追加</button></div><div id="m-rules" class="rules"></div></div>
 <div class="editor-pane" data-etab="inspect">
-<div class="sectiontitle sect-inspect"><i class="sect-badge sb-inspect">調</i>RNEを調べる<span class="period-optional">読み取りのみ</span></div>
-<p class="inspect-lead">RNEを開いて中身を読み取ります。<b>RNEも出力ファイルも変更しません。</b>詳しい説明は config\README.txt にあります。</p>
-<div class="split-run-box"><div class="split-run-head"><b>本番の実行で列分割</b><label class="trial-parts">動作<select id="m-split-mode"><option value="auto">自動（裏付けがあるときだけ）</option><option value="race">競争させる（1本と同時に走らせ、勝った方を採用）</option><option value="force">常に分割</option><option value="off">使わない</option></select></label></div>
-<div id="m-split-run-state" class="split-run-state">「列の分割可否を調べる」を実行すると、次に実行したときどうなるかを表示します。</div></div>
-<div class="inspect-grid"><div class="rne-inspect-head"><button id="m-rne-inspect" type="button" class="secondary">RNEの中身を調べる</button><small><b>管理ポイント</b>（絞り込みの軸）と<b>データ項目</b>（出力される列）を読み取ります。RNEは変更しません。</small></div><div id="m-rne-inspect-result" class="rne-inspect-result" hidden></div>
-<div class="rne-inspect-head"><button id="m-column-plan" type="button" class="secondary">列の分割可否を調べる</button><small>列を「分割して取得できる列」と「必ず残る列」に分けます。<b>RNEを開いて数えるだけ</b>で、問い合わせは実行しません。</small></div><div id="m-column-plan-result" class="rne-inspect-result" hidden></div><div class="rne-inspect-head"><div class="trial-head"><button id="m-split-trial" type="button" class="secondary">分割の効果を試す（影実行）</button><label class="trial-parts">方式<select id="m-split-mode-trial"><option value="column">列分割</option><option value="row">行分割</option><option value="grid">行×列</option></select></label><label class="trial-parts">列<select id="m-split-parts"><option value="0">おまかせ</option><option value="2">2</option><option value="3">3</option><option value="4">4</option></select></label><label class="trial-parts">行<select id="m-row-trial-parts"><option value="2">2</option><option value="3">3</option><option value="4">4</option></select></label><label class="trial-race"><input id="m-split-race" type="checkbox"><span>競争</span></label></div><small>分割ありと分割なしを続けて実行し、結果を<b>バイト単位で比較</b>します。<b>出力ファイルは更新しません</b>。列分割は先に「列の分割可否を調べる」、行分割は「行の分割可否を調べる」を実行してください。行×列は片の数が 行×列 になります。</small></div><div id="m-split-trial-result" class="rne-inspect-result" hidden></div><div class="rne-inspect-head"><div class="trial-head"><button id="m-row-split" type="button" class="secondary">行の分割可否を調べる</button><label class="trial-parts">分割数<select id="m-row-parts"><option value="2">2分割</option><option value="3">3分割</option><option value="4">4分割</option></select></label><label class="trial-race"><input id="m-row-probe" type="checkbox"><span>所要時間の内訳も測る</span></label></div><small>直近の出力を1回読み、<b>どの列をどこで区切ると行数が最も均等になるか</b>を探します（サーバーには触れません）。「所要時間の内訳も測る」は<b>転送せずに問い合わせだけ</b>を実行し、サーバー側の時間と転送の時間を切り分けます（<b>1バイトも受信しません</b>）。</small></div><div id="m-row-split-result" class="rne-inspect-result" hidden></div></div>
-</div></div><div class="modalfoot"><button value="cancel" class="secondary">キャンセル</button><button id="apply" value="default">設定を反映</button></div></form></dialog>
+<div class="sectiontitle sect-inspect"><i class="sect-badge sb-inspect">調</i>RNEを調べる<span class="period-optional" title="この画面のどの操作も、RNEファイルと出力ファイルを書き換えません。影実行の結果も公開しません。詳しい説明は config\README.txt にあります。">RNEも出力も変更しません</span></div>
+<div class="insp">
+<nav id="insp-rail" class="insp-rail" role="tablist" aria-label="調べる手順">
+<button type="button" class="insp-step on" data-istep="read" role="tab"><i class="is-no">1</i><span class="is-txt"><b>中身を読む</b><small>列と管理ポイント</small></span><em class="is-state">未実行</em></button>
+<button type="button" class="insp-step" data-istep="plan" role="tab"><i class="is-no">2</i><span class="is-txt"><b>分け方を探す</b><small>列で／行で</small></span><em class="is-state">未実行</em></button>
+<button type="button" class="insp-step" data-istep="trial" role="tab"><i class="is-no">3</i><span class="is-txt"><b>速さを試す</b><small>影実行で実測</small></span><em class="is-state">未実行</em></button>
+<button type="button" class="insp-step" data-istep="run" role="tab"><i class="is-no">4</i><span class="is-txt"><b>本番の動作</b><small>次に実行したら</small></span><em class="is-state">—</em></button>
+</nav>
+<div class="insp-pane">
+
+<section class="insp-panel on" data-istep="read">
+<header class="ip-head"><b>RNEの中身を読む</b><small>SymfoNaviに接続してRNEを開き、<b>管理ポイント</b>（絞り込みの軸）と<b>データ項目</b>（出力される列）を読み取ります。</small></header>
+<div class="ip-act"><button id="m-rne-inspect" type="button" class="secondary">読み取る</button><span class="ip-hint">接続します（数秒）</span></div>
+<div id="m-rne-inspect-result" class="rne-inspect-result" hidden></div>
+<p class="ip-empty" data-empty="read">まだ読み取っていません。ここに列の一覧と管理ポイントが表示されます。</p>
+</section>
+
+<section class="insp-panel" data-istep="plan">
+<header class="ip-head"><b>分け方を探す</b><small>1本の問い合わせを何本かに分けられるかを、<b>サーバーに問い合わせずに</b>判定します。列で分ける（縦に切る）か、行で分ける（横に切る）かを選んでください。</small></header>
+<div class="ip-seg" id="plan-axis" role="tablist"><button type="button" class="on" data-axis="column" role="tab">列で分ける</button><button type="button" data-axis="row" role="tab">行で分ける</button></div>
+<div class="ip-sub on" data-axis="column">
+<div class="ip-act"><button id="m-column-plan" type="button" class="secondary">列を調べる</button><span class="ip-hint">RNEを開いて数えるだけ</span></div>
+<p class="ip-note">列を「分割して取得できる列」と「全パートに必ず残る列」に分けます。必ず残る列が多いほど、分割しても運ぶ量が減りません。</p>
+<div id="m-column-plan-result" class="rne-inspect-result" hidden></div>
+<p class="ip-empty" data-empty="column">まだ調べていません。分割できる列の本数と、見込みの短縮率が表示されます。</p>
+</div>
+<div class="ip-sub" data-axis="row">
+<div class="ip-act"><button id="m-row-split" type="button" class="secondary">行を調べる</button><label class="trial-parts">分割数<select id="m-row-parts"><option value="2">2分割</option><option value="3">3分割</option><option value="4">4分割</option></select></label><label class="trial-race"><input id="m-row-probe" type="checkbox"><span>所要時間の内訳も測る</span></label></div>
+<p class="ip-note">直近の出力を1回読み、<b>どの列をどこで区切ると行数が最も均等になるか</b>を探します。「所要時間の内訳も測る」は<b>転送せずに問い合わせだけ</b>を実行し、サーバー側・回線・整形の3つに時間を切り分けます（<b>1バイトも受信しません</b>）。</p>
+<div id="m-row-split-result" class="rne-inspect-result" hidden></div>
+<p class="ip-empty" data-empty="row">まだ調べていません。区切りに使える列と、所要時間の内訳が表示されます。</p>
+</div>
+</section>
+
+<section class="insp-panel" data-istep="trial">
+<header class="ip-head"><b>速さを試す（影実行）</b><small>分割ありと分割なしを実際に走らせ、結果を<b>バイト単位で比較</b>します。数分かかりますが、この画面は閉じても構いません。</small></header>
+<div class="ip-act"><button id="m-split-trial" type="button" class="secondary">影実行を開始</button><label class="trial-parts">方式<select id="m-split-mode-trial"><option value="column">列分割</option><option value="row">行分割</option><option value="grid">行×列</option></select></label><label class="trial-parts" data-need="column">列<select id="m-split-parts"><option value="0">おまかせ</option><option value="2">2</option><option value="3">3</option><option value="4">4</option></select></label><label class="trial-parts" data-need="row" hidden>行<select id="m-row-trial-parts"><option value="2">2</option><option value="3">3</option><option value="4">4</option></select></label><label class="trial-race"><input id="m-split-race" type="checkbox"><span>競争させる</span></label></div>
+<p class="ip-note" id="trial-need">先に手順2の「列を調べる」を実行してください。<b>出力ファイルは更新しません</b>。</p>
+<div id="m-split-trial-result" class="rne-inspect-result" hidden></div>
+<p class="ip-empty" data-empty="trial">まだ試していません。分割なしとの所要時間の比較と、結果が一致したかどうかが表示されます。</p>
+</section>
+
+<section class="insp-panel" data-istep="run">
+<header class="ip-head"><b>本番の動作</b><small>ここまでの結果を受けて、<b>実際のファイル生成</b>で分割を使うかどうかを決めます。裏付け（影実行で結果が一致し、かつ速いこと）が取れた割り当てだけが使われます。</small></header>
+<div class="ip-act"><label class="trial-parts">動作<select id="m-split-mode"><option value="auto">自動（裏付けがあるときだけ）</option><option value="race">競争させる（1本と同時に走らせ、勝った方を採用）</option><option value="force">常に分割</option><option value="off">使わない</option></select></label></div>
+<div id="m-split-run-state" class="split-run-state"></div>
+<p class="ip-note">本番の実行で使えるのは<b>列分割</b>だけです。行分割と行×列は、いまのところ手順3の影実行（測定）専用です。</p>
+</section>
+
+</div>
+</div>
+</div>
+</div>
+<div class="modalfoot"><button value="cancel" class="secondary">キャンセル</button><button id="apply" value="default">設定を反映</button></div></form></dialog>
 <dialog id="rule-editor"><form method="dialog" class="modal rulemodal"><div class="modalhead"><div><small>自動実行スケジュール</small><h2>実行ルール</h2></div><button value="cancel" class="iconbtn" aria-label="閉じる">×</button></div><div class="modalbody">
 <input id="r-id" type="hidden">
 <div class="rule-basics"><label class="rule-namefield">ルール名称<input id="r-name" list="suggest-rule-names" placeholder="例: 始業前更新"></label><label class="rule-enable"><input id="r-enabled" type="checkbox"><span>このルールを有効化</span></label></div>
@@ -196,4 +248,4 @@
 <div class="rule-live"><span class="rl-ic">確認</span><div class="rl-text"><small>このルールの実行タイミング</small><b id="r-live-summary">—</b></div></div></div><div class="modalfoot"><button value="cancel" class="secondary">キャンセル</button><button id="rule-apply" value="default">ルールを反映</button></div></form></dialog>
 <dialog id="cal-day-dialog"><div class="modal calday-modal"><div class="modalhead"><div><small>カレンダー</small><h2 id="cal-day-title">—</h2></div><button id="cal-day-close" class="iconbtn" aria-label="閉じる">×</button></div><div class="modalbody"><div id="cal-day-body" class="calday-body"></div><div class="calday-quickadd"><b>この日に単発の自動実行を追加</b><p class="hint">選択した対象へ、この日付の1回きりの実行ルール（特定日指定）を追加します。</p><div class="quickadd-row"><select id="cal-quick-job"></select><input id="cal-quick-time" type="time" value="06:00"><button id="cal-quick-add" type="button">追加</button></div></div></div></div></dialog>
 <datalist id="suggest-names"></datalist><datalist id="suggest-rne"></datalist><datalist id="suggest-output"></datalist><datalist id="suggest-output-file"></datalist><datalist id="suggest-table"></datalist><datalist id="suggest-sheet"></datalist><datalist id="suggest-period-cp"><option value="月度"><option value="日"><option value="年度"><option value="四半期"><option value="半期"></datalist><datalist id="suggest-rule-names"><option value="始業前更新"><option value="昼休み更新"><option value="夜間更新"><option value="月初更新"><option value="臨時更新"></datalist>
-<script src="/static/app.js?v=1.36.0-rowtrial"></script></body></html>
+<script src="/static/app.js?v=1.39.0-rowcond"></script></body></html>

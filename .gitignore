@@ -1,2 +1,6 @@
 __pycache__/
 *.pyc
+
+# Linuxでの検証時だけできる複製。Windowsでは config/ と同じ場所なので、
+# 追跡済みの config/app_settings.sqlite3 には影響しない。
+/Config/app_settings.sqlite3
