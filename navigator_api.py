@@ -286,6 +286,11 @@ class NavigatorApi:
         d.NaviGetRecordNumber.argtypes=[L,P,P];d.NaviGetRecordNumber.restype=None
         # 見出しだけを取りに行くための2関数（5.3.6 / 5.3.7）。1行だけ受け取って打ち切ると、
         # NaviSaveData はその分しか書き出さない。列名の取得が全件転送なしで済む。
+        if hasattr(d,'NaviChangeConditionDI'):
+            # (hDItem, rc, condition, key, search, nonmatch, range, lcheck, lvalue, rcheck, rvalue, reserve)
+            d.NaviChangeConditionDI.argtypes=[L,P,L,S,L,L,L,L,S,L,S,S];d.NaviChangeConditionDI.restype=None
+        if hasattr(d,'NaviChangeConditionCP'):
+            d.NaviChangeConditionCP.argtypes=[L,P,S,L,L];d.NaviChangeConditionCP.restype=None
         if hasattr(d,'NaviDownLoadData'):
             d.NaviDownLoadData.argtypes=[L,P,L,P];d.NaviDownLoadData.restype=None
         if hasattr(d,'NaviTerminateDL'):
@@ -720,6 +725,44 @@ class NavigatorApi:
             if h:found={'name':name,'removable':True,'locate':'データ','handle':h}
             out.append(found or {'name':name,'removable':False,'locate':'表側など','handle':0})
         return out
+
+    def supports_row_split(self):
+        """行を条件で絞れるDLLか（データ項目の集計条件を変えられるか）。"""
+        return hasattr(self.dll,'NaviChangeConditionDI') and hasattr(self.dll,'NaviGetDataItem')
+
+    def change_condition_di(self,h_item,condition,key='',search=NAVI_COMPLETE,nonmatch=0,
+                           rng=0,lcheck=NAVI_INCLUDE,lvalue='',rcheck=NAVI_INCLUDE,rvalue='',reserve=''):
+        """データ項目の集計条件を差し替える（SymNaviApi.bas の宣言どおり12引数）。
+
+        範囲で絞るときは condition に NAVI_RANGE、rng に NAVI_UNDER / NAVI_BETWEEN / NAVI_OVER。
+        境目を二重に数えないよう、下限側は NAVI_NOTINCLUDE を使うこと。
+        空の値も拾いたい組では condition に NAVI_NULL を足す。RNEファイルは変更しない。
+        """
+        rc=ctypes.c_long()
+        self.dll.NaviChangeConditionDI(int(h_item),ctypes.byref(rc),int(condition),_ansi(key),int(search),
+                                       int(nonmatch),int(rng),int(lcheck),_ansi(lvalue),
+                                       int(rcheck),_ansi(rvalue),_ansi(reserve))
+        self._check('NaviChangeConditionDI',rc,f'condition=0x{int(condition):x} range=0x{int(rng):x} l={lvalue!r} r={rvalue!r}')
+        return True
+
+    def apply_row_condition(self,h_catalog,spec):
+        """1パートぶんの行の条件を適用する。実行前に呼ぶこと。
+
+        spec は row_condition_calls が組み立てた形（column / condition / range / lcheck / lvalue /
+        rcheck / rvalue）。対象の列が見つからない、または条件を設定できない場合は例外にする。
+        黙って全件を取ってしまうと、結合したときに行が重複するため。
+        """
+        if not self.supports_row_split():
+            raise RuntimeError('このDLLは NaviChangeConditionDI を公開していません')
+        name=str(spec.get('column') or '')
+        h=self.get_data_item(h_catalog,name,locate=NAVI_DATA)
+        if not h:
+            raise NavigatorApiError('行分割:列の取得',NAVI_ERROR,f'列「{name}」のハンドルが0です')
+        self.change_condition_di(h,int(spec.get('condition') or NAVI_RANGE),
+                                 rng=int(spec.get('range') or 0),
+                                 lcheck=int(spec.get('lcheck') or NAVI_INCLUDE),lvalue=str(spec.get('lvalue') or ''),
+                                 rcheck=int(spec.get('rcheck') or NAVI_INCLUDE),rvalue=str(spec.get('rvalue') or ''))
+        return {'column':name,'handle':h,'condition':int(spec.get('condition') or 0),'range':int(spec.get('range') or 0)}
 
     def apply_column_split(self,h_catalog,drop_names):
         """担当外の列をカタログから外す。実行前に呼ぶこと。
