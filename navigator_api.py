@@ -776,16 +776,27 @@ class NavigatorApi:
         if not self.supports_row_split():
             raise RuntimeError('このDLLは NaviChangeConditionDI を公開していません')
         name=str(spec.get('column') or '')
-        h=self.get_data_item(h_catalog,name,locate=NAVI_DATA)
+        # 条件欄(NAVI_COND)を先に探す。絞り込みの条件は条件欄の項目に付くもので、
+        # データ欄(NAVI_DATA)の項目に同じ条件を設定しても rc=OK が返るだけで
+        # 実際には1行も絞られない（2026-08-10の実測。全パートが全件を返した）。
+        # サンプル(ExecNavi.bas SearchItem)も、条件を変えるときは NAVI_COND から引いている。
+        tried=[];h=0;where=''
+        for locate,label in ((NAVI_COND,'条件欄'),(NAVI_DATA,'データ欄')):
+            try:
+                got=self.get_data_item(h_catalog,name,locate=locate)
+            except Exception as e:
+                tried.append(f'{label}から取得: {e}');continue
+            if got:
+                h=got;where=label;break
+            tried.append(f'{label}から取得: ハンドルが0')
         if not h:
             raise NavigatorApiError('行分割:列の取得',NAVI_ERROR,
-                                    f'列「{name}」のハンドルが0です。'
+                                    f'列「{name}」のハンドルが0です（'+' / '.join(tried)+'）。'
                                     'この列がパートから外されていると起きます（行の条件に使う列は全パートに残す必要があります）')
-        tried=[]
         for label,kw in self.row_condition_forms(spec):
             try:
                 self.change_condition_di(h,**kw)
-                return {'column':name,'handle':h,'form':label,'tried':tried,
+                return {'column':name,'handle':h,'form':label,'locate':where,'tried':tried,
                         'condition':int(kw.get('condition') or 0),'range':int(kw.get('rng') or 0),
                         'lvalue':kw.get('lvalue',''),'rvalue':kw.get('rvalue','')}
             except Exception as e:
