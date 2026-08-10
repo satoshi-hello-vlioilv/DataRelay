@@ -201,6 +201,7 @@
 </div>
 <div class="ip-sub" data-axis="row">
 <div class="ip-act"><button id="m-row-split" type="button" class="secondary">行を調べる</button><span class="ip-hint">接続します（数秒）</span><label class="trial-parts">分割数<select id="m-row-parts"><option value="2">2分割</option><option value="3">3分割</option><option value="4">4分割</option><option value="6">6分割</option><option value="8">8分割</option></select></label><label class="trial-race"><input id="m-row-probe" type="checkbox"><span>所要時間の内訳も測る</span></label></div>
+<div class="ip-act axis-pick"><label class="trial-parts">軸の決め方<select id="m-axis-mode"><option value="first">表側の1番目（調査不要）</option><option value="index">番号で指定（調査不要）</option><option value="name">名前で指定（調べて選ぶ）</option><option value="balanced">偏りが少ないものを自動で選ぶ</option></select></label><label class="trial-parts" id="m-axis-index-wrap" hidden>表側#<input id="m-axis-index" type="number" min="1" max="200" step="1" value="1"></label><label class="trial-parts" id="m-axis-name-wrap" hidden>軸<select id="m-axis-name"><option value="">（先に「行を調べる」）</option></select></label><span class="ip-hint" id="m-axis-hint">決め方は対象ごとに保存され、本番の実行でも使われます</span></div>
 <p class="ip-note">RNEを開いて<b>行を絞れる軸（管理ポイント）</b>を読み取ります。明細データの問い合わせなら<b>表側</b>に必ず軸があるので、どのRNEでも同じやり方で分けられます。接続はしますが<b>データは1バイトも受信しません</b>。「所要時間の内訳も測る」を選ぶと、転送せずに問い合わせだけを実行し、サーバー側・回線・整形の3つに時間を切り分けます。</p>
 <div id="m-row-split-result" class="rne-inspect-result" hidden></div>
 <p class="ip-empty" data-empty="row">まだ調べていません。区切りに使える列と、所要時間の内訳が表示されます。</p>

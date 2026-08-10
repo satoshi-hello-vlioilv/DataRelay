@@ -25,8 +25,8 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.48.0'; APP_VERSION_TITLE='調べものを裏で走らせる'; APP_RELEASED_AT='2026-08-10'
-BUILD_VERSION=f'{APP_VERSION}-bgtask'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.49.0'; APP_VERSION_TITLE='空の値の行を落とさない／軸の決め方を選べる'; APP_RELEASED_AT='2026-08-10'
+BUILD_VERSION=f'{APP_VERSION}-axischoice'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリに同梱する仕様書。ここに登録したものだけが画面から開ける。
 # 画面からはこのidしか受け取らないので、任意のパスを読ませることはできない。
 DOCS=[
@@ -43,7 +43,19 @@ def docs_dir():
 
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
-{'version':'1.48.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+{'version':'1.49.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'【欠けた36行の正体】実測(2026-08-10 13:09)で、欠けた36行はすべて「検査番号が空」の行でした。どのカテゴリにも当てはまらない行が、絞り込みの時点で落ちていました。',
+'原因は NaviReloadCategory の第6引数 nonmatch に0を渡していたことです。仕様書の「カテゴリロード」にある NAVI_NONMATCH（0x02）を渡すと、当てはまらない値も残ります。この形を最初に試すようにしました。通らない環境では今までの形へ順に落とします。',
+'絞り込みの形は「外すだけ」を「外して出す」より先に試すようにしました。分割で作ってよいのは分割なしの部分集合だけで、行を増やしてはいけません。RNEに保存された時点で非表示の値を出すと、分割なしに無い行が混ざります。',
+'欠けた行がすべて空の値だったときは、そう明記します（SPLIT_TRIAL_MISSING）。',
+'行の軸の決め方を4通りから選べるようにしました。対象ごとに保存され、画面の無い本番の実行でも同じ軸が使われます。',
+'　・表側の1番目（調査不要）… 既定。明細のRNEなら必ず1本はあるので、調べずに分けられます。',
+'　・番号で指定（調査不要）… 使う軸が分かっているとき。使えなければ1番目に戻ります。',
+'　・名前で指定（調べて選ぶ）… 「行を調べる」で出た候補から選びます。番号が動いても追随します。',
+'　・偏りが少ないものを自動で選ぶ… 直近の出力から表側の各軸の散らばりを1回で測り、いちばん多い値の割合が最も小さい軸を選びます。いちばん重い片が小さくなる＝いちばん速くなる軸です。',
+'候補の一覧に「最多◯%」を出すようにしました。検査番号のように1つの値が87%を占める軸は、選ぶ前に分かります。',
+]},
+{'version':'1.48.0','date':'2026-08-10','title':'調べものを裏で走らせる','notes':[
 '【行分割が通りました】実測(2026-08-10 12:35)で 分割なし64.82秒 に対し 行2分割33.88秒、1.91倍。1行ずつ突き合わせた結果、中身の違いは0行・0セルでした。',
 '影実行の進み具合が前回の表示を引きずっていたのを直しました。始めた時点でバーも片の一覧も白紙に戻します（これまでは running だけを書き換えていたため、前回の100%のバーと前回の片がそのまま見えていました）。',
 '「中身を読む」「分け方を探す」も裏で走るようにしました。待機モーダルで画面を塞がず、進み具合をその手順の結果欄に出します。閉じても続き、開き直せば途中から追いつきます。',
@@ -863,6 +875,10 @@ def ensure_schema_upgrades():
   if 'comment' not in cols:c.execute("ALTER TABLE jobs ADD COLUMN comment TEXT NOT NULL DEFAULT ''")
   if 'period_json' not in cols:c.execute("ALTER TABLE jobs ADD COLUMN period_json TEXT NOT NULL DEFAULT ''")
   if 'split_mode' not in cols:c.execute("ALTER TABLE jobs ADD COLUMN split_mode TEXT NOT NULL DEFAULT 'auto'")
+  # 行分割で使う軸の決め方。本番の実行には画面が無いので、対象ごとに覚えておく。
+  if 'row_axis_mode' not in cols:c.execute("ALTER TABLE jobs ADD COLUMN row_axis_mode TEXT NOT NULL DEFAULT 'first'")
+  if 'row_axis_index' not in cols:c.execute('ALTER TABLE jobs ADD COLUMN row_axis_index INTEGER NOT NULL DEFAULT 1')
+  if 'row_axis_name' not in cols:c.execute("ALTER TABLE jobs ADD COLUMN row_axis_name TEXT NOT NULL DEFAULT ''")
   rc=[r['name'] for r in c.execute('PRAGMA table_info(rne_columns)')]
   if rc and 'classify_json' not in rc:c.execute("ALTER TABLE rne_columns ADD COLUMN classify_json TEXT NOT NULL DEFAULT ''")
   # 条件欄のデータ項目。絞り込みの条件が付くのはここにある項目だけなので、行分割の判断に要る。
@@ -1370,6 +1386,101 @@ def axis_usable(a):
   return False,(f'値が{n}種しかありません'+(f'（{a.get("category_error")}）' if a.get('category_error') else ''))
  return True,f'{n}種の値を組に分ける'
 
+# 行の軸をどうやって決めるか。用途に応じて4通り。
+#   first    … 表側の1番目を決め打ち（調査不要）。明細のRNEなら必ず1本はあるので、これが既定。
+#   index    … 表側の指定番号を決め打ち（調査不要）。使う軸が分かっているとき。
+#   name     … 名前で指定（「分け方を探す」で選んだもの）。番号が動いても追随する。
+#   balanced … 表側のうち、行の散らばりが最もよいものを自動で選ぶ。直近の出力から実際の
+#              分布を測るので、いちばん重い片が小さくなる＝いちばん速くなる軸を選べる。
+ROW_AXIS_MODES=('first','index','name','balanced')
+ROW_AXIS_MODE_LABEL={'first':'表側の1番目（調査不要）','index':'番号で指定（調査不要）',
+                     'name':'名前で指定（調べて選ぶ）','balanced':'偏りが少ないものを自動で選ぶ'}
+def normalize_row_axis_mode(v):
+ v=str(v or 'first').lower()
+ return v if v in ROW_AXIS_MODES else 'first'
+
+def row_axis_choice(data,job=None):
+ """軸の決め方を1か所で組み立てる。
+
+ その場の指定（画面）＞ 対象に保存された設定 ＞ 既定（表側の1番目）の順に効かせる。
+ 本番の実行には画面が無いので、対象に保存された設定がそのまま使われる。
+ """
+ d=data or {};j=job or {}
+ mode=d.get('row_axis_mode') if d.get('row_axis_mode') is not None else j.get('row_axis_mode')
+ name=d.get('row_axis_name') if d.get('row_axis_name') is not None else j.get('row_axis_name')
+ idx=d.get('row_axis_index') if d.get('row_axis_index') is not None else j.get('row_axis_index')
+ # 「分け方を探す」で選んだ名前を直接渡された場合は、名前指定として扱う
+ if not mode and str(d.get('row_column') or '').strip():mode='name';name=d.get('row_column')
+ try:idx=max(1,min(200,int(idx or 1)))
+ except Exception:idx=1
+ return {'mode':normalize_row_axis_mode(mode),'index':idx,'name':str(name or '').strip()}
+
+def axis_balance_scores(job,cfg,names):
+ """直近の出力から、軸ごとに「いちばん多い値が全体の何割を占めるか」を測る。
+
+ 割合が小さいほど均等に分けられる。出力が無い/その列が無いものは None（測れない）。
+ 読むのは1回だけ。何十本も別々に読むと、それだけで待たされる。
+ """
+ names=[str(x) for x in (names or []) if str(x).strip()!='']
+ if not names:return {}
+ try:
+  op=_viewer_output_path(job,cfg)
+  if not op.is_file():return {}
+  got=column_samples(op,job,names)
+ except Exception:
+  log.exception('AXIS_BALANCE_FAILED job=%s',(job or {}).get('name'));return {}
+ out={}
+ for nm in names:
+  counts=((got.get('columns') or {}).get(nm) or {}).get('counts') or None
+  if not counts:continue
+  total=sum(counts.values())
+  if total<=0:continue
+  blank=sum(n for v,n in counts.items() if str(v).strip()=='')
+  # 出力に無い列は「全行が空」として返ってくる。測れなかったものとして黙って外す
+  # （そのままだと「1つの値で100%」＝いちばん偏った軸に見えてしまう）。
+  if blank>=total:continue
+  out[nm]={'top_share':max(counts.values())/total,'distinct':len(counts),'rows':total,'blank_rows':blank}
+ return out
+
+def pick_row_axis_by_mode(axes,parts=2,mode='first',index=1,name='',scores=None):
+ """決められた方針で軸を1本選ぶ。選べなければ理由を付けて返す。
+
+ どの方針でも、最後は pick_row_axis を通す（使えない軸を掴まないため）。
+ """
+ mode=normalize_row_axis_mode(mode)
+ usable=[a for a in (axes or []) if axis_usable(a)[0]]
+ note=''
+ if mode=='name' and str(name or '').strip():
+  best,ranked=pick_row_axis(axes,parts,str(name).strip())
+  if best and best.get('name')==str(name).strip():
+   return best,ranked,f'名前で指定された「{name}」を使います'
+  note=f'指定された「{name}」は使えないので、表側の1番目に戻します'
+ elif mode=='index':
+  want=max(1,int(index or 1))
+  hit=next((a for a in usable if a.get('location')=='表側' and int(a.get('index') or 0)+1==want),None)
+  if hit:
+   best,ranked=pick_row_axis(axes,parts,hit.get('name',''))
+   if best and best.get('name')==hit.get('name'):
+    return best,ranked,f'指定された表側#{want}「{hit.get("name")}」を使います'
+  note=f'指定された表側#{want}は使えないので、表側の1番目に戻します'
+ elif mode=='balanced':
+  sc=scores or {}
+  cand=[(sc[a['name']]['top_share'],int(a.get('index') or 0),a) for a in usable
+        if a.get('location')=='表側' and a.get('name') in sc]
+  cand.sort(key=lambda x:(x[0],x[1]))
+  if cand:
+   share,_,a=cand[0]
+   best,ranked=pick_row_axis(axes,parts,a.get('name',''))
+   if best and best.get('name')==a.get('name'):
+    return best,ranked,(f'表側のうち最も散らばっている「{a.get("name")}」を選びました'
+                        f'（いちばん多い値が{share:.0%}。候補{len(cand)}本から）')
+  note='直近の出力から散らばりを測れないので、表側の1番目に戻します'
+ # first、および上の方針で決まらなかった場合。表側の1番目から順に、使える軸を探す。
+ best,ranked=pick_row_axis(axes,parts)
+ if best:
+  return best,ranked,(note+'。' if note else '')+f'表側から順に見て「{best.get("name")}」を使います'
+ return None,ranked,note or '使える軸がありません'
+
 def pick_row_axis(axes,parts=2,prefer=''):
  """行分割に使う軸を選ぶ。表側の先頭を最優先にする（明細データなら必ず在る）。
 
@@ -1387,14 +1498,15 @@ def pick_row_axis(axes,parts=2,prefer=''):
  best=next((x for x in ranked if x['usable'] and x['enough']),None)
  return best,ranked
 
-def resolve_axis_now(job,cfg,rne_path,parts,prefer='',hint=None,line=''):
+def resolve_axis_now(job,cfg,rne_path,parts,prefer='',hint=None,line='',choice=None):
  """実行の直前に、軸と値をサーバーから読み直す。分割点は必ずこの結果から決める。
 
  事前に調べた一覧は目安にしかならない。仕掛のように件数が動くものは、調べた時点と
  実行する時点で値の顔ぶれが変わる。使うのは常に「いま返ってきた値」。
  hint に事前の軸を渡すと、変化のぐあいをログに残す。
+ choice に軸の決め方（mode/index/name）を渡すと、その方針で選ぶ。
  """
- out={'axis':None,'ranked':[],'error':'','parts':0,'drift':None}
+ out={'axis':None,'ranked':[],'error':'','parts':0,'drift':None,'why':''}
  try:
   user,pw,server,_=creds(resolve_path(cfg['symnavim_conf']))
   ins=run_inspect_worker(dict(job,_read_names=True),cfg,user,pw,server,['axes'],
@@ -1405,8 +1517,17 @@ def resolve_axis_now(job,cfg,rne_path,parts,prefer='',hint=None,line=''):
   out['error']=ins.get('error') or '管理ポイントを読み取れませんでした';return out
  # 「2つに割れるか」で選び、頼まれた数に届くかは選んだあとに落として合わせる（axis_usable_parts）。
  # ここで parts を要求すると、4分割に届かないだけの良い軸を捨てて悪い軸へ流れてしまう。
- axis,ranked=pick_row_axis(ins.get('axes') or [],2,prefer)
- out['ranked']=ranked
+ got=ins.get('axes') or []
+ ch=dict(choice or {})
+ if prefer:ch={'mode':'name','name':prefer}      # 名前を直接渡されたらそれが最優先
+ mode=normalize_row_axis_mode(ch.get('mode'))
+ scores=axis_balance_scores(job,cfg,[a.get('name') for a in got]) if mode=='balanced' else {}
+ axis,ranked,why=pick_row_axis_by_mode(got,2,mode,ch.get('index') or 1,ch.get('name') or '',scores)
+ out['ranked']=ranked;out['why']=why
+ if scores:
+  for a in sorted(scores.items(),key=lambda x:x[1]['top_share'])[:6]:
+   log.info('AXIS_BALANCE 軸=%s いちばん多い値=%.1f%% 種類=%s 空=%s行',
+            a[0],a[1]['top_share']*100,a[1]['distinct'],a[1]['blank_rows'])
  if not axis:
   out['error']=('いま行を分けられる管理ポイントがありません。表側・表頭・条件のどれかに'
                 '「2種類以上の値を持つ管理ポイント」または「期間が設定された時間型」が要ります。'
@@ -1457,6 +1578,7 @@ def resolve_axis_now(job,cfg,rne_path,parts,prefer='',hint=None,line=''):
   log.info('AXIS_NOW%s rne=%s 軸=%s（%s %s番目 / %s）いまの値=%s種 分割数=%s',
            f' line={line}' if line else '',rne_path,axis['name'],axis['location'],axis['index']+1,
            axis['type_name'],axis.get('category_count'),out['parts'])
+ log.info('AXIS_NOW_CHOICE rne=%s 決め方=%s → %s',rne_path,normalize_row_axis_mode((choice or {}).get('mode')),out['why'])
  return out
 
 def axis_usable_parts(axis,want):
@@ -2175,8 +2297,10 @@ def compare_csv_content(a_path,b_path,key_columns,encoding='cp932',samples=5,axi
    v=ma[k][ai] if ai<len(ma[k]) else ''
    tally[v]=tally.get(v,0)+1
   top=sorted(tally.items(),key=lambda x:-x[1])
+  blank=sum(n for v,n in tally.items() if str(v).strip()=='')
   out['missing_axis']={'column':axis_column,'distinct':len(tally),
                        'top':[{'value':v,'rows':n} for v,n in top[:8]],
+                       'blank_rows':blank,'all_blank':bool(blank and blank==len(only_a)),
                        'concentrated':bool(top and top[0][1]>=len(only_a)*0.8)}
  diff_rows=[];diff_cells=0;changed=0
  for k in ma:
@@ -2430,7 +2554,7 @@ def load():
     if x['month_days_json']:q['month_days']=json.loads(x['month_days_json'])
     if x['dates_json']:q['dates']=json.loads(x['dates_json'])
     rules.append(q)
-   fmt=normalize_output_format(r['output_format'],r['output_file']); jobs.append({'id':r['id'],'enabled':bool(r['enabled']),'name':r['name'],'rne':r['rne'],'rne_path':r['rne_path'],'output_folder':r['output_folder'],'output_format':fmt,'output_file':canonical_output_file(r['output_file'],fmt),'table':r['table_name'],'sheet':r['sheet_name'],'type':r['read_type'],'naming_mode':(r['naming_mode'] if 'naming_mode' in r.keys() else 'fixed'),'output_pattern':(r['output_pattern'] if 'output_pattern' in r.keys() else ''),'comment':(r['comment'] if 'comment' in r.keys() else ''),'split_mode':normalize_split_mode(r['split_mode'] if 'split_mode' in r.keys() else ''),'period':_decode_period(r['period_json'] if 'period_json' in r.keys() else ''),'schedules':rules})
+   fmt=normalize_output_format(r['output_format'],r['output_file']); jobs.append({'id':r['id'],'enabled':bool(r['enabled']),'name':r['name'],'rne':r['rne'],'rne_path':r['rne_path'],'output_folder':r['output_folder'],'output_format':fmt,'output_file':canonical_output_file(r['output_file'],fmt),'table':r['table_name'],'sheet':r['sheet_name'],'type':r['read_type'],'naming_mode':(r['naming_mode'] if 'naming_mode' in r.keys() else 'fixed'),'output_pattern':(r['output_pattern'] if 'output_pattern' in r.keys() else ''),'comment':(r['comment'] if 'comment' in r.keys() else ''),'split_mode':normalize_split_mode(r['split_mode'] if 'split_mode' in r.keys() else ''),'row_axis_mode':normalize_row_axis_mode(r['row_axis_mode'] if 'row_axis_mode' in r.keys() else ''),'row_axis_index':int((r['row_axis_index'] if 'row_axis_index' in r.keys() else 1) or 1),'row_axis_name':str((r['row_axis_name'] if 'row_axis_name' in r.keys() else '') or ''),'period':_decode_period(r['period_json'] if 'period_json' in r.keys() else ''),'schedules':rules})
   cfg['jobs']=jobs; cfg.setdefault('settings',{}); cfg['settings'].setdefault('extract_engine','api'); cfg['settings'].setdefault('api_parallel_max_lines',PARALLEL_LINES_SUPPORTED_MAX); cfg['settings'].setdefault('api_parallel_model','process')
   # 既定の並列ラインは6。旧テスト実装では stability_profile='stable_api_serial' の環境で読込のたびに api_parallel_lines を1へ強制していた（毎回1ラインへ戻る不具合の原因）。
   # その名残マーカーが残る環境（または初期状態）だけ一度2へ引き上げ、以降はユーザーが保存した値をそのまま尊重する。
@@ -2454,7 +2578,7 @@ def _save_local(v):
   keep=[]
   for order,j in enumerate(jobs):
    jid=j.get('id') or str(uuid.uuid4()); keep.append(jid)
-   fmt=normalize_output_format(j.get('output_format'),j.get('output_file')); output_file=canonical_output_file(j.get('output_file'),fmt); log.info('設定保存 job=%s requested_format=%s saved_format=%s requested_file=%s saved_file=%s',j.get('name'),j.get('output_format'),fmt,j.get('output_file'),output_file); c.execute('INSERT OR REPLACE INTO jobs (id,display_order,enabled,name,rne,rne_path,output_folder,output_format,output_file,table_name,sheet_name,read_type,naming_mode,output_pattern,comment,split_mode,period_json,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',(jid,order,int(bool(j.get('enabled',True))),j.get('name',''),j.get('rne',''),j.get('rne_path',''),j.get('output_folder',''),fmt,output_file,j.get('table','仕掛'),j.get('sheet','Page1'),j.get('type','詳細データ'),str(j.get('naming_mode') or 'fixed'),str(j.get('output_pattern') or ''),str(j.get('comment') or ''),normalize_split_mode(j.get('split_mode')),json.dumps(_decode_period(json.dumps(j.get('period') or {},ensure_ascii=False)),ensure_ascii=False),now))
+   fmt=normalize_output_format(j.get('output_format'),j.get('output_file')); output_file=canonical_output_file(j.get('output_file'),fmt); log.info('設定保存 job=%s requested_format=%s saved_format=%s requested_file=%s saved_file=%s',j.get('name'),j.get('output_format'),fmt,j.get('output_file'),output_file); c.execute('INSERT OR REPLACE INTO jobs (id,display_order,enabled,name,rne,rne_path,output_folder,output_format,output_file,table_name,sheet_name,read_type,naming_mode,output_pattern,comment,split_mode,row_axis_mode,row_axis_index,row_axis_name,period_json,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',(jid,order,int(bool(j.get('enabled',True))),j.get('name',''),j.get('rne',''),j.get('rne_path',''),j.get('output_folder',''),fmt,output_file,j.get('table','仕掛'),j.get('sheet','Page1'),j.get('type','詳細データ'),str(j.get('naming_mode') or 'fixed'),str(j.get('output_pattern') or ''),str(j.get('comment') or ''),normalize_split_mode(j.get('split_mode')),normalize_row_axis_mode(j.get('row_axis_mode')),max(1,min(200,int(j.get('row_axis_index') or 1))),str(j.get('row_axis_name') or ''),json.dumps(_decode_period(json.dumps(j.get('period') or {},ensure_ascii=False)),ensure_ascii=False),now))
    c.execute('DELETE FROM schedules WHERE job_id=?',(jid,))
    for ro,q in enumerate(j.get('schedules',[])):
     c.execute('INSERT INTO schedules VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',(q.get('id') or str(uuid.uuid4()),jid,ro,int(bool(q.get('enabled',True))),q.get('name','実行ルール'),q.get('type','daily'),q.get('time','06:00'),q.get('interval_minutes'),json.dumps(q.get('weekdays'),ensure_ascii=False) if 'weekdays' in q else None,json.dumps(q.get('month_days'),ensure_ascii=False) if 'month_days' in q else None,json.dumps(q.get('dates'),ensure_ascii=False) if 'dates' in q else None,now))
@@ -4964,7 +5088,13 @@ def _split_trial_run(data,c,job):
             rp,len(row_axis_all),sv.get('taken_at'))
   else:
    log.info('SPLIT_TRIAL_AXES_SKIP rne=%s 下調べがないので、実行直前の読み直しだけで進めます',rp)
-  row_axis,ranked=pick_row_axis(row_axis_all,row_parts,str(data.get('row_column') or ''))
+  # 軸の決め方。指定が無ければ対象の設定を使い、それも無ければ「表側の1番目」。
+  axis_choice=row_axis_choice(data,job)
+  scores=(axis_balance_scores(job,c,[a.get('name') for a in row_axis_all])
+          if axis_choice['mode']=='balanced' else {})
+  row_axis,ranked,axis_why=pick_row_axis_by_mode(row_axis_all,row_parts,axis_choice['mode'],
+                                                 axis_choice['index'],axis_choice['name'],scores)
+  log.info('SPLIT_TRIAL_AXIS_MODE rne=%s 決め方=%s → %s',rp,axis_choice['mode'],axis_why)
   for x in ranked:
    log.info('SPLIT_TRIAL_AXIS 候補 %s#%s %s 型=%s 値=%s 使える=%s（%s）',x['location'],x['index']+1,x['name'],
             x['type_name'],x.get('category_count'),x['usable'] and x['enough'],x['reason'])
@@ -5007,8 +5137,7 @@ def _split_trial_run(data,c,job):
   if mode in ('row','grid'):
    # ここが肝。事前に調べた一覧ではなく、いまサーバーが返す値で分割点を決める。
    split_trial_stage('行の軸をいま読み直しています（分割点はこの結果で決めます）',phase='weights',progress=0.8)
-   now=resolve_axis_now(job,c,rp,row_parts,str(data.get('row_column') or '') or axis_hint.get('name',''),
-                        hint=axis_hint)
+   now=resolve_axis_now(job,c,rp,row_parts,'',hint=axis_hint,choice=axis_choice)
    if not now['axis']:
     return dict(ok=False,axes=now['ranked'],
                 error=f'実行の直前に軸を読み直したところ、分けられませんでした: {now["error"]}')
@@ -5204,10 +5333,12 @@ def _split_trial_run(data,c,job):
   mx=cmp.get('missing_axis')
   if mx:
    # 欠けた行が1つの値に集中していれば絞り方の取りこぼし、ばらけていれば実行中にデータが動いただけ。
+   why=('（すべて値が空の行です＝どのカテゴリにも当てはまらない行が落ちています。'
+        'NaviReloadCategory の nonmatch に NAVI_NONMATCH を渡す必要があります）' if mx.get('all_blank')
+        else '（1つの値に集中しています＝絞り方の取りこぼしです）' if mx['concentrated']
+        else '（値がばらけています＝実行中にデータが動いた可能性が高いです）')
    log.warning('SPLIT_TRIAL_MISSING rne=%s 欠けた%s行の「%s」= %s種%s / 内訳: %s',
-               rp,cmp.get('only_in_a'),mx['column'],mx['distinct'],
-               '（1つの値に集中しています＝絞り方の取りこぼしです）' if mx['concentrated']
-               else '（値がばらけています＝実行中にデータが動いた可能性が高いです）',
+               rp,cmp.get('only_in_a'),mx['column'],mx['distinct'],why,
                ' / '.join(f"{x['value']!r}×{x['rows']}行" for x in mx['top']))
   a=base_csv.read_bytes() if compared else b''
   b=merged.read_bytes()
@@ -5417,14 +5548,23 @@ def row_split_plan():
  except Exception as e:
   axes_error=str(e);log.exception('ROW_AXES_FAILED rne=%s',rp)
  parts0=max(2,min(8,int(data.get('parts') or 2)))
- axis,ranked=pick_row_axis(axes,parts0)
- log.info('ROW_AXES rne=%s 読めた軸=%s 使える=%s 既定=%s',rp,len(axes),
-          sum(1 for x in ranked if x['usable'] and x['enough']),(axis or {}).get('name','(なし)'))
+ choice=row_axis_choice(data,job)
+ scores=axis_balance_scores(job,c,[a.get('name') for a in axes]) if choice['mode']=='balanced' else {}
+ axis,ranked,axis_why=pick_row_axis_by_mode(axes,parts0,choice['mode'],choice['index'],choice['name'],scores)
+ log.info('ROW_AXES rne=%s 読めた軸=%s 使える=%s 決め方=%s 既定=%s（%s）',rp,len(axes),
+          sum(1 for x in ranked if x['usable'] and x['enough']),choice['mode'],
+          (axis or {}).get('name','(なし)'),axis_why)
+ # 散らばりが分かっているものは、選ぶときの手がかりとして画面へも渡す
+ if not scores:scores=axis_balance_scores(job,c,[a.get('name') for a in axes if a.get('location')=='表側'])
+ for x in ranked:
+  sc=scores.get(x.get('name'))
+  if sc:x['balance']={'top_share':round(sc['top_share'],4),'distinct':sc['distinct'],'blank_rows':sc['blank_rows']}
  # ここで読んだ一覧を覚えておく。影実行が同じ問い合わせを繰り返さずに済む（実行直前の読み直しは別途行う）。
  save_axis_survey(rp,axes,parts0)
  state,cached=column_cache_state(rp)
  if not cached or not cached.get('columns'):
-  return jsonify(ok=True,rne=str(rp),job=job['name'],parts=parts0,axes=ranked,axis=axis,axes_error=axes_error,
+  return jsonify(ok=True,rne=str(rp),job=job['name'],parts=parts0,axes=ranked,axis=axis,axes_error=axes_error,axis_mode=choice['mode'],axis_why=axis_why,
+                 axis_modes=[{'id':k,'label':v} for k,v in ROW_AXIS_MODE_LABEL.items()],
                  columns=0,fixed=0,removable_count=0,candidates=[],examined=0,sample_rows=0,
                  candidate_error='列定義が未取得です（手順2の「列を調べる」を実行すると、列の情報も出せます）',
                  breakdown={'known':False},condition_items=[]),200
@@ -5472,7 +5612,8 @@ def row_split_plan():
            breakdown.get('format_seconds'),breakdown.get('format_kbs'),breakdown.get('rows'))
  return jsonify(ok=True,rne=str(rp),job=job['name'],parts=parts,columns=len(columns),fixed=len(fixed),
                 removable_count=len(removable),
-                axes=ranked,axis=axis,axes_error=axes_error,
+                axes=ranked,axis=axis,axes_error=axes_error,axis_mode=choice['mode'],axis_why=axis_why,
+                 axis_modes=[{'id':k,'label':v} for k,v in ROW_AXIS_MODE_LABEL.items()],
                 condition_items=cond_items,
                 candidates=[dict(x,in_condition=(x['column'] in set(cond_items))) for x in (cand or {}).get('candidates',[])],
                 examined=(cand or {}).get('examined',0),
