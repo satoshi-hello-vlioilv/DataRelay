@@ -1,5 +1,5 @@
 ﻿from __future__ import annotations
-import atexit, calendar, configparser, contextlib, csv, gc, json, logging, os, re, shutil, socket, sqlite3, struct, subprocess, sys, tempfile, threading, time, traceback, uuid, webbrowser
+import atexit, calendar, configparser, contextlib, copy, csv, gc, json, logging, os, re, shutil, socket, sqlite3, struct, subprocess, sys, tempfile, threading, time, traceback, uuid, webbrowser
 from collections import deque
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -25,8 +25,8 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.45.0'; APP_VERSION_TITLE='行分割が実際に走るようにする'; APP_RELEASED_AT='2026-08-10'
-BUILD_VERSION=f'{APP_VERSION}-rowsplit'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.46.0'; APP_VERSION_TITLE='同じ内容が続くログを1本にまとめる'; APP_RELEASED_AT='2026-08-10'
+BUILD_VERSION=f'{APP_VERSION}-logdedup'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリに同梱する仕様書。ここに登録したものだけが画面から開ける。
 # 画面からはこのidしか受け取らないので、任意のパスを読ませることはできない。
 DOCS=[
@@ -43,7 +43,26 @@ def docs_dir():
 
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
-{'version':'1.44.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+{'version':'1.46.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'短い間に同じことを言い続ける行を、1本にまとめるようにしました。待機中・進捗・途絶の警告などが延々と並ばなくなり、ログが軽くなります。',
+'まとめても時間は測れます。残すのは「続きはじめの1行」と「最後の1行」で、最後の1行は発生した時刻のまま出します。区間の両端が残るので、いつからいつまで同じ状態だったかを後から出せます。',
+'最後の1行には「同じ内容を◯行省略（◯秒間・これが最後の1行）」と書き足します。何を省いたかが分からないまま消えることはありません。',
+'経過秒・バイト数・進捗のように動く値だけが違う行も、同じ内容として扱います（例: silence=9s と silence=29s）。伏せた値そのものは最後の1行に実際の値が残ります。',
+'担当や工程が違う行までまとめることはありません（例: part=行1/2 と part=行2/2 は別の行として残ります）。',
+'60秒より長く間があいてから同じ内容が出たときは、「また起きた」として残します。',
+'続いている最中も30秒ごと（エラーは10秒ごと）に途中経過を1行出します。途中で落ちても、そこまでの状態がログに残ります。',
+'まとめた行は、ログの一覧でも影実行のログでも、左に印が付いて見分けられます。',
+'診断で生のログが要るときは、環境変数 NAVI_LOG_DEDUP=0 で止められます。',
+]},
+{'version':'1.45.0','date':'2026-08-10','title':'行分割が実際に走るようにする','notes':[
+'1.44.0 で軸も値も正しく読めるようになりましたが（表側#1 検査番号=843種）、最後の「行の軸で絞る」だけで落ちていました。表示指定の定数を書き忘れていたためです（NAVI_IN_NONDISP / NAVI_IN_TARGET）。仕様書どおり5つを定義しました。',
+'影実行の待ち時間を約40秒縮めました。1.44.0 は同じ「軸を読む」問い合わせが3回走っていました。「分け方を探す」で読んだ一覧をRNE単位で控え、影実行はそれを目安に使います。実測は今までどおり実行の直前に1回だけ読み直します。',
+'RNEが更新されていたとき、控えが24時間より古いときは使わず読み直します。',
+'「事前6種 → いま843種（増=837）」という表示を改めました。事前調査は見本を数件しか読まないので、顔ぶれの差は出せません。種類の数どうしを比べ、「事前は見本のみ」と明記します。',
+'分割しても速くならない理由を数字で出します。検査番号は値ひとつで全体の66%を占めるため、2等分しても一番重い片は縮まず、この軸では最大1.52倍までしか速くなりません。均等との倍率・占有率・その軸での上限を表示します。',
+'基準がまだ無いときに「分割なしは 0秒」と出していたのをやめました。',
+]},
+{'version':'1.44.0','date':'2026-08-08','title':'全値型の軸を読み込んで分割する','notes':[
 '【原因判明】表側の管理ポイント64本すべてが「値の数=0」になっていたのは、どれも型が「全値型」だったためです。全値型は決まった値の一覧を持たず、値はデータの中にあります。読み込ませる前に数えていたので0でした。',
 '値を数える前に NaviReloadCategory でデータベースから読み込むようにしました。渡し方を3通り試し、通った形と失敗した理由をログに残します（ROW_AXIS_LOAD）。',
 '8000件を超える軸はDLLが一覧にできません（NAVI_ERROR_OVER8000）。その軸は「値が8000件超」として飛ばし、値の少ない次の軸を自動的に選びます。検査番号のように値が多い軸でも、行分割そのものは止まりません。',
@@ -52,7 +71,7 @@ CHANGELOG=[
 '一覧にできない軸については「先頭一致で絞れるか」を1回だけ試し、結果をログに残します。次の手（先頭の文字で分ける方式）が使えるかの下調べです。',
 '影実行の画面のログビューワに「ログを消去」を付けました。確認をはさんだうえで、実行ログ全体を消します。',
 ]},
-{'version':'1.43.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+{'version':'1.43.0','date':'2026-08-08','title':'影実行の画面でログも追える','notes':[
 '「RNEを調べる」の手順3（速さを試す）に、ログの簡易ビューワを付けました。影実行を見ながら、そのままログを追えます。「ログ・診断」タブへ行き来する必要がなくなります。',
 '表示は「分割まわり / エラーと警告 / すべて」から選べます。既定の「分割まわり」は SPLIT_・AXIS_・ROW_・COLUMN_ の行だけを出すので、影実行に関係のない行が混ざりません。',
 '語での絞り込みもできます（正規表現も可。壊れた式でも落ちず、そのまま語として扱います）。',
@@ -602,10 +621,111 @@ PARALLEL_LINES_SUPPORTED_MAX=24
 class RunCancelled(Exception):pass
 status={'build_version':BUILD_VERSION,'running':False,'current':'','current_job_id':'','current_job_name':'','current_index':0,'total_jobs':0,'step':'idle','step_label':'待機中','step_percent':0,'completed_jobs':0,'failed_jobs':0,'started_at':'','elapsed_seconds':0,'symnavi_window':'未起動','last_result':'未実行','last_finished_at':'','error_detail':'','activity_detail':'','activity_value':'','heartbeat_at':'','parallel_lines':[],'batch_job_ids':[],'queue_completed_ids':[],'queue_failed_ids':[],'queue_running_ids':[],'queue_waiting_ids':[],'job_errors':[]}
 log=logging.getLogger('navi'); log.setLevel(logging.INFO)
+
+# ==== 同じ内容が続いたときの省略 =========================================
+# 短い間に同じことを言い続ける行（待機中・進捗・途絶の警告など）は、読むときの邪魔になるだけでなく
+# ファイルを重くする。残すのは「変化した瞬間」だけにする。
+#
+# 省略しても時間が測れなくならないよう、次の3つを必ず守る。
+#   1. 続きはじめの1行は、そのまま残す（いつ始まったか）
+#   2. 最後の1行も残す（いつまで続いたか）。時刻はもとの発生時刻のまま出す
+#   3. 最後の1行に「何行省略したか」「何秒間続いたか」を書き足す
+# つまり区間の両端と長さは必ず残るので、後から所要時間を出せる。
+#
+# 「同じ内容」の判定では、経過秒・バイト数・進捗といった動く値を伏せてから比べる。
+#   例) HEARTBEAT_DEGRADED silence=9s → HEARTBEAT_DEGRADED silence=*
+# 伏せた値そのものは、最後の1行に実際の値が残るので失われない。
+LOG_DEDUP_WINDOW=60.0        # これだけ間があいたら、同じ内容でも「また起きた」として残す
+LOG_DEDUP_HOLD_SECONDS=30.0  # 続いている最中も、これだけ経ったら途中経過を1行出す
+LOG_DEDUP_HOLD_COUNT=1000    # 行数でも同じく区切る（落ちたときに失う状態をこの数までに抑える）
+LOG_DEDUP_ERROR_SECONDS=10.0 # エラーは短めに区切る（直っていないことが分かるように）
+_DEDUP_KEYS=('elapsed','silence','secs','sec','seconds','ms','msec','bytes','size','percent','progress','prog',
+             'age','age_days','age_hours','attempt','attempts','remaining','eta','speed','rate','uptime','grace',
+             'count','total','rows','done','sent','received','read','written','at','since')
+_DEDUP_VOLATILE=re.compile(r'((?:^|[\s\[(,|])(?:'+'|'.join(_DEDUP_KEYS)+r')\s*=\s*)[-+]?[0-9][0-9,._/]*[a-zA-Z%]*',re.I)
+_DEDUP_UNITS=re.compile(r'[-+]?[0-9][0-9,._]*\s*(秒|ミリ秒|分間|バイト|KB|MB|GB|s\b)',re.I)
+def _dedup_key(record):
+ """動く値を伏せた「内容の形」。これが同じ行を「同じ内容」として扱う。"""
+ try:msg=record.getMessage()
+ except Exception:msg=str(record.msg)
+ msg=_DEDUP_VOLATILE.sub(r'\1*',msg)
+ msg=_DEDUP_UNITS.sub(r'*\1',msg)
+ exc=''
+ if record.exc_info and record.exc_info[0] is not None:
+  # 同じ例外が繰り返しているのか、別の例外に変わったのかは区別する
+  exc=f'|{record.exc_info[0].__name__}:{str(record.exc_info[1])[:120]}'
+ return f'{record.levelno}|{msg}{exc}'
+
+class LogDedupFilter(logging.Filter):
+ """同じ内容が続く区間を1本にまとめる。区間の両端と長さは必ず残す。
+
+ ふるいはハンドラー側に付ける。ハンドラーのロックの外で動くので、状態は自前の錠で守る。
+ まとめた行を書くときだけハンドラーのロックを取る（emit はふるいを呼ばないので再帰しない）。
+ """
+ def __init__(self,handler):
+  super().__init__()
+  self.handler=handler;self.enabled=os.environ.get('NAVI_LOG_DEDUP','1')!='0'
+  self.lock=threading.Lock()
+  self.key=None;self.n=0;self.last=None;self.first_at=0.0;self.last_at=0.0;self.suppressed=0
+
+ def _emit(self,record):
+  self.handler.acquire()
+  try:self.handler.emit(record)
+  finally:self.handler.release()
+
+ def _close(self,now=None):
+  """溜めていた区間を書き出す。呼び出し側で self.lock を取っていること。"""
+  if self.n<=0 or self.last is None:
+   self.key=None;self.n=0;self.last=None;return
+  last=self.last;n=self.n;span=max(0.0,self.last_at-self.first_at)
+  self.n=0;self.last=None
+  if n==1:
+   # 1行だけなら、まとめる意味がないのでそのまま出す
+   self._emit(last);return
+  rec=copy.copy(last)
+  try:body=last.getMessage()
+  except Exception:body=str(last.msg)
+  rec.msg=f'{body} ｜ LOG_DEDUP 同じ内容を{n}行省略（{span:.1f}秒間・これが最後の1行）'
+  rec.args=None
+  # rec.created / rec.msecs は複製元のまま＝最後に起きた時刻。時間の測り直しができる
+  self.suppressed+=n-1
+  self._emit(rec)
+
+ def flush(self):
+  with self.lock:self._close()
+
+ def filter(self,record):
+  if not self.enabled:return True
+  now=record.created
+  key=_dedup_key(record)
+  with self.lock:
+   if key==self.key:
+    hold=LOG_DEDUP_ERROR_SECONDS if record.levelno>=logging.ERROR else LOG_DEDUP_HOLD_SECONDS
+    # 区切る条件。①長く続きすぎた ②行数が多すぎる ③間があきすぎた（また起きた、とみなす）
+    over=(now-self.first_at>hold or self.n+1>=LOG_DEDUP_HOLD_COUNT or now-self.last_at>LOG_DEDUP_WINDOW)
+    if not over:
+     self.n+=1;self.last=record;self.last_at=now;return False
+   # 溜めていた区間を閉じてから、この行を新しい区間のはじまりとして出す
+   self._close()
+   self.key=key;self.n=0;self.last=None;self.first_at=now;self.last_at=now
+   return True
+
+log_dedup=None
 if not log.handlers:
  # 並列実行では複数プロセスが同じログへ追記するため、行だけを見るとどのプロセスの出来事か分からない。
  # プロセスIDを常に出して、後からライン単位で追跡できるようにする（先頭の日時と[LEVEL]の位置は画面側の解析に合わせて維持）。
  h=logging.FileHandler(LOCAL_LOGS/'app.log',encoding='utf-8'); h.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] [pid %(process)d] %(message)s')); log.addHandler(h)
+ log_dedup=LogDedupFilter(h); h.addFilter(log_dedup)
+ # 溜めたままプロセスが終わると最後の1行が消える。終了時には必ず書き出す。
+ atexit.register(log_dedup.flush)
+def flush_log():
+ """溜めている省略ぶんを書き出してから、ハンドラーを流す。終了経路と読み出しの前に呼ぶ。"""
+ if log_dedup is not None:
+  try:log_dedup.flush()
+  except Exception:pass
+ for x in log.handlers:
+  try:x.flush()
+  except Exception:pass
 # COMオブジェクトの明示解放が正常経路で数秒停止する環境があるため、
 # Quit済みAccess.Applicationの参照だけをプロセス内に遅延保持する。
 # データ作成・件数検査・Quit完了後なので、出力精度には影響させない。
@@ -2563,14 +2683,14 @@ def phase_log(phase,started=None,**values):
  if started is None:
   _phase_profile['depth']+=1
   log.info('STEP_START phase=%s %s',phase,parts)
-  for h in log.handlers:h.flush()
+  flush_log()
   return time.perf_counter()
  elapsed=time.perf_counter()-started
  _phase_profile['depth']=max(0,_phase_profile['depth']-1)
  # 入れ子の工程（format_conversion内のintermediate_parseなど）は二重計上しない。
  if _phase_profile['depth']==0:_phase_profile['phases'][phase]=_phase_profile['phases'].get(phase,0.0)+elapsed
  log.info('STEP_END phase=%s elapsed=%.2fs %s',phase,elapsed,parts)
- for h in log.handlers:h.flush()
+ flush_log()
  return elapsed
 
 def save_metrics(path,elapsed,rows):
@@ -4242,7 +4362,7 @@ def request_shutdown_from_tray():
  else:
   log.info('TRAY_EXIT_REQUESTED running=0 action=exit')
  with command_queue_lock:command_queue.clear()
- for h in log.handlers:h.flush()
+ flush_log()
  _flush_settings_on_exit('tray-exit');stop_event.set()
  if tray:
   try:tray.stop()
@@ -4301,7 +4421,7 @@ def heartbeat_watchdog():
     if reason:
      enter_residency(reason,ids);continue
     log.info('APP_TABS_EMPTY_CONFIRMED closing_clients=%s active_app_tabs=0 grace=%ss action=python_exit',ids,CLOSE_GRACE_SECONDS)
-    for h in log.handlers:h.flush()
+    flush_log()
     _flush_settings_on_exit('app-tabs-empty');stop_event.set();os._exit(0)
    elif active and residency_state['active']:
     leave_residency()
@@ -5488,6 +5608,9 @@ LOG_FILTERS={
  'all':('','すべて'),
 }
 def read_log_lines(limit=1200,q='',preset=''):
+ # 省略でまとめている最中の行はまだファイルに出ていない。読む直前に書き出して、
+ # 画面が「いま起きていること」より遅れて見えないようにする。
+ flush_log()
  p=LOCAL_LOGS/'app.log'
  if not p.exists():return [],0
  lines=p.read_text(encoding='utf-8',errors='replace').splitlines()
