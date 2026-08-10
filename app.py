@@ -25,8 +25,8 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.49.1'; APP_VERSION_TITLE='起動待ち画面の文字化けを直す'; APP_RELEASED_AT='2026-08-10'
-BUILD_VERSION=f'{APP_VERSION}-loadingfix'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.50.0'; APP_VERSION_TITLE='行が落ちる軸を使わない／ログを操作ごとにまとめる'; APP_RELEASED_AT='2026-08-10'
+BUILD_VERSION=f'{APP_VERSION}-blankguard'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリに同梱する仕様書。ここに登録したものだけが画面から開ける。
 # 画面からはこのidしか受け取らないので、任意のパスを読ませることはできない。
 DOCS=[
@@ -43,7 +43,16 @@ def docs_dir():
 
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
-{'version':'1.49.1','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+{'version':'1.50.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'【行数が合わない件】1.49.0 で入れた nonmatch=NAVI_NONMATCH は、このDLLに拒否されていました（rc=0x15 NAVI_ERROR_ZERO）。「当てはまらない値だけを読む」の意味らしく、値が空の行を拾う役には立ちません。通る形を先に試すよう戻しました。',
+'代わりに、値が空の行がある軸は最初から使わないようにしました。空の行はどのカテゴリにも当てはまらず、カテゴリで絞ると必ずどの片にも入らずに落ちます。検査番号は空が36行あるため、この軸では何をしても行数が合いません。',
+'散らばりの測定を常に行うようにしました（直近の出力を1回読むだけ）。どの決め方でも、空の行がある軸は自動的に飛ばして次の軸へ進みます。',
+'候補の一覧でも、空の行がある軸は「値が空の行が◯行あります。この軸で分けるとその行が結果から落ちます」として選べなくしました。',
+'軸の決め方を「速さを試す（影実行）」の欄でも選べるようにしました。手順2へ戻らずに、その場で軸を変えて測り直せます。どちらで変えても両方に反映されます。',
+'実行ログの高さを画面に合わせて広げ、つまんで伸ばせるようにしました。最後の行まで読めなかったのを直しました。',
+'実行ログに「操作ごとにまとめる」表示を追加しました。1回の操作で何十行も出るため、実行・影実行・調べもの・設定の保存などの単位で畳み、エラーや警告の数を見出しに出します。新しい操作が上に来ます。',
+]},
+{'version':'1.49.1','date':'2026-08-10','title':'起動待ち画面の文字化けを直す','notes':[
 '【起動できなくなっていた不具合の修正】1.49.0 の起動待ち画面が文字化けし、自動でアプリへ移らなくなっていました。1.48.0 までは正常です。',
 '原因は 1.49.0 でランチャー(start.vbs)に入れたバージョン差し込みです。loading.html は UTF-8 ですが、VBScript の OpenTextFile / CreateTextFile は既定でANSI(cp932)として読み書きするため、日本語だけでなくタグまで崩れ、画面の遷移処理も動かなくなっていました。',
 'UTF-8 を正しく扱える ADODB.Stream で読み書きするようにしました。書き上がりが「<!doctype html> と </html> を含む1000バイト超」であることを確かめてから置き換えます。',
@@ -1450,13 +1459,29 @@ def axis_balance_scores(job,cfg,names):
   out[nm]={'top_share':max(counts.values())/total,'distinct':len(counts),'rows':total,'blank_rows':blank}
  return out
 
+def axis_loses_rows(name,scores):
+ """その軸で分けると行が落ちるか。落ちるなら落ちる行数を返す（落ちなければ0）。
+
+ 値が空の行は、どのカテゴリにも当てはまらない。カテゴリで絞ると、そういう行はどの片にも
+ 入らず結果から消える。2026-08-10の実測では、検査番号が空の36行が毎回そうして欠けた
+ （分割なし14485行 に対し 結合14449行）。NaviReloadCategory の nonmatch で拾おうとしたが
+ このDLLには拒否された（rc=0x15）。したがって、空のある軸は最初から使わないのが唯一の手。
+ """
+ sc=(scores or {}).get(str(name or ''))
+ return int((sc or {}).get('blank_rows') or 0)
+
 def pick_row_axis_by_mode(axes,parts=2,mode='first',index=1,name='',scores=None):
  """決められた方針で軸を1本選ぶ。選べなければ理由を付けて返す。
 
  どの方針でも、最後は pick_row_axis を通す（使えない軸を掴まないため）。
+ 値が空の行がある軸は、行が落ちるので既定では選ばない（名前で名指しされたときだけ通す）。
  """
  mode=normalize_row_axis_mode(mode)
  usable=[a for a in (axes or []) if axis_usable(a)[0]]
+ # 空の行がある軸は結果が合わなくなるので、選ぶ対象から外す。
+ # ただし全部が該当するときは外さない（1本も選べなくなるほうが困る）。
+ safe=[a for a in usable if not axis_loses_rows(a.get('name'),scores)]
+ if scores and safe:usable=safe
  note=''
  if mode=='name' and str(name or '').strip():
   best,ranked=pick_row_axis(axes,parts,str(name).strip())
@@ -1484,9 +1509,17 @@ def pick_row_axis_by_mode(axes,parts=2,mode='first',index=1,name='',scores=None)
                         f'（いちばん多い値が{share:.0%}。候補{len(cand)}本から）')
   note='直近の出力から散らばりを測れないので、表側の1番目に戻します'
  # first、および上の方針で決まらなかった場合。表側の1番目から順に、使える軸を探す。
- best,ranked=pick_row_axis(axes,parts)
+ # usable は空の行がある軸を外したあとなので、ここでも行の落ちない軸が先に来る。
+ order=sorted(usable,key=lambda a:(AXIS_PRIORITY.get(a.get('location'),9),int(a.get('index') or 0)))
+ head=order[0].get('name','') if order else ''
+ best,ranked=pick_row_axis(axes,parts,head)
  if best:
-  return best,ranked,(note+'。' if note else '')+f'表側から順に見て「{best.get("name")}」を使います'
+  skipped=''
+  if scores and best.get('name')!=(sorted([a for a in (axes or []) if axis_usable(a)[0]],
+                                          key=lambda a:(AXIS_PRIORITY.get(a.get('location'),9),
+                                                        int(a.get('index') or 0)))[:1] or [{}])[0].get('name'):
+   skipped='（手前の軸は値が空の行があり、分けると行が落ちるので飛ばしました）'
+  return best,ranked,(note+'。' if note else '')+f'表側から順に見て「{best.get("name")}」を使います'+skipped
  return None,ranked,note or '使える軸がありません'
 
 def pick_row_axis(axes,parts=2,prefer=''):
@@ -1529,13 +1562,21 @@ def resolve_axis_now(job,cfg,rne_path,parts,prefer='',hint=None,line='',choice=N
  ch=dict(choice or {})
  if prefer:ch={'mode':'name','name':prefer}      # 名前を直接渡されたらそれが最優先
  mode=normalize_row_axis_mode(ch.get('mode'))
- scores=axis_balance_scores(job,cfg,[a.get('name') for a in got]) if mode=='balanced' else {}
+ # 散らばりは常に測る。どの決め方でも「値が空の行がある軸」を避けたいので必ず要る。
+ # 直近の出力を1回読むだけなので、費用は無視できる。
+ scores=axis_balance_scores(job,cfg,[a.get('name') for a in got])
  axis,ranked,why=pick_row_axis_by_mode(got,2,mode,ch.get('index') or 1,ch.get('name') or '',scores)
  out['ranked']=ranked;out['why']=why
  if scores:
   for a in sorted(scores.items(),key=lambda x:x[1]['top_share'])[:6]:
-   log.info('AXIS_BALANCE 軸=%s いちばん多い値=%.1f%% 種類=%s 空=%s行',
-            a[0],a[1]['top_share']*100,a[1]['distinct'],a[1]['blank_rows'])
+   log.info('AXIS_BALANCE 軸=%s いちばん多い値=%.1f%% 種類=%s 空=%s行%s',
+            a[0],a[1]['top_share']*100,a[1]['distinct'],a[1]['blank_rows'],
+            '（空の行があるので分けると落ちます。この軸は使いません）' if a[1]['blank_rows'] else '')
+ lost=axis_loses_rows((axis or {}).get('name'),scores)
+ if lost:
+  log.warning('AXIS_BLANK_RISK rne=%s 軸=%s 値が空の行が%s行あります。この軸で分けるとその行が結果から落ちます',
+              rne_path,(axis or {}).get('name'),lost)
+  out['blank_rows']=lost
  if not axis:
   out['error']=('いま行を分けられる管理ポイントがありません。表側・表頭・条件のどれかに'
                 '「2種類以上の値を持つ管理ポイント」または「期間が設定された時間型」が要ります。'
@@ -5098,8 +5139,7 @@ def _split_trial_run(data,c,job):
    log.info('SPLIT_TRIAL_AXES_SKIP rne=%s 下調べがないので、実行直前の読み直しだけで進めます',rp)
   # 軸の決め方。指定が無ければ対象の設定を使い、それも無ければ「表側の1番目」。
   axis_choice=row_axis_choice(data,job)
-  scores=(axis_balance_scores(job,c,[a.get('name') for a in row_axis_all])
-          if axis_choice['mode']=='balanced' else {})
+  scores=axis_balance_scores(job,c,[a.get('name') for a in row_axis_all])
   row_axis,ranked,axis_why=pick_row_axis_by_mode(row_axis_all,row_parts,axis_choice['mode'],
                                                  axis_choice['index'],axis_choice['name'],scores)
   log.info('SPLIT_TRIAL_AXIS_MODE rne=%s 決め方=%s → %s',rp,axis_choice['mode'],axis_why)
@@ -5557,16 +5597,19 @@ def row_split_plan():
   axes_error=str(e);log.exception('ROW_AXES_FAILED rne=%s',rp)
  parts0=max(2,min(8,int(data.get('parts') or 2)))
  choice=row_axis_choice(data,job)
- scores=axis_balance_scores(job,c,[a.get('name') for a in axes]) if choice['mode']=='balanced' else {}
+ scores=axis_balance_scores(job,c,[a.get('name') for a in axes])
  axis,ranked,axis_why=pick_row_axis_by_mode(axes,parts0,choice['mode'],choice['index'],choice['name'],scores)
  log.info('ROW_AXES rne=%s 読めた軸=%s 使える=%s 決め方=%s 既定=%s（%s）',rp,len(axes),
           sum(1 for x in ranked if x['usable'] and x['enough']),choice['mode'],
           (axis or {}).get('name','(なし)'),axis_why)
- # 散らばりが分かっているものは、選ぶときの手がかりとして画面へも渡す
- if not scores:scores=axis_balance_scores(job,c,[a.get('name') for a in axes if a.get('location')=='表側'])
  for x in ranked:
   sc=scores.get(x.get('name'))
-  if sc:x['balance']={'top_share':round(sc['top_share'],4),'distinct':sc['distinct'],'blank_rows':sc['blank_rows']}
+  if sc:
+   x['balance']={'top_share':round(sc['top_share'],4),'distinct':sc['distinct'],'blank_rows':sc['blank_rows']}
+   # 値が空の行はどのカテゴリにも入らない。この軸で分けるとその行が落ちる。
+   if sc['blank_rows']:
+    x['usable']=False
+    x['reason']=f'値が空の行が{sc["blank_rows"]}行あります。この軸で分けるとその行が結果から落ちます'
  # ここで読んだ一覧を覚えておく。影実行が同じ問い合わせを繰り返さずに済む（実行直前の読み直しは別途行う）。
  save_axis_survey(rp,axes,parts0)
  state,cached=column_cache_state(rp)
