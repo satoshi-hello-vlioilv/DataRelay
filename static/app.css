@@ -1379,3 +1379,10 @@ body > main{max-width:1620px;padding-left:12px;padding-right:12px}
    ここが区間の終わりであることが分かるよう、行の左に印を付ける。 */
 .log-line.dedup{border-left:3px solid #5b7f8c;opacity:.92}
 .ilog-body .log-line.dedup{border-left:3px solid #5b7f8c;padding-left:6px;margin-left:-9px}
+
+/* 軸の決め方。調べずに決め打ちする道と、調べてから選ぶ道を1行に並べる。 */
+.axis-pick{flex-wrap:wrap;gap:8px 12px}
+.axis-pick .trial-parts[hidden]{display:none!important}
+.axis-pick #m-axis-index{width:64px}
+.axis-pick #m-axis-name{max-width:340px}
+.axis-pick .ip-hint{flex:1 1 100%;color:#5e747e}

@@ -712,19 +712,25 @@ class NavigatorApi:
         全値型（NAVI_CONTROLPOINT_ALLVALUE）の管理ポイントは、決まった値の一覧を持たない。
         値はデータの中にあるので、まずここで読み込ませないと NaviGetCategoryNumber は0を返す。
         2026-08-10の実測で、表側64本すべてが 型=全値型 / 値の数=0 だったのはこれが理由。
-        呼び方が確定していないので、確からしい順に試して通った形を持ち帰る。
+
+        第6引数 nonmatch には NAVI_NONMATCH を渡す。ここを0にすると、どのカテゴリにも
+        当てはまらない行（値が空の行など）が結果から落ちる。2026-08-10の実測では、
+        検査番号が空の36行がちょうどこの形で欠け、分割なし14666行に対し結合14630行になった。
+        通らない環境もありうるので、0のほうも順に試して通った形を持ち帰る。
         """
         if not hasattr(self.dll,'NaviReloadCategory'):
             return False,'no_export',[]
-        forms=[('すべて読み込む',dict(key=key,search=search)),
-               ('前方一致で読み込む',dict(key=key,search=NAVI_FROMSTART)),
-               ('部分一致で読み込む',dict(key=key,search=NAVI_PARTIAL))]
+        forms=[('すべて読み込む（当てはまらない値も残す）',search,NAVI_NONMATCH),
+               ('すべて読み込む',search,0),
+               ('前方一致で読み込む（当てはまらない値も残す）',NAVI_FROMSTART,NAVI_NONMATCH),
+               ('前方一致で読み込む',NAVI_FROMSTART,0),
+               ('部分一致で読み込む',NAVI_PARTIAL,0)]
         tried=[]
-        for label,kw in forms:
+        for label,mode,nonmatch in forms:
             rc=ctypes.c_long(-1)
             try:
-                self.dll.NaviReloadCategory(int(h_cp),ctypes.byref(rc),NAVI_LABEL,_ansi(kw['key']),
-                                            int(kw['search']),0,_ansi(''))
+                self.dll.NaviReloadCategory(int(h_cp),ctypes.byref(rc),NAVI_LABEL,_ansi(key),
+                                            int(mode),int(nonmatch),_ansi(''))
             except Exception as e:
                 tried.append(f'{label}: {type(e).__name__} {e}');continue
             if int(rc.value)==NAVI_OK:
@@ -874,19 +880,17 @@ class NavigatorApi:
             rc=ctypes.c_long()
             self.dll.NaviChangeCategory(hcp,ctypes.byref(rc),_ansi(cat),NAVI_LABEL,int(disp),0,_ansi(separator))
             self._check('NaviChangeCategory',rc,f'cat={cat[:40]!r} disp={disp}')
-        def one_by_one():
-            """担当外を1件ずつ外し、担当ぶんは1件ずつ出す。
-
-            出す側を省いてはいけない。RNEに保存された時点で非表示になっている値があると、
-            外すだけでは戻らず、その行がどの片にも入らずに落ちる。2026-08-10の実測では
-            分割なし14241行に対し結合14205行で、36行がちょうどこの形で欠けた。
-            """
+        def hide_and_show():
             for v in others:change(v,NAVI_IN_NONDISP)
             for v in mine:change(v,NAVI_IN_DISP)
+        # 「外すだけ」を「外して出す」より先に試す。
+        # 分割で作ってよいのは分割なしの部分集合だけで、行を増やしてはいけない。RNEに保存された
+        # 時点で非表示の値を出してしまうと、分割なしに無い行が結果に混ざる。外すだけなら必ず減る。
         forms=[
             ('まとめて外して担当ぶんを戻す',lambda:(change(sep.join(others+mine),NAVI_IN_NONDISP,sep) if others or mine else None,
                                                   change(sep.join(mine),NAVI_IN_DISP,sep))),
-            ('担当外を1件ずつ外し担当ぶんを1件ずつ出す',one_by_one),
+            ('担当外を1件ずつ外す',lambda:[change(v,NAVI_IN_NONDISP) for v in others]),
+            ('担当外を1件ずつ外し担当ぶんを1件ずつ出す',hide_and_show),
             ('担当ぶんを対象に指定する',lambda:[self.change_condition_cp(hcp,v,NAVI_IN_TARGET) for v in mine]),
         ]
         tried=[]
