@@ -212,12 +212,14 @@
 <header class="ip-head"><b>速さを試す（影実行）</b><small>分割ありと分割なしを実際に走らせ、結果を<b>バイト単位で比較</b>します。数分かかりますが、この画面は閉じても構いません。</small></header>
 <div class="ip-act"><button id="m-split-trial" type="button" class="secondary">影実行を開始</button><label class="trial-parts">測るもの<select id="m-split-measure"><option value="split">分割だけ</option><option value="normal">分割なしだけ（基準を測る）</option><option value="both">両方つづけて（比較）</option></select></label><label class="trial-parts" data-when="split">方式<select id="m-split-mode-trial"><option value="column">列分割</option><option value="row">行分割</option><option value="grid">行×列</option></select></label><label class="trial-parts" data-when="split" data-need="column">列<select id="m-split-parts"><option value="0">おまかせ</option><option value="2">2</option><option value="3">3</option><option value="4">4</option></select></label><label class="trial-parts" data-when="split" data-need="row" hidden>行<select id="m-row-trial-parts"><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="6">6</option><option value="8">8</option></select></label><label class="trial-race" data-when="both"><input id="m-split-race" type="checkbox"><span>競争させる</span></label></div>
 <p class="ip-note" id="trial-need">先に手順2の「列を調べる」を実行してください。<b>出力ファイルは更新しません</b>。</p>
+<div class="ip-act axis-pick" id="trial-axis-pick" data-when="row grid"><label class="trial-parts">行の軸の決め方<select id="m-axis-mode-t"><option value="first">表側の1番目（調査不要）</option><option value="index">番号で指定（調査不要）</option><option value="name">名前で指定（調べて選ぶ）</option><option value="balanced">偏りが少ないものを自動で選ぶ</option></select></label><label class="trial-parts" id="m-axis-index-wrap-t" hidden>表側#<input id="m-axis-index-t" type="number" min="1" max="200" step="1" value="1"></label><label class="trial-parts" id="m-axis-name-wrap-t" hidden>軸<select id="m-axis-name-t"><option value="">（先に手順2の「行を調べる」）</option></select></label><span class="ip-hint" id="m-axis-hint-t"></span></div>
 <div id="m-split-trial-result" class="rne-inspect-result" hidden></div>
 <p class="ip-empty" data-empty="trial">まだ試していません。分割なしとの所要時間の比較と、結果が一致したかどうかが表示されます。</p>
 <details id="insp-log" class="ilog">
 <summary><b>実行ログ</b><small>影実行を見ながら、そのまま追えます</small><span id="ilog-count" class="ilog-count"></span></summary>
 <div class="ilog-tools">
 <label class="trial-parts">表示<select id="ilog-filter"><option value="split">分割まわり</option><option value="problem">エラーと警告</option><option value="all">すべて</option></select></label>
+<label class="trial-parts">並べ方<select id="ilog-group"><option value="flat">そのまま並べる</option><option value="action">操作ごとにまとめる</option></select></label>
 <input id="ilog-q" class="ilog-q" placeholder="語で絞り込む（正規表現も可）">
 <label class="trial-race"><input id="ilog-follow" type="checkbox" checked><span>自動更新</span></label>
 <button id="ilog-reload" type="button" class="secondary">更新</button>

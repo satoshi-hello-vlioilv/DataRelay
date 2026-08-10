@@ -1368,7 +1368,10 @@ body > main{max-width:1620px;padding-left:12px;padding-right:12px}
 .ilog-tools{display:flex;align-items:center;gap:9px;flex-wrap:wrap;padding:0 11px 8px}
 .ilog-tools button{padding:5px 10px;font-size:11px}
 .ilog-q{width:auto;flex:1 1 190px;min-width:150px;height:31px;font-size:12px}
-.ilog-body{max-height:230px;overflow:auto;margin:0 11px 11px;padding:8px 10px;border-radius:8px;
+/* 高さが足りず、最後まで読めなかった。画面の高さに合わせて伸ばし、つまんで広げられるようにする。
+   下の余白は「最終行がふちに貼りつかない」ためのもの（読み終わりが分かるようにする）。 */
+.ilog-body{max-height:min(58vh,620px);min-height:180px;resize:vertical;overflow:auto;
+  overscroll-behavior:contain;margin:0 11px 11px;padding:8px 10px 22px;border-radius:8px;
   background:#101b23;font:11px/1.55 Consolas,monospace}
 .ilog-body .log-line{color:#d6e6ed;white-space:pre-wrap;word-break:break-all;padding:1px 0}
 .ilog-body .log-line.warning{color:#f0c674}
@@ -1386,3 +1389,17 @@ body > main{max-width:1620px;padding-left:12px;padding-right:12px}
 .axis-pick #m-axis-index{width:64px}
 .axis-pick #m-axis-name{max-width:340px}
 .axis-pick .ip-hint{flex:1 1 100%;color:#5e747e}
+
+/* 操作ごとにまとめたときの見出し。1回の操作で何十行も出るので、畳めるようにする。 */
+.ilog-act{border:1px solid #24404f;border-radius:7px;margin:6px 0;background:#0d1820}
+.ilog-act>summary{cursor:pointer;padding:6px 9px;display:flex;gap:10px;align-items:baseline;
+  font:12px/1.5 "Yu Gothic UI",sans-serif;color:#dceaf0}
+.ilog-act>summary b{font-weight:800}
+.ilog-act>summary span{color:#7fa0ae;font:11px Consolas,monospace}
+.ilog-act>summary em{margin-left:auto;color:#8fb2c0;font-style:normal;font-size:11px}
+.ilog-act.has-warn>summary{background:#2b2415;border-radius:6px}
+.ilog-act.has-error>summary{background:#2a1719;color:#ffd9d4}
+.ilog-act .log-line{padding-left:9px}
+/* 影実行の欄に置いた軸の決め方 */
+#trial-axis-pick{margin:0 0 10px}
+#trial-axis-pick[hidden]{display:none!important}
