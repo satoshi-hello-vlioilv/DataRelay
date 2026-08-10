@@ -25,8 +25,8 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.49.0'; APP_VERSION_TITLE='空の値の行を落とさない／軸の決め方を選べる'; APP_RELEASED_AT='2026-08-10'
-BUILD_VERSION=f'{APP_VERSION}-axischoice'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.49.1'; APP_VERSION_TITLE='起動待ち画面の文字化けを直す'; APP_RELEASED_AT='2026-08-10'
+BUILD_VERSION=f'{APP_VERSION}-loadingfix'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリに同梱する仕様書。ここに登録したものだけが画面から開ける。
 # 画面からはこのidしか受け取らないので、任意のパスを読ませることはできない。
 DOCS=[
@@ -43,7 +43,15 @@ def docs_dir():
 
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
-{'version':'1.49.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+{'version':'1.49.1','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'【起動できなくなっていた不具合の修正】1.49.0 の起動待ち画面が文字化けし、自動でアプリへ移らなくなっていました。1.48.0 までは正常です。',
+'原因は 1.49.0 でランチャー(start.vbs)に入れたバージョン差し込みです。loading.html は UTF-8 ですが、VBScript の OpenTextFile / CreateTextFile は既定でANSI(cp932)として読み書きするため、日本語だけでなくタグまで崩れ、画面の遷移処理も動かなくなっていました。',
+'UTF-8 を正しく扱える ADODB.Stream で読み書きするようにしました。書き上がりが「<!doctype html> と </html> を含む1000バイト超」であることを確かめてから置き換えます。',
+'確かめに通らないときは、元のファイルを丸ごとコピーします。壊れた控えは毎回上書きされるので、更新すればそれだけで直ります。',
+'バージョンの控え(runtime\\version.txt)はASCIIだけにしました。読み取り側の文字コードに左右されないようにするためです。',
+'※すでに起動できない状態のときは、ブラウザーで http://127.0.0.1:5031 を直接開けばアプリを使えます。',
+]},
+{'version':'1.49.0','date':'2026-08-10','title':'空の値の行を落とさない／軸の決め方を選べる','notes':[
 '【欠けた36行の正体】実測(2026-08-10 13:09)で、欠けた36行はすべて「検査番号が空」の行でした。どのカテゴリにも当てはまらない行が、絞り込みの時点で落ちていました。',
 '原因は NaviReloadCategory の第6引数 nonmatch に0を渡していたことです。仕様書の「カテゴリロード」にある NAVI_NONMATCH（0x02）を渡すと、当てはまらない値も残ります。この形を最初に試すようにしました。通らない環境では今までの形へ順に落とします。',
 '絞り込みの形は「外すだけ」を「外して出す」より先に試すようにしました。分割で作ってよいのは分割なしの部分集合だけで、行を増やしてはいけません。RNEに保存された時点で非表示の値を出すと、分割なしに無い行が混ざります。',
@@ -6365,7 +6373,9 @@ if __name__=='__main__':
  _t=time.perf_counter(); shutil.rmtree(LOCAL_ROOT/'work',ignore_errors=True); (LOCAL_ROOT/'work').mkdir(parents=True,exist_ok=True); log.info('APP_START_WORKCLEAN elapsed=%.2fs',time.perf_counter()-_t)
  # 起動待ちモーダル(loading.html)は file:// から開くので、サーバーが立つまで版が分からない。
  # ここに置いておけば、ランチャーが次回の起動時に画面へ差し込める。
- try:(LOCAL_RUNTIME/'version.txt').write_text(f'{APP_VERSION}\t{BUILD_VERSION}\t{APP_VERSION_TITLE}',encoding='utf-8')
+ # 中身はASCIIだけにする。ランチャー(VBScript)は既定でANSIとして読むので、
+ # 日本語を混ぜると読み取り側の文字コードに左右される。版とビルドが分かれば足りる。
+ try:(LOCAL_RUNTIME/'version.txt').write_text(f'{APP_VERSION}\t{BUILD_VERSION}',encoding='ascii')
  except Exception:log.exception('VERSION_STAMP_FAILED')
  _t=time.perf_counter(); migrate_legacy_settings(); log.info('APP_START_MIGRATION elapsed=%.2fs',time.perf_counter()-_t)
  _t=time.perf_counter(); threading.Thread(target=scheduler,daemon=True,name='scheduler').start(); threading.Thread(target=command_dispatcher,daemon=True,name='command-dispatcher').start(); threading.Thread(target=heartbeat_watchdog,daemon=True,name='heartbeat-watchdog').start(); log.info('APP_START_THREADS elapsed=%.2fs',time.perf_counter()-_t)
