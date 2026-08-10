@@ -333,9 +333,66 @@ End Sub
 
 
 ' ==== Startup helpers: loading modal, browser handoff, startup cache ====
-' 起動待ちモーダルへ差し込むバージョン。アプリが起動するたびに runtime\version.txt へ
-' 書き出しているので、次の起動ではサーバーが立つ前から版を表示できる。
-' 控えが無い初回だけは、画面側が「バージョン確認中」と出す。
+' 起動待ちモーダルへ差し込むバージョン。出どころは次の順で選ぶ。
+'   1) app.py の APP_VERSION（初回起動でも更新直後でも正しい）
+'   2) runtime\version.txt（アプリが起動するたびに書き出す控え。1が読めないとき用）
+'   3) どちらも駄目なら差し込まない。画面側が「バージョン確認中」と出す。
+Function SourceVersion()
+    Dim si, head, at, body, q, k, ap
+    SourceVersion = ""
+    On Error Resume Next
+    ap = fso.BuildPath(scriptDir, "app.py")
+    If Not fso.FileExists(ap) Then Exit Function
+    Set si = CreateObject("ADODB.Stream")
+    si.Type = 2 : si.Charset = "utf-8" : si.Open
+    si.LoadFromFile ap
+    head = si.ReadText(8192)
+    si.Close
+    If Err.Number <> 0 Or Len(head) = 0 Then
+        Err.Clear
+        Exit Function
+    End If
+    ' APP_VERSION は APP_VERSION_TITLE や BUILD_VERSION の中にも現れる。
+    ' 「APP_VERSION の直後が = で、その先が引用符」のものだけを版として受け取り、
+    ' 当てはまらなければ次の出現位置へ進む。
+    at = 1
+    Do
+        at = InStr(at, head, "APP_VERSION")
+        If at = 0 Then Exit Do
+        body = LTrim(Mid(head, at + Len("APP_VERSION")))
+        If Left(body, 1) = "=" Then
+            body = LTrim(Mid(body, 2))
+            q = Left(body, 1)
+            If q = "'" Or q = Chr(34) Then
+                body = Mid(body, 2)
+                k = InStr(body, q)
+                If k > 0 Then
+                    body = Trim(Left(body, k - 1))
+                    If VersionLooksValid(body) Then
+                        SourceVersion = body
+                        Exit Do
+                    End If
+                End If
+            End If
+        End If
+        at = at + Len("APP_VERSION")
+    Loop
+    Err.Clear
+    On Error GoTo 0
+End Function
+
+' 版として通す形は、数字と点だけ。ここを緩めると読み違えがそのまま画面へ出る。
+Function VersionLooksValid(v)
+    Dim n, c
+    VersionLooksValid = False
+    If Len(v) = 0 Or Len(v) > 20 Then Exit Function
+    For n = 1 To Len(v)
+        c = Mid(v, n, 1)
+        If InStr("0123456789.", c) = 0 Then Exit Function
+    Next
+    VersionLooksValid = True
+End Function
+
 Function StampedVersion()
     Dim vf, ts, txt, parts
     StampedVersion = ""
@@ -389,15 +446,20 @@ Function WriteLoadingWithVersion(src, dst, ver)
 End Function
 
 Sub OpenLoading()
-    Dim src, dst, appSh, ver, stamped
+    Dim src, dst, appSh, ver, stamped, vsrc
     On Error Resume Next
     src = fso.BuildPath(scriptDir, "loading.html")
     dst = fso.BuildPath(localRoot, "loading.html")
     If fso.FileExists(src) Then
-        ver = StampedVersion()
+        ver = SourceVersion()
+        vsrc = "app.py"
+        If ver = "" Then
+            ver = StampedVersion()
+            vsrc = "version.txt"
+        End If
         stamped = WriteLoadingWithVersion(src, dst, ver)
         If stamped Then
-            WriteLog "LOADING_MODAL version=" & ver
+            WriteLog "LOADING_MODAL version=" & ver & " source=" & vsrc
         Else
             ' 差し込めなければ丸ごとコピーする。画面側が token を見て「確認中」と出す。
             Err.Clear
