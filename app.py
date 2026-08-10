@@ -25,8 +25,8 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.51.1'; APP_VERSION_TITLE='起動待ち画面のバージョンを初回から正しく出す'; APP_RELEASED_AT='2026-08-10'
-BUILD_VERSION=f'{APP_VERSION}-ddeprogress'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.52.0'; APP_VERSION_TITLE='行分割を列分割の都合で止めない'; APP_RELEASED_AT='2026-08-11'
+BUILD_VERSION=f'{APP_VERSION}-rowguard'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリに同梱する仕様書。ここに登録したものだけが画面から開ける。
 # 画面からはこのidしか受け取らないので、任意のパスを読ませることはできない。
 DOCS=[
@@ -43,7 +43,14 @@ def docs_dir():
 
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
-{'version':'1.51.1','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+{'version':'1.52.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'【行分割の影実行が、理由も出ないまま失敗していました】影実行の入口が列分割の判定だけで組まれており、「分け方」を読み取る行がその判定より後ろにありました。列分割が成立しないRNEで行分割を試すと、判定がまだ決まっていない「分け方」を読んでしまい、UnboundLocalError で落ちていました。読み取りを入口のいちばん先へ移しました。',
+'行分割は列を1本も外しません。それなのに、列分割だけに要る4つの条件を行分割にも課していました。いずれも行分割では起こり得ない話なので、課さないようにしました。1) 外せる列があること 2) 行をつなぎ留める列（錨）が立つこと 3) 同じ名前の列が無いこと 4) 全パートに残る列（結合キー）があること。列分割のときは今までどおり断ります。',
+'行分割は片ごとに全列が揃うため、結合キーがそもそも要りません。キーが作れないときは全列で突き合わせます。キーを空のまま比較すると全行が1件に潰れ、違いがあっても「一致」と判定してしまいます。',
+'影実行が走り出す前に断ったとき、理由をログへ残すようにしました（SPLIT_TRIAL_ABORT）。これまでは黙って戻っていたため、ログには行チェックの結果までしか残らず、なぜ止まったのかを追えませんでした。',
+'錨が見つからないときの文言に「100.0%%しか覆えず」と%が2つ出ていたのを直しました。',
+]},
+{'version':'1.51.1','date':'2026-08-10','title':'起動待ち画面のバージョンを初回から正しく出す','notes':[
 '【起動待ち画面のバージョンが古い／初回は出ない】起動待ち画面へ差し込む版は、アプリが起動するたびに書き出す控え(runtime\\version.txt)から読んでいました。控えは前回の起動で書かれたものなので、更新した直後は1つ前の版が出て、控えがまだ無い初回起動では何も出ませんでした。',
 'ランチャーが app.py の APP_VERSION を直接読むようにしました。前回の起動に依存しないため、初回起動でも更新した直後でも、これから起動する版がそのまま出ます。読めないときだけ従来の控えへ戻り、どちらも駄目なときだけ「バージョン確認中」と出します。どちらから読んだかは起動ログ(vbs_launcher.log)に残します。',
 'APP_VERSION は APP_VERSION_TITLE や BUILD_VERSION の中にも現れます。「直後が = で、その先が引用符」のものだけを版として受け取り、当てはまらなければ次の出現位置へ進みます。取り出した値は数字と点だけかを確かめてから画面へ出します。',
@@ -5158,12 +5165,25 @@ def _split_trial_run(data,c,job):
  try:rp=resolve_rne_path(job,c)
  except Exception as e:return dict(ok=False,error=f'RNEパスの解決に失敗しました: {e}')
  if not Path(rp).is_file():return dict(ok=False,error=f'RNEが見つかりません: {rp}')
+ # 分け方（列/行/行×列）は、どの条件を課すかを決める。列分割だけの条件を行分割へ持ち込むと
+ # 成立するはずの分割が止まるので、いちばん先に確定させる。
+ # 以前はこの行が下の方にあり、上の判定が mode を先に読んでいたため、列分割が成立しない
+ # RNEで行分割を試すと UnboundLocalError で落ちていた（実測 2026-08-10 SIKAHIKINOW.RNE）。
+ mode=str(data.get('mode') or 'column').lower()
+ if mode not in ('column','row','grid'):mode='column'
+ measure=normalize_measure(data.get('measure'),bool(data.get('race')))
+ uses_columns=mode!='row'          # 行分割は列を1本も外さない。列まわりの条件は課さない。
+ # 走り出す前に断るときは、必ず理由をログへ残す。以前は黙って戻っていたため、
+ # 画面には短い文が出るだけで、なぜ止まったのかがログから追えなかった。
+ def stop(reason,**kw):
+  log.warning('SPLIT_TRIAL_ABORT rne=%s job=%s mode=%s 理由=%s',rp,job.get('name'),mode,reason)
+  return dict(ok=False,error=reason,**kw)
  cached=load_column_cache(rp)
  if not cached or cached['stale'] or not cached['columns']:
-  return dict(ok=False,error='先に「列の分割可否を調べる」を実行してください（列定義が未取得か、RNEが更新されています）')
+  return stop('先に「列の分割可否を調べる」を実行してください（列定義が未取得か、RNEが更新されています）')
  removable=[x['name'] for x in (cached.get('classify') or []) if x.get('removable')]
- if not removable:
-  return dict(ok=False,error='分割して取得できる列がありません')
+ if not removable and uses_columns:
+  return stop('分割して取得できる列がありません')
  columns=cached['columns'];trials=load_split_trials(rp)
  parts=int(data.get('parts') or 0)
  # 直近の出力から列ごとのデータ量と埋まり具合を測る。分割数の判断にも使うので先に済ませる。
@@ -5182,38 +5202,42 @@ def _split_trial_run(data,c,job):
  except Exception as we:
   log.warning('COLUMN_WEIGHTS_FAILED rne=%s error=%s',rp,we)
  # 錨が立たない＝担当列がすべて空になる行を防げない。行が落ちると分かっているので実行しない。
- if weights and not anchors and not data.get('force'):
+ # 行分割は列を外さないため、この心配がそもそも無い。
+ if uses_columns and weights and not anchors and not data.get('force'):
   log.warning('SPLIT_NO_ANCHOR rne=%s coverage=%.4f',rp,coverage)
-  return dict(ok=False,error=f'行をつなぎ留める列（錨）が見つかりませんでした。'
-                 f'最も埋まっている列でも全行の{coverage*100:.1f}%%しか覆えず、残りの行は担当列がすべて空になるため落ちます。'
-                 '錨を増やしても覆えないため、このRNEの現在の列構成では分割できません。',
-                 rowset_mismatch=True,anchor_coverage=coverage,no_anchor=True)
+  return stop(f'行をつなぎ留める列（錨）が見つかりませんでした。'
+              f'最も埋まっている列でも全行の{coverage*100:.1f}%しか覆えず、残りの行は担当列がすべて空になるため落ちます。'
+              '錨を増やしても覆えないため、このRNEの現在の列構成では分割できません。',
+              rowset_mismatch=True,anchor_coverage=coverage,no_anchor=True)
+ # 同名の列が困るのは、列名で担当を決めて列名で突き合わせる列分割のときだけ。
+ # 行分割はどの片も全列を持ち、縦に積むだけなので同名でも取り違えようがない。
  dupes=duplicate_columns(columns)
- if dupes and not data.get('force'):
+ if dupes and uses_columns and not data.get('force'):
   log.warning('SPLIT_TRIAL_DUPLICATES rne=%s names=%s',rp,[d['name'] for d in dupes[:10]])
-  return dict(ok=False,duplicates=dupes,
-              error='同じ名前の列が複数あるため、列分割は行えません（'
+  return stop('同じ名前の列が複数あるため、列分割は行えません（'
                     +'、'.join(f"{d['name']}×{d['count']}" for d in dupes[:5])
                     +('ほか' if len(dupes)>5 else '')
-                    +'）。列分割は列名で担当を決め、結合でも列名を突き合わせるため、'
-                     '同名の列があると外す対象を取り違えたり、結合で片方が消えたりします。'
-                     'RNE側で列名を分けてから再度お試しください。')
+              +'）。列分割は列名で担当を決め、結合でも列名を突き合わせるため、'
+               '同名の列があると外す対象を取り違えたり、結合で片方が消えたりします。'
+               'RNE側で列名を分けてから再度お試しください。',duplicates=dupes)
  if parts<2:
   parts,_g,_d=recommend_split_parts(columns,removable,int(c['settings'].get('api_parallel_max_lines',4) or 4),
                                     trials,load_rne_timing(rp),weights,c['settings'],split_link_profile(rp))
   if parts<2:parts=2                              # 明示的な試行なので、推奨が1でも2で測る
  plan,keys=plan_column_split(columns,removable,parts,weights,anchors)
- if len(plan)<2 and mode!='row':return dict(ok=False,error='この列構成では分割できません')
- if split_incompatible(rp) and not anchors and not data.get('force'):
-  return dict(ok=False,error='このRNEは、列を外すと返ってくる行そのものが変わることが確認済みです。'
-                 '行をつなぎ留める錨の列も立てられないため、列分割は使えません。'
-                 '直近の出力ファイルがあれば錨を探せます。1回実行してから再度お試しください。',
-                 rowset_mismatch=True,known=True)
- if not keys:return dict(ok=False,error='全パートに残る列（結合キー）がないため、結合できません')
+ if len(plan)<2 and uses_columns:return stop('この列構成では分割できません')
+ # 「列を外すと返る行が変わる」のも列分割固有の話。行分割は列を外さないので当てはまらない。
+ if uses_columns and split_incompatible(rp) and not anchors and not data.get('force'):
+  return stop('このRNEは、列を外すと返ってくる行そのものが変わることが確認済みです。'
+              '行をつなぎ留める錨の列も立てられないため、列分割は使えません。'
+              '直近の出力ファイルがあれば錨を探せます。1回実行してから再度お試しください。',
+              rowset_mismatch=True,known=True)
+ if not keys:
+  if uses_columns:return stop('全パートに残る列（結合キー）がないため、結合できません')
+  # 行分割はどの片も全列を持つ。突き合わせは全列で行えばよく、結合キーは要らない。
+  keys=list(columns)
+  log.info('SPLIT_TRIAL_ROW_KEYS rne=%s 結合キーは使いません（行分割はどの片も全列を持ちます）。突き合わせは全%s列で行います',rp,len(keys))
  # 行分割・行×列の組み合わせ。列の割り当てはここまでで出来ているので、行の条件を足す。
- mode=str(data.get('mode') or 'column').lower()
- if mode not in ('column','row','grid'):mode='column'
- measure=normalize_measure(data.get('measure'),bool(data.get('race')))
  row_axis=None;row_axis_all=[];row_drift=None;row_skew=None;axis_hint={};row_parts_want=max(2,min(8,int(data.get('row_parts') or 2)))
  row_parts=row_parts_want
  if mode in ('row','grid') and measure!='normal':
