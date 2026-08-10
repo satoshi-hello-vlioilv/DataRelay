@@ -25,8 +25,8 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.43.0'; APP_VERSION_TITLE='影実行の画面でログも追える'; APP_RELEASED_AT='2026-08-08'
-BUILD_VERSION=f'{APP_VERSION}-ilog'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.44.0'; APP_VERSION_TITLE='全値型の軸を読み込んで分割する'; APP_RELEASED_AT='2026-08-08'
+BUILD_VERSION=f'{APP_VERSION}-reload'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリに同梱する仕様書。ここに登録したものだけが画面から開ける。
 # 画面からはこのidしか受け取らないので、任意のパスを読ませることはできない。
 DOCS=[
@@ -43,6 +43,15 @@ def docs_dir():
 
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
+{'version':'1.44.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'【原因判明】表側の管理ポイント64本すべてが「値の数=0」になっていたのは、どれも型が「全値型」だったためです。全値型は決まった値の一覧を持たず、値はデータの中にあります。読み込ませる前に数えていたので0でした。',
+'値を数える前に NaviReloadCategory でデータベースから読み込むようにしました。渡し方を3通り試し、通った形と失敗した理由をログに残します（ROW_AXIS_LOAD）。',
+'8000件を超える軸はDLLが一覧にできません（NAVI_ERROR_OVER8000）。その軸は「値が8000件超」として飛ばし、値の少ない次の軸を自動的に選びます。検査番号のように値が多い軸でも、行分割そのものは止まりません。',
+'値を全部読むのは実際に使う軸1本だけにしました。列挙の段階では数と見本だけを読みます（表側64本×8000件を全部読むと現実的な時間で終わらないため）。',
+'読めた値が全体の数に足りない場合は分割を中止します。一部だけで組を作ると、読めなかった値の行が結果から落ちるためです。',
+'一覧にできない軸については「先頭一致で絞れるか」を1回だけ試し、結果をログに残します。次の手（先頭の文字で分ける方式）が使えるかの下調べです。',
+'影実行の画面のログビューワに「ログを消去」を付けました。確認をはさんだうえで、実行ログ全体を消します。',
+]},
 {'version':'1.43.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
 '「RNEを調べる」の手順3（速さを試す）に、ログの簡易ビューワを付けました。影実行を見ながら、そのままログを追えます。「ログ・診断」タブへ行き来する必要がなくなります。',
 '表示は「分割まわり / エラーと警告 / すべて」から選べます。既定の「分割まわり」は SPLIT_・AXIS_・ROW_・COLUMN_ の行だけを出すので、影実行に関係のない行が混ざりません。',
@@ -1181,10 +1190,13 @@ def axis_usable(a):
   pr=a.get('period') or {}
   if pr.get('from') and pr.get('to'):return True,'期間で区切る'
   return False,'期間が設定されていません'
+ if a.get('over8000'):
+  # DLLが一覧にできる上限（8000件）を超えている。この軸は値で分けられない。
+  return False,'値が8000件を超えるため一覧にできません'
  n=a.get('category_count')
  if n is None:return False,(a.get('category_error') or '値の数を読めません')
- if int(n)<2:return False,f'値が{n}種しかありません'
- if not a.get('categories'):return False,(a.get('category_error') or '値を読めません')
+ if int(n)<2:
+  return False,(f'値が{n}種しかありません'+(f'（{a.get("category_error")}）' if a.get('category_error') else ''))
  return True,f'{n}種の値を組に分ける'
 
 def pick_row_axis(axes,parts=2,prefer=''):
@@ -1224,6 +1236,27 @@ def resolve_axis_now(job,cfg,rne_path,parts,prefer='',hint=None,line=''):
  out['ranked']=ranked
  if not axis:
   out['error']='いま行を分けられる軸がありません';return out
+ # 使う軸が決まってから、その1本の値を読み切る。ここで全部そろわなければ分けない
+ # （一部だけで組を作ると、読めなかった値の行がどこにも入らず落ちる）。
+ if not axis.get('is_time'):
+  try:
+   vs=run_inspect_worker(dict(job,_read_names=True,_axis={'column':axis['name'],'locate':axis['locate'],
+                                                          'location':axis['location'],'index':axis['index']}),
+                         cfg,user,pw,server,['axis_values'],
+                         timeout=int(cfg['settings'].get('split_trial_timeout_seconds',1800) or 1800))
+  except Exception as e:
+   out['error']=f'軸の値を読めませんでした: {e}';return out
+  av=(vs.get('axis_values') or {}) if vs.get('ok') else {}
+  if not vs.get('ok'):
+   out['error']=vs.get('error') or '軸の値を読めませんでした';return out
+  axis=dict(axis,categories=av.get('values') or [],category_count=av.get('count'),
+            category_error=av.get('error') or '',load_form=av.get('load_form') or '')
+  if not av.get('complete'):
+   out['error']=(f'「{axis["name"]}」の値を全部は読めませんでした'
+                 f'（{av.get("count")}種のうち{len(av.get("values") or [])}種）。'
+                 '一部だけで分けると、読めなかった値の行が結果から落ちるため中止します')
+   out['axis']=axis;return out
+  log.info('AXIS_NOW_VALUES 軸=%s 値=%s種 読み込み=%s',axis['name'],len(axis['categories']),axis.get('load_form'))
  out['axis']=axis
  out['parts']=axis_usable_parts(axis,parts)
  if hint:
@@ -3009,14 +3042,17 @@ def process_catalog_inspect(j,cfg,user,pw,server,want=None):
   if 'axes' in want:
    # 行を絞れるのは管理ポイントだけ。どこに何が置かれているか（表側／表頭／条件）と、
    # その軸が取り得る値まで読む。直近の出力ファイルが無くても行分割の下調べができる。
-   cats=int((cfg.get('settings') or {}).get('row_axis_category_limit',400) or 400)
-   axes=api.list_control_points(handle,read_names=read_names,with_categories=cats)
+   # ここでは値の「数」と見本だけを読む。64本×8000件を全部読むのは現実的でないため。
+   axes=api.list_control_points(handle,read_names=read_names,with_categories=6)
    out['axes']=axes
    for a in axes:
-    log.info('ROW_AXIS %s#%s 名前=%s 型=%s 値の数=%s 期間=%s%s',a['location'],a['index']+1,a['name'],
-             a['type_name'],a.get('category_count'),a.get('period'),
-             (' 読めた値='+' | '.join(a.get('categories') or [])[:120]) if a.get('categories') else
-             (' 値の読み取り='+a['category_error'] if a.get('category_error') else ''))
+    log.info('ROW_AXIS %s#%s 名前=%s 型=%s 値の数=%s 読み込み=%s 期間=%s%s%s',a['location'],a['index']+1,a['name'],
+             a['type_name'],a.get('category_count'),a.get('load_form') or '(未)',a.get('period'),
+             (' 読めた値='+' | '.join((a.get('categories') or [])[:8])[:120]) if a.get('categories') else
+             (' 値の読み取り='+a['category_error'] if a.get('category_error') else ''),
+             (' 先頭一致の下見='+json.dumps(a['prefix'],ensure_ascii=False)) if a.get('prefix') else '')
+    for t in (a.get('load_tried') or []):
+     log.info('ROW_AXIS_LOAD %s#%s %s %s',a['location'],a['index']+1,a['name'],t)
   if 'items' in want:
    lay=api.column_layout(handle,columns=known,read_names=read_names)
    out['layout']={'removable':[x['name'] for x in lay['removable']],'fixed':[x['name'] for x in lay['fixed']],
@@ -3024,6 +3060,16 @@ def process_catalog_inspect(j,cfg,user,pw,server,want=None):
                   'data_item_count':len(lay['data_items']),'control_point_count':len(lay['control_points'])}
    out['data_items']=lay['data_items'];out['di_diag']=getattr(api,'di_diag','')
    fields,why=api.field_number(handle);out['field_count']=fields;out['field_why']=why
+  if 'axis_values' in want:
+   # 実際に使う軸1本だけ、値を読み切る。分割の割り当てはこの結果から作る。
+   spec=(j.get('_axis') or {})
+   lim=int((cfg.get('settings') or {}).get('row_axis_category_limit',8000) or 8000)
+   out['axis_values']=api.axis_categories(handle,spec,limit=lim)
+   av=out['axis_values']
+   log.info('AXIS_VALUES 軸=%s つかみ方=%s 値の数=%s 読めた=%s 完全=%s 読み込み=%s%s',
+            av.get('name'),av.get('how'),av.get('count'),len(av.get('values') or []),av.get('complete'),
+            av.get('load_form'),(' error='+av['error']) if av.get('error') else '')
+   for t in (av.get('load_tried') or []):log.info('AXIS_VALUES_TRIED %s',t)
   if 'timing' in want:
    # 転送せずに問い合わせだけを実行し、サーバー側で結果を作るのにかかる時間を測る。
    # 通常の実行(DOWNLOADNOW)との差が、そのまま転送に費やされている時間になる。
