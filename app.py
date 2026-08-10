@@ -25,8 +25,8 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.50.0'; APP_VERSION_TITLE='行が落ちる軸を使わない／ログを操作ごとにまとめる'; APP_RELEASED_AT='2026-08-10'
-BUILD_VERSION=f'{APP_VERSION}-blankguard'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.51.1'; APP_VERSION_TITLE='起動待ち画面のバージョンを初回から正しく出す'; APP_RELEASED_AT='2026-08-10'
+BUILD_VERSION=f'{APP_VERSION}-ddeprogress'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリに同梱する仕様書。ここに登録したものだけが画面から開ける。
 # 画面からはこのidしか受け取らないので、任意のパスを読ませることはできない。
 DOCS=[
@@ -43,7 +43,31 @@ def docs_dir():
 
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
-{'version':'1.50.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+{'version':'1.51.1','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'【起動待ち画面のバージョンが古い／初回は出ない】起動待ち画面へ差し込む版は、アプリが起動するたびに書き出す控え(runtime\\version.txt)から読んでいました。控えは前回の起動で書かれたものなので、更新した直後は1つ前の版が出て、控えがまだ無い初回起動では何も出ませんでした。',
+'ランチャーが app.py の APP_VERSION を直接読むようにしました。前回の起動に依存しないため、初回起動でも更新した直後でも、これから起動する版がそのまま出ます。読めないときだけ従来の控えへ戻り、どちらも駄目なときだけ「バージョン確認中」と出します。どちらから読んだかは起動ログ(vbs_launcher.log)に残します。',
+'APP_VERSION は APP_VERSION_TITLE や BUILD_VERSION の中にも現れます。「直後が = で、その先が引用符」のものだけを版として受け取り、当てはまらなければ次の出現位置へ進みます。取り出した値は数字と点だけかを確かめてから画面へ出します。',
+'サーバーが起動したあとに表示が「1.51.1」から「1.51.1-ddeprogress」へ変わって見えていました。/api/instance が版とビルド名を分けて返すようにし、画面は版のほうを出します。',
+]},
+{'version':'1.51.0','date':'2026-08-10','title':'DDEの進捗と結果を直す／必要なDLLを探せるようにする','notes':[
+'【DDE方式の進捗が途中で前へ戻っていました】工程の並びが「閉じる → 検証」の順で書かれていたのに、実際は「検証 → 閉じる」の順に流れます。そのため「ファイル生成・安定確認」まで進んだあとに「抽出画面を閉じる」へ戻って見えていました。実際の順番へ揃えました。',
+'進捗画面の抽出方式が、DDEで実行していても「API安定運転 1ライン」と出ていました。「DDE互換 / 1件ずつ直列」と出します。',
+'工程一覧に「実行対象の準備」が無く、その間だけどの工程も光らない時間がありました。追加して、常にどこかが現在地になるようにしました。',
+'【DDEの結果が記録に残っていませんでした】DDEと直列APIは、実績（所要・転送量・転送速度・工程ごとの秒数）を保存していませんでした。件数だけが残り、一覧の実績欄はほぼ空でした。並列実行と同じ形で保存します。取り方の表示は「DDE」と出ます。',
+'進捗画面に「できあがったファイル」の一覧を追加しました。1件終わるごとに、対象名・件数・所要・出力ファイル名が出ます。直列実行はライン表示が無いため、途中経過がこれまで何も見えませんでした。失敗した対象も同じ一覧に残します。',
+'直列実行で失敗したとき、対象一覧の行が「処理中」のまま止まっていました。失敗として確定させ、赤で分かるようにしました。',
+'対象一覧の行に出る工程の点が、直列実行では動いていませんでした。DDEの工程を接続・問い合わせ・受信・変換・公開へ対応づけました。',
+'DDEで実行キューへ積むと「6ライン」と表示されていました。DDEは画面を1つ操作する方式で並列できないため、「DDE 1件ずつ」と出します。',
+'',
+'【DLLの探し方】別のPCで環境を作るときに必要なものを、共通設定「抽出方式」へまとめました。',
+'「必要なDLL」: このPCで要るbit数（Pythonと同じ）、そのまま使える配布フォルダー名、使えないフォルダー名、Visual C++ ランタイムの過不足を出します。フォルダー名の規則（debugdll/dll・VCの版・x64の有無）から素性を読み取って表示します。',
+'「DLLを探すフォルダー」: 探す範囲を自分で足せます。上から順に探し、最初に見つかった使えるDLLを使用します。探す深さも1〜6階層で選べます。フォルダー名ではなくファイル名で探すため、配布フォルダーと違う名前の場所に置いていても見つかります。',
+'検索結果には、見つかった1件ずつのbit数・使えるかどうか・使えない理由・同じフォルダーの依存DLLの数を出します。使えるものには「これを使う」を付け、その場で設定できます。',
+'「手動で指定」: 検索で見つからない場所にあるDLLを、参照ダイアログから直接選べます。手動で指定したDLLは、実在してbit数が合っていれば自動検索より優先します（以前は指定しても自動検索が先に決めていました）。',
+'事前診断のDLL項目も書き換えました。見つからないときは探した範囲を、bit数が違うときは「見つかったのは何bitで、必要なのは何bitか」を出します。Visual C++ ランタイムの項目も追加しました。',
+'DDE方式を選んでいるときの事前診断に、pywin32のDDE機能を読み込めるかの確認を追加しました。無いと実行開始直後に必ず失敗します。',
+]},
+{'version':'1.50.0','date':'2026-08-10','title':'行が落ちる軸を使わない／ログを操作ごとにまとめる','notes':[
 '【行数が合わない件】1.49.0 で入れた nonmatch=NAVI_NONMATCH は、このDLLに拒否されていました（rc=0x15 NAVI_ERROR_ZERO）。「当てはまらない値だけを読む」の意味らしく、値が空の行を拾う役には立ちません。通る形を先に試すよう戻しました。',
 '代わりに、値が空の行がある軸は最初から使わないようにしました。空の行はどのカテゴリにも当てはまらず、カテゴリで絞ると必ずどの片にも入らずに落ちます。検査番号は空が36行あるため、この軸では何をしても行数が合いません。',
 '散らばりの測定を常に行うようにしました（直近の出力を1回読むだけ）。どの決め方でも、空の行がある軸は自動的に飛ばして次の軸へ進みます。',
@@ -665,8 +689,10 @@ cancel_requested=threading.Event(); active_workers_lock=threading.Lock(); active
 chdir_lock=threading.RLock()
 # 並列ライン数として動作を確認している上限。既定値・移行・クランプはすべてこの値を基準にする。
 PARALLEL_LINES_SUPPORTED_MAX=24
+# SymNaviA.dllを探す既定の範囲。製品側の標準配置 → アプリ同梱 の順。設定画面から増減できる。
+DEFAULT_DLL_SEARCH_ROOTS=(r'C:\NAVIAP','.\\Config\\NAVIAP','.\\NAVIAP')
 class RunCancelled(Exception):pass
-status={'build_version':BUILD_VERSION,'running':False,'current':'','current_job_id':'','current_job_name':'','current_index':0,'total_jobs':0,'step':'idle','step_label':'待機中','step_percent':0,'completed_jobs':0,'failed_jobs':0,'started_at':'','elapsed_seconds':0,'symnavi_window':'未起動','last_result':'未実行','last_finished_at':'','error_detail':'','activity_detail':'','activity_value':'','heartbeat_at':'','parallel_lines':[],'batch_job_ids':[],'queue_completed_ids':[],'queue_failed_ids':[],'queue_running_ids':[],'queue_waiting_ids':[],'job_errors':[]}
+status={'build_version':BUILD_VERSION,'running':False,'current':'','current_job_id':'','current_job_name':'','current_index':0,'total_jobs':0,'step':'idle','step_label':'待機中','step_percent':0,'completed_jobs':0,'failed_jobs':0,'started_at':'','elapsed_seconds':0,'symnavi_window':'未起動','last_result':'未実行','last_finished_at':'','error_detail':'','activity_detail':'','activity_value':'','heartbeat_at':'','parallel_lines':[],'batch_job_ids':[],'queue_completed_ids':[],'queue_failed_ids':[],'queue_running_ids':[],'queue_waiting_ids':[],'job_errors':[],'job_results':[]}
 log=logging.getLogger('navi'); log.setLevel(logging.INFO)
 
 # ==== 同じ内容が続いたときの省略 =========================================
@@ -2614,6 +2640,11 @@ def load():
   if _backup_mode_missing:cfg['settings']['backup_generations']=3
   if int(cfg['settings'].get('api_parallel_lines',6) or 6)==2:cfg['settings']['api_parallel_lines']=6
   cfg.setdefault('navigator_api_dll',r'.\Config\NAVIAP\debugdllVC14x64\SymNaviA.dll'); cfg.setdefault('accdb_template','.\\assets\\empty.accdb');
+  # DLLを探す範囲。別のPCへ移すとNAVIAPの置き場所が変わることがあるため、範囲そのものを設定にする。
+  if not isinstance(cfg.get('navigator_api_search_roots'),list) or not cfg.get('navigator_api_search_roots'):
+   cfg['navigator_api_search_roots']=list(DEFAULT_DLL_SEARCH_ROOTS)
+  try:cfg['navigator_api_search_depth']=max(1,min(6,int(cfg.get('navigator_api_search_depth',3) or 3)))
+  except (TypeError,ValueError):cfg['navigator_api_search_depth']=3
  if str(cfg.get('backup_folder') or '').strip().lower() in ('','.\\backup','backup','.\\config\\backup'):
   cfg['backup_folder']=str(LOCAL_BACKUP)
  return cfg
@@ -2879,6 +2910,35 @@ def phase_profile_add(phase,elapsed):
  内訳不明のまま残ってしまう。
  """
  _phase_profile['phases'][phase]=_phase_profile['phases'].get(phase,0.0)+float(elapsed)
+
+def serial_run_metrics(engine,fmt,total,rows,cols,intermediate=None,dde_save_seconds=None):
+ """直列実行1件ぶんの実績。並列ワーカーが返すものと同じ形に揃える。
+
+ 形が違うと一覧の実績欄・所要の比較・ログの読み方が方式ごとに分かれてしまう。
+ DDEの[Save]は問い合わせと転送を一度に行うため、その1回を execute_seconds として扱う。
+ """
+ phases=phase_profile_seconds()
+ def sec(*names):
+  for n in names:
+   v=phases.get(n)
+   if v:return round(float(v),2)
+  return None
+ execute=sec('xls_save','api_execute_catalog') if engine=='dde' else sec('api_execute_catalog')
+ transfer_seconds=(float(dde_save_seconds) if engine=='dde' and dde_save_seconds else None) or sec('api_save_xlsx_direct','api_save_csv')
+ m={'elapsed':round(float(total),2),'rows':rows,'cols':cols,'format':fmt,'engine':engine,
+    'execute_seconds':execute,'save_seconds':sec('api_save_xlsx_direct','api_save_csv') if engine!='dde' else sec('xls_stability'),
+    'convert_seconds':sec('format_conversion'),'publish_seconds':sec('publish'),'lines':1}
+ try:
+  p=Path(intermediate) if intermediate else None
+  if p and p.exists():
+   size=p.stat().st_size;m['transfer_bytes']=size
+   if transfer_seconds:m['transfer_kbs']=round(size/1024/transfer_seconds,1)
+ except OSError:pass
+ return {k:v for k,v in m.items() if v is not None}
+
+def phase_profile_seconds():
+ """いま測り終わっている工程の秒数。実績としてDBへ残すときに使う。"""
+ return dict(_phase_profile['phases'])
 
 def phase_profile_summary():
  total=time.perf_counter()-_phase_profile['started']
@@ -3648,7 +3708,7 @@ def process_split_part(j,cfg,user,pw,server,out_csv,drop_columns,part_label='',r
   except Exception:pass
  try:
   step('接続')
-  api=NavigatorApi(resolve_path(cfg.get('symnavi_exe','')),log,resolve_path(cfg.get('navigator_api_dll')) if cfg.get('navigator_api_dll') else None,base_dir=BASE)
+  api=NavigatorApi(resolve_path(cfg.get('symnavi_exe','')),log,resolve_path(cfg.get('navigator_api_dll')) if cfg.get('navigator_api_dll') else None,base_dir=BASE,search_roots=dll_search_roots(cfg))
   api.open_session(user,pw,server)
   profiles=api_data_source_profiles(resolve_path(cfg['symnavim_conf']))
   if not any(p.get('kind')=='oracle' for p in profiles):
@@ -3960,7 +4020,7 @@ def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,
    finally:
     shutil.rmtree(split_work,ignore_errors=True)
   if intermediate is None:
-   _dll_started=time.perf_counter();api_client=NavigatorApi(resolve_path(cfg['symnavi_exe']),log,resolve_path(cfg.get('navigator_api_dll')) if cfg.get('navigator_api_dll') else None,base_dir=BASE);phase_profile_add('api_load_dll',time.perf_counter()-_dll_started)
+   _dll_started=time.perf_counter();api_client=NavigatorApi(resolve_path(cfg['symnavi_exe']),log,resolve_path(cfg.get('navigator_api_dll')) if cfg.get('navigator_api_dll') else None,base_dir=BASE,search_roots=dll_search_roots(cfg));phase_profile_add('api_load_dll',time.perf_counter()-_dll_started)
    update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='API接続',percent=line_percent('session',0.4),detail='セッション接続',phase='session');session_started=time.perf_counter();session_elapsed=api_client.open_session(user,pw,server);phase_profile_add('api_open_session',session_elapsed);log.info('PARALLEL_API_SESSION line=%s job=%s dll=%s elapsed=%.2fs is_opened=1',line_name,j['name'],api_client.dll_path,session_elapsed)
    profiles=api_data_source_profiles(resolve_path(cfg['symnavim_conf']))
    if not any(p.get('kind')=='oracle' for p in profiles):
@@ -4110,7 +4170,7 @@ def run_api_process_batch(jobs,cfg,user,pw,server,dde_work,backup,max_lines,trig
  # 各対象(ジョブ)の実状態を job_id 単位で保持し、完了後に「待機」へ戻る不具合を防ぐ。
  completed_ids=[];failed_ids=[];all_job_ids=[j['id'] for j in jobs]
  with active_workers_lock:active_workers.clear()
- batch_started=time.perf_counter(); total=len(jobs); configured_lines=max(1,int(max_lines)); max_lines=max(1,min(int(max_lines),total))
+ batch_started=time.perf_counter(); total=len(jobs); configured_lines=max(1,int(max_lines)); max_lines=max(1,min(int(max_lines),total)); batch_results=[]
  # 列分割は同時プロセスを増やす。設定した並列数を超えないよう、1対象あたりの持ち分を先に決める。
  # 対象がラインを埋め切っているときは持ち分が1になり、分割は行われない。
  split_budget=max(1,configured_lines//total)
@@ -4171,6 +4231,10 @@ def run_api_process_batch(jobs,cfg,user,pw,server,dde_work,backup,max_lines,trig
    (results if result.get('ok') else failures).append(result)
    (completed_ids if result.get('ok') else failed_ids).append(item['job']['id'])
    log.info('WORKER_END batch_id=%s line=%s pid=%s job=%s returncode=%s ok=%s elapsed=%.2fs',batch_id,item['line'],item['proc'].pid,item['job']['name'],rc,result.get('ok'),result.get('elapsed',0))
+   batch_results.append({'job':item['job']['name'],'job_id':item['job']['id'],'status':'ok' if result.get('ok') else 'failed',
+                         'detail':str(result.get('result') or result.get('error') or ''),'rows':result.get('rows'),'cols':result.get('columns'),
+                         'elapsed':round(float(result.get('elapsed') or 0),1),'target':str(result.get('target') or '')})
+   set_status(job_results=list(batch_results))
    record_job_run(item['job']['id'],item['job']['name'],'ok' if result.get('ok') else 'failed',trigger,detail=(result.get('result') or result.get('error') or ''),rows=result.get('rows'),cols=result.get('columns'),output_file=Path(result.get('target') or '').name,
                   metrics={k:result.get(k) for k in ('elapsed','execute_seconds','save_seconds','merge_seconds','transfer_bytes','transfer_kbs','split_parts','race_winner','format') if result.get(k) is not None})
    # ワーカーが持ち帰った列名をここで保存する。設定DBへの書き込みを親1本に集約して競合を避ける。
@@ -4207,7 +4271,7 @@ def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=No
  try:
   startup_started=time.perf_counter();cfg_started=time.perf_counter();cfg=load();log.info('STARTUP_PHASE phase=config_load elapsed=%.2fs',time.perf_counter()-cfg_started);jobs=[j for j in cfg['jobs'] if j.get('enabled') and (not job_ids or j['id'] in job_ids)]
   if not jobs:raise ValueError('実行対象がありません')
-  selection_elapsed=time.perf_counter()-cfg_started;first_job=jobs[0]; first_fmt=normalize_output_format(first_job.get('output_format'),first_job.get('output_file')); first_target=resolve_path(first_job.get('output_folder') or cfg['default_output_folder'])/canonical_output_file(first_job.get('output_file'),first_fmt); progress.started=time.time(); requested_lines=max(1,min(int(parallel_lines_override or 1),len(jobs))); execution_mode='parallel' if str(cfg['settings'].get('extract_engine') or 'api').lower()=='api' else 'serial'; set_status(run_id=run_id or uuid.uuid4().hex,execution_mode=execution_mode,requested_lines=requested_lines,parallel_mode=(execution_mode=='parallel'),parallel_lines=[],queue_total=0,queue_waiting=0,queue_active=0,queue_completed=0,queue_completed_ids=[],queue_failed_ids=[],queue_running_ids=[],queue_waiting_ids=[j['id'] for j in jobs],parallel_max_lines=(requested_lines if execution_mode=='parallel' else 0),parallel_speedup=0,batch_job_ids=[j['id'] for j in jobs]); set_status(running=True,current='準備中',current_job_id=first_job['id'],current_job_name=first_job['name'],current_index=1,total_jobs=len(jobs),completed_jobs=0,failed_jobs=0,output_format=first_fmt,output_file=canonical_output_file(first_job.get('output_file'),first_fmt),output_target=str(first_target),started_at=datetime.now().isoformat(timespec='seconds'),elapsed_seconds=0,symnavi_window='起動待ち',step='prepare',step_label='設定を確認しています',step_percent=3,last_result='実行中',error_detail='',job_errors=[]); log.info('BUILD_VERSION=%s',BUILD_VERSION); log.info('処理開始 trigger=%s jobs=%s',trigger,[j['rne'] for j in jobs]);log.info('STARTUP_PHASE phase=config_and_job_selection elapsed=%.2fs',selection_elapsed)
+  selection_elapsed=time.perf_counter()-cfg_started;first_job=jobs[0]; first_fmt=normalize_output_format(first_job.get('output_format'),first_job.get('output_file')); first_target=resolve_path(first_job.get('output_folder') or cfg['default_output_folder'])/canonical_output_file(first_job.get('output_file'),first_fmt); progress.started=time.time(); requested_lines=max(1,min(int(parallel_lines_override or 1),len(jobs))); execution_mode='parallel' if str(cfg['settings'].get('extract_engine') or 'api').lower()=='api' else 'serial'; set_status(run_id=run_id or uuid.uuid4().hex,execution_mode=execution_mode,requested_lines=requested_lines,parallel_mode=(execution_mode=='parallel'),parallel_lines=[],queue_total=0,queue_waiting=0,queue_active=0,queue_completed=0,queue_completed_ids=[],queue_failed_ids=[],queue_running_ids=[],queue_waiting_ids=[j['id'] for j in jobs],job_results=[],parallel_max_lines=(requested_lines if execution_mode=='parallel' else 0),parallel_speedup=0,batch_job_ids=[j['id'] for j in jobs]); set_status(running=True,current='準備中',current_job_id=first_job['id'],current_job_name=first_job['name'],current_index=1,total_jobs=len(jobs),completed_jobs=0,failed_jobs=0,output_format=first_fmt,output_file=canonical_output_file(first_job.get('output_file'),first_fmt),output_target=str(first_target),started_at=datetime.now().isoformat(timespec='seconds'),elapsed_seconds=0,symnavi_window='起動待ち',step='prepare',step_label='設定を確認しています',step_percent=3,last_result='実行中',error_detail='',job_errors=[]); log.info('BUILD_VERSION=%s',BUILD_VERSION); log.info('処理開始 trigger=%s jobs=%s',trigger,[j['rne'] for j in jobs]);log.info('STARTUP_PHASE phase=config_and_job_selection elapsed=%.2fs',selection_elapsed)
   for k in ('symnavi_exe','symnavim_conf','symnavim_def'):
    if not resolve_path(cfg[k]).is_file():raise FileNotFoundError(f'{k}がありません: {cfg[k]}')
   cred_started=time.perf_counter();user,pw,server,_=creds(resolve_path(cfg['symnavim_conf']));log.info('STARTUP_PHASE phase=credential_load elapsed=%.2fs',time.perf_counter()-cred_started);path_started=time.perf_counter();rne_root=resolve_path(cfg['rne_folder']);backup=resolve_path(cfg['backup_folder']);dde_work=dde_staging_folder();log.info('STARTUP_PHASE phase=path_prepare elapsed=%.2fs total=%.2fs',time.perf_counter()-path_started,time.perf_counter()-startup_started);log.info('共通一時保存先: %s',dde_work)
@@ -4237,7 +4301,7 @@ def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=No
   # engine=='api'の分岐は、DLLを直接読み込む設定に戻せるよう残してあるが通常は通らない。
   if engine=='api':
    from navigator_api import NavigatorApi
-   progress('launch','Navigator APIを初期化しています',8); api_client=NavigatorApi(resolve_path(cfg['symnavi_exe']),log,resolve_path(cfg.get('navigator_api_dll')) if cfg.get('navigator_api_dll') else None,base_dir=BASE); set_status(symnavi_window='APIモード')
+   progress('launch','Navigator APIを初期化しています',8); api_client=NavigatorApi(resolve_path(cfg['symnavi_exe']),log,resolve_path(cfg.get('navigator_api_dll')) if cfg.get('navigator_api_dll') else None,base_dir=BASE,search_roots=dll_search_roots(cfg)); set_status(symnavi_window='APIモード')
    progress('dde','Navigator ServerへAPI接続しています',15); t=time.perf_counter(); elapsed=api_client.open_session(user,pw,server); log.info('APIセッション接続完了 dll=%s elapsed=%.2fs is_opened=1',api_client.dll_path,elapsed)
    profiles=api_data_source_profiles(resolve_path(cfg['symnavim_conf']))
    # Oracle専用設定がなければ、Navigator認証情報をOracle接続へ1回だけ流用する。
@@ -4259,11 +4323,12 @@ def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=No
    # app.py全体がコンパイル不能になる。文字列連結で組み立て、旧バージョンでも起動できるようにする。
    progress('launch','SymfoNaviを起動しています',8); _symnavi_cmd='"'+str(resolve_path(cfg['symnavi_exe']))+'" -d -u"'+user+'","'+pw+'","'+server+'"'; proc=subprocess.Popen(_symnavi_cmd); set_status(symnavi_window='起動済み'); progress('dde','SymfoNaviへのDDE接続を待っています',15); srv,conv=dde_connect(int(cfg['settings']['dde_timeout_seconds'])); hide_done=start_hidden_symnavi(proc,cfg['settings']); log.info('SymfoNavi定期監視を抽出中は停止 mode=pipeline-priority')
   else:raise ValueError('抽出エンジンが不正です: '+engine)
-  progress('ready','処理の準備が完了しました',20); results=[]; completed_ids=[]
+  progress('ready','処理の準備が完了しました',20); results=[]; completed_ids=[]; job_results=[]
+  set_status(job_results=[])
   for job_index,j in enumerate(jobs,1):
    if cancel_requested.is_set():raise RunCancelled(f'{job_index-1}/{len(jobs)}件完了後に中断されました')
    j['output_file']=resolve_output_filename(j,cfg); log.info('OUTPUT_NAME job=%s mode=%s pattern=%s resolved_file=%s',j['name'],j.get('naming_mode','fixed'),j.get('output_pattern',''),j['output_file'])
-   set_status(current_index=job_index,current_job_id=j['id'],current_job_name=j['name'],output_format=normalize_output_format(j.get('output_format'),j.get('output_file')),output_file=canonical_output_file(j.get('output_file'),normalize_output_format(j.get('output_format'),j.get('output_file'))))
+   set_status(current_index=job_index,current_job_id=j['id'],current_job_name=j['name'],queue_running_ids=[j['id']],queue_waiting_ids=[x['id'] for x in jobs[job_index:]],output_format=normalize_output_format(j.get('output_format'),j.get('output_file')),output_file=canonical_output_file(j.get('output_file'),normalize_output_format(j.get('output_format'),j.get('output_file'))))
    phase_profile_reset(); preflight_started=phase_log('job_preflight',job=j['name']); progress('open',f'{j["name"]}: 入出力先を確認しています',22,activity_detail='事前確認',activity_value='出力先・保留ファイル・RNEを確認'); rp=resolve_rne_path(j,cfg); out_dir=resolve_path(j.get('output_folder') or cfg['default_output_folder']); fmt=validate_output_contract(j,'before-extraction'); j['_accdb_template']=str(resolve_path(cfg.get('accdb_template','.\\assets\\empty.accdb'))); target=out_dir/j['output_file']; set_status(output_target=str(target)); log.info('実行設定 job=%s format=%s output_file=%s target=%s',j['name'],fmt,j['output_file'],target); apply_pending(target,backup,int(cfg['settings']['backup_generations']),backup_enabled=bool(cfg['settings'].get('backup_enabled',True)),retention_days=int(cfg['settings'].get('backup_retention_days',30)),generation_limit_enabled=bool(cfg['settings'].get('backup_generation_limit_enabled',True)),backup_mode=str(cfg['settings'].get('backup_mode','generations'))); phase_log('job_preflight',preflight_started,job=j['name'],rne=rp,target=target)
    if not rp.is_file():raise FileNotFoundError('RNEがありません: '+str(rp))
    stamp=datetime.now().strftime('%Y%m%d_%H%M%S_%f'); xls=dde_work/f'navi_{job_index}_{stamp}.xls'; local_export=dde_work/'export'; local_export.mkdir(parents=True,exist_ok=True); db=local_export/f'{Path(j["output_file"]).stem}_{stamp}{Path(j["output_file"]).suffix}'; log.info('変換作業先 local=%s',db); esc=lambda x:str(x).replace('"','""')
@@ -4318,14 +4383,17 @@ def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=No
      intermediate=api_csv
     progress('close',f'{j["name"]}: APIカタログを解放しています',62,activity_detail='API抽出完了',activity_value=f'期待値 {expected_rows}行 x {expected_cols}列');t=phase_log('api_close_catalog',job=j['name']);api_client.close_catalog();phase_log('api_close_catalog',t,job=j['name'])
    else:
-    progress('open',f'{j["name"]}: RNEを開いています',28,current_job_id=j['id'],activity_detail='共通抽出工程 1/3',activity_value='全形式共通')
+    # DDEも工程ごとに進捗を出す。APIと同じ順（開く→抽出→検証→閉じる）で percent も単調に増やす。
+    progress('open',f'{j["name"]}: RNEを開いています',28,current_job_id=j['id'],activity_detail='共通抽出工程 1/4',activity_value=str(rp))
     t=phase_log('rne_open',job=j['name']); dde_exec(conv,'Open',f'[Open("{esc(rp)}")]'); phase_log('rne_open',t,job=j['name'])
-    progress('save',f'{j["name"]}: 共通XLSを生成しています',38,activity_detail='共通抽出工程 2/3',activity_value=str(xls))
-    t=phase_log('xls_save',job=j['name']); dde_exec(conv,'Save',f'[Save("{esc(xls)}", "EXCEL")]',expected_output=xls); phase_log('xls_save',t,job=j['name'])
-    progress('wait',f'{j["name"]}: 共通XLSを検証しています',50,activity_detail='共通抽出工程 3/3',activity_value='ファイル安定・構造確認')
+    progress('save',f'{j["name"]}: 共通XLSを生成しています',38,activity_detail='共通抽出工程 2/4',activity_value=str(xls))
+    t=phase_log('xls_save',job=j['name']); dde_exec(conv,'Save',f'[Save("{esc(xls)}", "EXCEL")]',expected_output=xls); dde_save_seconds=phase_log('xls_save',t,job=j['name'])
+    progress('wait',f'{j["name"]}: 共通XLSを検証しています',50,activity_detail='共通抽出工程 3/4',activity_value='ファイル安定・構造確認')
     t=phase_log('xls_stability',job=j['name']); wait_file(xls,int(cfg['settings']['output_wait_seconds']),j); phase_log('xls_stability',t,job=j['name'],size=xls.stat().st_size)
     intermediate=xls;expected_rows=None;expected_cols=None
-    progress('close',f'{j["name"]}: 抽出画面を閉じています',62,activity_detail='共通抽出完了',activity_value=f'{xls.stat().st_size:,} bytes')
+    xls_bytes=xls.stat().st_size
+    log.info('DDE_EXTRACT job=%s file=%s bytes=%s save_elapsed=%.2fs throughput_kb_s=%s',j['name'],xls,xls_bytes,dde_save_seconds or 0,f'{xls_bytes/1024/dde_save_seconds:.1f}' if dde_save_seconds else '0')
+    progress('close',f'{j["name"]}: 抽出画面を閉じています',62,activity_detail='共通抽出工程 4/4',activity_value=f'{xls_bytes:,} bytes')
     t=phase_log('rne_close',job=j['name']); dde_exec(conv,'Close','[Close()]'); phase_log('rne_close',t,job=j['name'])
    if fmt=='accdb' and access_prewarm_thread is not None:
     join_started=time.perf_counter();alive_before=access_prewarm_thread.is_alive();access_prewarm_thread.join(timeout=2.0);log.info('ACCDB_PREWARM_JOIN alive_before=%s alive_after=%s elapsed=%.2fs',alive_before,access_prewarm_thread.is_alive(),time.perf_counter()-join_started)
@@ -4337,7 +4405,16 @@ def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=No
     t=phase_log('format_conversion',job=j['name'],format=fmt); nr,nc=export_data(intermediate,db,j,bool(cfg['settings']['reject_zero_rows']),expected_rows,expected_cols); phase_log('format_conversion',t,job=j['name'],format=fmt,rows=nr,columns=nc)
    progress('publish',f'{j["name"]}: 検査済みファイルを公開しています',90,activity_detail='公開工程',activity_value=str(target))
    t=phase_log('publish',job=j['name']); pub=publish(db,target,backup,int(cfg['settings']['backup_generations']),backup_enabled=bool(cfg['settings'].get('backup_enabled',True)),retention_days=int(cfg['settings'].get('backup_retention_days',30)),generation_limit_enabled=bool(cfg['settings'].get('backup_generation_limit_enabled',True)),backup_mode=str(cfg['settings'].get('backup_mode','generations'))); phase_log('publish',t,job=j['name'],published=pub['published'])
-   total=time.perf_counter()-job_started; results.append(f'{j["name"]}: {nr}件/{nc}列 / {total:.1f}秒'+('' if pub['published'] else f' / 更新保留: {pub["pending"]}')); completed_ids.append(j['id']); set_status(completed_jobs=job_index,queue_completed_ids=list(completed_ids)); log.info('JOB_RESULT job=%s format=%s rows=%s columns=%s elapsed=%.2fs target=%s',j['name'],fmt,nr,nc,total,target); log.info('JOB_PROFILE job=%s rows=%s columns=%s %s',j['name'],nr,nc,phase_profile_summary()); record_job_run(j['id'],j['name'],'ok',trigger,detail=f'{nr}件/{nc}列 / {total:.1f}秒',rows=nr,cols=nc,output_file=j['output_file'])
+   total=time.perf_counter()-job_started
+   detail=f'{nr}件/{nc}列 / {total:.1f}秒'+('' if pub['published'] else f' / 更新保留: {pub["pending"]}')
+   results.append(f'{j["name"]}: '+detail); completed_ids.append(j['id'])
+   # 直列（DDE / アプリ内API）でも並列と同じ実績を残す。ここを空にすると一覧の実績欄が
+   # 「件数だけ」になり、所要も転送量も後から追えなくなる。
+   metrics=serial_run_metrics(engine,fmt,total,nr,nc,locals().get('intermediate'),locals().get('dde_save_seconds'))
+   record_job_run(j['id'],j['name'],'ok',trigger,detail=detail,rows=nr,cols=nc,output_file=j['output_file'],metrics=metrics)
+   job_results.append({'job':j['name'],'job_id':j['id'],'status':'ok','detail':detail,'rows':nr,'cols':nc,'elapsed':round(total,1),'target':str(target),'published':bool(pub['published'])})
+   set_status(completed_jobs=job_index,queue_completed_ids=list(completed_ids),queue_running_ids=[],job_results=list(job_results))
+   log.info('JOB_RESULT job=%s format=%s rows=%s columns=%s elapsed=%.2fs target=%s',j['name'],fmt,nr,nc,total,target); log.info('JOB_PROFILE job=%s rows=%s columns=%s %s',j['name'],nr,nc,phase_profile_summary())
    try:
     if column_cache_state(rp)[0]!='hit':save_column_cache(rp,read_header_names(db,j),rows=nr,source='run',job=j)
    except Exception as ce:log.warning('COLUMN_CACHE_READ_FAILED job=%s error=%s',j['name'],ce)
@@ -4349,10 +4426,18 @@ def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=No
   msg='正常終了 | '+' | '.join(results); progress('complete','すべての処理が完了しました',100); set_status(last_result=msg,last_finished_at=datetime.now().isoformat(timespec='seconds'),elapsed_seconds=int(time.time()-progress.started)); log.info(msg)
  except RunCancelled as e:
   msg='中断されました: '+str(e); set_status(step='cancelled',step_label='ユーザーの操作により中断しました',step_percent=100,last_result=msg,error_detail='',last_finished_at=datetime.now().isoformat(timespec='seconds'),elapsed_seconds=int(time.time()-getattr(progress,'started',time.time()))); log.info('RUN_CANCELLED %s',msg)
-  if status.get('running') and status.get('current_job_id'):record_job_run(status['current_job_id'],status.get('current_job_name',''),'cancelled',trigger,detail=msg)
+  if status.get('running') and status.get('current_job_id'):
+   record_job_run(status['current_job_id'],status.get('current_job_name',''),'cancelled',trigger,detail=msg)
+   set_status(queue_running_ids=[])
  except Exception as e:
   msg='異常終了: '+str(e); set_status(step='error',step_label='処理を完了できませんでした',failed_jobs=1,step_percent=100,last_result=msg,error_detail=str(e),last_finished_at=datetime.now().isoformat(timespec='seconds'),elapsed_seconds=int(time.time()-getattr(progress,'started',time.time()))); log.error('%s\n%s',msg,traceback.format_exc())
-  if status.get('current_job_id'):record_job_run(status['current_job_id'],status.get('current_job_name',''),'failed',trigger,detail=str(e))
+  if status.get('current_job_id'):
+   record_job_run(status['current_job_id'],status.get('current_job_name',''),'failed',trigger,detail=str(e))
+   # 直列実行では失敗を確定させるのがここしかない。入れておかないと一覧の行が
+   # 「処理中」のまま止まり、どの対象で落ちたのかが画面から分からない。
+   failed_ids=[x for x in (status.get('queue_failed_ids') or [])]+[status['current_job_id']]
+   set_status(queue_failed_ids=list(dict.fromkeys(failed_ids)),queue_running_ids=[],
+              job_results=list(status.get('job_results') or [])+[{'job':status.get('current_job_name','') or '実行対象','job_id':status['current_job_id'],'status':'failed','detail':str(e)}])
   if not status.get('job_errors'):set_status(job_errors=[{'job':status.get('current_job_name','') or '実行対象','error':str(e)}])
   raise
  finally:
@@ -4401,7 +4486,11 @@ def clamp_parallel_lines(value,cfg=None,default=1):
 def enqueue_command(job_ids,trigger,parallel_lines):
  cfg=load(); selected=[j for j in cfg['jobs'] if j.get('enabled') and (not job_ids or j['id'] in job_ids)]
  if not selected:raise ValueError('実行対象がありません')
- item={'id':uuid.uuid4().hex,'job_ids':[j['id'] for j in selected],'job_names':[j['name'] for j in selected],'trigger':trigger,'parallel_lines':clamp_parallel_lines(parallel_lines,cfg),'enqueued_at':datetime.now().isoformat(timespec='seconds'),'count':len(selected)}
+ # DDEはSymfoNavi画面を1つ操作する方式なので、並列ライン数の指定は効かない。
+ # そのまま持たせると実行キューに「6ライン」と出て、実際の動き（1件ずつ）と食い違う。
+ engine=str(cfg.get('settings',{}).get('extract_engine') or 'api').lower()
+ lines=1 if engine=='dde' else clamp_parallel_lines(parallel_lines,cfg)
+ item={'id':uuid.uuid4().hex,'job_ids':[j['id'] for j in selected],'job_names':[j['name'] for j in selected],'trigger':trigger,'parallel_lines':lines,'engine':engine,'enqueued_at':datetime.now().isoformat(timespec='seconds'),'count':len(selected)}
  with command_queue_lock:
   command_queue.append(item);position=len(command_queue)+(1 if active_command else 0)
  command_queue_event.set();log.info('COMMAND_QUEUE_ENQUEUE id=%s position=%s jobs=%s lines=%s trigger=%s',item['id'],position,item['job_names'],item['parallel_lines'],trigger)
@@ -4871,7 +4960,7 @@ def open_api_catalog(c,rne_path):
  """セッションを開き、データソースへ接続し、RNEを読み込んで (api, handle) を返す。呼び出し側で api.close() すること。"""
  from navigator_api import NavigatorApi
  user,pw,server,_=creds(resolve_path(c['symnavim_conf']))
- api=NavigatorApi(resolve_path(c.get('symnavi_exe','')),log,resolve_path(c.get('navigator_api_dll')) if c.get('navigator_api_dll') else None,base_dir=BASE)
+ api=NavigatorApi(resolve_path(c.get('symnavi_exe','')),log,resolve_path(c.get('navigator_api_dll')) if c.get('navigator_api_dll') else None,base_dir=BASE,search_roots=dll_search_roots(c))
  api.open_session(user,pw,server)
  profiles=api_data_source_profiles(resolve_path(c['symnavim_conf']))
  if not any(p.get('kind')=='oracle' for p in profiles):
@@ -5860,13 +5949,54 @@ def move_execution_queue(queue_id):
 @app.get('/api/status')
 def get_status():
  response=jsonify(status);response.headers['Cache-Control']='no-store, no-cache, must-revalidate, max-age=0';return response
-def dll_diagnostic_issues(attempts,python_bits=None,exports=None,bound=None):
+def dll_search_roots(cfg=None):
+ """DLLを探す範囲を、設定どおりの順番で絶対パスにして返す。
+
+ 設定は相対パス（.\\Config\\NAVIAP）でも書けるので、ここで一度だけ解決する。
+ 空にはしない。空になると探索が一切効かず、原因の分からない「見つかりません」になる。
+ """
+ try:values=(cfg if isinstance(cfg,dict) else load()).get('navigator_api_search_roots')
+ except Exception:values=None
+ if not isinstance(values,list) or not values:values=list(DEFAULT_DLL_SEARCH_ROOTS)
+ out=[];seen=set()
+ for raw in values:
+  raw=str(raw or '').strip()
+  if not raw:continue
+  try:p=resolve_path(raw)
+  except Exception:continue
+  key=os.path.normcase(os.path.normpath(str(p)))
+  if key in seen:continue
+  seen.add(key);out.append(p)
+ return out or [resolve_path(x) for x in DEFAULT_DLL_SEARCH_ROOTS]
+
+def dll_diagnostic_issues(attempts,python_bits=None,exports=None,bound=None,requirement=None):
  issues=[];existing=[x for x in attempts if x.get('exists')]
- if not existing:issues.append({'level':'error','title':'DLLが見つかりません','detail':'設定パスとC:\\NAVIAP配下の検索候補にSymNaviA.dllがありません。','action':'参照ボタンでDLLを指定するか、配置場所を確認してください。'})
- mismatches=[x for x in existing if x.get('dll_bits') and python_bits and int(x['dll_bits'])!=int(python_bits)]
- if mismatches:issues.append({'level':'error','title':'DLLとPythonのbit数が一致しません','detail':f'実行中のPythonは{python_bits}bitですが、異なるbit数のDLLが検出されました。','action':f'{python_bits}bit版DLLを指定するか、Pythonのbit数をDLLへ合わせてください。'})
+ # 条件が渡されていなくても自分で求める。ここが空だと「何が必要か」を言えないまま
+ # 「読み込めません」だけを出すことになり、別のPCで手が止まる。
+ req=requirement or _dll_requirement() or {}
+ bits=int(python_bits or req.get('required_bits') or struct.calcsize('P')*8)
+ want=', '.join(req.get('preferred_folders') or [])
+ roots=' / '.join(req.get('search_roots') or [])
+ # 「何が必要か」を最初に置く。読み込めた場合でも、別のPCへ移すときに要る情報はこれ。
+ issues.append({'level':'ok','title':f'このPCで必要なDLL: {bits}bit版 SymNaviA.dll',
+                'detail':req.get('reason') or f'このアプリを動かしているPythonが{bits}bitのため、DLLも{bits}bit版でなければ読み込めません。',
+                'action':(f'標準の配布フォルダーなら {want} の中にあるものが該当します。' if want else '')+(f' 探した範囲: {roots}' if roots else '')})
+ if not existing:issues.append({'level':'error','title':'DLLが見つかりません','detail':f'検索範囲（{roots or "既定"}）と手動指定のどちらにも SymNaviA.dll がありません。','action':'「検索するフォルダー」に置き場所を追加して再検索するか、「手動で指定」でDLLを直接選んでください。'})
+ mismatches=[x for x in existing if x.get('dll_bits') and int(x['dll_bits'])!=bits]
+ if mismatches and not [x for x in attempts if x.get('result')=='loaded']:
+  seen=', '.join(sorted({str(x.get('dll_bits'))+'bit' for x in mismatches}))
+  issues.append({'level':'error','title':'見つかったDLLのbit数が合いません','detail':f'必要なのは{bits}bit版ですが、検出できたのは{seen}のDLLだけです。','action':(f'{want} のような{bits}bit版フォルダーを配置するか、そのフォルダーを検索範囲へ追加してください。' if want else f'{bits}bit版のDLLを配置してください。')})
+ elif mismatches:
+  issues.append({'level':'ok','title':'bit数が合わない候補は自動で除外しました','detail':'%d件を対象外にしています。'%len(mismatches),'action':f'{bits}bit版だけを使用します。除外は正常な動作です。'})
  errors=[x for x in attempts if x.get('result')=='load_error' or x.get('error')]
- if errors:issues.append({'level':'error','title':'DLLは存在しますが読み込めません','detail':str(errors[0].get('error') or 'WindowsがDLLをロードできませんでした。'),'action':'同一フォルダーの依存DLL、Visual C++ランタイム、アクセス権を確認してください。'})
+ if errors:
+  missing=req.get('runtime_missing') or []
+  issues.append({'level':'error','title':'DLLは存在しますが読み込めません','detail':str(errors[0].get('error') or 'WindowsがDLLをロードできませんでした。'),
+                 'action':('Visual C++ 再頒布可能パッケージ（%dbit）が不足しています: %s'%(bits,', '.join(missing))) if missing else '同一フォルダーの依存DLL、Visual C++ランタイム、アクセス権を確認してください。'})
+ if req.get('runtime_missing'):
+  issues.append({'level':'error','title':f'Visual C++ ランタイム（{bits}bit）が不足しています','detail':'見つからないDLL: '+', '.join(req['runtime_missing']),'action':f'Microsoft Visual C++ 再頒布可能パッケージの{bits}bit版を導入してください。'})
+ elif req.get('runtime'):
+  issues.append({'level':'ok','title':f'Visual C++ ランタイム（{bits}bit）は揃っています','detail':'確認済み: '+', '.join(req['runtime']),'action':'このPCでは追加導入は不要です。'})
  loaded=[x for x in attempts if x.get('result')=='loaded']
  if loaded:issues.append({'level':'ok','title':'DLLを正常に読み込みました','detail':str(loaded[0].get('path') or ''),'action':'Navigator APIを利用できます。'})
  # このDLLで何ができるかは、アプリが使っている関数だけでは分からない。公開されている関数も提示する。
@@ -5911,16 +6041,16 @@ def navigator_api_status():
   cached=_read_api_diag_cache()
   if cached:
    log.info('API_DIAG cache_hit=1 dll=%s dll_bits=%s',cached.get('dll'),cached.get('dll_bits'));_log_api_exports(cached.get('dll'),cached.get('exports'),cached.get('exports_bound'))
-   cached=dict(cached);cached['cached']=True;cached['issues']=dll_diagnostic_issues(cached.get('attempts') or [],cached.get('python_bits'),cached.get('exports'),cached.get('exports_bound'));return jsonify(cached)
+   cached=dict(cached);cached['cached']=True;cached['requirement']=_dll_requirement(c);cached['search_roots']=[str(x) for x in dll_search_roots(c)];cached['issues']=dll_diagnostic_issues(cached.get('attempts') or [],cached.get('python_bits'),cached.get('exports'),cached.get('exports_bound'),cached['requirement']);return jsonify(cached)
  try:
   from navigator_api import NavigatorApi
-  started=time.perf_counter();api=NavigatorApi(resolve_path(c.get('symnavi_exe','')),log,resolve_path(c.get('navigator_api_dll')) if c.get('navigator_api_dll') else None,base_dir=BASE);info=api.info();api.close();info['elapsed']=round(time.perf_counter()-started,3);info['cached']=False;info['issues']=dll_diagnostic_issues(info.get('attempts') or [],info.get('python_bits'),info.get('exports'),info.get('exports_bound'));log.info('API_DIAG cache_hit=0 elapsed=%.3fs dll=%s dll_bits=%s attempts=%s selection=%s',info.get('elapsed'),info.get('dll'),info.get('dll_bits'),len(info.get('attempts') or []),info.get('selection_reason'));_log_api_exports(info.get('dll'),info.get('exports'),info.get('exports_bound'));_write_api_diag_cache(info);return jsonify(info)
+  started=time.perf_counter();api=NavigatorApi(resolve_path(c.get('symnavi_exe','')),log,resolve_path(c.get('navigator_api_dll')) if c.get('navigator_api_dll') else None,base_dir=BASE,search_roots=dll_search_roots(c));info=api.info();api.close();info['elapsed']=round(time.perf_counter()-started,3);info['cached']=False;info['issues']=dll_diagnostic_issues(info.get('attempts') or [],info.get('python_bits'),info.get('exports'),info.get('exports_bound'),info.get('requirement'));log.info('API_DIAG cache_hit=0 elapsed=%.3fs dll=%s dll_bits=%s attempts=%s selection=%s',info.get('elapsed'),info.get('dll'),info.get('dll_bits'),len(info.get('attempts') or []),info.get('selection_reason'));_log_api_exports(info.get('dll'),info.get('exports'),info.get('exports_bound'));_write_api_diag_cache(info);return jsonify(info)
  except Exception as e:
   exports=[];exports_dll=''
   try:
    from navigator_api import candidate_dlls,pe_bits,pe_exports
    pybits=struct.calcsize('P')*8;attempts=[]
-   for p in candidate_dlls(resolve_path(c.get('symnavi_exe','')),resolve_path(c.get('navigator_api_dll')) if c.get('navigator_api_dll') else None,[BASE/'Config'/'NAVIAP',BASE/'NAVIAP']):
+   for p in candidate_dlls(resolve_path(c.get('symnavi_exe','')),resolve_path(c.get('navigator_api_dll')) if c.get('navigator_api_dll') else None,[BASE/'Config'/'NAVIAP',BASE/'NAVIAP'],search_roots=dll_search_roots(c)):
     exists=p.is_file();bits=pe_bits(p) if exists else None;attempts.append({'path':str(p),'exists':exists,'dll_bits':bits,'python_bits':pybits,'result':'bit_mismatch' if exists and bits and bits!=pybits else 'not_found'})
     # DLLを読み込めなくても、エクスポート表はファイルを読むだけで分かる。
     # 読み込みに失敗する端末こそ、そのDLLに何ができるのかを知りたい。
@@ -5930,7 +6060,88 @@ def navigator_api_status():
   except Exception:pybits=None;attempts=[]
   log.warning('API_DIAG cache_hit=0 result=failed attempts=%s error=%s',len(attempts),e)
   _log_api_exports(exports_dll,exports,[])
-  return jsonify(ok=False,error=str(e),mode='Navigator API',cached=False,attempts=attempts,exports=exports,exports_bound=[],issues=dll_diagnostic_issues(attempts,pybits,exports,[])),200
+  req=_dll_requirement(c)
+  return jsonify(ok=False,error=str(e),mode='Navigator API',cached=False,attempts=attempts,exports=exports,exports_bound=[],requirement=req,search_roots=req.get('search_roots') or [],issues=dll_diagnostic_issues(attempts,pybits,exports,[],req)),200
+
+def _dll_requirement(cfg=None):
+ """このPCで必要なDLLの条件。診断が失敗したときこそ必要な情報なので、常に返せるようにする。"""
+ try:
+  from navigator_api import dll_requirement
+  return dll_requirement(BASE,[str(x) for x in dll_search_roots(cfg)])
+ except Exception:
+  log.exception('DLL_REQUIREMENT_FAILED');return {}
+
+@app.get('/api/navigator-api/requirement')
+def navigator_api_requirement():
+ """「どのDLLを持ってくればよいか」だけを返す。診断を走らせる前に読めるようにする。"""
+ c=load();req=_dll_requirement(c)
+ return jsonify(ok=bool(req),requirement=req,configured=c.get('navigator_api_dll',''),
+                search_roots=[str(x) for x in dll_search_roots(c)],
+                default_roots=list(DEFAULT_DLL_SEARCH_ROOTS),
+                depth=int(c.get('navigator_api_search_depth',3) or 3))
+
+@app.post('/api/navigator-api/search-roots')
+def navigator_api_search_roots():
+ """DLLを探す範囲を保存する。別のPCではNAVIAPの置き場所が変わるため、範囲そのものを設定にしている。"""
+ body=request.get_json(silent=True) or {}
+ roots=[str(x).strip() for x in (body.get('roots') or []) if str(x or '').strip()]
+ try:depth=max(1,min(6,int(body.get('depth',3) or 3)))
+ except (TypeError,ValueError):depth=3
+ c=load()
+ c['navigator_api_search_roots']=roots or list(DEFAULT_DLL_SEARCH_ROOTS)
+ c['navigator_api_search_depth']=depth
+ c.pop('credential_status',None);save(c)
+ log.info('DLL_SEARCH_ROOTS_SAVED count=%s depth=%s roots=%s',len(c['navigator_api_search_roots']),depth,' | '.join(c['navigator_api_search_roots']))
+ return jsonify(ok=True,roots=c['navigator_api_search_roots'],resolved=[str(x) for x in dll_search_roots(c)],depth=depth)
+
+@app.post('/api/navigator-api/scan')
+def navigator_api_scan():
+ """指定した範囲を実際に歩いてSymNaviA.dllを集め、そのまま使えるものを先頭に返す。
+
+ 名前ではなくファイルで探すので、配布フォルダーの名前と違う場所に置かれていても見つかる。
+ """
+ body=request.get_json(silent=True) or {}
+ c=load()
+ raw=[str(x).strip() for x in (body.get('roots') or []) if str(x or '').strip()]
+ roots=[resolve_path(x) for x in raw] if raw else dll_search_roots(c)
+ try:depth=max(1,min(6,int(body.get('depth') or c.get('navigator_api_search_depth',3) or 3)))
+ except (TypeError,ValueError):depth=3
+ started=time.perf_counter()
+ try:
+  from navigator_api import scan_dll_roots
+  result=scan_dll_roots(roots,max_depth=depth)
+ except Exception as e:
+  log.exception('DLL_SCAN_FAILED');return jsonify(ok=False,error=str(e)),200
+ result['elapsed']=round(time.perf_counter()-started,3)
+ result['requirement']=_dll_requirement(c)
+ result['configured']=c.get('navigator_api_dll','')
+ result['recommended']=(result['usable'][0]['path'] if result.get('usable') else '')
+ log.info('DLL_SCAN roots=%s depth=%s found=%s usable=%s elapsed=%.2fs recommended=%s',
+          len(result.get('roots') or []),depth,len(result.get('found') or []),len(result.get('usable') or []),result['elapsed'],result['recommended'] or '-')
+ for x in (result.get('found') or []):
+  log.info('DLL_FOUND path=%s dll_bits=%s python_bits=%s usable=%s folder=%s',x.get('path'),x.get('dll_bits'),x.get('python_bits'),int(bool(x.get('usable'))),x.get('folder'))
+ return jsonify(ok=True,**result)
+
+@app.post('/api/navigator-api/select')
+def navigator_api_select():
+ """検索結果や参照ダイアログで選んだDLLを、手動指定として保存する。"""
+ body=request.get_json(silent=True) or {}
+ path=str(body.get('path') or '').strip()
+ if not path:return jsonify(ok=False,error='DLLのパスが指定されていません'),400
+ resolved=resolve_path(path)
+ if resolved.is_dir():resolved=resolved/'SymNaviA.dll'
+ if not resolved.is_file():return jsonify(ok=False,error=f'指定されたファイルがありません: {resolved}'),200
+ try:
+  from navigator_api import pe_bits
+  bits=pe_bits(resolved)
+ except Exception:bits=None
+ pybits=struct.calcsize('P')*8
+ c=load();c['navigator_api_dll']=str(resolved);c.pop('credential_status',None);save(c)
+ try:_api_diag_cache_path().unlink()
+ except OSError:pass
+ log.info('DLL_SELECTED path=%s dll_bits=%s python_bits=%s match=%s',resolved,bits,pybits,int(bits==pybits))
+ return jsonify(ok=True,path=str(resolved),dll_bits=bits,python_bits=pybits,match=bool(bits==pybits),
+                warning=('' if bits==pybits else f'このDLLは{bits or "不明"}bitです。Pythonは{pybits}bitのため、このままでは読み込めません。'))
 
 # 影実行を見ながらログも追いたい、という使い方が多い。1行ずつ全部返すと重いので、
 # 絞り込みと行数の上限をサーバー側で受けられるようにする。既定の挙動は今までどおり。
@@ -6255,12 +6466,26 @@ def validate():
    from navigator_api import candidate_dlls,pe_bits
    import struct
    pybits=struct.calcsize('P')*8
-   dll_candidates=candidate_dlls(resolve_path(c.get('symnavi_exe','')),resolve_path(c.get('navigator_api_dll')) if c.get('navigator_api_dll') else None,[BASE/'Config'/'NAVIAP',BASE/'NAVIAP'])
-   usable=[x for x in dll_candidates if x.is_file() and pe_bits(x)==pybits];selected=usable[0] if usable else None
-   add('実行環境','Navigator API DLL',bool(selected),f'利用候補: {selected} / Python {pybits}bit' if selected else f'Python {pybits}bitで利用可能なDLLがありません',configured=c.get('navigator_api_dll',''),item='navigator_api_dll',candidates=[str(x) for x in dll_candidates if x.is_file()],needs_reselect=not bool(selected))
+   roots=dll_search_roots(c)
+   dll_candidates=candidate_dlls(resolve_path(c.get('symnavi_exe','')),resolve_path(c.get('navigator_api_dll')) if c.get('navigator_api_dll') else None,[BASE/'Config'/'NAVIAP',BASE/'NAVIAP'],search_roots=roots)
+   found=[x for x in dll_candidates if x.is_file()]
+   usable=[x for x in found if pe_bits(x)==pybits];selected=usable[0] if usable else None
+   # bit数の話は必ず添える。別のPCで詰まるのはたいていここ。
+   if selected:detail=f'利用候補: {selected} / このPCで必要なのは {pybits}bit版 / 一致'
+   elif found:detail='見つかったDLLは%s。必要なのは%dbit版です'%(', '.join(sorted({str(pe_bits(x) or "不明")+"bit" for x in found})),pybits)
+   else:detail='検索範囲にSymNaviA.dllがありません（範囲: %s）'%(' / '.join(str(x) for x in roots))
+   add('実行環境','Navigator API DLL',bool(selected),detail,configured=c.get('navigator_api_dll',''),item='navigator_api_dll',candidates=[str(x) for x in found],needs_reselect=not bool(selected))
+   req=_dll_requirement(c);missing=req.get('runtime_missing') or []
+   add('実行環境','Visual C++ ランタイム',not missing,('不足: '+', '.join(missing)+f'（{pybits}bit版の再頒布可能パッケージが必要です）') if missing else '必要な%dbit版ランタイムは揃っています: %s'%(pybits,', '.join(req.get('runtime') or [])),item='vc_runtime')
   except Exception as e:add('実行環境','Navigator API DLL',False,e,item='navigator_api_dll',candidates=[],needs_reselect=True)
  else:
   exe=resolve_path(c.get('symnavi_exe',''));add('実行環境','SymNavi.exe',exe.is_file(),exe,configured=c.get('symnavi_exe',''))
+  # DDEはpywin32のdde拡張が要る。無ければ実行開始直後に必ず失敗するので、事前に出す。
+  try:
+   import win32ui,dde  # noqa: F401
+   add('実行環境','pywin32のDDE機能',True,'win32ui / dde を読み込めます')
+  except Exception as e:
+   add('実行環境','pywin32のDDE機能',False,f'読み込めません: {e}（pip install pywin32 が必要です）',item='pywin32')
  # 共通接続ファイル。設定されているものだけを検査し、未設定の任意項目は警告にする。
  for label,key in [('symnavim.conf','symnavim_conf'),('symnavim.def','symnavim_def')]:
   raw=str(c.get(key) or '').strip();p=resolve_path(raw) if raw else None
@@ -6298,7 +6523,9 @@ def validate():
 
 @app.get('/api/instance')
 def instance_info():
- r=app.make_response(jsonify(app=APP_ID,instance_id=INSTANCE_ID,display_name='SymfoNavi Data Hub',build_version=BUILD_VERSION,pid=os.getpid(),port=PORT,path=str(BASE)))
+ # versionは版だけ、build_versionは版＋ビルド名。起動待ちモーダルは前者を出す（差し込んだ値と
+ # 同じ形にして、サーバーが立った瞬間に表示が変わって見えないようにする）。
+ r=app.make_response(jsonify(app=APP_ID,instance_id=INSTANCE_ID,display_name='SymfoNavi Data Hub',version=APP_VERSION,build_version=BUILD_VERSION,pid=os.getpid(),port=PORT,path=str(BASE)))
  # 起動待ちモーダル(loading.html)がfile://から状態を確認できるよう、ローカル情報に限りCORSを許可する。
  r.headers['Access-Control-Allow-Origin']='*'; r.headers['Cache-Control']='no-store'; return r
 
