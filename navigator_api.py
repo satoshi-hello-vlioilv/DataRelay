@@ -23,7 +23,12 @@ NAVI_SIDE=0x1
 NAVI_HEAD=0x2
 NAVI_COND=0x3
 NAVI_DATA=0x4
-NAVI_IN_DISP=0x0
+# 表示指定（NaviChangeCategory の disp / NaviChangeConditionCP の target）
+NAVI_IN_DISP=0x0      # 表示する
+NAVI_IN_NONDISP=0x1   # 表示しない
+NAVI_IN_OTHERS=0x2    # その他としてまとめる
+NAVI_IN_TARGET=0x3    # 絞り込みの対象にする
+NAVI_IN_NONTARGET=0x4 # 絞り込みの対象から外す
 NAVI_LABEL=0x0
 # データ項目の集計条件（NaviChangeConditionDI の condition。ビットで組み合わせる）
 NAVI_MATCH=0x1        # 値を指定して一致するものを求める
