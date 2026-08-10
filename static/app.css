@@ -1522,3 +1522,55 @@ body > main{max-width:1620px;padding-left:12px;padding-right:12px}
   border-radius:5px;padding:6px 9px;line-height:1.55}
 .rp-mode.rowsplit{background:#eaf0dd;color:#4d6423}
 @media(max-width:700px){.sp-card{grid-template-columns:30px minmax(0,1fr) auto}.sp-tag{grid-column:2/-1}}
+
+/* ==== RNEの控え（手順1）と実績（手順5）================================== */
+.master-state{display:grid;gap:8px;padding:10px 12px;border:1px solid #dbe5e9;border-left-width:3px;
+  border-radius:8px;background:#f6f9fa;margin-bottom:9px}
+.master-state.is-fresh{border-left-color:#2e8b6f;background:#f5fbf8}
+.master-state.is-stale{border-left-color:#c0a25a;background:#fdf9ef}
+.master-state.is-none{border-left-color:#9fb0b8}
+.master-state.is-missing{border-left-color:#c9564a;background:#fff5f3}
+.ms-head{display:grid;gap:2px}
+.ms-head b{font-size:13px;color:#17505f}
+.ms-head span{font-size:10px;color:#93a6ae;word-break:break-all}
+.ms-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:6px}
+.ms-grid>div{display:grid;gap:1px;padding:6px 9px;background:#fff;border:1px solid #e2eaed;border-radius:6px}
+.ms-grid small{font-size:10px;color:#7d919b}
+.ms-grid b{font-size:14px;color:#17505f;line-height:1.2}
+.ms-grid span{font-size:10px;color:#93a6ae}
+.ms-foot{display:flex;flex-wrap:wrap;gap:4px 14px}
+.ms-foot span{font-size:10px;color:#93a6ae}
+.ms-block{display:grid;gap:4px;padding:7px 9px;background:#fff3f1;border:1px solid #efc8c2;border-radius:6px}
+.ms-block b{font-size:11px;color:#94352d}
+.ms-block>span{display:grid;gap:1px;font-size:10.5px;color:#7a4a44}
+.ms-block em{font-style:normal;font-size:9.5px;color:#a3736c}
+.ms-block button{justify-self:start;height:28px;padding:3px 10px;font-size:10.5px}
+.ip-more{margin:8px 0 0}
+.ip-more>summary{cursor:pointer;font-size:10.5px;color:#7d919b;padding:3px 0}
+
+.rne-stats{display:grid;gap:9px}
+.rs-sum{display:flex;gap:12px;align-items:baseline}
+.rs-sum b{font-size:13px;color:#17505f}
+.rs-sum span{font-size:11px;color:#7d919b}
+.rs-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:7px}
+.rs-card{border:1px solid #e0e8eb;border-radius:8px;background:#fff;overflow:hidden}
+.rs-card>header{display:flex;justify-content:space-between;align-items:baseline;gap:8px;
+  padding:6px 9px;background:#f6f9fa;border-bottom:1px solid #e8eef0}
+.rs-card>header b{font-size:11.5px;color:#28505f}
+.rs-card>header small{font-size:9.5px;color:#93a6ae}
+.rs-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 8px;padding:5px 9px;border-top:1px solid #f0f4f5}
+.rs-row:first-of-type{border-top:0}
+.rs-row>span{font-size:11px;color:#28505f;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rs-row>b{font-size:12px;color:#17505f;text-align:right}
+.rs-row>small{grid-column:1/-1;font-size:9.5px;color:#93a6ae}
+.rs-list{border:1px solid #e0e8eb;border-radius:8px;background:#fff}
+.rs-list>summary{cursor:pointer;padding:6px 9px;font-size:11px;color:#43616b}
+.rs-table{display:grid;gap:1px;padding:0 9px 8px;max-height:260px;overflow:auto}
+.rs-line{display:grid;grid-template-columns:118px minmax(0,1fr) 62px;gap:2px 8px;padding:4px 0;border-top:1px solid #f0f4f5}
+.rs-line time{font-size:10px;color:#93a6ae}
+.rs-line>span{font-size:10.5px;color:#28505f;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rs-line>b{font-size:11px;color:#17505f;text-align:right}
+.rs-line>small{grid-column:1/-1;font-size:9.5px;color:#93a6ae}
+.rs-line.is-ng>b{color:#a33a31}
+@media(max-width:700px){.rs-line{grid-template-columns:minmax(0,1fr) 62px}.rs-line time{grid-column:1/-1}}
+.rs-fixed{font-style:normal;font-size:10px;color:#93a6ae;margin-left:auto}

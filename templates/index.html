@@ -182,18 +182,21 @@
 <div class="sectiontitle sect-inspect"><i class="sect-badge sb-inspect">調</i>RNEを調べる<span class="period-optional" title="この画面のどの操作も、RNEファイルと出力ファイルを書き換えません。影実行の結果も公開しません。詳しい説明は config\README.txt にあります。">RNEも出力も変更しません</span></div>
 <div class="insp">
 <nav id="insp-rail" class="insp-rail" role="tablist" aria-label="調べる手順">
-<button type="button" class="insp-step on" data-istep="read" role="tab"><i class="is-no">1</i><span class="is-txt"><b>中身を読む</b><small>列と管理ポイント</small></span><em class="is-state">未実行</em></button>
+<button type="button" class="insp-step on" data-istep="read" role="tab"><i class="is-no">1</i><span class="is-txt"><b>RNEを調査</b><small>1回で全部読む</small></span><em class="is-state">未実行</em></button>
 <button type="button" class="insp-step" data-istep="plan" role="tab"><i class="is-no">2</i><span class="is-txt"><b>分け方を探す</b><small>列で／行で</small></span><em class="is-state">未実行</em></button>
 <button type="button" class="insp-step" data-istep="trial" role="tab"><i class="is-no">3</i><span class="is-txt"><b>速さを試す</b><small>影実行で実測</small></span><em class="is-state">未実行</em></button>
 <button type="button" class="insp-step" data-istep="run" role="tab"><i class="is-no">4</i><span class="is-txt"><b>本番の動作</b><small>次に実行したら</small></span><em class="is-state">—</em></button>
+<button type="button" class="insp-step" data-istep="stats" role="tab"><i class="is-no">5</i><span class="is-txt"><b>実績</b><small>条件別の速さ</small></span><em class="is-state">—</em></button>
 </nav>
 <div class="insp-pane">
 
 <section class="insp-panel on" data-istep="read">
-<header class="ip-head"><b>RNEの中身を読む</b><small>SymfoNaviに接続してRNEを開き、<b>管理ポイント</b>（絞り込みの軸）と<b>データ項目</b>（出力される列）を読み取ります。</small></header>
-<div class="ip-act"><button id="m-rne-inspect" type="button" class="secondary">読み取る</button><span class="ip-hint">接続します（数秒）</span></div>
+<header class="ip-head"><b>RNEを調査</b><small>SymfoNaviへ1回だけ接続し、<b>列</b>・<b>管理ポイント（行の軸）</b>・<b>所要時間</b>をまとめて読み取って、この RNE の控えとして保存します。<br>控えは<b>ファイルが変わるまでそのまま使えます</b>。同じファイルなら、影実行のときも本番の実行のときも調べ直しません。</small></header>
+<div id="m-master-state" class="master-state">確認中</div>
+<div class="ip-act"><button id="m-rne-inspect-all" type="button">RNEを調査</button><span class="ip-hint" id="m-inspect-all-hint">列・行・管理ポイントを1回で読みます</span><button id="m-master-refresh" type="button" class="secondary">控えを確認</button></div>
 <div id="m-rne-inspect-result" class="rne-inspect-result" hidden></div>
-<p class="ip-empty" data-empty="read">まだ読み取っていません。ここに列の一覧と管理ポイントが表示されます。</p>
+<details class="ip-more"><summary>個別に読み直す（ふつうは不要）</summary><div class="ip-act"><button id="m-rne-inspect" type="button" class="secondary">中身だけ読む</button><span class="ip-hint">管理ポイントとデータ項目の一覧だけを取り直します</span></div></details>
+<p class="ip-empty" data-empty="read" hidden>まだ調査していません。「RNEを調査」を押すと、必要なものを1回でそろえます。</p>
 </section>
 
 <section class="insp-panel" data-istep="plan">
@@ -242,6 +245,13 @@
 <div class="ip-act"><label class="trial-parts">動作<select id="m-split-mode"><option value="auto">自動（裏付けがあるときだけ）</option><option value="race">競争させる（1本と同時に走らせ、勝った方を採用）</option><option value="force">常に分割</option><option value="off">使わない</option></select></label><label class="trial-parts">分け方<select id="m-split-shape"><option value="auto">自動（実測で速かった形）</option><option value="column">列分割</option><option value="row">行分割</option><option value="grid">行×列</option></select></label><button id="m-split-refresh" type="button" class="secondary">いまの判定を見る</button></div>
 <div id="m-split-run-state" class="split-run-state"></div>
 <p class="ip-note">分け方は<b>選ばなくて構いません</b>。既定の「自動」は、手順3で実測した中から<b>いちばん速かった形</b>を使います。形を指定すると、その形の裏付けがあるときだけ使います。<br>行を使う形（行分割・行×列）は、実行のたびに<b>軸の値を読み直して</b>から分けます。値は日々増えるため、測った時点の値で分けると新しい行が落ちるからです。この読み直しにかかる時間は、上の倍率にすでに含まれています。</p>
+</section>
+
+<section class="insp-panel" data-istep="stats">
+<header class="ip-head"><b>実績</b><small>この RNE を実行するたびに、<b>所要時間・分け方・時間帯・PC</b>を記録しています。どの条件のときに速いのかを見比べられます。</small></header>
+<div class="ip-act"><button id="m-stats-reload" type="button" class="secondary">実績を読み込む</button><span class="ip-hint">記録を読むだけです（接続しません）</span></div>
+<div id="m-stats-body" class="rne-stats"></div>
+<p class="ip-empty" data-empty="stats">まだ実績がありません。この対象を実行すると、1回ごとに記録されます。</p>
 </section>
 
 </div>

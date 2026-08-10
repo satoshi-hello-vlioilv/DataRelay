@@ -122,7 +122,7 @@ async function copyTextValue(v,label){try{await navigator.clipboard.writeText(v|
 async function openJobOutput(j){try{let r=await fetch('/api/open-path',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:j.output_folder||cfg.default_output_folder})}),d=await r.json();toast(r.ok&&d.ok?'出力先を開きました':d.error||'出力先を開けませんでした')}catch{toast('出力先を開けませんでした')}}
 function duplicateJob(j){let n=structuredClone(j);n.id=uid();n.name+=' コピー';n.schedules=(n.schedules||[]).map(r=>({...r,id:uid(),enabled:false}));cfg.jobs.splice(cfg.jobs.indexOf(j)+1,0,n);render();dirty()}
 if($('#job-context-menu')){$('#job-context-menu').onclick=e=>{let a=e.target.closest('[data-action]');if(!a||!contextJob)return;let j=contextJob,act=a.dataset.action;hideJobContextMenu();if(act==='edit')openEditor(j);else if(act==='run')runJobs([j.id]);else if(act==='open-output')openJobOutput(j);else if(act==='viewer'){document.querySelector('[data-p="viewer"]')?.click();setTimeout(()=>{let sel=$('#viewer-job');if(sel){sel.value=j.id;sel.dispatchEvent(new Event('change'))}},100)}else if(act==='copy-rne')copyTextValue(j.rne_path||j.rne,'RNEパス');else if(act==='copy-output')copyTextValue(j.output_folder||cfg.default_output_folder,'出力先');else if(act==='duplicate')duplicateJob(j);else if(act==='toggle'){j.enabled=!j.enabled;render();dirty();toast(j.enabled?'有効にしました':'無効にしました')}else if(act==='delete')deleteJob(j)};document.addEventListener('click',e=>{if(!e.target.closest('#job-context-menu'))hideJobContextMenu()});document.addEventListener('keydown',e=>{if(e.key==='Escape')hideJobContextMenu()});window.addEventListener('blur',hideJobContextMenu)}
-function openEditor(job){editing=structuredClone(job||{id:uid(),name:'新しい対象',enabled:true,rne:'NEW.RNE',rne_path:cfg.rne_folder+'\\NEW.RNE',output_folder:cfg.default_output_folder,output_format:'sqlite3',output_file:'NEW.sqlite3',table:'仕掛',sheet:'Page1',type:'詳細データ',naming_mode:'fixed',output_pattern:'',comment:'',split_mode:'auto',split_shape:'auto',period:{enabled:false,control_point:'',unit:'month',from_offset:-1,to_offset:0},schedules:[]});$('#modal-title').textContent=job?'対象を編集':'対象を追加';$('#m-id').value=editing.id;$('#m-name').value=editing.name;$('#m-enabled').checked=editing.enabled;$('#m-rne-path').value=editing.rne_path||'';$('#m-output').value=editing.output_folder||cfg.default_output_folder;editing.output_format=normalizeFormat(editing.output_format);$('#m-format').value=editing.output_format;$('#m-output-file').value=editing.output_file;$('#m-table').value=editing.table;$('#m-sheet').value=editing.sheet;$('#m-type').value=editing.type;if($('#m-comment'))$('#m-comment').value=editing.comment||'';if($('#m-split-mode'))$('#m-split-mode').value=editing.split_mode||'auto';if($('#m-split-shape'))$('#m-split-shape').value=editing.split_shape||'auto';if($('#m-axis-mode'))$('#m-axis-mode').value=editing.row_axis_mode||'first';if($('#m-axis-index'))$('#m-axis-index').value=editing.row_axis_index||1;AXIS_PICK.forEach(g=>{if($(g.n))$(g.n).innerHTML=`<option value="${E(editing.row_axis_name||'')}">${E(editing.row_axis_name||'（先に「行を調べる」）')}</option>`;if($(g.m))$(g.m).value=editing.row_axis_mode||'first';if($(g.i))$(g.i).value=editing.row_axis_index||1});syncAxisPick();syncOutputExtension();initNaming(editing);setPeriodUI(editing.period);renderRuntimeSplit(null);inspReset();splitTrialPoll();rulesRender();updatePeriodBadge();setEditorTab('basic');$('#editor').showModal()}
+function openEditor(job){editing=structuredClone(job||{id:uid(),name:'新しい対象',enabled:true,rne:'NEW.RNE',rne_path:cfg.rne_folder+'\\NEW.RNE',output_folder:cfg.default_output_folder,output_format:'sqlite3',output_file:'NEW.sqlite3',table:'仕掛',sheet:'Page1',type:'詳細データ',naming_mode:'fixed',output_pattern:'',comment:'',split_mode:'auto',split_shape:'auto',period:{enabled:false,control_point:'',unit:'month',from_offset:-1,to_offset:0},schedules:[]});$('#modal-title').textContent=job?'対象を編集':'対象を追加';$('#m-id').value=editing.id;$('#m-name').value=editing.name;$('#m-enabled').checked=editing.enabled;$('#m-rne-path').value=editing.rne_path||'';$('#m-output').value=editing.output_folder||cfg.default_output_folder;editing.output_format=normalizeFormat(editing.output_format);$('#m-format').value=editing.output_format;$('#m-output-file').value=editing.output_file;$('#m-table').value=editing.table;$('#m-sheet').value=editing.sheet;$('#m-type').value=editing.type;if($('#m-comment'))$('#m-comment').value=editing.comment||'';if($('#m-split-mode'))$('#m-split-mode').value=editing.split_mode||'auto';if($('#m-split-shape'))$('#m-split-shape').value=editing.split_shape||'auto';if($('#m-axis-mode'))$('#m-axis-mode').value=editing.row_axis_mode||'first';if($('#m-axis-index'))$('#m-axis-index').value=editing.row_axis_index||1;AXIS_PICK.forEach(g=>{if($(g.n))$(g.n).innerHTML=`<option value="${E(editing.row_axis_name||'')}">${E(editing.row_axis_name||'（先に「行を調べる」）')}</option>`;if($(g.m))$(g.m).value=editing.row_axis_mode||'first';if($(g.i))$(g.i).value=editing.row_axis_index||1});syncAxisPick();syncOutputExtension();initNaming(editing);setPeriodUI(editing.period);renderRuntimeSplit(null);inspReset();loadMaster(false);splitTrialPoll();rulesRender();updatePeriodBadge();setEditorTab('basic');$('#editor').showModal()}
 $('#m-format').onchange=()=>{syncOutputExtension();if(currentNamingMode()==='template')refreshNamePreview()};$('#m-rne-check').onclick=async()=>{showWaiting('RNEファイル確認中','設定場所と周辺フォルダーを検索しています...');try{let temp={item:'rne',job_id:editing.id,label:editing.rne,configured:$('#m-rne-path').value,resolved:$('#m-rne-path').value,candidates:[],ok:false};let r=await fetch('/api/path-check',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({item:'rne',job_id:editing.id,value:$('#m-rne-path').value,expected_name:$('#m-rne-path').value.split(/[\\/]/).pop()})}),d=await r.json();if(r.ok)showPathResult(d);else toast(d.error)}finally{hideWaiting()}};$('#m-rne-pick').onclick=async()=>{let p=await browse('file',$('#m-rne-path').value,[['RNEファイル','*.RNE'],['すべて','*.*']]);if(p){let i=$('#m-rne-path'),wasRel=i.value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(i.value);i.value=p;if(wasRel)await convertPath(i,'relative');updatePathBadge(i);i._refreshPathControl?.()}};$('#m-output-pick').onclick=async()=>{let p=await browse('folder',$('#m-output').value);if(p){let i=$('#m-output'),wasRel=i.value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(i.value);i.value=p;if(wasRel)await convertPath(i,'relative');updatePathBadge(i)}};enhancePathInput($('#m-rne-path'),'file');enhancePathInput($('#m-output'),'folder');$('#add-rule').onclick=()=>openRule({id:uid(),enabled:true,name:'実行ルール',type:'daily',time:'06:00'},true);$('#apply').onclick=async e=>{e.preventDefault();syncOutputExtension();const f=normalizeFormat($('#m-format').value),file=canonicalOutputFile($('#m-output-file').value,f),updated={...editing,name:$('#m-name').value.trim(),enabled:$('#m-enabled').checked,rne_path:$('#m-rne-path').value.trim(),rne:$('#m-rne-path').value.trim().split(/[\\/]/).pop(),output_folder:$('#m-output').value.trim(),output_format:f,output_file:file,table:$('#m-table').value.trim(),sheet:$('#m-sheet').value.trim(),type:$('#m-type').value,naming_mode:currentNamingMode(),output_pattern:$('#m-output-pattern').value.trim(),comment:($('#m-comment')?.value||'').trim(),split_mode:($('#m-split-mode')?.value||'auto'),split_shape:($('#m-split-shape')?.value||'auto'),row_axis_mode:($('#m-axis-mode')?.value||'first'),row_axis_index:Number($('#m-axis-index')?.value||1)||1,row_axis_name:($('#m-axis-name')?.value||''),period:currentPeriod()};let i=cfg.jobs.findIndex(j=>j.id===updated.id);if(i<0)cfg.jobs.unshift(updated);else cfg.jobs[i]=updated;let payload=structuredClone(cfg);delete payload.credential_status;showWaiting('設定を保存中',`${formatName(f)} / ${file}`);try{let r=await fetch('/api/config',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),d=await r.json();if(!r.ok)throw Error(d.error||'設定保存失敗');$('#editor').close();await init();toast(`保存完了: ${formatName(f)} / ${file}`)}catch(x){toast(x.message)}finally{hideWaiting()}};
 /* V35: dynamic output filename builder */
 let namePreviewTimer=null;
@@ -245,7 +245,16 @@ function setExtractEngine(v){let s=$('#extract-engine');if(s)s.value=v;updateEng
   `<span class="cq-badge cq-manual">即実行 ${manualJobs}件</span>`;}
  list.innerHTML=d.items.length?d.items.map(x=>{
   let stateInfo=x.state==='running'?(running?`処理中 ${jobRun} / 完了 ${jobDone}${jobFail?' / 失敗 '+jobFail:''} / 待機 ${batchWait}`:'処理中'):`${x.position}番目に実行予定`;
-  return `<div class="cq-row ${x.state}"><span class="cq-pos">${x.state==='running'?'実行中':x.position+'番'}</span><div class="cq-main"><b>${E((x.job_names||[]).join(' / '))}</b><small>${x.state==='running'?E(stateInfo):('登録 '+E(x.enqueued_at||'')+' / '+(x.count||0)+'対象')}</small></div><span class="cq-mode">${x.engine==='dde'?'DDE 1件ずつ':x.parallel_lines>1?x.parallel_lines+'ライン':'API 1ライン'}</span><div class="cq-actions">${x.state==='waiting'?`<button class="secondary cq-up" data-id="${x.id}">上へ</button><button class="secondary cq-down" data-id="${x.id}">下へ</button><button class="danger cq-delete" data-id="${x.id}">解除</button>`:'<span>処理中は変更不可</span>'}</div></div>`}).join(''):'<div class="cq-empty">実行待ちのキューはありません</div>';list.hidden=!commandQueueOpen;$$('.cq-up,.cq-down').forEach(b=>b.onclick=async()=>{await fetch(`/api/execution-queue/${b.dataset.id}/move`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({direction:b.classList.contains('cq-up')?'up':'down'})});loadCommandQueue()});$$('.cq-delete').forEach(b=>b.onclick=async()=>{let r=await fetch(`/api/execution-queue/${b.dataset.id}`,{method:'DELETE'});if(r.ok)toast('実行キューから解除しました');loadCommandQueue()})}catch{}}{const cqToggle=$('#cq-toggle');if(cqToggle)cqToggle.onclick=()=>{commandQueueOpen=!commandQueueOpen;cqToggle.textContent=commandQueueOpen?'閉じる':'一覧';loadCommandQueue()};}function logLevel(line){return line.includes('[ERROR]')?'error':line.includes('[WARNING]')?'warning':'info'}function buildLogTree(text){let lines=(text||'').split(/\r?\n/).filter(Boolean),groups=[],current=null,job=null;for(let line of lines){if(line.includes('処理開始 trigger=')){current={title:line.slice(0,19)+'  実行指令',lines:[],jobs:[]};groups.push(current);job=null}else if(line.includes('設定保存 job=')){current={title:line.slice(0,19)+'  設定保存',lines:[line],jobs:[]};groups.push(current);job=null;continue}if(!current){current={title:'その他のログ',lines:[],jobs:[]};groups.push(current)}let m=line.match(/(?:PIPELINE|JOB_RESULT) job=([^ ]+)/);if(m){job=current.jobs.find(x=>x.name===m[1])||{name:m[1],lines:[]};if(!current.jobs.includes(job))current.jobs.push(job)}if(job)job.lines.push(line);else current.lines.push(line);if(line.includes('正常終了')||line.includes('異常終了'))job=null}return groups}function logLines(lines){return `<div class="log-lines">${lines.map(x=>`<div class="log-line ${logLevel(x)}">${E(x)}</div>`).join('')}</div>`}function renderLogTree(text){let groups=buildLogTree(text);renderedLogGroups=groups.slice().reverse();$('#log').innerHTML=renderedLogGroups.length?renderedLogGroups.map((g,gi)=>`<details class="log-action" ${gi===0?'open':''} data-gi="${gi}"><summary><span><b>実行指令 ${renderedLogGroups.length-gi}</b> ${E(g.title)}</span><small>${g.jobs.length}ファイル</small><span class="log-summary-actions"><button class="secondary log-copy-full" data-gi="${gi}">全文コピー</button><button class="secondary log-copy-summary" data-gi="${gi}">要約コピー</button><button class="secondary danger-lite log-delete-group" data-gi="${gi}">削除</button></span></summary>${g.lines.length?logLines(g.lines):''}${g.jobs.map(j=>`<details class="log-job"><summary>${E(j.name)} <small>${j.lines.length}行</small></summary>${logLines(j.lines)}</details>`).join('')}</details>`).join(''):'<div class="empty">ログなし</div>';$$('.log-copy-full').forEach(b=>b.onclick=e=>{e.preventDefault();e.stopPropagation();let g=renderedLogGroups[Number(b.dataset.gi)];textToClipboard(groupText(g,'full'),'選択した実行指令ログをコピーしました')});$$('.log-copy-summary').forEach(b=>b.onclick=e=>{e.preventDefault();e.stopPropagation();let g=renderedLogGroups[Number(b.dataset.gi)];textToClipboard(groupText(g,'summary'),'選択した実行指令の要約ログをコピーしました')});$$('.log-delete-group').forEach(b=>b.onclick=async e=>{e.preventDefault();e.stopPropagation();let g=renderedLogGroups[Number(b.dataset.gi)],txt=groupText(g,'full');if(!confirm('この実行指令ログを削除しますか？'))return;let r=await fetch('/api/log/delete-lines',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({lines:txt.split(/\n/)})});if(r.ok){toast('選択した実行指令ログを削除しました');await loadLog()}})}let latestLogText='',renderedLogGroups=[];async function loadLog(){let d=await fetch('/api/log').then(r=>r.json());latestLogText=d.text||'';renderLogTree(latestLogText)}function textToClipboard(text,msg){if(!text?.trim())return toast('コピー対象のログがありません');navigator.clipboard?.writeText(text).then(()=>toast(msg)).catch(()=>{let ta=document.createElement('textarea');ta.value=text;document.body.appendChild(ta);ta.select();document.execCommand('copy');ta.remove();toast(msg)})}function groupText(g,mode='full'){let lines=[];lines.push(...(g.lines||[]));(g.jobs||[]).forEach(j=>lines.push(...j.lines));if(mode==='summary')lines=lines.filter(x=>/処理開始|STARTUP_PHASE|RUN_ENVIRONMENT|EXECUTION_MODE|WORKER_READY|PIPELINE|STEP_END phase=(api_open_catalog|api_execute_catalog|api_save_csv|api_save_xlsx_direct|format_conversion|publish)|ACCDB_|SQLITE_|XLSX_|PUBLISH_|PENDING_APPLY|PENDING_SCAN|BATCH_ORDER|API_DIAG|JOB_RESULT|JOB_PROFILE|PARALLEL_BATCH_END|正常終了|異常終了/.test(x));return lines.join('\n').trim()}function copyAllLog(){textToClipboard(latestLogText,'表示中のログ全体をコピーしました')}async function copyReportLog(){await loadLog();let g=renderedLogGroups[0];if(g)return textToClipboard(groupText(g),'最新の実行指令ログをコピーしました');let lines=latestLogText.split(/\r?\n/),start=-1;for(let i=lines.length-1;i>=0;i--){if(lines[i].includes('処理開始 trigger=')){start=i;break}}textToClipboard((start>=0?lines.slice(start):lines).join('\n').trim(),'最新の実行指令ログをコピーしました')}async function clearLog(){if(!confirm('表示中の実行ログを消去しますか？'))return;let r=await fetch('/api/log/clear',{method:'POST'});if(r.ok){latestLogText='';renderLogTree('');toast('ログを消去しました')}}if($('#copy-all-log'))$('#copy-all-log').onclick=async()=>{await loadLog();copyAllLog()};if($('#copy-report-log'))$('#copy-report-log').onclick=copyReportLog;if($('#clear-log'))$('#clear-log').onclick=clearLog;if($('#reload'))$('#reload').onclick=loadLog;if($('#expand-logs'))$('#expand-logs').onclick=()=>$$('#log details').forEach(x=>x.open=true);if($('#collapse-logs'))$('#collapse-logs').onclick=()=>$$('#log details').forEach(x=>x.open=false);let lastRunning=false,lastTerminalShownKey='',activeRunId='',activeExecutionMode='serial',dismissedRunIds=new Set();/* 実際に流れる順番と同じ並びにする。ここが実行順とずれていると、進捗が
+  return `<div class="cq-row ${x.state}"><span class="cq-pos">${x.state==='running'?'実行中':x.position+'番'}</span><div class="cq-main"><b>${E((x.job_names||[]).join(' / '))}</b><small>${x.state==='running'?E(stateInfo):('登録 '+E(x.enqueued_at||'')+' / '+(x.count||0)+'対象')}</small></div><span class="cq-mode">${x.engine==='dde'?'DDE 1件ずつ':x.parallel_lines>1?x.parallel_lines+'ライン':'API 1ライン'}</span><div class="cq-actions">${x.state==='waiting'?`<button class="secondary cq-up" data-id="${x.id}">上へ</button><button class="secondary cq-down" data-id="${x.id}">下へ</button><button class="danger cq-delete" data-id="${x.id}">解除</button>`:'<span>処理中は変更不可</span>'}</div></div>`}).join(''):'<div class="cq-empty">実行待ちのキューはありません</div>';list.hidden=!commandQueueOpen;$$('.cq-up,.cq-down').forEach(b=>b.onclick=async()=>{await fetch(`/api/execution-queue/${b.dataset.id}/move`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({direction:b.classList.contains('cq-up')?'up':'down'})});loadCommandQueue()});$$('.cq-delete').forEach(b=>b.onclick=async()=>{let r=await fetch(`/api/execution-queue/${b.dataset.id}`,{method:'DELETE'});if(r.ok)toast('実行キューから解除しました');loadCommandQueue()})}catch{}}{const cqToggle=$('#cq-toggle');if(cqToggle)cqToggle.onclick=()=>{commandQueueOpen=!commandQueueOpen;cqToggle.textContent=commandQueueOpen?'閉じる':'一覧';loadCommandQueue()};}function logLevel(line){return line.includes('[ERROR]')?'error':line.includes('[WARNING]')?'warning':'info'}function buildLogTree(text){let lines=(text||'').split(/\r?\n/).filter(Boolean),groups=[],current=null,job=null;for(let line of lines){if(line.includes('処理開始 trigger=')){current={title:line.slice(0,19)+'  実行指令',lines:[],jobs:[]};groups.push(current);job=null}else if(line.includes('設定保存 job=')){current={title:line.slice(0,19)+'  設定保存',lines:[line],jobs:[]};groups.push(current);job=null;continue}if(!current){current={title:'その他のログ',lines:[],jobs:[]};groups.push(current)}let m=line.match(/(?:PIPELINE|JOB_RESULT) job=([^ ]+)/);if(m){job=current.jobs.find(x=>x.name===m[1])||{name:m[1],lines:[]};if(!current.jobs.includes(job))current.jobs.push(job)}if(job)job.lines.push(line);else current.lines.push(line);if(line.includes('正常終了')||line.includes('異常終了'))job=null}return groups}function logLines(lines){return `<div class="log-lines">${lines.map(x=>`<div class="log-line ${logLevel(x)}">${E(x)}</div>`).join('')}</div>`}function renderLogTree(text){let groups=buildLogTree(text);renderedLogGroups=groups.slice().reverse();$('#log').innerHTML=renderedLogGroups.length?renderedLogGroups.map((g,gi)=>`<details class="log-action" ${gi===0?'open':''} data-gi="${gi}"><summary><span><b>実行指令 ${renderedLogGroups.length-gi}</b> ${E(g.title)}</span><small>${g.jobs.length}ファイル</small><span class="log-summary-actions"><button class="secondary log-copy-full" data-gi="${gi}">全文コピー</button><button class="secondary log-copy-summary" data-gi="${gi}">要約コピー</button><button class="secondary danger-lite log-delete-group" data-gi="${gi}">削除</button></span></summary>${g.lines.length?logLines(g.lines):''}${g.jobs.map(j=>`<details class="log-job"><summary>${E(j.name)} <small>${j.lines.length}行</small></summary>${logLines(j.lines)}</details>`).join('')}</details>`).join(''):'<div class="empty">ログなし</div>';$$('.log-copy-full').forEach(b=>b.onclick=e=>{e.preventDefault();e.stopPropagation();let g=renderedLogGroups[Number(b.dataset.gi)];textToClipboard(groupText(g,'full'),'選択した実行指令ログをコピーしました')});$$('.log-copy-summary').forEach(b=>b.onclick=e=>{e.preventDefault();e.stopPropagation();let g=renderedLogGroups[Number(b.dataset.gi)];textToClipboard(groupText(g,'summary'),'選択した実行指令の要約ログをコピーしました')});$$('.log-delete-group').forEach(b=>b.onclick=async e=>{e.preventDefault();e.stopPropagation();let g=renderedLogGroups[Number(b.dataset.gi)],txt=groupText(g,'full');if(!confirm('この実行指令ログを削除しますか？'))return;let r=await fetch('/api/log/delete-lines',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({lines:txt.split(/\n/)})});if(r.ok){toast('選択した実行指令ログを削除しました');await loadLog()}})}let latestLogText='',renderedLogGroups=[];async function loadLog(){let d=await fetch('/api/log').then(r=>r.json());latestLogText=d.text||'';renderLogTree(latestLogText)}/* コピーするログから「省略の印」を取り除く。
+   ログには「｜ LOG_DEDUP 同じ内容を14行省略（28.2秒間・これが最後の1行）」が付くことがある。
+   これは画面で読むための注記で、貼り付け先では邪魔にしかならない。
+   行そのものは残す（何が起きたかは消さない）。消すのは印だけ。 */
+function stripLogNoise(text){
+ return String(text||'').split(/\r?\n/)
+  .map(x=>x.replace(/\s*｜\s*LOG_DEDUP [^\n]*$/,''))
+  .join('\n');
+}
+function textToClipboard(text,msg){text=stripLogNoise(text);if(!text?.trim())return toast('コピー対象のログがありません');navigator.clipboard?.writeText(text).then(()=>toast(msg)).catch(()=>{let ta=document.createElement('textarea');ta.value=text;document.body.appendChild(ta);ta.select();document.execCommand('copy');ta.remove();toast(msg)})}function groupText(g,mode='full'){let lines=[];lines.push(...(g.lines||[]));(g.jobs||[]).forEach(j=>lines.push(...j.lines));if(mode==='summary')lines=lines.filter(x=>/処理開始|STARTUP_PHASE|RUN_ENVIRONMENT|EXECUTION_MODE|WORKER_READY|PIPELINE|STEP_END phase=(api_open_catalog|api_execute_catalog|api_save_csv|api_save_xlsx_direct|format_conversion|publish)|ACCDB_|SQLITE_|XLSX_|PUBLISH_|PENDING_APPLY|PENDING_SCAN|BATCH_ORDER|API_DIAG|JOB_RESULT|JOB_PROFILE|PARALLEL_BATCH_END|正常終了|異常終了/.test(x));return lines.join('\n').trim()}function copyAllLog(){textToClipboard(latestLogText,'表示中のログ全体をコピーしました')}async function copyReportLog(){await loadLog();let g=renderedLogGroups[0];if(g)return textToClipboard(groupText(g),'最新の実行指令ログをコピーしました');let lines=latestLogText.split(/\r?\n/),start=-1;for(let i=lines.length-1;i>=0;i--){if(lines[i].includes('処理開始 trigger=')){start=i;break}}textToClipboard((start>=0?lines.slice(start):lines).join('\n').trim(),'最新の実行指令ログをコピーしました')}async function clearLog(){if(!confirm('表示中の実行ログを消去しますか？'))return;let r=await fetch('/api/log/clear',{method:'POST'});if(r.ok){latestLogText='';renderLogTree('');toast('ログを消去しました')}}if($('#copy-all-log'))$('#copy-all-log').onclick=async()=>{await loadLog();copyAllLog()};if($('#copy-report-log'))$('#copy-report-log').onclick=copyReportLog;if($('#clear-log'))$('#clear-log').onclick=clearLog;if($('#reload'))$('#reload').onclick=loadLog;if($('#expand-logs'))$('#expand-logs').onclick=()=>$$('#log details').forEach(x=>x.open=true);if($('#collapse-logs'))$('#collapse-logs').onclick=()=>$$('#log details').forEach(x=>x.open=false);let lastRunning=false,lastTerminalShownKey='',activeRunId='',activeExecutionMode='serial',dismissedRunIds=new Set();/* 実際に流れる順番と同じ並びにする。ここが実行順とずれていると、進捗が
    「ファイル生成・安定確認」から「抽出画面を閉じる」へ戻ったように見える。 */
 const stepOrder=['prepare','launch','dde','ready','open','save','wait','close','export','publish','complete'];function showProgress(){let d=$('#progress-dialog');if(!d.open)d.showModal()}function hhmmss(v){v=Math.floor(Math.max(0,Number(v)||0));return [Math.floor(v/3600),Math.floor((v%3600)/60),v%60].map(x=>String(x).padStart(2,'0')).join(':')}
 /* 終わった対象の結果をその場で出す。ログを開かないと件数も所要も分からない、という状態にしない。
@@ -917,7 +926,9 @@ function inspPlanState(axis,text,tone){
    （状態はサーバーが持っているので、開き直せば途中から追いつく）。 */
 const INSP_TASK={read:  {box:'#m-rne-inspect-result',btn:'#m-rne-inspect',needJob:false},
                  column:{box:'#m-column-plan-result', btn:'#m-column-plan', needJob:true},
-                 row:   {box:'#m-row-split-result',   btn:'#m-row-split',   needJob:true}};
+                 row:   {box:'#m-row-split-result',   btn:'#m-row-split',   needJob:true},
+                 // 3つを1回で走らせる。利用者から見れば「そのRNEを調べる」1つの用事。
+                 all:   {box:'#m-rne-inspect-result',  btn:'#m-rne-inspect-all',needJob:true}};
 let inspTaskTimer={},inspTaskRender={};
 function inspTaskProgress(kind,st){
  let rb=$(INSP_TASK[kind].box);if(!rb)return;
@@ -972,9 +983,90 @@ function inspTaskResume(){
   }catch{}
  });
 }
+/* ==== RNEの控え（マスタ） ====================================================
+   同じファイルなら調べ直さなくてよい、を1行で言い切る。判断に要るのはそこだけ。
+   何が控えてあるか（列・軸・所要・確認済みの割り当て）はその下に数字で並べる。 */
+const MASTER_TONE={fresh:'is-fresh',stale:'is-stale',none:'is-none',missing:'is-missing'};
+function renderMaster(m){
+ let box=$('#m-master-state');if(!box)return;
+ if(!m){box.className='master-state';box.textContent='確認中';return}
+ box.className='master-state '+(MASTER_TONE[m.state]||'');
+ let head={fresh:'調査済み ― 調べ直す必要はありません',stale:'RNEが更新されています ― 調べ直してください',
+           none:'まだ調査していません',missing:'RNEファイルが見つかりません'}[m.state]||m.why;
+ let c=m.columns||{},ax=m.axes||{},tm=m.timing||{},plans=m.plans||[];
+ let cells=[
+  ['列',c.have?`${c.count}本`:'—',c.have?`外せる ${c.removable} / 固定 ${c.fixed}`:'未取得'],
+  ['行の軸',ax.have?`${ax.count}本`:'—',ax.have?`分割に使える ${ax.usable}本`:'未取得'],
+  ['所要時間',tm.have&&tm.total?fmtSeconds(tm.total):'—',tm.have&&tm.rows?`${Number(tm.rows).toLocaleString()}件の実測`:'未計測'],
+  ['確認済みの分け方',plans.length?`${plans.length}通り`:'—',plans.length?plans.map(x=>x.how).join(' / '):'影実行で確認すると増えます'],
+ ];
+ box.innerHTML=`<div class="ms-head"><b>${E(head)}</b><span>${E(m.rne||'')}</span></div>`
+  +`<div class="ms-grid">${cells.map(x=>`<div><small>${E(x[0])}</small><b>${E(x[1])}</b><span>${E(x[2])}</span></div>`).join('')}</div>`
+  +(m.file?.modified?`<div class="ms-foot"><span>RNEの更新日時: ${E(m.file.modified)}</span>`
+     +`<span>控えを取った日時: ${E(c.captured_at||ax.captured_at||'—')}</span></div>`:'')
+  +((ax.blocked||[]).length?`<div class="ms-block"><b>使わないことにした軸 ${ax.blocked.length}件</b>`
+     +ax.blocked.map(b=>`<span>${E(b.name)}<em>${E(b.reason||'')}</em></span>`).join('')
+     +`<button id="m-block-clear" type="button" class="secondary">記録を取り消す</button></div>`:'');
+ let cb=$('#m-block-clear');
+ if(cb)cb.onclick=async()=>{
+  let r=await fetch('/api/rne-master/clear-blocks',{method:'POST',headers:{'Content-Type':'application/json'},
+       body:JSON.stringify({job_id:editing.id})}),d=await r.json();
+  if(d.ok){toast(`${d.removed}件の記録を取り消しました`);renderMaster(d.master)}else toast(d.error||'取り消せませんでした');
+ };
+ inspState('read',{fresh:'調査済み',stale:'要再調査',none:'未調査',missing:'RNEなし'}[m.state]||'—',
+           m.state==='fresh'?'ok':m.state==='none'?'':'ng');
+ inspEmpty('read',m.state!=='none');
+}
+async function loadMaster(stats){
+ if(!editing?.id||!cfg.jobs.some(j=>j.id===editing.id)){renderMaster(null);return null}
+ try{
+  let r=await fetch('/api/rne-master',{method:'POST',headers:{'Content-Type':'application/json'},
+       body:JSON.stringify({job_id:editing.id,stats:!!stats})}),d=await r.json();
+  if(d.ok){renderMaster(d.master);return d}
+  renderMaster(null);return null;
+ }catch{renderMaster(null);return null}
+}
+/* 実績。条件ごとの平均だけを見せる。速い順に並べれば「どれが効いたか」は数字で分かる。 */
+function renderRneStats(st){
+ let box=$('#m-stats-body');if(!box)return;
+ if(!st||!st.total){box.innerHTML='';inspEmpty('stats',false);inspState('stats','—','');return}
+ inspEmpty('stats',true);
+ let g=st.groups||{};
+ // 見比べになるのは、値が2つ以上ある条件だけ。1つしか無いものはカードにせず、
+ // 「この記録はどういう条件で取ったか」として1行にまとめる（並べても比較にならないため）。
+ let keys=Object.keys(g).filter(k=>(g[k].items||[]).length);
+ let multi=keys.filter(k=>g[k].items.length>1||k==='how');
+ let single=keys.filter(k=>!multi.includes(k));
+ let cards=multi.map(k=>{
+  let it=g[k].items||[];
+  return `<article class="rs-card"><header><b>${E(g[k].label)}</b><small>速い順</small></header>`
+   +it.map(x=>`<div class="rs-row"><span>${E(x.key||'—')}</span><b>${fmtSeconds(x.avg)}</b>`
+     +`<small>${x.runs}回 / 最短 ${fmtSeconds(x.min)} 最長 ${fmtSeconds(x.max)}</small></div>`).join('')
+   +`</article>`;
+ }).join('');
+ box.innerHTML=`<div class="rs-sum"><b>記録 ${st.total}件</b><span>うち成功 ${st.ok}件</span>`
+  +(single.length?`<em class="rs-fixed">${single.map(k=>`${E(g[k].label)}: ${E(g[k].items[0].key||'—')}`).join(' / ')}</em>`:'')
+  +`</div>`
+  +`<div class="rs-cards">${cards}</div>`
+  +`<details class="rs-list"><summary>1回ごとの記録（新しい順に ${(st.runs||[]).length}件）</summary>`
+  +`<div class="rs-table">${(st.runs||[]).map(r=>`<div class="rs-line ${r.status==='ok'?'':'is-ng'}">`
+     +`<time>${E(String(r.finished_at||'').replace('T',' '))}</time>`
+     +`<span>${E(r.how||'分割なし')}</span><b>${r.elapsed?fmtSeconds(r.elapsed):'—'}</b>`
+     +`<small>${r.rows?Number(r.rows).toLocaleString()+'件':''}${r.row_axis?' / 軸 '+E(r.row_axis):''}`
+     +`${r.host?' / '+E(r.host):''}</small></div>`).join('')}</div></details>`;
+ inspState('stats',`${st.total}件`,'ok');
+}
+async function loadRneStats(){
+ let d=await loadMaster(true);
+ renderRneStats(d?.stats);
+}
+if($('#m-master-refresh'))$('#m-master-refresh').onclick=()=>loadMaster(false);
+if($('#m-stats-reload'))$('#m-stats-reload').onclick=loadRneStats;
 function inspEmpty(name,hide){let e=document.querySelector(`.ip-empty[data-empty="${name}"]`);if(e)e.hidden=!!hide}
 function inspReset(){
  Object.keys(INSP_TASK).forEach(k=>{inspTaskStop(k);inspTaskRender[k]=null});
+ let ms=$('#m-master-state');if(ms){ms.className='master-state';ms.textContent='確認中'}
+ let sb=$('#m-stats-body');if(sb)sb.innerHTML='';
  ['#m-rne-inspect-result','#m-column-plan-result','#m-row-split-result','#m-split-trial-result']
   .forEach(id=>{let e=$(id);if(e){e.hidden=true;e.innerHTML=''}});
  $$('.ip-empty').forEach(e=>e.hidden=false);
@@ -1018,14 +1110,19 @@ function syncTrialControls(){
  }
  // 下調べが済んでいるかを見て、案内を「まだ足りない」から「準備できた」へ切り替える。
  let done=m==='grid'?(inspPlan.column?.tone==='ok'&&inspPlan.row?.tone==='ok'):inspPlan[m]?.tone==='ok';
- let ready=({column:'列の割り当てができています。',row:'行の区切りができています。行分割はいまのところ測定専用です。',
-  grid:'列と行の両方がそろっています。片の数は 行×列 になります。行×列はいまのところ測定専用です。'})[m];
+ let ready=({column:'列の割り当てができています。',row:'行の区切りができています。',
+  grid:'列と行の両方がそろっています。片の数は 行×列 になります。'})[m];
  let todo=({column:'先に手順2の「列を調べる」を実行してください。',
-  row:'先に手順2の「行を調べる」を実行してください。行分割はいまのところ測定専用です。',
+  row:'先に手順1の「RNEを調査」を実行してください。',
   grid:'先に手順2で「列を調べる」と「行を調べる」の両方を実行してください。片の数は 行×列 になります。'})[m];
  n.innerHTML=(done?ready:todo)+'<b>出力ファイルは更新しません</b>（比較するだけで、結果は公開しません）。';
 }
-$$('.insp-step').forEach(b=>b.onclick=()=>{inspGo(b.dataset.istep);if(b.dataset.istep==='run')loadRuntimeSplit()});
+$$('.insp-step').forEach(b=>b.onclick=()=>{
+ let k=b.dataset.istep;inspGo(k);
+ if(k==='run')loadRuntimeSplit();
+ if(k==='read')loadMaster(false);
+ if(k==='stats')loadRneStats();
+});
 $$('#plan-axis button').forEach(b=>b.onclick=()=>planAxis(b.dataset.axis));
 if($('#m-split-mode-trial'))$('#m-split-mode-trial').onchange=syncTrialControls;
 if($('#m-split-measure'))$('#m-split-measure').onchange=syncTrialControls;
@@ -1035,6 +1132,26 @@ syncTrialControls();
    時間管理ポイントの検出は「抽出期間」タブ側の目的に絞ってあるので、RNE全体の把握はこちらで行う。 */
 if($('#m-rne-inspect'))$('#m-rne-inspect').onclick=()=>inspTaskRun('read',
   {job_id:editing?.id,rne_path:$('#m-rne-path')?.value||'',job_name:editing?.name||''},renderRneInspect);
+// RNEを1回で調べ切る。終わったら控えの状態と、手順2〜4の中身をまとめて出し直す。
+if($('#m-rne-inspect-all'))$('#m-rne-inspect-all').onclick=()=>inspTaskRun('all',
+  {job_id:editing?.id,rne_path:$('#m-rne-path')?.value||'',job_name:editing?.name||'',parts:2},renderInspectAll);
+function renderInspectAll(d){
+ let rb=$('#m-rne-inspect-result');if(rb)rb.hidden=false;
+ let steps=d.steps||[];
+ let head=d.ok?'<p class="ri-ok">RNEの調査が終わりました。控えとして保存しています。</p>'
+  :`<p class="ri-ng">一部が読めませんでした。</p><p class="ri-note">${E(d.error||'')}</p>`;
+ if(rb)rb.innerHTML=head
+  +`<div class="ri-chips">${steps.map(x=>`<span class="ri-chip${x.ok?'':' unnamed'}">${E(x.title)}`
+    +`<em>${x.ok?'OK':'NG'} / ${fmtSeconds(x.elapsed)}</em></span>`).join('')}</div>`
+  +(steps.some(x=>!x.ok)?`<p class="ri-note">${steps.filter(x=>!x.ok).map(x=>E(x.title+': '+x.error)).join('<br>')}</p>`:'')
+  +`<p class="ri-note">この控えは<b>RNEファイルが変わるまで</b>そのまま使えます。影実行でも本番の実行でも、同じ内容を読み直しません。</p>`;
+ if(d.master)renderMaster(d.master); else loadMaster(false);
+ // 手順2〜4の中身も、いま読んだ結果で出し直す（押し直させない）。
+ if(d.read?.ok)try{renderRneInspect(d.read)}catch{}
+ if(d.column?.ok)try{renderColumnPlan(d.column)}catch{}
+ if(d.row?.ok)try{renderRowPlan(d.row)}catch{}
+ loadRuntimeSplit();
+}
 function renderRneInspect(d){
  let rb=$('#m-rne-inspect-result');
  try{

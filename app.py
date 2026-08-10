@@ -25,8 +25,8 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.53.0'; APP_VERSION_TITLE='行分割・行×列を本番でも使う'; APP_RELEASED_AT='2026-08-11'
-BUILD_VERSION=f'{APP_VERSION}-rowrun'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.54.0'; APP_VERSION_TITLE='RNEを1回で調べて控える／条件式が長すぎる軸を使わない'; APP_RELEASED_AT='2026-08-11'
+BUILD_VERSION=f'{APP_VERSION}-rnemaster'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリに同梱する仕様書。ここに登録したものだけが画面から開ける。
 # 画面からはこのidしか受け取らないので、任意のパスを読ませることはできない。
 DOCS=[
@@ -43,7 +43,23 @@ def docs_dir():
 
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
-{'version':'1.53.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+{'version':'1.54.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'【分割が「検索条件式が長すぎる」で失敗していました】行を絞るときは、担当しない値をすべて条件式へ並べます。値が多いほど式が長くなり、ある長さを超えるとデータベースが受け付けません（KVR52020）。実測では 876種（約7,000字）は通り、3641種（約29,000字）で拒否されました。',
+'値の種類ではなく「条件式の長さ」で決まるため、そこを見積もってから軸を選ぶようにしました。通った実績を下回らない上限（約9,000字）を超える軸は、走り出す前に候補から外します。分割数が増えると1片が外す値も増えるので、分割数も込みで判定します。',
+'それでもサーバーに拒否されたときは、その軸を「使わない」と記録して次から選ばないようにしました。毎回2分かけて拒否されるのを避けるためです。本番の実行で拒否された場合は、保存済みの割り当ても取り下げて分割なしへ戻します。記録は手順1から取り消せます。',
+'エラーの文面を書き直しました。「値が7,282種あり、2分割すると1片で約3,641種（29,128字）を条件式へ並べます」と、なぜ駄目で次にどうすればよいかを出します。',
+'「見込み0行」とだけ出ていたのを直しました。所要時間の記録がまだ無いRNEでは行数が0で渡っていたので、直近の出力から数えた重みの合計で代えます。',
+'',
+'【RNEの調査を1回にまとめ、控えとして保存します】「中身を読む」「列を調べる」「行を調べる」の3つに分かれていたのを、手順1の「RNEを調査」1回にまとめました。読むものは同じで、分けて押す理由がありませんでした。',
+'控えは RNE ファイルが変わるまでそのまま使えます。これまで軸の一覧は24時間で捨てていたため、ファイルが1バイトも変わっていなくても翌日には20〜100秒かけて読み直しになっていました。同じファイルかどうかは更新日時と大きさで見ます。',
+'手順1に「調査済み ― 調べ直す必要はありません」と1行で出し、その下に何が控えてあるか（列の本数と内訳／行の軸の本数／所要時間／確認済みの分け方）を並べます。RNEが更新されていれば「調べ直してください」と出ます。',
+'手順5「実績」を追加しました。この RNE を実行するたびに、所要時間・分け方・行の軸・時間帯・PC・きっかけ・出力形式を記録します。分け方別・時間帯別の平均を速い順に並べ、どの条件のときに速いのかを見比べられます。',
+'',
+'【ログ】ハートビート途絶の警告が、状態が変わらないまま延々と出ていました（実測7時間ぶんで数千行）。最初の1回と、1分→5分→30分→1時間と間隔を広げた節目だけ残します。',
+'コピーボタンでコピーするとき、「｜ LOG_DEDUP 同じ内容を◯行省略」の印を取り除くようにしました。画面で読むための注記で、貼り付け先では邪魔になるためです。行そのものは残します。',
+'影実行の候補一覧に、その軸で分けたときの条件式の長さ（何種／約何字）を出すようにしました。次に同じことが起きたとき、ログだけで原因が分かります。',
+]},
+{'version':'1.53.0','date':'2026-08-11','title':'行分割・行×列を本番でも使う','notes':[
 '【行分割・行×列が本番の実行でも使えるようになりました】これまでは影実行（測定）専用で、どれだけ速い結果が出ても次の実行は分割なしのままでした。裏付けの取れた形を保存し、本番でもその形で取ります。',
 '割り当ては分け方ごとに保存します。以前は片数だけを鍵にしていたため、「列2分割」と「行2分割」が同じ場所を奪い合い、あとから測った方で上書きされていました。既存の保存は列分割として引き継ぎます。',
 '行を使う形では、値の一覧そのものは保存しません。カテゴリは日々増減するため（実測 1746種→1754種）、測った時点の値で分けると新しい値の行がどの片にも入らず落ちます。保存するのは「どの軸で何分割するか」だけで、値の割り当ては実行の直前に読み直して作ります。',
@@ -898,6 +914,9 @@ def init_settings_db():
   CREATE TABLE IF NOT EXISTS rne_timing (rne_key TEXT PRIMARY KEY,rne_path TEXT NOT NULL DEFAULT '',execute_seconds REAL,save_seconds REAL,total_seconds REAL,rows INTEGER,cols INTEGER,measured_at TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS rne_columns (rne_key TEXT PRIMARY KEY,rne_path TEXT NOT NULL,rne_mtime_ns TEXT NOT NULL DEFAULT '',rne_size INTEGER NOT NULL DEFAULT 0,columns_json TEXT NOT NULL,column_count INTEGER NOT NULL DEFAULT 0,row_count INTEGER,source TEXT NOT NULL DEFAULT '',job_id TEXT NOT NULL DEFAULT '',job_name TEXT NOT NULL DEFAULT '',captured_at TEXT NOT NULL);
   CREATE INDEX IF NOT EXISTS idx_run_history_finished ON run_history(finished_at);
+  CREATE TABLE IF NOT EXISTS rne_axis_blocks (rne_key TEXT NOT NULL,axis_name TEXT NOT NULL,rne_path TEXT NOT NULL DEFAULT '',parts INTEGER NOT NULL DEFAULT 0,reason TEXT NOT NULL DEFAULT '',server_message TEXT NOT NULL DEFAULT '',values_count INTEGER NOT NULL DEFAULT 0,blocked_at TEXT NOT NULL,PRIMARY KEY(rne_key,axis_name));
+  CREATE TABLE IF NOT EXISTS rne_runs (id INTEGER PRIMARY KEY AUTOINCREMENT,rne_key TEXT NOT NULL,rne_path TEXT NOT NULL DEFAULT '',job_id TEXT NOT NULL DEFAULT '',job_name TEXT NOT NULL DEFAULT '',finished_at TEXT NOT NULL,hour INTEGER NOT NULL DEFAULT 0,weekday INTEGER NOT NULL DEFAULT 0,status TEXT NOT NULL DEFAULT '',trigger TEXT NOT NULL DEFAULT '',engine TEXT NOT NULL DEFAULT '',shape TEXT NOT NULL DEFAULT '',how TEXT NOT NULL DEFAULT '',parts INTEGER NOT NULL DEFAULT 0,row_axis TEXT NOT NULL DEFAULT '',rows INTEGER,cols INTEGER,elapsed REAL,execute_seconds REAL,save_seconds REAL,merge_seconds REAL,axis_seconds REAL,transfer_bytes INTEGER,transfer_kbs REAL,lines INTEGER NOT NULL DEFAULT 0,host TEXT NOT NULL DEFAULT '',cpu INTEGER NOT NULL DEFAULT 0,format TEXT NOT NULL DEFAULT '');
+  CREATE INDEX IF NOT EXISTS idx_rne_runs_key ON rne_runs(rne_key,finished_at);
   """)
    c.execute("INSERT OR REPLACE INTO schema_info(key,value) VALUES('schema_version','2')")
   ensure_schema_upgrades()
@@ -1396,21 +1415,34 @@ def save_axis_survey(rne_path,axes,parts):
  log.info('AXIS_SURVEY_SAVE rne=%s 軸=%s本',rne_path,len(axes))
  return rec
 
-def load_axis_survey(rne_path,max_age_hours=24):
- """覚えておいた軸の一覧。RNEが更新されていたら使わない。"""
+def read_axis_survey_raw(rne_path):
+ """控えをそのまま読む。古いかどうかの判断はしない（状態を画面へ出すために要る）。"""
  f=split_baseline_dir(rne_path)/'axes.json'
  if not f.is_file():return None
  try:rec=json.loads(f.read_text(encoding='utf-8'))
  except Exception:
   log.warning('AXIS_SURVEY_BROKEN rne=%s',rne_path);return None
  mtime,size=rne_signature(rne_path)
- if mtime and (mtime!=rec.get('rne_mtime_ns') or size!=rec.get('rne_size')):
+ rec['fresh']=bool(mtime) and str(mtime)==str(rec.get('rne_mtime_ns')) and int(size or 0)==int(rec.get('rne_size') or 0)
+ try:rec['age_hours']=(datetime.now()-datetime.fromisoformat(rec.get('taken_at') or '')).total_seconds()/3600
+ except Exception:rec['age_hours']=None
+ return rec
+
+def load_axis_survey(rne_path,max_age_hours=None):
+ """覚えておいた軸の一覧。RNEが更新されていたら使わない。
+
+ 同じファイルであるかぎり、何日前のものでも使う。分割点は実行の直前に読み直すので
+ （resolve_axis_now）、この控えは「どんな軸があるか」の目安にしかならない。
+ 時間で捨てていたころは、ファイルが1バイトも変わっていなくても翌日には20〜100秒かけて
+ 読み直しになっていた。max_age_hours を渡したときだけ、時間でも捨てる。
+ """
+ rec=read_axis_survey_raw(rne_path)
+ if not rec:return None
+ if not rec.get('fresh'):
   log.info('AXIS_SURVEY_STALE rne=%s RNEが更新されているので読み直します',rne_path);return None
- try:age=(datetime.now()-datetime.fromisoformat(rec.get('taken_at') or '')).total_seconds()/3600
- except Exception:age=None
- if age is not None and age>float(max_age_hours):
+ age=rec.get('age_hours')
+ if max_age_hours is not None and age is not None and age>float(max_age_hours):
   log.info('AXIS_SURVEY_OLD rne=%s %.1f時間前のものなので読み直します',rne_path,age);return None
- rec['age_hours']=age
  return rec
 
 SPLIT_MEASURE=('both','split','normal')
@@ -1447,7 +1479,46 @@ def split_expected_share(mode,columns,removable,col_parts,row_parts=1,weights=No
 # 明細データの問い合わせなら表側に必ず1つ以上ある。どのRNEでも使える道はこれだけ。
 AXIS_PRIORITY={'表側':0,'表頭':1,'条件':2}
 
-def axis_usable(a):
+# 行を絞るときは「担当しない値」をぜんぶ条件式へ並べる。値が多いほど式が長くなり、
+# ある長さを超えるとデータベースが受け付けない。
+#   実測 2026-08-10:
+#     登録設備   73種 →  36種を外す（約  150字） 成功（3.42倍）
+#     製品単重 1746種 → 876種を外す（約 7,000字） 成功（1.89倍）
+#     ﾛｯﾄ番号  7282種 → 3641種を外す（約29,000字） 失敗
+#       KVR52020 データベースに対する検索条件式が長すぎるため問い合わせができません
+# 通った実績（約7,000字）に少しだけ余裕を持たせた値を上限にする。ここを緩めると
+# 「2分かけて条件を組み立てたあとに拒否される」という、いちばん高くつく失敗になる。
+ROW_FILTER_MAX_CHARS=9000
+# 値を1件ずつ外すのはAPI呼び出しがその数だけ走る。3641件で114秒かかった実測がある。
+# 長さの上限より先にこちらへ当たることは少ないが、目安として持っておく。
+ROW_FILTER_MAX_VALUES=2500
+
+def row_filter_cost(axis,parts=2):
+ """その軸でN分割したとき、1片が条件式へ並べる値の「数」と「文字数」の見積もり。
+
+ 見本しか読めていない軸でも平均の長さから見積もる。実行してから拒否されるより、
+ 走り出す前に「この軸では無理」と分かるほうが安い。
+ """
+ vals=[str(x) for x in (axis.get('categories') or [])]
+ n=int(axis.get('category_count') or len(vals) or 0)
+ parts=max(2,int(parts or 2))
+ if n<2:return 0,0
+ avg=(sum(len(v) for v in vals)/len(vals)) if vals else 8.0
+ excluded=int(n*(parts-1)/parts)          # 1片が外す値の数
+ return excluded,int(excluded*(avg+1))    # +1 は区切り文字ぶん
+
+def axis_filter_too_long(axis,parts=2):
+ """条件式が長くなりすぎる軸か。なるなら理由を返す。"""
+ if axis.get('is_time'):return ''         # 期間は from〜to の2つだけ。長さの心配は無い
+ cnt,chars=row_filter_cost(axis,parts)
+ if chars>ROW_FILTER_MAX_CHARS:
+  return (f'値が{int(axis.get("category_count") or 0)}種あり、{parts}分割すると1片で{cnt}種を'
+          f'条件式へ並べます（約{chars:,}字）。データベースが受け付ける長さを超えるため使えません')
+ if cnt>ROW_FILTER_MAX_VALUES:
+  return f'値が多すぎます（{parts}分割で1片が{cnt}種を外すことになります）'
+ return ''
+
+def axis_usable(a,parts=2):
  """その軸で行を分けられるか。理由も返す。"""
  if a.get('is_time'):
   pr=a.get('period') or {}
@@ -1460,6 +1531,9 @@ def axis_usable(a):
  if n is None:return False,(a.get('category_error') or '値の数を読めません')
  if int(n)<2:
   return False,(f'値が{n}種しかありません'+(f'（{a.get("category_error")}）' if a.get('category_error') else ''))
+ # 値が多すぎる軸は、条件式が長すぎてデータベースに拒否される。実行する前に外す。
+ toolong=axis_filter_too_long(a,parts)
+ if toolong:return False,toolong
  return True,f'{n}種の値を組に分ける'
 
 # 行の軸をどうやって決めるか。用途に応じて4通り。
@@ -1518,6 +1592,47 @@ def axis_balance_scores(job,cfg,names):
   out[nm]={'top_share':max(counts.values())/total,'distinct':len(counts),'rows':total,'blank_rows':blank}
  return out
 
+def block_row_axis(rne_path,axis_name,reason,server_message='',parts=0,values=0):
+ """サーバーに拒否された軸を覚えておく。次からはこの軸を選ばない。
+
+ 「実行してみないと分からない」ものは、一度分かった時点で残さないと同じ失敗を繰り返す。
+ KVR52020（検索条件式が長すぎる）がこれに当たる。
+ """
+ if not axis_name:return False
+ init_settings_db()
+ try:
+  with settings_sync_lock, settings_connection() as c:
+   c.execute('INSERT OR REPLACE INTO rne_axis_blocks(rne_key,axis_name,rne_path,parts,reason,server_message,values_count,blocked_at) VALUES(?,?,?,?,?,?,?,?)',
+             (_rne_key(rne_path),str(axis_name),str(rne_path),int(parts or 0),str(reason),str(server_message)[:400],
+              int(values or 0),datetime.now().isoformat(timespec='seconds')))
+   _mark_settings_dirty()
+ except Exception:
+  log.exception('ROW_AXIS_BLOCK_SAVE_FAILED rne=%s axis=%s',rne_path,axis_name);return False
+ log.warning('ROW_AXIS_BLOCKED rne=%s 軸=%s 値=%s種 %s分割 理由=%s サーバー=%s（次からこの軸は選びません）',
+             rne_path,axis_name,values,parts,reason,str(server_message)[:120])
+ return True
+
+def blocked_row_axes(rne_path):
+ """このRNEで使えないと分かっている軸。{名前: 理由} を返す。"""
+ init_settings_db()
+ try:
+  with settings_connection() as c:
+   rows=list(c.execute('SELECT axis_name,reason,values_count,parts,blocked_at FROM rne_axis_blocks WHERE rne_key=?',
+                       (_rne_key(rne_path),)))
+ except Exception:
+  return {}
+ return {r['axis_name']:{'reason':r['reason'],'values':r['values_count'],'parts':r['parts'],'at':r['blocked_at']}
+         for r in rows}
+
+def clear_row_axis_blocks(rne_path):
+ init_settings_db()
+ try:
+  with settings_sync_lock, settings_connection() as c:
+   n=c.execute('DELETE FROM rne_axis_blocks WHERE rne_key=?',(_rne_key(rne_path),)).rowcount;_mark_settings_dirty()
+  return n
+ except Exception:
+  log.exception('ROW_AXIS_BLOCK_CLEAR_FAILED rne=%s',rne_path);return 0
+
 def axis_loses_rows(name,scores):
  """その軸で分けると行が落ちるか。落ちるなら落ちる行数を返す（落ちなければ0）。
 
@@ -1529,21 +1644,23 @@ def axis_loses_rows(name,scores):
  sc=(scores or {}).get(str(name or ''))
  return int((sc or {}).get('blank_rows') or 0)
 
-def pick_row_axis_by_mode(axes,parts=2,mode='first',index=1,name='',scores=None):
+def pick_row_axis_by_mode(axes,parts=2,mode='first',index=1,name='',scores=None,blocked=None):
  """決められた方針で軸を1本選ぶ。選べなければ理由を付けて返す。
 
  どの方針でも、最後は pick_row_axis を通す（使えない軸を掴まないため）。
  値が空の行がある軸は、行が落ちるので既定では選ばない（名前で名指しされたときだけ通す）。
+ blocked には、過去にサーバーが拒否した軸を渡す。同じ失敗を繰り返さないため。
  """
  mode=normalize_row_axis_mode(mode)
- usable=[a for a in (axes or []) if axis_usable(a)[0]]
+ blocked=blocked or {}
+ usable=[a for a in (axes or []) if axis_usable(a,parts)[0] and a.get('name') not in blocked]
  # 空の行がある軸は結果が合わなくなるので、選ぶ対象から外す。
  # ただし全部が該当するときは外さない（1本も選べなくなるほうが困る）。
  safe=[a for a in usable if not axis_loses_rows(a.get('name'),scores)]
  if scores and safe:usable=safe
  note=''
  if mode=='name' and str(name or '').strip():
-  best,ranked=pick_row_axis(axes,parts,str(name).strip())
+  best,ranked=pick_row_axis(axes,parts,str(name).strip(),blocked)
   if best and best.get('name')==str(name).strip():
    return best,ranked,f'名前で指定された「{name}」を使います'
   note=f'指定された「{name}」は使えないので、表側の1番目に戻します'
@@ -1551,7 +1668,7 @@ def pick_row_axis_by_mode(axes,parts=2,mode='first',index=1,name='',scores=None)
   want=max(1,int(index or 1))
   hit=next((a for a in usable if a.get('location')=='表側' and int(a.get('index') or 0)+1==want),None)
   if hit:
-   best,ranked=pick_row_axis(axes,parts,hit.get('name',''))
+   best,ranked=pick_row_axis(axes,parts,hit.get('name',''),blocked)
    if best and best.get('name')==hit.get('name'):
     return best,ranked,f'指定された表側#{want}「{hit.get("name")}」を使います'
   note=f'指定された表側#{want}は使えないので、表側の1番目に戻します'
@@ -1562,33 +1679,37 @@ def pick_row_axis_by_mode(axes,parts=2,mode='first',index=1,name='',scores=None)
   cand.sort(key=lambda x:(x[0],x[1]))
   if cand:
    share,_,a=cand[0]
-   best,ranked=pick_row_axis(axes,parts,a.get('name',''))
+   best,ranked=pick_row_axis(axes,parts,a.get('name',''),blocked)
    if best and best.get('name')==a.get('name'):
     return best,ranked,(f'表側のうち最も散らばっている「{a.get("name")}」を選びました'
                         f'（いちばん多い値が{share:.0%}。候補{len(cand)}本から）')
   note='直近の出力から散らばりを測れないので、表側の1番目に戻します'
  # first、および上の方針で決まらなかった場合。表側の1番目から順に、使える軸を探す。
  # usable は空の行がある軸を外したあとなので、ここでも行の落ちない軸が先に来る。
+ # 過去に拒否された軸は、理由を添えて一覧にも残す（なぜ飛ばしたのかが追えるように）。
  order=sorted(usable,key=lambda a:(AXIS_PRIORITY.get(a.get('location'),9),int(a.get('index') or 0)))
  head=order[0].get('name','') if order else ''
- best,ranked=pick_row_axis(axes,parts,head)
+ best,ranked=pick_row_axis(axes,parts,head,blocked)
  if best:
   skipped=''
-  if scores and best.get('name')!=(sorted([a for a in (axes or []) if axis_usable(a)[0]],
+  if scores and best.get('name')!=(sorted([a for a in (axes or []) if axis_usable(a,parts)[0]],
                                           key=lambda a:(AXIS_PRIORITY.get(a.get('location'),9),
                                                         int(a.get('index') or 0)))[:1] or [{}])[0].get('name'):
    skipped='（手前の軸は値が空の行があり、分けると行が落ちるので飛ばしました）'
   return best,ranked,(note+'。' if note else '')+f'表側から順に見て「{best.get("name")}」を使います'+skipped
  return None,ranked,note or '使える軸がありません'
 
-def pick_row_axis(axes,parts=2,prefer=''):
+def pick_row_axis(axes,parts=2,prefer='',blocked=None):
  """行分割に使う軸を選ぶ。表側の先頭を最優先にする（明細データなら必ず在る）。
 
  名前を指定されたときはそれを優先する。使えない軸は理由を付けて外す。
  """
+ blocked=blocked or {}
  ranked=[]
  for a in (axes or []):
-  ok,why=axis_usable(a)
+  ok,why=axis_usable(a,parts)
+  if ok and a.get('name') in blocked:
+   ok=False;why='前回サーバーに拒否されました（%s）'%(blocked[a['name']].get('reason') or '理由不明')
   n=int(a.get('category_count') or 0)
   ranked.append(dict(a,usable=ok,reason=why,
                      rank=(0 if prefer and a.get('name')==prefer else 1,
@@ -1624,7 +1745,11 @@ def resolve_axis_now(job,cfg,rne_path,parts,prefer='',hint=None,line='',choice=N
  # 散らばりは常に測る。どの決め方でも「値が空の行がある軸」を避けたいので必ず要る。
  # 直近の出力を1回読むだけなので、費用は無視できる。
  scores=axis_balance_scores(job,cfg,[a.get('name') for a in got])
- axis,ranked,why=pick_row_axis_by_mode(got,2,mode,ch.get('index') or 1,ch.get('name') or '',scores)
+ # 過去にサーバーが拒否した軸は選ばない。条件式の長さは実行してみるまで分からないので、
+ # 一度分かったものは覚えておく（KVR52020 検索条件式が長すぎる）。
+ blocked=blocked_row_axes(rne_path)
+ axis,ranked,why=pick_row_axis_by_mode(got,max(2,int(parts or 2)),mode,ch.get('index') or 1,ch.get('name') or '',scores,blocked)
+ if blocked:log.info('ROW_AXIS_BLOCKS rne=%s 使わない軸=%s',rne_path,'、'.join(blocked))
  out['ranked']=ranked;out['why']=why
  if scores:
   for a in sorted(scores.items(),key=lambda x:x[1]['top_share'])[:6]:
@@ -1766,6 +1891,11 @@ def plan_axis_split(axis,parts,weights=None,total_rows=0):
  vals=[str(x) for x in (axis.get('categories') or [])]
  groups=balance_values(vals,parts,weights)
  if not groups:return None
+ # 行数の見込み。所要時間の記録がまだ無いRNEでは total_rows=0 で渡ってくるため、
+ # 直近の出力から数えた重みの合計で代える。0のままだと「見込み0行」とだけ出て何も分からない。
+ if not total_rows and weights:
+  try:total_rows=int(sum(weights.values()))
+  except Exception:total_rows=0
  total_w=sum(g['weight'] for g in groups) or 0.0
  out=[]
  for i,g in enumerate(groups):
@@ -2648,6 +2778,117 @@ def drop_split_plans(rne_path,reason=''):
   log.exception('SPLIT_PLAN_DROP_FAILED rne=%s',rne_path);return 0
  if n:log.warning('SPLIT_PLAN_DROP rne=%s removed=%s reason=%s',rne_path,n,reason)
  return n
+
+_HOST_NAME=''
+def host_name():
+ """このPCの名前。同じRNEでも端末が違えば速さが違うので、実績に添える。"""
+ global _HOST_NAME
+ if not _HOST_NAME:
+  try:_HOST_NAME=os.environ.get('COMPUTERNAME') or socket.gethostname() or '-'
+  except Exception:_HOST_NAME='-'
+ return _HOST_NAME
+
+def record_rne_run(rne_path,job,status_value,trigger,metrics,engine='api',fmt=''):
+ """1回の実行を、RNE単位の実績として残す。あとから条件別に見比べるために使う。
+
+ job_runs は「対象ごとの最新1件」、run_history は「実施したかどうか」。
+ どちらも速さの分析には足りない。ここには時間帯・端末・分け方・内訳まで残す。
+ """
+ if not rne_path:return False
+ init_settings_db()
+ m=dict(metrics or {})
+ now=datetime.now()
+ try:
+  with settings_sync_lock, settings_connection() as c:
+   c.execute("""INSERT INTO rne_runs(rne_key,rne_path,job_id,job_name,finished_at,hour,weekday,status,trigger,engine,
+                shape,how,parts,row_axis,rows,cols,elapsed,execute_seconds,save_seconds,merge_seconds,axis_seconds,
+                transfer_bytes,transfer_kbs,lines,host,cpu,format)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+             (_rne_key(rne_path),str(rne_path),str((job or {}).get('id') or ''),str((job or {}).get('name') or ''),
+              now.isoformat(timespec='seconds'),now.hour,now.weekday(),str(status_value),str(trigger or ''),str(engine or ''),
+              str(m.get('split_shape') or ''),str(m.get('split_how') or ''),int(m.get('split_parts') or 0),
+              str(m.get('row_axis') or ''),m.get('rows'),m.get('cols'),m.get('elapsed'),
+              m.get('execute_seconds'),m.get('save_seconds'),m.get('merge_seconds'),m.get('axis_seconds'),
+              m.get('transfer_bytes'),m.get('transfer_kbs'),int(m.get('lines') or 0),
+              host_name(),int(os.cpu_count() or 0),str(m.get('format') or fmt or '')))
+   # 分析に要るのは傾向で、全履歴ではない。RNEごとに直近2000件へ抑える。
+   c.execute('DELETE FROM rne_runs WHERE rne_key=? AND id NOT IN (SELECT id FROM rne_runs WHERE rne_key=? ORDER BY id DESC LIMIT 2000)',
+             (_rne_key(rne_path),_rne_key(rne_path)))
+   _mark_settings_dirty()
+ except Exception:
+  log.exception('RNE_RUN_RECORD_FAILED rne=%s',rne_path);return False
+ return True
+
+def rne_run_stats(rne_path,limit=400):
+ """RNE単位の実績を、条件別にまとめる。どの条件が速いのかを数字で示すためのもの。"""
+ init_settings_db()
+ try:
+  with settings_connection() as c:
+   rows=[dict(r) for r in c.execute(
+     'SELECT * FROM rne_runs WHERE rne_key=? ORDER BY id DESC LIMIT ?',(_rne_key(rne_path),int(limit)))]
+ except Exception:
+  return {'runs':[],'total':0,'groups':{}}
+ ok=[r for r in rows if r.get('status')=='ok' and (r.get('elapsed') or 0)>0]
+ def group(key,label):
+  g={}
+  for r in ok:
+   k=str(r.get(key) or '')
+   if key=='hour':k='%02d時台'%int(r.get('hour') or 0)
+   if not k:k='（記録なし）'
+   g.setdefault(k,[]).append(float(r['elapsed']))
+  out=[{'key':k,'runs':len(v),'avg':round(sum(v)/len(v),1),'min':round(min(v),1),'max':round(max(v),1)}
+       for k,v in g.items()]
+  out.sort(key=lambda x:x['avg'])
+  return {'label':label,'items':out}
+ return {'total':len(rows),'ok':len(ok),
+         'runs':[{k:r.get(k) for k in ('finished_at','status','trigger','how','shape','parts','row_axis',
+                                       'rows','cols','elapsed','execute_seconds','save_seconds','merge_seconds',
+                                       'axis_seconds','transfer_bytes','transfer_kbs','host','cpu','format','engine')}
+                 for r in rows[:60]],
+         'groups':{'how':group('how','分け方'),'hour':group('hour','時間帯'),
+                   'host':group('host','PC'),'trigger':group('trigger','きっかけ'),
+                   'format':group('format','出力形式')}}
+
+def rne_master_view(job,cfg):
+ """このRNEについて控えてあるもの一式。画面はこれ1本を見れば足りる。
+
+ 調べ直すかどうかの判断に要るのは1つだけ ―― 控えを取った時のファイルと、いまのファイルが
+ 同じかどうか。RNEの更新日時と大きさで見る。同じなら調べ直す必要はない。
+ """
+ rp=resolve_rne_path(job,cfg)
+ mtime,size=rne_signature(rp)
+ exists=Path(rp).is_file()
+ cached=load_column_cache(rp) or {}
+ survey=read_axis_survey_raw(rp) or {}
+ timing=load_rne_timing(rp) or {}
+ plans=load_split_plans(rp)
+ blocks=blocked_row_axes(rp)
+ axes=survey.get('axes') or []
+ # 「同じファイルか」は控えごとに持っている指紋で判定する。片方だけ古いこともある。
+ col_fresh=bool(cached) and not cached.get('stale')
+ axis_fresh=bool(axes) and str(survey.get('rne_mtime_ns') or '')==str(mtime) and int(survey.get('rne_size') or 0)==int(size or 0)
+ have=bool(cached.get('columns')) and bool(axes)
+ if not exists:state,why='missing','RNEファイルが見つかりません'
+ elif not have:state,why='none','まだ調査していません'
+ elif col_fresh and axis_fresh:state,why='fresh','調査したときと同じファイルです。調べ直す必要はありません'
+ else:state,why='stale','RNEが更新されています。調べ直してください'
+ return {'rne':str(rp),'exists':exists,'state':state,'why':why,
+         'file':{'mtime_ns':mtime,'size':size,
+                 'modified':(datetime.fromtimestamp(Path(rp).stat().st_mtime).isoformat(timespec='seconds') if exists else '')},
+         'columns':{'have':bool(cached.get('columns')),'count':len(cached.get('columns') or []),
+                    'removable':len([x for x in (cached.get('classify') or []) if x.get('removable')]),
+                    'fixed':len([x for x in (cached.get('classify') or []) if not x.get('removable')]),
+                    'condition':len(cached.get('condition') or []),
+                    'captured_at':cached.get('captured_at',''),'fresh':col_fresh,'source':cached.get('source','')},
+         'axes':{'have':bool(axes),'count':len(axes),
+                 'usable':len([a for a in axes if axis_usable(a,2)[0]]),
+                 'captured_at':survey.get('taken_at',''),'fresh':axis_fresh,
+                 'blocked':[{'name':k,'reason':v.get('reason',''),'values':v.get('values'),'at':v.get('at','')}
+                            for k,v in blocks.items()]},
+         'timing':{'have':bool(timing),'total':timing.get('total'),'execute':timing.get('execute'),
+                   'save':timing.get('save'),'rows':timing.get('rows'),'cols':timing.get('cols'),
+                   'measured_at':timing.get('measured_at','')},
+         'plans':[split_plan_view(x) for x in sorted(plans,key=lambda x:-(x['observed_speedup'] or 0))]}
 
 def split_plan_view(p,chosen=None):
  """保存済みの割り当て1件を、そのまま画面へ出せる形にする。
@@ -3789,6 +4030,15 @@ def elapsed_tick(expected_seconds,label,note=''):
   return None,f'{label} {elapsed:.0f}秒'+(f' · {note}' if note else '')
  return make
 
+# データベースが「検索条件式が長すぎる」と断ってきたときの印。値の数を減らす以外に手はない。
+#   KVR52020 データベースに対する検索条件式が長すぎるため問い合わせができません
+SPLIT_FILTER_TOO_LONG_MARKS=('KVR52020','NAVI_ERROR_EXECMD')
+
+def split_filter_too_long(err):
+ """その失敗が「条件式が長すぎる」ものかどうか。"""
+ t=str(err or '')
+ return 'KVR52020' in t or ('NAVI_ERROR_EXECMD' in t and '長すぎる' in t)
+
 def process_split_part(j,cfg,user,pw,server,out_csv,drop_columns,part_label='',row_condition=None,row_axis=None):
  """1パートを実行してCSVへ保存する。担当外の列を外し、担当する行だけに絞る。
 
@@ -3910,9 +4160,15 @@ def process_split_part(j,cfg,user,pw,server,out_csv,drop_columns,part_label='',r
           'row_locate':applied_row.get('locate','') or (row_axis or {}).get('location',''),
           'row_form':applied_row.get('form','')}
  except Exception as e:
-  log.error('SPLIT_PART_FAILED part=%s step=%s error=%s',part_label,stage.get('step',''),e)
+  # 「条件式が長すぎる」は、この軸では何度やっても同じ結果になる種類の失敗。
+  # 呼び出し側がその軸を覚えて次から避けられるよう、印を付けて返す。
+  toolong=split_filter_too_long(e)
+  log.error('SPLIT_PART_FAILED part=%s step=%s%s error=%s',part_label,stage.get('step',''),
+            ' 種別=条件式が長すぎる' if toolong else '',e)
   step('失敗',error=str(e))
   return {'ok':False,'part':part_label,'error':str(e),'step':stage.get('step',''),
+          'filter_too_long':bool(toolong),'row_axis_name':(row_axis or {}).get('column',''),
+          'row_axis_values':len((row_axis or {}).get('values') or [])+len((row_axis or {}).get('others') or []),
           'elapsed':round(time.perf_counter()-started,2)}
  finally:
   if api:
@@ -4077,7 +4333,16 @@ def run_split_extraction(j,cfg,user,pw,server,work,chosen,dest_csv,line='',stats
                        on_tick=lambda el,st:_line_tick(line,j,'transfer',tick,el,
                                                        f'{sum(1 for x in st if x["done"])}/{total}片'))
  bad=[r for r in results if not r.get('ok')]
- if bad:raise RuntimeError('分割抽出に失敗: '+'; '.join(f'{r.get("part")}: {r.get("error")}' for r in bad))
+ if bad:
+  # 条件式が長すぎる＝この軸では二度と通らない。覚えておき、割り当ても取り下げる。
+  # そのまま残すと毎回2分かけて拒否されるだけになる。
+  toolong=[r for r in bad if r.get('filter_too_long')]
+  if toolong and row_axis:
+   block_row_axis(rp,row_axis.get('name',''),'本番の実行で検索条件式が長すぎるとサーバーに拒否されました',
+                  server_message=str(toolong[0].get('error') or ''),parts=len(specs),
+                  values=int(row_axis.get('category_count') or 0))
+   drop_split_plans(rp,f'行の軸「{row_axis.get("name")}」が拒否されました（条件式が長すぎます）')
+  raise RuntimeError('分割抽出に失敗: '+'; '.join(f'{r.get("part")}: {r.get("error")}' for r in bad))
  run_elapsed=time.perf_counter()-extract_started
  phase_log('split_extract',t,job=j['name'],line=line,mode=kind,parts=total,
            rows=max((r.get('rows') or 0) for r in results),bytes=sum((r.get('size') or 0) for r in results))
@@ -4464,6 +4729,10 @@ def run_api_process_batch(jobs,cfg,user,pw,server,dde_work,backup,max_lines,trig
    set_status(job_results=list(batch_results))
    record_job_run(item['job']['id'],item['job']['name'],'ok' if result.get('ok') else 'failed',trigger,detail=(result.get('result') or result.get('error') or ''),rows=result.get('rows'),cols=result.get('columns'),output_file=Path(result.get('target') or '').name,
                   metrics={k:result.get(k) for k in ('elapsed','execute_seconds','save_seconds','merge_seconds','transfer_bytes','transfer_kbs','split_parts','split_shape','split_how','row_axis','axis_seconds','race_winner','format') if result.get(k) is not None})
+   # RNE単位の実績。時間帯・端末・分け方まで残し、あとから条件別に見比べられるようにする。
+   if result.get('rne_path'):
+    record_rne_run(result['rne_path'],item['job'],'ok' if result.get('ok') else 'failed',trigger,
+                   dict(result,rows=result.get('rows'),cols=result.get('columns'),lines=max_lines),engine='api')
    # ワーカーが持ち帰った列名をここで保存する。設定DBへの書き込みを親1本に集約して競合を避ける。
    if result.get('ok') and result.get('column_names'):
     save_column_cache(result.get('rne_path') or '',result['column_names'],rows=result.get('rows'),source='run',job=item['job'])
@@ -4640,6 +4909,7 @@ def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=No
    # 「件数だけ」になり、所要も転送量も後から追えなくなる。
    metrics=serial_run_metrics(engine,fmt,total,nr,nc,locals().get('intermediate'),locals().get('dde_save_seconds'))
    record_job_run(j['id'],j['name'],'ok',trigger,detail=detail,rows=nr,cols=nc,output_file=j['output_file'],metrics=metrics)
+   record_rne_run(rp,j,'ok',trigger,metrics,engine=engine,fmt=fmt)
    job_results.append({'job':j['name'],'job_id':j['id'],'status':'ok','detail':detail,'rows':nr,'cols':nc,'elapsed':round(total,1),'target':str(target),'published':bool(pub['published'])})
    set_status(completed_jobs=job_index,queue_completed_ids=list(completed_ids),queue_running_ids=[],job_results=list(job_results))
    log.info('JOB_RESULT job=%s format=%s rows=%s columns=%s elapsed=%.2fs target=%s',j['name'],fmt,nr,nc,total,target); log.info('JOB_PROFILE job=%s rows=%s columns=%s %s',j['name'],nr,nc,phase_profile_summary())
@@ -4958,10 +5228,35 @@ def heartbeat_watchdog():
    elif active and residency_state['active']:
     leave_residency()
    # ハートビート途絶だけでは終了しない。ネットワーク断、スリープ、ブラウザー破棄との誤判定を避ける。
+   # 状態は変わらないので、そのつど出すとログがこれだけで埋まる（実測 7時間ぶんで数千行）。
+   # 最初の1回と、間隔を広げながらの節目だけ残す。分かることは同じで、量は1/100以下になる。
    if silence>HEARTBEAT_TIMEOUT_SECONDS:
-    log.warning('HEARTBEAT_DEGRADED silence=%.0fs server_kept_alive=1',silence)
+    if _heartbeat_should_log(silence):
+     log.warning('HEARTBEAT_DEGRADED silence=%.0fs server_kept_alive=1 note=次は%s後に出します',
+                 silence,_heartbeat_next_label(silence))
+   else:
+    _heartbeat_notice['at']=0.0
   except Exception:
    log.exception('ハートビート監視エラー')
+
+# 途絶の知らせは節目だけ。1分 → 5分 → 30分 → 1時間ごと、と間隔を広げる。
+HEARTBEAT_NOTICE_STEPS=(60,300,1800,3600)
+_heartbeat_notice={'at':0.0}
+
+def _heartbeat_should_log(silence):
+ """この途絶を残すか。前回から十分に間が空いたときだけ True。"""
+ last=float(_heartbeat_notice.get('at') or 0)
+ if last<=0:
+  _heartbeat_notice['at']=silence;return True
+ gap=silence-last
+ want=next((x for x in HEARTBEAT_NOTICE_STEPS if silence<x*2),HEARTBEAT_NOTICE_STEPS[-1])
+ if gap>=want:
+  _heartbeat_notice['at']=silence;return True
+ return False
+
+def _heartbeat_next_label(silence):
+ want=next((x for x in HEARTBEAT_NOTICE_STEPS if silence<x*2),HEARTBEAT_NOTICE_STEPS[-1])
+ return f'{want//60}分' if want>=60 else f'{want}秒'
 
 def scheduler():
  time.sleep(3)
@@ -5468,12 +5763,14 @@ def _split_trial_run(data,c,job):
    log.info('SPLIT_TRIAL_AXES_SKIP rne=%s 下調べがないので、実行直前の読み直しだけで進めます',rp)
   # 軸の決め方は入口で確定させてある（指定が無ければ対象の設定、それも無ければ表側の1番目）。
   scores=axis_balance_scores(job,c,[a.get('name') for a in row_axis_all])
+  row_blocks=blocked_row_axes(rp)
   row_axis,ranked,axis_why=pick_row_axis_by_mode(row_axis_all,row_parts,axis_choice['mode'],
-                                                 axis_choice['index'],axis_choice['name'],scores)
+                                                 axis_choice['index'],axis_choice['name'],scores,row_blocks)
   log.info('SPLIT_TRIAL_AXIS_MODE rne=%s 決め方=%s → %s',rp,axis_choice['mode'],axis_why)
   for x in ranked:
-   log.info('SPLIT_TRIAL_AXIS 候補 %s#%s %s 型=%s 値=%s 使える=%s（%s）',x['location'],x['index']+1,x['name'],
-            x['type_name'],x.get('category_count'),x['usable'] and x['enough'],x['reason'])
+   _cnt,_chars=row_filter_cost(x,row_parts)
+   log.info('SPLIT_TRIAL_AXIS 候補 %s#%s %s 型=%s 値=%s 条件式=%s種/約%s字 使える=%s（%s）',x['location'],x['index']+1,x['name'],
+            x['type_name'],x.get('category_count'),_cnt,_chars,x['usable'] and x['enough'],x['reason'])
   axis_hint=row_axis or {}
   if row_axis:
    log.info('SPLIT_TRIAL_AXIS_PICK rne=%s 軸=%s（%s %s番目 / %s）値=%s 期間=%s',
@@ -5663,6 +5960,25 @@ def _split_trial_run(data,c,job):
                         'どのパートもほぼ全件を返しました。結合すると同じ行が'
                         f'{pieces}倍に増えるため、ここで中止しています。出力ファイルは更新していません。')
   if bad:
+   # 「条件式が長すぎる」は、この軸の値が多すぎることが原因。何度やっても同じなので、
+   # その軸を覚えて次から選ばないようにし、画面には次の手を書く。
+   toolong=[r for r in bad if r.get('filter_too_long')]
+   if toolong and row_axis:
+    vals=max(int(r.get('row_axis_values') or 0) for r in toolong) or int(row_axis.get('category_count') or 0)
+    block_row_axis(rp,row_axis.get('name',''),
+                   f'{row_parts}分割で1片が外す値が多すぎ、検索条件式が長すぎるとサーバーに拒否されました',
+                   server_message=str(toolong[0].get('error') or ''),parts=row_parts,values=vals)
+    _cnt,_chars=row_filter_cost(row_axis,row_parts)
+    record_split_trial(rp,job,pieces,None,None,normal_elapsed,None,False,
+                       detail=f'{mode}: 条件式が長すぎる 軸={row_axis.get("name")} 値={vals}種')
+    return dict(ok=False,parts=pieces,results=results,filter_too_long=True,
+                   row_column=row_axis.get('name',''),row_values=vals,
+                   error=f'「{row_axis.get("name","")}」は値が{vals:,}種あり、{row_parts}分割すると1片で'
+                         f'約{_cnt:,}種（{_chars:,}字）を条件式へ並べることになります。'
+                         'データベースが受け付ける長さを超えたため、問い合わせが拒否されました'
+                         '（KVR52020 検索条件式が長すぎます）。'
+                         'この軸は以後選ばないよう記録しました。値の種類が少ない軸（数十〜数百種）を選ぶと通ります。'
+                         '出力ファイルは更新していません。')
    return dict(ok=False,error='分割実行に失敗しました: '+'; '.join(f'{r.get("part")}: {r.get("error")}' for r in bad),
                   parts=pieces,results=results)
   # 3) 結合して、分割なしの結果と突き合わせる。
@@ -5921,6 +6237,35 @@ def split_trial_tick(phase,stage,paths,expected_bytes,elapsed,expected_seconds=N
                    bytes=got,expected_bytes=int(expected_bytes or 0),note=note,
                    part_progress=split_part_progress(paths,states or [],expected_bytes))
 
+@app.post('/api/rne-master')
+def rne_master():
+ """このRNEについて控えてあるもの一式と、実績の集計。
+
+ 「同じファイルなら調べ直さなくてよい」ことを画面で示すための口。
+ サーバーへは一切問い合わせない（控えを読むだけ）。
+ """
+ data=request.get_json(silent=True) or {};c=load()
+ job=next((x for x in c['jobs'] if x['id']==data.get('job_id')),None) if data.get('job_id') else None
+ if not job:return jsonify(ok=False,error='保存済みの対象を選んでください'),200
+ try:view=rne_master_view(job,c)
+ except Exception as e:
+  log.exception('RNE_MASTER_FAILED');return jsonify(ok=False,error=str(e)),200
+ stats=rne_run_stats(view['rne']) if data.get('stats') else None
+ log.info('RNE_MASTER job=%s state=%s 列=%s 軸=%s 割り当て=%s%s',job['name'],view['state'],
+          view['columns']['count'],view['axes']['count'],len(view['plans']),
+          f" 実績={stats['total']}件" if stats else '')
+ return jsonify(ok=True,job=job['name'],master=view,stats=stats)
+
+@app.post('/api/rne-master/clear-blocks')
+def rne_master_clear_blocks():
+ """「使わない」と記録した軸を取り消す。条件が変われば通ることもあるため、戻せるようにしておく。"""
+ data=request.get_json(silent=True) or {};c=load()
+ job=next((x for x in c['jobs'] if x['id']==data.get('job_id')),None) if data.get('job_id') else None
+ if not job:return jsonify(ok=False,error='保存済みの対象を選んでください'),200
+ rp=resolve_rne_path(job,c);n=clear_row_axis_blocks(rp)
+ log.info('ROW_AXIS_BLOCK_CLEAR rne=%s removed=%s',rp,n)
+ return jsonify(ok=True,removed=n,master=rne_master_view(job,c))
+
 @app.post('/api/run-split-state')
 def run_split_state():
  """次に本番で実行したら、どの形で取るのか。判定だけを返す（サーバーへは問い合わせない）。
@@ -5975,7 +6320,8 @@ def row_split_plan():
  parts0=max(2,min(8,int(data.get('parts') or 2)))
  choice=row_axis_choice(data,job)
  scores=axis_balance_scores(job,c,[a.get('name') for a in axes])
- axis,ranked,axis_why=pick_row_axis_by_mode(axes,parts0,choice['mode'],choice['index'],choice['name'],scores)
+ axis_blocks=blocked_row_axes(rp)
+ axis,ranked,axis_why=pick_row_axis_by_mode(axes,parts0,choice['mode'],choice['index'],choice['name'],scores,axis_blocks)
  log.info('ROW_AXES rne=%s 読めた軸=%s 使える=%s 決め方=%s 既定=%s（%s）',rp,len(axes),
           sum(1 for x in ranked if x['usable'] and x['enough']),choice['mode'],
           (axis or {}).get('name','(なし)'),axis_why)
@@ -6123,12 +6469,18 @@ INSPECT_TASK_SPECS={
  'row':   ('row_split_plan','/api/row-split-plan','行の分け方を探す',
            'RNEから、行を絞れる軸（管理ポイント）を読んでいます',24.0),
 }
+# 「RNEを調査」は上の3つを続けて走らせる。読むものは同じで、分けて押す理由が無い。
+# 別々に押させると、どれをどの順で押したかを利用者が覚えることになる。
+INSPECT_ALL_ORDER=('read','column','row')
+INSPECT_ALL_SPEC=('RNEを調査','中身・列・行をまとめて読み、この RNE の控えとして保存しています',
+                  sum(INSPECT_TASK_SPECS[k][4] for k in INSPECT_ALL_ORDER))
 inspect_task_lock=threading.RLock()
 def inspect_task_blank(**over):
  st={'running':False,'kind':'','stage':'','title':'','job':'','started':0.0,'elapsed':0.0,
      'percent':0.0,'result':None,'error':'','expected':0.0,'measured':False}
  st.update(over);return st
 inspect_tasks={k:inspect_task_blank(kind=k) for k in INSPECT_TASK_SPECS}
+inspect_tasks['all']=inspect_task_blank(kind='all')
 inspect_task_seconds={}   # 種類ごとの直近の所要秒。見込みの分母にだけ使う
 
 def inspect_task_percent(st):
@@ -6139,6 +6491,73 @@ def inspect_task_percent(st):
  el=max(0.0,time.time()-float(st.get('started') or time.time()))
  if exp<=0:return round(min(90.0,el/30.0*90.0),1)
  return round(min(90.0,el/exp*90.0),1)
+
+def _run_inspect_endpoint(kind,data):
+ """調べもの1件を、登録済みの口をそのまま呼んで実行する。ふるまいを二重に持たない。"""
+ endpoint,path,title,detail,_sec=INSPECT_TASK_SPECS[kind]
+ view=app.view_functions.get(endpoint)
+ if view is None:raise RuntimeError(f'{endpoint} が登録されていません')
+ with app.test_request_context(path,method='POST',json=data):
+  rv=view()
+ resp=rv[0] if isinstance(rv,tuple) else rv
+ return resp.get_json(silent=True) or {}
+
+@app.post('/api/inspect-task/all')
+def start_inspect_all():
+ """RNEを1回で調べ切る。中身・列・行を続けて読み、この RNE の控えとして保存する。
+
+ 3つに分かれていたのは実装の都合で、利用者から見れば「そのRNEを調べる」1つの用事。
+ 同じRNEを何度も開き直すことにもなっていた。
+ """
+ data=request.get_json(force=True) or {}
+ title,detail,expected=INSPECT_ALL_SPEC
+ with inspect_task_lock:
+  if inspect_tasks['all'].get('running'):
+   return jsonify(ok=False,error='「RNEを調査」はすでに実行中です。終わるまでお待ちください',busy=True),200
+  inspect_tasks['all']=inspect_task_blank(
+    kind='all',running=True,title=title,stage=detail,started=time.time(),
+    job=str(data.get('job_name') or ''),steps=[],
+    expected=float(inspect_task_seconds.get('all') or expected),
+    measured='all' in inspect_task_seconds)
+ def worker():
+  t=time.perf_counter();steps=[];parts={};err=''
+  for n,kind in enumerate(INSPECT_ALL_ORDER,1):
+   _e,_p,ktitle,kdetail,_s=INSPECT_TASK_SPECS[kind]
+   with inspect_task_lock:
+    inspect_tasks['all'].update(stage=f'{n}/{len(INSPECT_ALL_ORDER)} {ktitle}: {kdetail}',steps=list(steps))
+   kt=time.perf_counter()
+   try:out=_run_inspect_endpoint(kind,data)
+   except Exception as e:
+    log.exception('INSPECT_ALL_STEP_FAILED kind=%s',kind);out={'ok':False,'error':str(e)}
+   el=time.perf_counter()-kt
+   inspect_task_seconds[kind]=round(el,2)
+   parts[kind]=out
+   steps.append({'kind':kind,'title':ktitle,'ok':bool(out.get('ok')),
+                 'error':'' if out.get('ok') else str(out.get('error') or ''),'elapsed':round(el,1)})
+   log.info('INSPECT_ALL_STEP %s/%s kind=%s title=%s ok=%s elapsed=%.2fs',
+            n,len(INSPECT_ALL_ORDER),kind,ktitle,out.get('ok'),el)
+   # 途中で1つ落ちても残りは続ける。列が読めなくても行は調べられることがある。
+   if not out.get('ok') and not err:err=f'{ktitle}: {out.get("error") or "失敗しました"}'
+   with inspect_task_lock:inspect_tasks['all'].update(steps=list(steps))
+  el=time.perf_counter()-t
+  inspect_task_seconds['all']=round(el,2)
+  ok_all=all(x['ok'] for x in steps)
+  out={'ok':ok_all,'error':'' if ok_all else err,'steps':steps,
+       'read':parts.get('read'),'column':parts.get('column'),'row':parts.get('row')}
+  # 何が控えとして残ったかを、そのまま画面へ返せる形にする。
+  try:
+   job=next((x for x in load()['jobs'] if x['id']==data.get('job_id')),None)
+   if job:out['master']=rne_master_view(job,load())
+  except Exception:log.exception('INSPECT_ALL_MASTER_FAILED')
+  with inspect_task_lock:
+   inspect_tasks['all'].update(running=False,stage='完了',percent=100.0,result=out,
+                               elapsed=round(el,1),error=out['error'],steps=steps)
+  log.info('INSPECT_ALL job=%s ok=%s elapsed=%.2fs 内訳=%s',data.get('job_name'),ok_all,el,
+           ' / '.join(f"{x['title']}={'OK' if x['ok'] else 'NG'}({x['elapsed']}s)" for x in steps))
+ threading.Thread(target=worker,daemon=True,name='inspect-all').start()
+ log.info('INSPECT_ALL_START job=%s 見込み=%.0f秒%s',data.get('job_name'),
+          inspect_tasks['all']['expected'],'' if inspect_tasks['all']['measured'] else '（まだ実測がないので目安）')
+ return jsonify(ok=True,started=True,title=title,stage=detail)
 
 @app.post('/api/inspect-task/<kind>')
 def start_inspect_task(kind):
@@ -6178,7 +6597,8 @@ def start_inspect_task(kind):
 
 @app.get('/api/inspect-task/<kind>')
 def get_inspect_task(kind):
- if str(kind) not in INSPECT_TASK_SPECS:return jsonify(ok=False,error=f'知らない調べもの: {kind}'),200
+ if str(kind) not in INSPECT_TASK_SPECS and str(kind)!='all':
+  return jsonify(ok=False,error=f'知らない調べもの: {kind}'),200
  with inspect_task_lock:
   st=dict(inspect_tasks[str(kind)])
  if st.get('running'):
