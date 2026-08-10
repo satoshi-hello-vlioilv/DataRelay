@@ -25,8 +25,8 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.47.0'; APP_VERSION_TITLE='パート側でも軸の値を読み込む'; APP_RELEASED_AT='2026-08-10'
-BUILD_VERSION=f'{APP_VERSION}-partreload'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.48.0'; APP_VERSION_TITLE='調べものを裏で走らせる'; APP_RELEASED_AT='2026-08-10'
+BUILD_VERSION=f'{APP_VERSION}-bgtask'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリに同梱する仕様書。ここに登録したものだけが画面から開ける。
 # 画面からはこのidしか受け取らないので、任意のパスを読ませることはできない。
 DOCS=[
@@ -43,7 +43,16 @@ def docs_dir():
 
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
-{'version':'1.47.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+{'version':'1.48.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'【行分割が通りました】実測(2026-08-10 12:35)で 分割なし64.82秒 に対し 行2分割33.88秒、1.91倍。1行ずつ突き合わせた結果、中身の違いは0行・0セルでした。',
+'影実行の進み具合が前回の表示を引きずっていたのを直しました。始めた時点でバーも片の一覧も白紙に戻します（これまでは running だけを書き換えていたため、前回の100%のバーと前回の片がそのまま見えていました）。',
+'「中身を読む」「分け方を探す」も裏で走るようにしました。待機モーダルで画面を塞がず、進み具合をその手順の結果欄に出します。閉じても続き、開き直せば途中から追いつきます。',
+'進み具合は経過時間からの見当です（サーバーの応答は途中で測れないため）。1度実行するとその所要時間を覚え、次からの見込みが合うようになります。終わっていないのに満杯にはしません。',
+'絞り込みで「担当外を1件ずつ外す」ときに、担当ぶんを出す操作が抜けていました。RNEに保存された時点で非表示の値があると戻らず、その行がどの片にも入りません。実測で36行が欠けたのはこれが原因とみられます。',
+'結果が一致しないとき、欠けた行が「どの値」だったのかをログに出します。1つの値に集中していれば絞り方の取りこぼし、ばらけていれば実行中にデータが動いただけ、と切り分けられます。',
+'起動待ち画面にバージョンを表示します。前回の起動時に控えた版をランチャーが差し込むので、サーバーが立つ前から確認できます。立ち上がったあとはサーバーが返した値で必ず上書きします。',
+]},
+{'version':'1.47.0','date':'2026-08-10','title':'パート側でも軸の値を読み込む','notes':[
 '【原因判明】行分割が NAVI_ERROR_NONMATCH（0x17）で止まっていたのは、パート側の管理ポイントに値が1つも載っていなかったためです。全値型はカタログを開くたびにカテゴリが空になります。軸を調べたのは別のプロセスなので、その読み込みはパートの手元には残っていません。',
 'パートでも、絞る前に NaviReloadCategory で値を読み込ませるようにしました。読み込めた件数と読み込み方はログに残します。',
 '絞り込みに使う文字列は、いまDLLが持っている一覧からそのまま取ります。手元で持ち回った文字列と細部が違っても食い違いません。',
@@ -2130,7 +2139,7 @@ def merge_column_parts(part_files,dest,key_columns=None,column_order=None,encodi
   w=csv.writer(f,quoting=csv.QUOTE_MINIMAL);w.writerow(header);w.writerows(merged)
  return len(merged),len(header)
 
-def compare_csv_content(a_path,b_path,key_columns,encoding='cp932',samples=5):
+def compare_csv_content(a_path,b_path,key_columns,encoding='cp932',samples=5,axis_column=''):
  """2つのCSVを内容で比べる。バイト比較では「どこがどう違うか」が分からないため。
 
  行の並び順だけの違いと、中身の違いを区別する。生きているデータを別々に問い合わせている以上、
@@ -2157,6 +2166,18 @@ def compare_csv_content(a_path,b_path,key_columns,encoding='cp932',samples=5):
  ma={tuple(r[i] for i in ki):r for r in ra};mb={tuple(r[i] for i in ki):r for r in rb}
  only_a=set(ma)-set(mb);only_b=set(mb)-set(ma)
  out['only_in_a']=len(only_a);out['only_in_b']=len(only_b)
+ # 欠けた行が「どの軸の値」に偏っているかを残す。ひとつの値に集中していれば絞り方の取りこぼし、
+ # ばらけていれば実行中にデータが動いただけ、と切り分けられる。
+ if only_a and axis_column and axis_column in ha:
+  ai=ha.index(axis_column)
+  tally={}
+  for k in only_a:
+   v=ma[k][ai] if ai<len(ma[k]) else ''
+   tally[v]=tally.get(v,0)+1
+  top=sorted(tally.items(),key=lambda x:-x[1])
+  out['missing_axis']={'column':axis_column,'distinct':len(tally),
+                       'top':[{'value':v,'rows':n} for v,n in top[:8]],
+                       'concentrated':bool(top and top[0][1]>=len(only_a)*0.8)}
  diff_rows=[];diff_cells=0;changed=0
  for k in ma:
   if k in only_a:continue
@@ -5170,7 +5191,7 @@ def _split_trial_run(data,c,job):
   if compared:
    split_trial_stage('結果を比較中（分割なしと1行ずつ突き合わせます）'
                      +('' if not base.get('stored') else '［保存済みの基準］'),phase='compare',progress=0)
-   cmp=compare_csv_content(base_csv,merged,keys)
+   cmp=compare_csv_content(base_csv,merged,keys,axis_column=(row_axis or {}).get('name',''))
   else:
    cmp={'reason':'比べる相手がありません（「分割なしだけ」を1度実行すると、次から比較できます）',
         'rows_a':None,'rows_b':mrows,'content_identical':False,'count_match':None}
@@ -5180,6 +5201,14 @@ def _split_trial_run(data,c,job):
            cmp.get('diff_rows'),cmp.get('diff_cells'),cmp.get('only_in_a'),cmp.get('only_in_b'),cmp.get('reason'))
   for sm in (cmp.get('samples') or [])[:3]:
    log.info('SPLIT_TRIAL_DIFF key=%s %s',sm['key'],'; '.join(f"{c['name']}: 分割なし={c['a']!r} 結合={c['b']!r}" for c in sm['columns']))
+  mx=cmp.get('missing_axis')
+  if mx:
+   # 欠けた行が1つの値に集中していれば絞り方の取りこぼし、ばらけていれば実行中にデータが動いただけ。
+   log.warning('SPLIT_TRIAL_MISSING rne=%s 欠けた%s行の「%s」= %s種%s / 内訳: %s',
+               rp,cmp.get('only_in_a'),mx['column'],mx['distinct'],
+               '（1つの値に集中しています＝絞り方の取りこぼしです）' if mx['concentrated']
+               else '（値がばらけています＝実行中にデータが動いた可能性が高いです）',
+               ' / '.join(f"{x['value']!r}×{x['rows']}行" for x in mx['top']))
   a=base_csv.read_bytes() if compared else b''
   b=merged.read_bytes()
   detail='' if identical else f'diff_rows={cmp.get("diff_rows")} diff_cells={cmp.get("diff_cells")}'
@@ -5256,9 +5285,18 @@ def _split_trial_run(data,c,job):
 # 影実行は数分かかる。画面を占有すると、その間ログも他の機能も見られないため、
 # 別スレッドで走らせて、状態だけを画面へ渡す。
 split_trial_lock=threading.Lock()
-split_trial_state={'running':False,'stage':'','job':'','started':0.0,'elapsed':0.0,'result':None,'parts':0,
-                   'percent':0,'phase':'','phase_index':0,'phase_total':4,'bytes':0,'expected_bytes':0,'note':'',
-                   'part_progress':[],'mode':'','pieces':0}
+def split_trial_blank(**over):
+ """影実行の進み具合を白紙に戻した状態。始めるときは必ずここから作り直す。
+
+ 前は running と stage だけを書き換えていたので、percent・バイト数・片ごとの進み具合が
+ 前回のまま残り、始めた直後に「前回の100%のバー」と「前回の片」が見えていた。
+ """
+ st={'running':False,'stage':'','job':'','started':0.0,'elapsed':0.0,'result':None,'parts':0,
+     'percent':0,'phase':'','phase_index':0,'phase_total':4,'bytes':0,'expected_bytes':0,'note':'',
+     'part_progress':[],'mode':'','pieces':0}
+ st.update(over);return st
+
+split_trial_state=split_trial_blank()
 
 # 影実行の進み具合。工程ごとに、全体のどこからどこまでを占めるかを決めておく。
 # 実測できるのは「書き出されつつあるファイルの大きさ」だけなので、進み具合はそこから出す。
@@ -5479,7 +5517,10 @@ def column_split_trial_start():
  with split_trial_lock:
   if split_trial_state.get('running'):
    return jsonify(ok=False,error=f'影実行が進行中です（{split_trial_state.get("job")}）。終わるまでお待ちください',busy=True),200
-  split_trial_state.update(running=True,stage='準備中',job=job['name'],started=time.time(),elapsed=0.0,result=None,parts=0)
+  # 前回の残りを持ち越さない。バーも片の一覧も、始めた時点では空でなければならない。
+  split_trial_state.clear()
+  split_trial_state.update(split_trial_blank(running=True,stage='準備中',job=job['name'],started=time.time()))
+  _split_stage_logged.update(text='',at=0.0)
  def worker():
   try:
    res=_split_trial_run(data,c,job)
@@ -5496,6 +5537,84 @@ def column_split_trial_status():
  with split_trial_lock:
   st=dict(split_trial_state)
  if st.get('running'):st['elapsed']=round(time.time()-(st.get('started') or time.time()),1)
+ return jsonify(ok=True,**st)
+
+# ==== 調べものを裏で走らせる ============================================
+# 「中身を読む」「分け方を探す」はサーバーへ問い合わせるので20秒前後かかる。
+# これまでは待機モーダルで画面を塞いでいたが、影実行と同じように裏で走らせ、
+# 進み具合を出して、閉じても続くようにする。
+#
+# 中身は既存の口をそのまま呼ぶ。ふるまいを二重に持たないためで、
+# test_request_context はスレッドごとに独立しているので同時に走らせても混ざらない。
+INSPECT_TASK_SPECS={
+ 'read':  ('period_control_points','/api/period-control-points','中身を読む',
+           'RNEを開いて、管理ポイントとデータ項目を読んでいます',22.0),
+ 'column':('column_plan','/api/column-plan','列の分け方を探す',
+           '列定義を用意して、分割できる列を判定しています',8.0),
+ 'row':   ('row_split_plan','/api/row-split-plan','行の分け方を探す',
+           'RNEから、行を絞れる軸（管理ポイント）を読んでいます',24.0),
+}
+inspect_task_lock=threading.RLock()
+def inspect_task_blank(**over):
+ st={'running':False,'kind':'','stage':'','title':'','job':'','started':0.0,'elapsed':0.0,
+     'percent':0.0,'result':None,'error':'','expected':0.0,'measured':False}
+ st.update(over);return st
+inspect_tasks={k:inspect_task_blank(kind=k) for k in INSPECT_TASK_SPECS}
+inspect_task_seconds={}   # 種類ごとの直近の所要秒。見込みの分母にだけ使う
+
+def inspect_task_percent(st):
+ """まだ実測できないので、経過時間と直近の所要秒から見当をつける。
+ 満杯にはしない（9割で止める）。終わっていないのに100%と出すのは嘘になる。"""
+ if not st.get('running'):return float(st.get('percent') or 0)
+ exp=float(st.get('expected') or 0)
+ el=max(0.0,time.time()-float(st.get('started') or time.time()))
+ if exp<=0:return round(min(90.0,el/30.0*90.0),1)
+ return round(min(90.0,el/exp*90.0),1)
+
+@app.post('/api/inspect-task/<kind>')
+def start_inspect_task(kind):
+ spec=INSPECT_TASK_SPECS.get(str(kind))
+ if not spec:return jsonify(ok=False,error=f'知らない調べもの: {kind}'),200
+ endpoint,path,title,detail,default_seconds=spec
+ data=request.get_json(force=True) or {}
+ with inspect_task_lock:
+  if inspect_tasks[kind].get('running'):
+   return jsonify(ok=False,error=f'「{title}」はすでに実行中です。終わるまでお待ちください',busy=True),200
+  inspect_tasks[kind]=inspect_task_blank(
+    kind=kind,running=True,title=title,stage=detail,started=time.time(),
+    job=str(data.get('job_name') or ''),
+    expected=float(inspect_task_seconds.get(kind) or default_seconds),
+    measured=kind in inspect_task_seconds)
+ view=app.view_functions.get(endpoint)
+ def worker():
+  t=time.perf_counter();out={'ok':False,'error':'応答がありませんでした'}
+  try:
+   if view is None:raise RuntimeError(f'{endpoint} が登録されていません')
+   with app.test_request_context(path,method='POST',json=data):
+    rv=view()
+   resp=rv[0] if isinstance(rv,tuple) else rv
+   out=resp.get_json(silent=True) or {}
+  except Exception as e:
+   log.exception('INSPECT_TASK_FAILED kind=%s',kind);out={'ok':False,'error':str(e)}
+  el=time.perf_counter()-t
+  inspect_task_seconds[kind]=round(el,2)
+  with inspect_task_lock:
+   inspect_tasks[kind].update(running=False,stage='完了',percent=100.0,result=out,
+                              elapsed=round(el,1),error=('' if out.get('ok') else str(out.get('error') or '')))
+  log.info('INSPECT_TASK kind=%s title=%s ok=%s elapsed=%.2fs',kind,title,out.get('ok'),el)
+ threading.Thread(target=worker,daemon=True,name=f'inspect-{kind}').start()
+ log.info('INSPECT_TASK_START kind=%s title=%s 見込み=%.0f秒%s',kind,title,
+          inspect_tasks[kind]['expected'],'' if inspect_tasks[kind]['measured'] else '（まだ実測がないので目安）')
+ return jsonify(ok=True,started=True,title=title,stage=detail)
+
+@app.get('/api/inspect-task/<kind>')
+def get_inspect_task(kind):
+ if str(kind) not in INSPECT_TASK_SPECS:return jsonify(ok=False,error=f'知らない調べもの: {kind}'),200
+ with inspect_task_lock:
+  st=dict(inspect_tasks[str(kind)])
+ if st.get('running'):
+  st['elapsed']=round(time.time()-(st.get('started') or time.time()),1)
+  st['percent']=inspect_task_percent(st)
  return jsonify(ok=True,**st)
 
 @app.post('/api/run')
@@ -6103,6 +6222,10 @@ if __name__=='__main__':
  if _spawn_at:log.info('APP_IMPORT_ELAPSED spawn_to_import=%.2fs note=interpreter_init+module_import+source_compile(BOX)',_APP_IMPORT_DONE_AT-_spawn_at)
  startup_clock=time.perf_counter();log.info('APP_START source=%s local_root=%s pycache=%s',BASE,LOCAL_ROOT,os.environ.get('PYTHONPYCACHEPREFIX',''))
  _t=time.perf_counter(); shutil.rmtree(LOCAL_ROOT/'work',ignore_errors=True); (LOCAL_ROOT/'work').mkdir(parents=True,exist_ok=True); log.info('APP_START_WORKCLEAN elapsed=%.2fs',time.perf_counter()-_t)
+ # 起動待ちモーダル(loading.html)は file:// から開くので、サーバーが立つまで版が分からない。
+ # ここに置いておけば、ランチャーが次回の起動時に画面へ差し込める。
+ try:(LOCAL_RUNTIME/'version.txt').write_text(f'{APP_VERSION}\t{BUILD_VERSION}\t{APP_VERSION_TITLE}',encoding='utf-8')
+ except Exception:log.exception('VERSION_STAMP_FAILED')
  _t=time.perf_counter(); migrate_legacy_settings(); log.info('APP_START_MIGRATION elapsed=%.2fs',time.perf_counter()-_t)
  _t=time.perf_counter(); threading.Thread(target=scheduler,daemon=True,name='scheduler').start(); threading.Thread(target=command_dispatcher,daemon=True,name='command-dispatcher').start(); threading.Thread(target=heartbeat_watchdog,daemon=True,name='heartbeat-watchdog').start(); log.info('APP_START_THREADS elapsed=%.2fs',time.perf_counter()-_t)
  _t=time.perf_counter(); log.info('APP_START_TRAY available=%s elapsed=%.2fs',bool(start_tray()),time.perf_counter()-_t)

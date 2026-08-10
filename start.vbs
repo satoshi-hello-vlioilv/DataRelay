@@ -333,13 +333,47 @@ End Sub
 
 
 ' ==== Startup helpers: loading modal, browser handoff, startup cache ====
+' 起動待ちモーダルへ差し込むバージョン。アプリが起動するたびに runtime\version.txt へ
+' 書き出しているので、次の起動ではサーバーが立つ前から版を表示できる。
+' 控えが無い初回だけは、画面側が「バージョン確認中」と出す。
+Function StampedVersion()
+    Dim vf, ts, txt, parts
+    StampedVersion = ""
+    On Error Resume Next
+    vf = fso.BuildPath(fso.BuildPath(localRoot, "runtime"), "version.txt")
+    If fso.FileExists(vf) Then
+        Set ts = fso.OpenTextFile(vf, 1, False)
+        txt = ts.ReadAll
+        ts.Close
+        parts = Split(txt, vbTab)
+        If UBound(parts) >= 0 Then StampedVersion = Trim(parts(0))
+    End If
+    Err.Clear
+    On Error GoTo 0
+End Function
+
 Sub OpenLoading()
-    Dim src, dst, appSh
+    Dim src, dst, appSh, ts, html, ver
     On Error Resume Next
     src = fso.BuildPath(scriptDir, "loading.html")
     dst = fso.BuildPath(localRoot, "loading.html")
     If fso.FileExists(src) Then
-        fso.CopyFile src, dst, True
+        ver = StampedVersion()
+        Set ts = fso.OpenTextFile(src, 1, False)
+        html = ts.ReadAll
+        ts.Close
+        If Err.Number = 0 And Len(html) > 0 And Len(ver) > 0 Then
+            html = Replace(html, "{{APP_VERSION}}", ver)
+            Set ts = fso.CreateTextFile(dst, True)
+            ts.Write html
+            ts.Close
+            WriteLog "LOADING_MODAL version=" & ver
+        End If
+        ' 差し込めなかったときは今までどおり丸ごとコピーする（token は画面側が処理する）。
+        If Err.Number <> 0 Or Not fso.FileExists(dst) Then
+            Err.Clear
+            fso.CopyFile src, dst, True
+        End If
         If Err.Number = 0 And fso.FileExists(dst) Then
             Set appSh = CreateObject("Shell.Application")
             appSh.ShellExecute dst, "", "", "open", 1

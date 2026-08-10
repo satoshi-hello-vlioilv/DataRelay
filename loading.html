@@ -22,7 +22,13 @@ body{
   padding:34px 34px 26px; backdrop-filter:blur(6px);
   box-shadow:0 24px 70px rgba(6,20,30,.45);
 }
-.brand{font-size:11px;letter-spacing:.18em;color:#8ee0e2;font-weight:800}
+.brand{font-size:11px;letter-spacing:.18em;color:#8ee0e2;font-weight:800;
+  display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+/* どの版が立ち上がろうとしているのかを、待っている間に確かめられるようにする。 */
+.ver{font:700 11px Consolas,monospace;letter-spacing:.04em;color:#d8f3ea;
+  border:1px solid rgba(255,255,255,.22);background:rgba(255,255,255,.07);
+  border-radius:99px;padding:2px 9px}
+.ver small{color:#a9c9d3;font-weight:400}
 h1{font-size:22px;margin:4px 0 2px}
 .sub{font-size:12.5px;color:#bcd7df;margin:0 0 20px;line-height:1.6}
 .stage{display:flex;align-items:center;gap:14px;margin:0 0 18px}
@@ -73,7 +79,9 @@ h1{font-size:22px;margin:4px 0 2px}
 </head>
 <body>
 <div class="card">
-  <div class="brand">SYMFO NAVI DATA HUB</div>
+  <div class="brand">SYMFO NAVI DATA HUB
+    <span class="ver" id="ver" title="起動しようとしているバージョン">v{{APP_VERSION}}</span>
+  </div>
   <h1>アプリを起動しています</h1>
   <p class="sub">サーバーの準備ができ次第、この画面から自動的にアプリへ切り替わります。<br>ウィンドウは閉じずにそのままお待ちください。</p>
 
@@ -119,6 +127,18 @@ h1{font-size:22px;margin:4px 0 2px}
   document.querySelectorAll('.step').forEach(function(el){stepEls[el.dataset.k]=el;});
   document.getElementById('manual').href=APP;
 
+  // バージョンの出どころは2つ。
+  //   1) ランチャーが前回の起動情報からこの画面へ差し込んだ値（サーバーが立つ前でも出せる）
+  //   2) サーバーが立ったあとの /api/instance（こちらが本物）
+  // 1がまだ無い初回は「確認中」と出し、2が届いたら必ず上書きする。
+  var verEl=document.getElementById('ver');
+  if(/\{\{/.test(verEl.textContent)) verEl.innerHTML='<small>バージョン確認中</small>';
+  function showVersion(v,title){
+    if(!v) return;
+    verEl.textContent=(String(v).charAt(0)==='v'?'':'v')+v;
+    if(title) verEl.title=title;
+  }
+
   // 認知心理学: 実際のサーバー状態は file:// からは細かく取得できないため、
   // 経過時間に応じた段階提示で「進んでいる」ことを伝える（perceived progress）。
   var titles={
@@ -162,8 +182,10 @@ h1{font-size:22px;margin:4px 0 2px}
     order.forEach(function(k){stepEls[k].classList.remove('active');stepEls[k].classList.add('done');});
     document.getElementById('bar').style.width='100%';
     document.getElementById('stage-title').textContent='準備ができました。アプリへ移動します…';
+    document.getElementById('stage-detail').textContent='起動したバージョン: '+verEl.textContent;
     document.getElementById('spinner').style.animationDuration='.4s';
-    setTimeout(function(){ location.replace(APP); }, 250);
+    // 差し替えたバージョンを一目で確認できるだけの間を置いてから移る。
+    setTimeout(function(){ location.replace(APP); }, 900);
   }
 
   function showError(){
@@ -179,7 +201,10 @@ h1{font-size:22px;margin:4px 0 2px}
     fetch(INSTANCE+'?_='+Date.now(),{cache:'no-store'})
       .then(function(r){ return r.ok ? r.json() : null; })
       .then(function(d){
-        if(d && (d.app==='SymfoNaviDataHub' || d.app==='NaviToSQLite')){ ready(); }
+        if(d && (d.app==='SymfoNaviDataHub' || d.app==='NaviToSQLite')){
+          showVersion(d.build_version,'起動したサーバーが返したバージョン');
+          ready();
+        }
         else { setTimeout(poll, 500); }
       })
       .catch(function(){ setTimeout(poll, 500); });  // まだ起動していない
