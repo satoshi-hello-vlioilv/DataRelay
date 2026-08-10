@@ -1483,3 +1483,42 @@ body > main{max-width:1620px;padding-left:12px;padding-right:12px}
   .dll-hit{grid-template-columns:52px minmax(0,1fr)}.dll-use{grid-column:2;justify-self:start}}
 /* display:grid は hidden 属性を上書きしてしまう。空の枠だけが残るのを防ぐ。 */
 .api-attempts[hidden],.dll-found[hidden],.dll-manual-state[hidden],.progress-results[hidden]{display:none!important}
+
+/* ==== 手順4「本番の動作」 ==================================================
+   読む順番を1つに決める。1行目で結論、カードで裏付け、脚注で条件。
+   形（列/行/行×列）を選ばせないのが既定なので、選択肢ではなく実測を主役にする。 */
+.split-run-state{gap:9px}
+.sp-head{display:grid;gap:3px}
+.sp-head>b{font-size:13px;line-height:1.5}
+.sp-why{font-size:11px;color:#8a7440;background:#fdf6e6;border-radius:5px;padding:5px 8px;line-height:1.5}
+.sp-cards{display:grid;gap:5px}
+.sp-card{display:grid;grid-template-columns:30px minmax(0,1fr) auto auto;gap:9px;align-items:center;
+  padding:7px 9px;background:#fff;border:1px solid #e0e8eb;border-radius:8px}
+.sp-ic{font-style:normal;font-weight:800;font-size:11px;text-align:center;line-height:24px;height:24px;
+  border-radius:6px;background:#eef3f5;color:#6d818c}
+.sp-ic.sp-row{background:#eaf0dd;color:#4d6423}
+.sp-ic.sp-grid{background:#f3ecfa;color:#6b4c9a}
+.sp-ic.sp-column{background:#e4f2f5;color:#1c6c85}
+.sp-main{display:grid;gap:1px;min-width:0}
+.sp-main b{font-size:12px;color:#28505f}
+.sp-main span{font-size:10.5px;color:#7d919b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sp-main small{font-size:9.5px;color:#93a6ae}
+.sp-num{text-align:right;display:grid;gap:0}
+.sp-num strong{font-size:15px;font-weight:800;color:#17505f;line-height:1.15}
+.sp-num small{font-size:9px;color:#93a6ae}
+.sp-tag{min-width:0}
+.sp-used{font-style:normal;font-size:9.5px;font-weight:800;color:#0b6a4b;background:#e8f6ef;
+  border:1px solid #bce2d0;border-radius:999px;padding:3px 8px;white-space:nowrap}
+.sp-old{font-style:normal;font-size:9.5px;font-weight:800;color:#94352d;background:#fff3f1;
+  border:1px solid #efc8c2;border-radius:999px;padding:3px 8px;white-space:nowrap}
+.sp-card.is-used{border-color:#a9dcc6;background:#f7fdfa;box-shadow:0 1px 0 #e3f3ec}
+.sp-card.is-used .sp-num strong{color:#0b6a4b}
+.sp-card.is-stale{opacity:.62}
+.sp-empty{margin:0;padding:9px 11px;border:1px dashed #cbd9de;border-radius:7px;color:#7d919b;
+  font-size:11px;line-height:1.6}
+.sp-foot{display:flex;flex-wrap:wrap;gap:4px 10px}
+.sp-foot span{font-size:10px;color:#93a6ae}
+.sp-tip{margin:0;font-size:10.5px;color:#5f7480;background:#f2f8fa;border-left:3px solid #0d8191;
+  border-radius:5px;padding:6px 9px;line-height:1.55}
+.rp-mode.rowsplit{background:#eaf0dd;color:#4d6423}
+@media(max-width:700px){.sp-card{grid-template-columns:30px minmax(0,1fr) auto}.sp-tag{grid-column:2/-1}}

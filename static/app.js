@@ -122,8 +122,8 @@ async function copyTextValue(v,label){try{await navigator.clipboard.writeText(v|
 async function openJobOutput(j){try{let r=await fetch('/api/open-path',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:j.output_folder||cfg.default_output_folder})}),d=await r.json();toast(r.ok&&d.ok?'出力先を開きました':d.error||'出力先を開けませんでした')}catch{toast('出力先を開けませんでした')}}
 function duplicateJob(j){let n=structuredClone(j);n.id=uid();n.name+=' コピー';n.schedules=(n.schedules||[]).map(r=>({...r,id:uid(),enabled:false}));cfg.jobs.splice(cfg.jobs.indexOf(j)+1,0,n);render();dirty()}
 if($('#job-context-menu')){$('#job-context-menu').onclick=e=>{let a=e.target.closest('[data-action]');if(!a||!contextJob)return;let j=contextJob,act=a.dataset.action;hideJobContextMenu();if(act==='edit')openEditor(j);else if(act==='run')runJobs([j.id]);else if(act==='open-output')openJobOutput(j);else if(act==='viewer'){document.querySelector('[data-p="viewer"]')?.click();setTimeout(()=>{let sel=$('#viewer-job');if(sel){sel.value=j.id;sel.dispatchEvent(new Event('change'))}},100)}else if(act==='copy-rne')copyTextValue(j.rne_path||j.rne,'RNEパス');else if(act==='copy-output')copyTextValue(j.output_folder||cfg.default_output_folder,'出力先');else if(act==='duplicate')duplicateJob(j);else if(act==='toggle'){j.enabled=!j.enabled;render();dirty();toast(j.enabled?'有効にしました':'無効にしました')}else if(act==='delete')deleteJob(j)};document.addEventListener('click',e=>{if(!e.target.closest('#job-context-menu'))hideJobContextMenu()});document.addEventListener('keydown',e=>{if(e.key==='Escape')hideJobContextMenu()});window.addEventListener('blur',hideJobContextMenu)}
-function openEditor(job){editing=structuredClone(job||{id:uid(),name:'新しい対象',enabled:true,rne:'NEW.RNE',rne_path:cfg.rne_folder+'\\NEW.RNE',output_folder:cfg.default_output_folder,output_format:'sqlite3',output_file:'NEW.sqlite3',table:'仕掛',sheet:'Page1',type:'詳細データ',naming_mode:'fixed',output_pattern:'',comment:'',split_mode:'auto',period:{enabled:false,control_point:'',unit:'month',from_offset:-1,to_offset:0},schedules:[]});$('#modal-title').textContent=job?'対象を編集':'対象を追加';$('#m-id').value=editing.id;$('#m-name').value=editing.name;$('#m-enabled').checked=editing.enabled;$('#m-rne-path').value=editing.rne_path||'';$('#m-output').value=editing.output_folder||cfg.default_output_folder;editing.output_format=normalizeFormat(editing.output_format);$('#m-format').value=editing.output_format;$('#m-output-file').value=editing.output_file;$('#m-table').value=editing.table;$('#m-sheet').value=editing.sheet;$('#m-type').value=editing.type;if($('#m-comment'))$('#m-comment').value=editing.comment||'';if($('#m-split-mode'))$('#m-split-mode').value=editing.split_mode||'auto';if($('#m-axis-mode'))$('#m-axis-mode').value=editing.row_axis_mode||'first';if($('#m-axis-index'))$('#m-axis-index').value=editing.row_axis_index||1;AXIS_PICK.forEach(g=>{if($(g.n))$(g.n).innerHTML=`<option value="${E(editing.row_axis_name||'')}">${E(editing.row_axis_name||'（先に「行を調べる」）')}</option>`;if($(g.m))$(g.m).value=editing.row_axis_mode||'first';if($(g.i))$(g.i).value=editing.row_axis_index||1});syncAxisPick();syncOutputExtension();initNaming(editing);setPeriodUI(editing.period);renderRuntimeSplit(null);inspReset();splitTrialPoll();rulesRender();updatePeriodBadge();setEditorTab('basic');$('#editor').showModal()}
-$('#m-format').onchange=()=>{syncOutputExtension();if(currentNamingMode()==='template')refreshNamePreview()};$('#m-rne-check').onclick=async()=>{showWaiting('RNEファイル確認中','設定場所と周辺フォルダーを検索しています...');try{let temp={item:'rne',job_id:editing.id,label:editing.rne,configured:$('#m-rne-path').value,resolved:$('#m-rne-path').value,candidates:[],ok:false};let r=await fetch('/api/path-check',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({item:'rne',job_id:editing.id,value:$('#m-rne-path').value,expected_name:$('#m-rne-path').value.split(/[\\/]/).pop()})}),d=await r.json();if(r.ok)showPathResult(d);else toast(d.error)}finally{hideWaiting()}};$('#m-rne-pick').onclick=async()=>{let p=await browse('file',$('#m-rne-path').value,[['RNEファイル','*.RNE'],['すべて','*.*']]);if(p){let i=$('#m-rne-path'),wasRel=i.value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(i.value);i.value=p;if(wasRel)await convertPath(i,'relative');updatePathBadge(i);i._refreshPathControl?.()}};$('#m-output-pick').onclick=async()=>{let p=await browse('folder',$('#m-output').value);if(p){let i=$('#m-output'),wasRel=i.value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(i.value);i.value=p;if(wasRel)await convertPath(i,'relative');updatePathBadge(i)}};enhancePathInput($('#m-rne-path'),'file');enhancePathInput($('#m-output'),'folder');$('#add-rule').onclick=()=>openRule({id:uid(),enabled:true,name:'実行ルール',type:'daily',time:'06:00'},true);$('#apply').onclick=async e=>{e.preventDefault();syncOutputExtension();const f=normalizeFormat($('#m-format').value),file=canonicalOutputFile($('#m-output-file').value,f),updated={...editing,name:$('#m-name').value.trim(),enabled:$('#m-enabled').checked,rne_path:$('#m-rne-path').value.trim(),rne:$('#m-rne-path').value.trim().split(/[\\/]/).pop(),output_folder:$('#m-output').value.trim(),output_format:f,output_file:file,table:$('#m-table').value.trim(),sheet:$('#m-sheet').value.trim(),type:$('#m-type').value,naming_mode:currentNamingMode(),output_pattern:$('#m-output-pattern').value.trim(),comment:($('#m-comment')?.value||'').trim(),split_mode:($('#m-split-mode')?.value||'auto'),row_axis_mode:($('#m-axis-mode')?.value||'first'),row_axis_index:Number($('#m-axis-index')?.value||1)||1,row_axis_name:($('#m-axis-name')?.value||''),period:currentPeriod()};let i=cfg.jobs.findIndex(j=>j.id===updated.id);if(i<0)cfg.jobs.unshift(updated);else cfg.jobs[i]=updated;let payload=structuredClone(cfg);delete payload.credential_status;showWaiting('設定を保存中',`${formatName(f)} / ${file}`);try{let r=await fetch('/api/config',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),d=await r.json();if(!r.ok)throw Error(d.error||'設定保存失敗');$('#editor').close();await init();toast(`保存完了: ${formatName(f)} / ${file}`)}catch(x){toast(x.message)}finally{hideWaiting()}};
+function openEditor(job){editing=structuredClone(job||{id:uid(),name:'新しい対象',enabled:true,rne:'NEW.RNE',rne_path:cfg.rne_folder+'\\NEW.RNE',output_folder:cfg.default_output_folder,output_format:'sqlite3',output_file:'NEW.sqlite3',table:'仕掛',sheet:'Page1',type:'詳細データ',naming_mode:'fixed',output_pattern:'',comment:'',split_mode:'auto',split_shape:'auto',period:{enabled:false,control_point:'',unit:'month',from_offset:-1,to_offset:0},schedules:[]});$('#modal-title').textContent=job?'対象を編集':'対象を追加';$('#m-id').value=editing.id;$('#m-name').value=editing.name;$('#m-enabled').checked=editing.enabled;$('#m-rne-path').value=editing.rne_path||'';$('#m-output').value=editing.output_folder||cfg.default_output_folder;editing.output_format=normalizeFormat(editing.output_format);$('#m-format').value=editing.output_format;$('#m-output-file').value=editing.output_file;$('#m-table').value=editing.table;$('#m-sheet').value=editing.sheet;$('#m-type').value=editing.type;if($('#m-comment'))$('#m-comment').value=editing.comment||'';if($('#m-split-mode'))$('#m-split-mode').value=editing.split_mode||'auto';if($('#m-split-shape'))$('#m-split-shape').value=editing.split_shape||'auto';if($('#m-axis-mode'))$('#m-axis-mode').value=editing.row_axis_mode||'first';if($('#m-axis-index'))$('#m-axis-index').value=editing.row_axis_index||1;AXIS_PICK.forEach(g=>{if($(g.n))$(g.n).innerHTML=`<option value="${E(editing.row_axis_name||'')}">${E(editing.row_axis_name||'（先に「行を調べる」）')}</option>`;if($(g.m))$(g.m).value=editing.row_axis_mode||'first';if($(g.i))$(g.i).value=editing.row_axis_index||1});syncAxisPick();syncOutputExtension();initNaming(editing);setPeriodUI(editing.period);renderRuntimeSplit(null);inspReset();splitTrialPoll();rulesRender();updatePeriodBadge();setEditorTab('basic');$('#editor').showModal()}
+$('#m-format').onchange=()=>{syncOutputExtension();if(currentNamingMode()==='template')refreshNamePreview()};$('#m-rne-check').onclick=async()=>{showWaiting('RNEファイル確認中','設定場所と周辺フォルダーを検索しています...');try{let temp={item:'rne',job_id:editing.id,label:editing.rne,configured:$('#m-rne-path').value,resolved:$('#m-rne-path').value,candidates:[],ok:false};let r=await fetch('/api/path-check',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({item:'rne',job_id:editing.id,value:$('#m-rne-path').value,expected_name:$('#m-rne-path').value.split(/[\\/]/).pop()})}),d=await r.json();if(r.ok)showPathResult(d);else toast(d.error)}finally{hideWaiting()}};$('#m-rne-pick').onclick=async()=>{let p=await browse('file',$('#m-rne-path').value,[['RNEファイル','*.RNE'],['すべて','*.*']]);if(p){let i=$('#m-rne-path'),wasRel=i.value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(i.value);i.value=p;if(wasRel)await convertPath(i,'relative');updatePathBadge(i);i._refreshPathControl?.()}};$('#m-output-pick').onclick=async()=>{let p=await browse('folder',$('#m-output').value);if(p){let i=$('#m-output'),wasRel=i.value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(i.value);i.value=p;if(wasRel)await convertPath(i,'relative');updatePathBadge(i)}};enhancePathInput($('#m-rne-path'),'file');enhancePathInput($('#m-output'),'folder');$('#add-rule').onclick=()=>openRule({id:uid(),enabled:true,name:'実行ルール',type:'daily',time:'06:00'},true);$('#apply').onclick=async e=>{e.preventDefault();syncOutputExtension();const f=normalizeFormat($('#m-format').value),file=canonicalOutputFile($('#m-output-file').value,f),updated={...editing,name:$('#m-name').value.trim(),enabled:$('#m-enabled').checked,rne_path:$('#m-rne-path').value.trim(),rne:$('#m-rne-path').value.trim().split(/[\\/]/).pop(),output_folder:$('#m-output').value.trim(),output_format:f,output_file:file,table:$('#m-table').value.trim(),sheet:$('#m-sheet').value.trim(),type:$('#m-type').value,naming_mode:currentNamingMode(),output_pattern:$('#m-output-pattern').value.trim(),comment:($('#m-comment')?.value||'').trim(),split_mode:($('#m-split-mode')?.value||'auto'),split_shape:($('#m-split-shape')?.value||'auto'),row_axis_mode:($('#m-axis-mode')?.value||'first'),row_axis_index:Number($('#m-axis-index')?.value||1)||1,row_axis_name:($('#m-axis-name')?.value||''),period:currentPeriod()};let i=cfg.jobs.findIndex(j=>j.id===updated.id);if(i<0)cfg.jobs.unshift(updated);else cfg.jobs[i]=updated;let payload=structuredClone(cfg);delete payload.credential_status;showWaiting('設定を保存中',`${formatName(f)} / ${file}`);try{let r=await fetch('/api/config',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),d=await r.json();if(!r.ok)throw Error(d.error||'設定保存失敗');$('#editor').close();await init();toast(`保存完了: ${formatName(f)} / ${file}`)}catch(x){toast(x.message)}finally{hideWaiting()}};
 /* V35: dynamic output filename builder */
 let namePreviewTimer=null;
 function currentNamingMode(){return document.querySelector('.naming-tab.on')?.dataset.mode||'fixed'}
@@ -549,8 +549,8 @@ function lastMetricsRow(info,jobId){
  let m=(info&&info.last_metrics)||{};
  if(!info||!info.last_run)return '';
  let mode=m.engine==='dde'?['dde','DDE']
-  :m.race_winner?['race',`競争→${m.race_winner==='split'?(m.split_parts||2)+'分割':'分割なし'}`]
-  :m.split_parts>1?['split',`${m.split_parts}分割`]:['','通常'];
+  :m.race_winner?['race',`競争→${m.race_winner==='split'?(m.split_how||(m.split_parts||2)+'分割'):'分割なし'}`]
+  :m.split_parts>1?[m.split_shape==='row'?'rowsplit':'split',m.split_how||`${m.split_parts}分割`]:['','通常'];
  let bits=[];
  if(m.elapsed)bits.push(fmtSeconds(m.elapsed));
  if(m.rows)bits.push(`${Number(m.rows).toLocaleString()}件`);
@@ -558,7 +558,8 @@ function lastMetricsRow(info,jobId){
  if(m.transfer_kbs)bits.push(`${Math.round(m.transfer_kbs).toLocaleString()}KB/s`);
  if(!bits.length&&!m.split_parts)return '';
  let title=[m.elapsed?`所要 ${fmtSeconds(m.elapsed)}`:'',m.execute_seconds?`問い合わせ ${m.execute_seconds}s`:'',
-  m.save_seconds?`転送 ${m.save_seconds}s`:'',m.merge_seconds?`結合 ${m.merge_seconds}s`:'',
+  m.save_seconds?`転送 ${m.save_seconds}s`:'',m.axis_seconds?`軸の読み直し ${m.axis_seconds}s`:'',
+  m.merge_seconds?`結合 ${m.merge_seconds}s`:'',m.row_axis?`行の軸 ${m.row_axis}`:'',
   m.cols?`${m.cols}列`:''].filter(Boolean).join(' / ');
  return `<div class="rp-metrics" title="${E(title)}"><span class="rp-mode ${mode[0]}">${E(mode[1])}</span>`
   +bits.map(b=>`<em>${E(b)}</em>`).join('<em class="rp-m-sep">·</em>')+`</div>`;
@@ -1024,7 +1025,7 @@ function syncTrialControls(){
   grid:'先に手順2で「列を調べる」と「行を調べる」の両方を実行してください。片の数は 行×列 になります。'})[m];
  n.innerHTML=(done?ready:todo)+'<b>出力ファイルは更新しません</b>（比較するだけで、結果は公開しません）。';
 }
-$$('.insp-step').forEach(b=>b.onclick=()=>inspGo(b.dataset.istep));
+$$('.insp-step').forEach(b=>b.onclick=()=>{inspGo(b.dataset.istep);if(b.dataset.istep==='run')loadRuntimeSplit()});
 $$('#plan-axis button').forEach(b=>b.onclick=()=>planAxis(b.dataset.axis));
 if($('#m-split-mode-trial'))$('#m-split-mode-trial').onchange=syncTrialControls;
 if($('#m-split-measure'))$('#m-split-measure').onchange=syncTrialControls;
@@ -1222,40 +1223,86 @@ if($('#ilog-clear'))$('#ilog-clear').onclick=async()=>{
 };
 
 let splitTrialTimer=null;
-// 本番の実行で分割が使われるかどうか。使われない場合は、その理由をそのまま出す。
+const RUN_MODE_LABEL={auto:'自動',race:'競争させる',force:'常に分割',off:'使わない'};
+const SHAPE_ICON={column:'列',row:'行',grid:'格'};
+/* 手順4は「次に実行したらどうなるか」の一枚板。読む順番を1つに決める。
+     1行目 … 何をするか（これだけ読めば足りる）
+     カード … 確認済みの形と実測。使うものに印を付ける
+     脚注   … 設定と条件
+   形を選ばせないのが既定。実測でいちばん速かった形をアプリが選ぶ。 */
+function speedText(v){return v?Number(v).toFixed(2)+'倍':''}
+function shapeCard(p){
+ let ic=SHAPE_ICON[p.shape]||'列';
+ let bits=[];
+ if(p.pieces)bits.push(`${p.pieces}片を同時に`);
+ if(p.axis)bits.push(`軸: ${p.axis}`);
+ if(p.rows)bits.push(`${Number(p.rows).toLocaleString()}件で一致`);
+ let note='';
+ if(p.shape!=='column'&&p.axis_seconds)
+  note=`軸の読み直し ${Number(p.axis_seconds).toFixed(1)}秒を含めた実力です`
+      +(p.raw_speedup?`（読み直しを除けば ${speedText(p.raw_speedup)}）`:'');
+ return `<article class="sp-card ${p.chosen?'is-used':''} ${p.stale?'is-stale':''}">
+  <i class="sp-ic sp-${E(p.shape)}">${ic}</i>
+  <div class="sp-main"><b>${E(p.how)}</b><span>${E(bits.join(' / '))}</span>${note?`<small>${E(note)}</small>`:''}</div>
+  <div class="sp-num"><strong>${speedText(p.speedup)||'—'}</strong><small>${p.speedup?'速い':'速さの裏付けなし'}</small></div>
+  <div class="sp-tag">${p.chosen?'<em class="sp-used">これを使います</em>':''}${p.stale?'<em class="sp-old">RNEが更新されました</em>':''}</div>
+ </article>`;
+}
 function renderRuntimeSplit(rs){
  let box=$('#m-split-run-state');if(!box)return;
  if(!rs){
   box.className='split-run-state';
-  box.innerHTML='<b>まだ調べていません</b><span>手順2の「列を調べる」を実行すると、次に本番で実行したときどうなるかをここに表示します。</span>';
+  box.innerHTML='<div class="sp-head"><b>まだ調べていません</b><span>「いまの判定を見る」を押すと、次に本番で実行したときどうなるかが出ます。</span></div>';
   inspState('run','—','');return;
  }
- let saved=(rs.saved||[]).filter(p=>!p.stale);
- let mode=({auto:'自動',race:'競争させる',force:'常に分割',off:'使わない'})[rs.mode]||rs.mode;
- let line,chip,tone,detail=[];
+ let mode=RUN_MODE_LABEL[rs.mode]||rs.mode;
+ let saved=rs.saved||[],fresh=saved.filter(p=>!p.stale);
+ let head,chip,tone;
  if(rs.active){
   box.className='split-run-state is-on';
   if(rs.mode==='race'){
-   line=`分割なし1本と${rs.parts}分割を同時に走らせ、先に終わった方を採用します（同時プロセス ${rs.parts+1} 本）`;
-   chip=`競争 · ${rs.parts}分割`;
+   head=`分割なし1本と<b>${E(rs.how)}</b>を同時に走らせ、先に終わった方を使います`;
+   chip=`競争 · ${rs.how}`;
   }else{
-   line=`${rs.parts}分割で取得します`+(rs.observed_speedup?`（裏付け ${rs.observed_speedup.toFixed(2)}倍）`:'');
-   chip=`${mode} · ${rs.parts}分割`;
+   head=`<b>${E(rs.how)}</b>で取得します`+(rs.observed_speedup?` — 実測 <b>${speedText(rs.observed_speedup)}</b>速い`:'');
+   chip=`${mode} · ${rs.how}`;
   }
   tone='ok';
-  if(rs.proven_at)detail.push(`裏付けを得た日時: ${rs.proven_at}`);
  }else{
   box.className='split-run-state is-off';
-  line=`分割せず1本で取得します`+(rs.reason?` — ${rs.reason}`:'');
+  head=`<b>分割せず1本</b>で取得します`;
   chip=`${mode} · 分割しない`;tone='';
  }
- detail.push(`動作の設定: ${mode}／単独で実行したときに使えるライン: ${rs.budget}本`);
- detail.push(saved.length
-  ?'保存済みの割り当て: '+saved.map(p=>`${p.parts}分割（${p.speedup?p.speedup.toFixed(2)+'倍':'速さの裏付けなし'} / ${p.columns}列）`).join('、')
-  :`保存済みの割り当てはありません。手順3で結果が一致すると保存されます（「自動」はさらに ${rs.min_speedup}倍以上の短縮が必要）。`);
- box.innerHTML=`<b>次に実行すると ${E(line)}</b>`+detail.map(x=>`<span>${E(x)}</span>`).join('');
+ let why=rs.active?'':(rs.reason||'');
+ let foot=[`動作: ${mode}`,`分け方: ${(rs.shapes||[]).find(x=>x.id===rs.shape)?.label||rs.shape}`,
+           `単独実行で使えるライン: ${rs.budget}本`];
+ if(rs.mode==='auto')foot.push(`「自動」が求める短縮: ${rs.min_speedup}倍以上`);
+ if(rs.active&&rs.proven_at)foot.push(`裏付けを得た日時: ${rs.proven_at}`);
+ box.innerHTML=`<div class="sp-head"><b>次に実行すると ${head}</b>${why?`<span class="sp-why">${E(why)}</span>`:''}</div>`
+  +(saved.length?`<div class="sp-cards">${saved.map(shapeCard).join('')}</div>`
+    :`<p class="sp-empty">確認済みの分け方はまだありません。手順3の影実行で<b>結果が一致</b>すると、その形がここに並びます。`
+     +`「自動」で使われるには、さらに <b>${rs.min_speedup}倍</b>以上の短縮が要ります。</p>`)
+  +`<div class="sp-foot">${foot.map(x=>`<span>${E(x)}</span>`).join('')}</div>`;
  inspState('run',chip,tone);
+ if(fresh.length>1&&rs.shape==='auto')
+  box.insertAdjacentHTML('beforeend','<p class="sp-tip">確認済みの形が複数あります。「分け方: 自動」のままにしておけば、いちばん速かった形が使われます。</p>');
 }
+// 手順4を単独で更新する。手順2や手順3の副産物ではなく、いつでも今の判定を見に行ける。
+async function loadRuntimeSplit(){
+ if(!editing?.id)return;
+ let btn=$('#m-split-refresh');if(btn)btn.disabled=true;
+ try{
+  let r=await fetch('/api/run-split-state',{method:'POST',headers:{'Content-Type':'application/json'},
+       body:JSON.stringify({job_id:editing.id,split_mode:$('#m-split-mode')?.value||'auto',
+                            split_shape:$('#m-split-shape')?.value||'auto'})}),d=await r.json();
+  if(d.ok)renderRuntimeSplit(d.runtime_split);
+  else toast(d.error||'判定を取得できませんでした');
+ }catch{toast('判定を取得できませんでした')}
+ finally{if(btn)btn.disabled=false}
+}
+if($('#m-split-refresh'))$('#m-split-refresh').onclick=loadRuntimeSplit;
+if($('#m-split-shape'))$('#m-split-shape').onchange=loadRuntimeSplit;
+if($('#m-split-mode'))$('#m-split-mode').onchange=loadRuntimeSplit;
 
 // 行分割の下調べ。分割できる列の候補と、所要時間の内訳を出す。
 if($('#m-row-split'))$('#m-row-split').onclick=()=>inspTaskRun('row',
@@ -1591,11 +1638,18 @@ function splitTrialRender(d){
  else if(r.identical)body+=`<p class="ri-note">この割り当ては保存していません（本番では分割しません）。保存の条件は「結果が一致し、かつ ${r.min_speedup}倍以上速いこと」です。</p>`;
  rb.innerHTML=body;
 }
+let splitTrialSeen='';
 async function splitTrialPoll(){
  try{
   let r=await fetch('/api/column-split-trial/status'),d=await r.json();
   splitTrialRender(d);
-  if(!d.running){clearInterval(splitTrialTimer);splitTrialTimer=null;ilogFollow(false);if(ilogOpen())ilogLoad(true)}
+  if(!d.running){
+   clearInterval(splitTrialTimer);splitTrialTimer=null;ilogFollow(false);if(ilogOpen())ilogLoad(true);
+   // 影実行で裏付けが保存されたかもしれない。手順4を取り直して、いまの判定へ合わせる。
+   if(d.result&&splitTrialSeen!==(d.result.rne||'')+String(d.elapsed||'')){
+    splitTrialSeen=(d.result.rne||'')+String(d.elapsed||'');loadRuntimeSplit();
+   }
+  }
   else ilogFollow(true);
  }catch{}
 }
