@@ -1374,3 +1374,8 @@ body > main{max-width:1620px;padding-left:12px;padding-right:12px}
 .ilog-body .log-line.warning{color:#f0c674}
 .ilog-body .log-line.error{color:#ff9c8f}
 .ilog-body .ri-note,.ilog-body .ri-ng{color:#9fb4bd}
+
+/* 同じ内容が続いて省略された区間の「最後の1行」。
+   ここが区間の終わりであることが分かるよう、行の左に印を付ける。 */
+.log-line.dedup{border-left:3px solid #5b7f8c;opacity:.92}
+.ilog-body .log-line.dedup{border-left:3px solid #5b7f8c;padding-left:6px;margin-left:-9px}

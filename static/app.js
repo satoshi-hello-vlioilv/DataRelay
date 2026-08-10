@@ -1,4 +1,4 @@
-const UI_BUILD='1.44.0-reload';
+const UI_BUILD='1.46.0-logdedup';
 let cfg,editing=null,editingRule=null,sortDir=1,scheduleInfo={},rowLive={},rowQueue={},statusFailCount=0,serverLostShown=false;const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)],E=s=>String(s??'').replace(/[&<>"']/g,x=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[x]));const uid=()=>crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random();function toast(t){$('#toast').textContent=t;$('#toast').style.display='block';setTimeout(()=>$('#toast').style.display='none',2500)}function dirty(){$('#dirty').textContent='未保存の変更があります'}$$('nav button').forEach(b=>b.onclick=()=>{$$('nav button,section').forEach(x=>x.classList.remove('on'));b.classList.add('on');$('#'+b.dataset.p).classList.add('on');if(b.dataset.p==='logs')loadLog();if(b.dataset.p==='calendar')openCalendar();if(b.dataset.p==='viewer')loadViewerJobs()});
 const paths={navigator_api_dll:['Navigator API DLL','file',[['DLLファイル','*.dll'],['すべて','*.*']]],symnavi_exe:['SymNavi.exe','file',[['実行ファイル','*.exe'],['すべて','*.*']]],symnavim_conf:['symnavim.conf','file',[['CONFファイル','*.conf'],['すべて','*.*']]],symnavim_def:['symnavim.def','file',[['DEFファイル','*.def'],['すべて','*.*']]],accdb_template:['ACCDB空テンプレート','file',[['Access Database','*.accdb'],['すべて','*.*']]],rne_folder:['RNE基本フォルダー','folder'],default_output_folder:['既定の出力先','folder'],backup_folder:['バックアップ先','folder']};
 let waitingTimer=null,waitingStarted=0;function currentEngine(){return $('#extract-engine')?.value||cfg?.settings?.extract_engine||'api'}function waitingEngineLabel(context='common'){if(context==='api'||(context==='engine'&&currentEngine()==='api'))return 'NAVIGATOR API';if(context==='dde'||(context==='engine'&&currentEngine()==='dde'))return 'DDE COMPATIBILITY';return 'COMMON OPERATION'}function showWaiting(title='確認中',detail='処理を続行しています...',context='common'){let d=$('#waiting-dialog');$('#waiting-engine').textContent=waitingEngineLabel(context);$('#waiting-title').textContent=title;$('#waiting-detail').textContent=detail;waitingStarted=Date.now();clearInterval(waitingTimer);let tick=()=>{let sec=Math.floor((Date.now()-waitingStarted)/1000);$('#waiting-elapsed').textContent=`経過 ${String(Math.floor(sec/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`};tick();waitingTimer=setInterval(tick,1000);if(!d.open)d.showModal()}function updateWaiting(title,detail,context){if(title)$('#waiting-title').textContent=title;if(detail)$('#waiting-detail').textContent=detail;if(context)$('#waiting-engine').textContent=waitingEngineLabel(context)}function hideWaiting(){clearInterval(waitingTimer);waitingTimer=null;let d=$('#waiting-dialog');if(d?.open)d.close()}async function convertPath(input,mode){showWaiting('パス変換中',mode==='relative'?'アプリフォルダー基準へ変換しています...':'実際の絶対パスを解決しています...');try{let r=await fetch('/api/path-convert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({value:input.value,mode})}),d=await r.json();if(!r.ok)return toast(d.error);input.value=d.value;updatePathBadge(input);dirty()}finally{hideWaiting()}}function updatePathBadge(input){let badge=input.closest('label')?.querySelector('.path-badge');if(!badge)return;let relative=input.value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(input.value);badge.textContent=relative?'相対パス / 基準: アプリフォルダー':'絶対パス';badge.className='path-badge '+(relative?'path-kind-relative':'path-kind-absolute')}function isRelativePath(value){return !!value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(value)}function enhancePathInput(input,kind='folder'){if(!input||input.dataset.pathEnhanced)return;input.dataset.pathEnhanced='1';let tools=document.createElement('div');tools.className='path-tools compact-path-tools';tools.innerHTML='<button type="button" class="pathmode path-toggle" title="絶対パスと相対パスを切り替えます"></button><small class="path-badge"></small>';input.closest('label')?.appendChild(tools);let toggle=tools.querySelector('.path-toggle');function refresh(){let relative=isRelativePath(input.value);toggle.textContent=relative?'相対 → 絶対':'絶対 → 相対';toggle.dataset.mode=relative?'absolute':'relative';updatePathBadge(input)}toggle.onclick=async()=>{await convertPath(input,toggle.dataset.mode);refresh()};input.addEventListener('input',refresh);input._refreshPathControl=refresh;refresh()}async function browse(kind,initial,types){showWaiting('参照画面を準備中','設定中のパスを解決して、その場所から開きます...');try{let url=kind==='folder'?'/api/pick-folder':'/api/pick-file',r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({initial,types})}),d=await r.json();if(!r.ok)toast(d.error);return d.path||''}finally{hideWaiting()}}
@@ -265,7 +265,7 @@ if($('#api-lines'))$('#api-lines').addEventListener('change',async e=>{let v=Mat
 function logKind(line){if(line.includes('[ERROR]')||line.includes('異常終了')||line.includes('FAILED')||line.includes('失敗'))return'error';if(line.includes('設定保存'))return'setting';if(line.includes('COMMAND_QUEUE'))return'queue';if(/PUBLISH_|phase=publish/.test(line))return'publish';if(/STARTUP_PHASE|STEP_END|elapsed=|SQLITE_|INTERMEDIATE_VALIDATION|PARALLEL_BATCH_END|JOB_RESULT|JOB_PROFILE|RUN_ENVIRONMENT|WORKER_READY/.test(line))return'performance';return'execution'}
 function logKindLabel(k){return{execution:'実行',setting:'設定',queue:'キュー',performance:'計測',publish:'公開',error:'エラー'}[k]||'実行'}
 function logMatches(line){let q=($('#log-filter-text')?.value||'').trim().toLowerCase(),k=$('#log-filter-kind')?.value||'all',lv=$('#log-filter-level')?.value||'all';return(!q||line.toLowerCase().includes(q))&&(k==='all'||logKind(line)===k)&&(lv==='all'||logLevel(line)===lv)}
-function logLines(lines){return`<div class="log-lines">${lines.map(x=>{let k=logKind(x);return`<div class="log-line ${logLevel(x)} kind-${k}${logMatches(x)?'':' hidden-by-filter'}" data-line="${E(x)}"><input class="log-select" type="checkbox" aria-label="このログ行を選択"><span class="log-kind">${logKindLabel(k)}</span><span class="log-text">${E(x)}</span></div>`}).join('')}</div>`}
+function logLines(lines){return`<div class="log-lines">${lines.map(x=>{let k=logKind(x);return`<div class="log-line ${logLevel(x)} kind-${k}${x.includes('LOG_DEDUP')?' dedup':''}${logMatches(x)?'':' hidden-by-filter'}" data-line="${E(x)}"><input class="log-select" type="checkbox" aria-label="このログ行を選択"><span class="log-kind">${logKindLabel(k)}</span><span class="log-text">${E(x)}</span></div>`}).join('')}</div>`}
 function filteredLogLines(){return $$('#log .log-line:not(.hidden-by-filter)').map(x=>x.dataset.line||'').filter(Boolean)}
 function selectedLogLines(){return $$('#log .log-select:checked').map(x=>x.closest('.log-line')?.dataset.line||'').filter(Boolean)}
 function updateLogSummary(){let a=$$('#log .log-line').length,v=$$('#log .log-line:not(.hidden-by-filter)').length,s=$$('#log .log-select:checked').length;if($('#log-filter-summary'))$('#log-filter-summary').textContent=`表示 ${v}行 / 全体 ${a}行 / 選択 ${s}行`}
@@ -985,7 +985,7 @@ async function ilogLoad(scroll=false){
   let d=await fetch('/api/log?'+q).then(r=>r.json());
   ilogText=d.text||'';
   let lines=ilogText?ilogText.split(/\r?\n/):[];
-  box.innerHTML=lines.length?lines.map(x=>`<div class="log-line ${logLevel(x)}">${E(x)}</div>`).join('')
+  box.innerHTML=lines.length?lines.map(x=>`<div class="log-line ${logLevel(x)}${x.includes('LOG_DEDUP')?' dedup':''}">${E(x)}</div>`).join('')
                             :'<p class="ri-note">この条件に当てはまるログはありません。</p>';
   let c=$('#ilog-count');
   if(c)c.textContent=lines.length?`${lines.length}行 / 全${Number(d.total||0).toLocaleString()}行`:'該当なし';
@@ -1292,12 +1292,24 @@ function splitTrialRender(d){
   +r.results.map(x=>`<span class="ri-chip">${E(x.part)}<em>${x.cols}列 / ${x.elapsed}s / ${(x.size/1024/1024).toFixed(2)}MB</em></span>`).join('')+`</div></details>`;
  if(r.mode&&r.mode!=='column'){
   let ra=r.row_axis||{},dr=r.row_drift;
-  if(dr&&(dr.added||dr.gone)){
-   let ex=(dr.added_sample||[]).slice(0,5);
+  if(dr&&(dr.added||dr.gone||dr.diff)){
+   let ex=(dr.added_sample||[]).slice(0,5),
+       how=dr.compared==='values'?`増えた ${dr.added} / 消えた ${dr.gone}`
+         :`${dr.diff>0?'+':''}${Number(dr.diff||0).toLocaleString()}種。事前は見本しか読んでいないので、増減の内訳までは分かりません`;
    body+=`<p class="ri-note"><b>実行の直前に読み直した結果</b>: `
     +`事前 ${Number(dr.before||0).toLocaleString()}種 → 実行時 ${Number(dr.after||0).toLocaleString()}種`
-    +`（増えた ${dr.added} / 消えた ${dr.gone}）。分割点はこの実行時の値から決めています。`
-    +(ex.length?` 増えた例: ${ex.map(E).join('、')}`:'')+`</p>`;
+    +`（${how}）。分割点はこの実行時の値から決めています。`
+    +(dr.compared==='values'&&ex.length?` 増えた例: ${ex.map(E).join('、')}`:'')+`</p>`;
+  }
+  // 1つの値に行が集中している軸は、何組に分けても一番重い片が全体を決める。
+  // 「分けたのに速くならない」の理由がここで分かる。
+  let sk=r.row_skew;
+  if(sk&&sk.ratio>=1.25){
+   body+=`<p class="ri-note"><b>片寄っています</b>: 一番重い片が ${Number(sk.max_rows||0).toLocaleString()}行`
+    +`（${sk.parts}等分なら ${Number(sk.even_rows||0).toLocaleString()}行 / <b>${sk.ratio}倍</b>）。`
+    +(sk.top_share?`「${E(r.row_column||'')}」の値ひとつだけで全体の ${Math.round(sk.top_share*100)}% を占めるためです。`:'')
+    +`並列で待たされるのは一番重い片なので、この軸では最大でも ${sk.ceiling}倍までしか縮みません。`
+    +`分割数を増やしても頭打ちです。ほかの軸（値が散らばっているもの）を選ぶと改善します。</p>`;
   }
   if(r.row_parts_want&&r.row_parts&&r.row_parts_want!==r.row_parts)
    body+=`<p class="ri-note">頼まれたのは ${r.row_parts_want}分割ですが、実行時の値では ${r.row_parts}分割が上限でした。`

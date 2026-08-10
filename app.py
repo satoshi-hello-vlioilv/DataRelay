@@ -1,5 +1,5 @@
 ﻿from __future__ import annotations
-import atexit, calendar, configparser, contextlib, csv, gc, json, logging, os, re, shutil, socket, sqlite3, struct, subprocess, sys, tempfile, threading, time, traceback, uuid, webbrowser
+import atexit, calendar, configparser, contextlib, copy, csv, gc, json, logging, os, re, shutil, socket, sqlite3, struct, subprocess, sys, tempfile, threading, time, traceback, uuid, webbrowser
 from collections import deque
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -25,8 +25,8 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.44.0'; APP_VERSION_TITLE='全値型の軸を読み込んで分割する'; APP_RELEASED_AT='2026-08-08'
-BUILD_VERSION=f'{APP_VERSION}-reload'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.46.0'; APP_VERSION_TITLE='同じ内容が続くログを1本にまとめる'; APP_RELEASED_AT='2026-08-10'
+BUILD_VERSION=f'{APP_VERSION}-logdedup'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリに同梱する仕様書。ここに登録したものだけが画面から開ける。
 # 画面からはこのidしか受け取らないので、任意のパスを読ませることはできない。
 DOCS=[
@@ -43,7 +43,26 @@ def docs_dir():
 
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
-{'version':'1.44.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+{'version':'1.46.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'短い間に同じことを言い続ける行を、1本にまとめるようにしました。待機中・進捗・途絶の警告などが延々と並ばなくなり、ログが軽くなります。',
+'まとめても時間は測れます。残すのは「続きはじめの1行」と「最後の1行」で、最後の1行は発生した時刻のまま出します。区間の両端が残るので、いつからいつまで同じ状態だったかを後から出せます。',
+'最後の1行には「同じ内容を◯行省略（◯秒間・これが最後の1行）」と書き足します。何を省いたかが分からないまま消えることはありません。',
+'経過秒・バイト数・進捗のように動く値だけが違う行も、同じ内容として扱います（例: silence=9s と silence=29s）。伏せた値そのものは最後の1行に実際の値が残ります。',
+'担当や工程が違う行までまとめることはありません（例: part=行1/2 と part=行2/2 は別の行として残ります）。',
+'60秒より長く間があいてから同じ内容が出たときは、「また起きた」として残します。',
+'続いている最中も30秒ごと（エラーは10秒ごと）に途中経過を1行出します。途中で落ちても、そこまでの状態がログに残ります。',
+'まとめた行は、ログの一覧でも影実行のログでも、左に印が付いて見分けられます。',
+'診断で生のログが要るときは、環境変数 NAVI_LOG_DEDUP=0 で止められます。',
+]},
+{'version':'1.45.0','date':'2026-08-10','title':'行分割が実際に走るようにする','notes':[
+'1.44.0 で軸も値も正しく読めるようになりましたが（表側#1 検査番号=843種）、最後の「行の軸で絞る」だけで落ちていました。表示指定の定数を書き忘れていたためです（NAVI_IN_NONDISP / NAVI_IN_TARGET）。仕様書どおり5つを定義しました。',
+'影実行の待ち時間を約40秒縮めました。1.44.0 は同じ「軸を読む」問い合わせが3回走っていました。「分け方を探す」で読んだ一覧をRNE単位で控え、影実行はそれを目安に使います。実測は今までどおり実行の直前に1回だけ読み直します。',
+'RNEが更新されていたとき、控えが24時間より古いときは使わず読み直します。',
+'「事前6種 → いま843種（増=837）」という表示を改めました。事前調査は見本を数件しか読まないので、顔ぶれの差は出せません。種類の数どうしを比べ、「事前は見本のみ」と明記します。',
+'分割しても速くならない理由を数字で出します。検査番号は値ひとつで全体の66%を占めるため、2等分しても一番重い片は縮まず、この軸では最大1.52倍までしか速くなりません。均等との倍率・占有率・その軸での上限を表示します。',
+'基準がまだ無いときに「分割なしは 0秒」と出していたのをやめました。',
+]},
+{'version':'1.44.0','date':'2026-08-08','title':'全値型の軸を読み込んで分割する','notes':[
 '【原因判明】表側の管理ポイント64本すべてが「値の数=0」になっていたのは、どれも型が「全値型」だったためです。全値型は決まった値の一覧を持たず、値はデータの中にあります。読み込ませる前に数えていたので0でした。',
 '値を数える前に NaviReloadCategory でデータベースから読み込むようにしました。渡し方を3通り試し、通った形と失敗した理由をログに残します（ROW_AXIS_LOAD）。',
 '8000件を超える軸はDLLが一覧にできません（NAVI_ERROR_OVER8000）。その軸は「値が8000件超」として飛ばし、値の少ない次の軸を自動的に選びます。検査番号のように値が多い軸でも、行分割そのものは止まりません。',
@@ -52,7 +71,7 @@ CHANGELOG=[
 '一覧にできない軸については「先頭一致で絞れるか」を1回だけ試し、結果をログに残します。次の手（先頭の文字で分ける方式）が使えるかの下調べです。',
 '影実行の画面のログビューワに「ログを消去」を付けました。確認をはさんだうえで、実行ログ全体を消します。',
 ]},
-{'version':'1.43.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+{'version':'1.43.0','date':'2026-08-08','title':'影実行の画面でログも追える','notes':[
 '「RNEを調べる」の手順3（速さを試す）に、ログの簡易ビューワを付けました。影実行を見ながら、そのままログを追えます。「ログ・診断」タブへ行き来する必要がなくなります。',
 '表示は「分割まわり / エラーと警告 / すべて」から選べます。既定の「分割まわり」は SPLIT_・AXIS_・ROW_・COLUMN_ の行だけを出すので、影実行に関係のない行が混ざりません。',
 '語での絞り込みもできます（正規表現も可。壊れた式でも落ちず、そのまま語として扱います）。',
@@ -602,10 +621,111 @@ PARALLEL_LINES_SUPPORTED_MAX=24
 class RunCancelled(Exception):pass
 status={'build_version':BUILD_VERSION,'running':False,'current':'','current_job_id':'','current_job_name':'','current_index':0,'total_jobs':0,'step':'idle','step_label':'待機中','step_percent':0,'completed_jobs':0,'failed_jobs':0,'started_at':'','elapsed_seconds':0,'symnavi_window':'未起動','last_result':'未実行','last_finished_at':'','error_detail':'','activity_detail':'','activity_value':'','heartbeat_at':'','parallel_lines':[],'batch_job_ids':[],'queue_completed_ids':[],'queue_failed_ids':[],'queue_running_ids':[],'queue_waiting_ids':[],'job_errors':[]}
 log=logging.getLogger('navi'); log.setLevel(logging.INFO)
+
+# ==== 同じ内容が続いたときの省略 =========================================
+# 短い間に同じことを言い続ける行（待機中・進捗・途絶の警告など）は、読むときの邪魔になるだけでなく
+# ファイルを重くする。残すのは「変化した瞬間」だけにする。
+#
+# 省略しても時間が測れなくならないよう、次の3つを必ず守る。
+#   1. 続きはじめの1行は、そのまま残す（いつ始まったか）
+#   2. 最後の1行も残す（いつまで続いたか）。時刻はもとの発生時刻のまま出す
+#   3. 最後の1行に「何行省略したか」「何秒間続いたか」を書き足す
+# つまり区間の両端と長さは必ず残るので、後から所要時間を出せる。
+#
+# 「同じ内容」の判定では、経過秒・バイト数・進捗といった動く値を伏せてから比べる。
+#   例) HEARTBEAT_DEGRADED silence=9s → HEARTBEAT_DEGRADED silence=*
+# 伏せた値そのものは、最後の1行に実際の値が残るので失われない。
+LOG_DEDUP_WINDOW=60.0        # これだけ間があいたら、同じ内容でも「また起きた」として残す
+LOG_DEDUP_HOLD_SECONDS=30.0  # 続いている最中も、これだけ経ったら途中経過を1行出す
+LOG_DEDUP_HOLD_COUNT=1000    # 行数でも同じく区切る（落ちたときに失う状態をこの数までに抑える）
+LOG_DEDUP_ERROR_SECONDS=10.0 # エラーは短めに区切る（直っていないことが分かるように）
+_DEDUP_KEYS=('elapsed','silence','secs','sec','seconds','ms','msec','bytes','size','percent','progress','prog',
+             'age','age_days','age_hours','attempt','attempts','remaining','eta','speed','rate','uptime','grace',
+             'count','total','rows','done','sent','received','read','written','at','since')
+_DEDUP_VOLATILE=re.compile(r'((?:^|[\s\[(,|])(?:'+'|'.join(_DEDUP_KEYS)+r')\s*=\s*)[-+]?[0-9][0-9,._/]*[a-zA-Z%]*',re.I)
+_DEDUP_UNITS=re.compile(r'[-+]?[0-9][0-9,._]*\s*(秒|ミリ秒|分間|バイト|KB|MB|GB|s\b)',re.I)
+def _dedup_key(record):
+ """動く値を伏せた「内容の形」。これが同じ行を「同じ内容」として扱う。"""
+ try:msg=record.getMessage()
+ except Exception:msg=str(record.msg)
+ msg=_DEDUP_VOLATILE.sub(r'\1*',msg)
+ msg=_DEDUP_UNITS.sub(r'*\1',msg)
+ exc=''
+ if record.exc_info and record.exc_info[0] is not None:
+  # 同じ例外が繰り返しているのか、別の例外に変わったのかは区別する
+  exc=f'|{record.exc_info[0].__name__}:{str(record.exc_info[1])[:120]}'
+ return f'{record.levelno}|{msg}{exc}'
+
+class LogDedupFilter(logging.Filter):
+ """同じ内容が続く区間を1本にまとめる。区間の両端と長さは必ず残す。
+
+ ふるいはハンドラー側に付ける。ハンドラーのロックの外で動くので、状態は自前の錠で守る。
+ まとめた行を書くときだけハンドラーのロックを取る（emit はふるいを呼ばないので再帰しない）。
+ """
+ def __init__(self,handler):
+  super().__init__()
+  self.handler=handler;self.enabled=os.environ.get('NAVI_LOG_DEDUP','1')!='0'
+  self.lock=threading.Lock()
+  self.key=None;self.n=0;self.last=None;self.first_at=0.0;self.last_at=0.0;self.suppressed=0
+
+ def _emit(self,record):
+  self.handler.acquire()
+  try:self.handler.emit(record)
+  finally:self.handler.release()
+
+ def _close(self,now=None):
+  """溜めていた区間を書き出す。呼び出し側で self.lock を取っていること。"""
+  if self.n<=0 or self.last is None:
+   self.key=None;self.n=0;self.last=None;return
+  last=self.last;n=self.n;span=max(0.0,self.last_at-self.first_at)
+  self.n=0;self.last=None
+  if n==1:
+   # 1行だけなら、まとめる意味がないのでそのまま出す
+   self._emit(last);return
+  rec=copy.copy(last)
+  try:body=last.getMessage()
+  except Exception:body=str(last.msg)
+  rec.msg=f'{body} ｜ LOG_DEDUP 同じ内容を{n}行省略（{span:.1f}秒間・これが最後の1行）'
+  rec.args=None
+  # rec.created / rec.msecs は複製元のまま＝最後に起きた時刻。時間の測り直しができる
+  self.suppressed+=n-1
+  self._emit(rec)
+
+ def flush(self):
+  with self.lock:self._close()
+
+ def filter(self,record):
+  if not self.enabled:return True
+  now=record.created
+  key=_dedup_key(record)
+  with self.lock:
+   if key==self.key:
+    hold=LOG_DEDUP_ERROR_SECONDS if record.levelno>=logging.ERROR else LOG_DEDUP_HOLD_SECONDS
+    # 区切る条件。①長く続きすぎた ②行数が多すぎる ③間があきすぎた（また起きた、とみなす）
+    over=(now-self.first_at>hold or self.n+1>=LOG_DEDUP_HOLD_COUNT or now-self.last_at>LOG_DEDUP_WINDOW)
+    if not over:
+     self.n+=1;self.last=record;self.last_at=now;return False
+   # 溜めていた区間を閉じてから、この行を新しい区間のはじまりとして出す
+   self._close()
+   self.key=key;self.n=0;self.last=None;self.first_at=now;self.last_at=now
+   return True
+
+log_dedup=None
 if not log.handlers:
  # 並列実行では複数プロセスが同じログへ追記するため、行だけを見るとどのプロセスの出来事か分からない。
  # プロセスIDを常に出して、後からライン単位で追跡できるようにする（先頭の日時と[LEVEL]の位置は画面側の解析に合わせて維持）。
  h=logging.FileHandler(LOCAL_LOGS/'app.log',encoding='utf-8'); h.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] [pid %(process)d] %(message)s')); log.addHandler(h)
+ log_dedup=LogDedupFilter(h); h.addFilter(log_dedup)
+ # 溜めたままプロセスが終わると最後の1行が消える。終了時には必ず書き出す。
+ atexit.register(log_dedup.flush)
+def flush_log():
+ """溜めている省略ぶんを書き出してから、ハンドラーを流す。終了経路と読み出しの前に呼ぶ。"""
+ if log_dedup is not None:
+  try:log_dedup.flush()
+  except Exception:pass
+ for x in log.handlers:
+  try:x.flush()
+  except Exception:pass
 # COMオブジェクトの明示解放が正常経路で数秒停止する環境があるため、
 # Quit済みAccess.Applicationの参照だけをプロセス内に遅延保持する。
 # データ作成・件数検査・Quit完了後なので、出力精度には影響させない。
@@ -1150,6 +1270,39 @@ def load_split_baseline(rne_path):
  except Exception:meta['age_days']=None
  return meta
 
+def save_axis_survey(rne_path,axes,parts):
+ """「分け方を探す」で読んだ軸の一覧を覚えておく。
+
+ 影実行のたびに同じ問い合わせ（20秒前後）を繰り返さないためのもの。あくまで目安で、
+ 分割点は実行の直前に読み直した値から決める（resolve_axis_now）。
+ """
+ if not axes:return None
+ d=split_baseline_dir(rne_path);mtime,size=rne_signature(rne_path)
+ rec={'rne':str(rne_path),'axes':axes,'parts':int(parts or 0),'rne_mtime_ns':mtime,'rne_size':size,
+      'taken_at':datetime.now().isoformat(timespec='seconds')}
+ try:(d/'axes.json').write_text(json.dumps(rec,ensure_ascii=False),encoding='utf-8')
+ except Exception:
+  log.exception('AXIS_SURVEY_SAVE_FAILED rne=%s',rne_path);return None
+ log.info('AXIS_SURVEY_SAVE rne=%s 軸=%s本',rne_path,len(axes))
+ return rec
+
+def load_axis_survey(rne_path,max_age_hours=24):
+ """覚えておいた軸の一覧。RNEが更新されていたら使わない。"""
+ f=split_baseline_dir(rne_path)/'axes.json'
+ if not f.is_file():return None
+ try:rec=json.loads(f.read_text(encoding='utf-8'))
+ except Exception:
+  log.warning('AXIS_SURVEY_BROKEN rne=%s',rne_path);return None
+ mtime,size=rne_signature(rne_path)
+ if mtime and (mtime!=rec.get('rne_mtime_ns') or size!=rec.get('rne_size')):
+  log.info('AXIS_SURVEY_STALE rne=%s RNEが更新されているので読み直します',rne_path);return None
+ try:age=(datetime.now()-datetime.fromisoformat(rec.get('taken_at') or '')).total_seconds()/3600
+ except Exception:age=None
+ if age is not None and age>float(max_age_hours):
+  log.info('AXIS_SURVEY_OLD rne=%s %.1f時間前のものなので読み直します',rne_path,age);return None
+ rec['age_hours']=age
+ return rec
+
 SPLIT_MEASURE=('both','split','normal')
 def normalize_measure(value,race=False):
  """何を測るか。both=分割なしと分割ありを続けて / split=分割だけ / normal=分割なしだけ。
@@ -1232,10 +1385,16 @@ def resolve_axis_now(job,cfg,rne_path,parts,prefer='',hint=None,line=''):
   out['error']=str(e);log.exception('AXIS_NOW_FAILED rne=%s',rne_path);return out
  if not ins.get('ok'):
   out['error']=ins.get('error') or '管理ポイントを読み取れませんでした';return out
+ # 「2つに割れるか」で選び、頼まれた数に届くかは選んだあとに落として合わせる（axis_usable_parts）。
+ # ここで parts を要求すると、4分割に届かないだけの良い軸を捨てて悪い軸へ流れてしまう。
  axis,ranked=pick_row_axis(ins.get('axes') or [],2,prefer)
  out['ranked']=ranked
  if not axis:
-  out['error']='いま行を分けられる軸がありません';return out
+  out['error']=('いま行を分けられる管理ポイントがありません。表側・表頭・条件のどれかに'
+                '「2種類以上の値を持つ管理ポイント」または「期間が設定された時間型」が要ります。'
+                +('（読み取れた軸: '+'、'.join(f"{x['location']}/{x['name']}（{x['reason']}）" for x in ranked[:6])+'）'
+                  if ranked else '（管理ポイントを1つも読み取れませんでした）'))
+  return out
  # 使う軸が決まってから、その1本の値を読み切る。ここで全部そろわなければ分けない
  # （一部だけで組を作ると、読めなかった値の行がどこにも入らず落ちる）。
  if not axis.get('is_time'):
@@ -1260,14 +1419,21 @@ def resolve_axis_now(job,cfg,rne_path,parts,prefer='',hint=None,line=''):
  out['axis']=axis
  out['parts']=axis_usable_parts(axis,parts)
  if hint:
-  before=len(hint.get('categories') or []) if not hint.get('is_time') else 0
-  after=len(axis.get('categories') or []) if not axis.get('is_time') else 0
-  gone=sorted(set(hint.get('categories') or [])-set(axis.get('categories') or []))
-  added=sorted(set(axis.get('categories') or [])-set(hint.get('categories') or []))
-  out['drift']={'before':before,'after':after,'added':len(added),'gone':len(gone),
-                'added_sample':added[:8],'gone_sample':gone[:8],'same_axis':hint.get('name')==axis.get('name')}
-  log.info('AXIS_NOW%s rne=%s 軸=%s 事前=%s種 → いま=%s種（増=%s 減=%s）分割数=%s%s',
-           f' line={line}' if line else '',rne_path,axis['name'],before,after,len(added),len(gone),out['parts'],
+  # 事前調査は見本を数件しか読んでいない（64本ぶんの値を全部読むと待たされるため）。
+  # 顔ぶれの差を出せるのは事前も全部読めていたときだけ。ふだんは「種類の数」どうしを比べる。
+  before=int(hint.get('category_count') or 0) if not hint.get('is_time') else 0
+  after=int(axis.get('category_count') or 0) if not axis.get('is_time') else 0
+  hs=set(hint.get('categories') or []);ns=set(axis.get('categories') or [])
+  full=bool(not hint.get('is_time') and before and len(hs)>=before)
+  gone=sorted(hs-ns) if full else []
+  added=sorted(ns-hs) if full else []
+  out['drift']={'before':before,'after':after,'added':len(added),'gone':len(gone),'diff':after-before,
+                'compared':'values' if full else 'count','added_sample':added[:8],'gone_sample':gone[:8],
+                'same_axis':hint.get('name')==axis.get('name')}
+  how=(f'増={len(added)} 減={len(gone)}' if full else
+       ('差なし' if after==before else f'差={after-before:+d}（事前は見本のみ）'))
+  log.info('AXIS_NOW%s rne=%s 軸=%s 事前=%s種 → いま=%s種（%s）分割数=%s%s',
+           f' line={line}' if line else '',rne_path,axis['name'],before,after,how,out['parts'],
            '' if out['parts']==parts else f'（頼まれた{parts}分割には足りないので{out["parts"]}分割にします）')
  else:
   log.info('AXIS_NOW%s rne=%s 軸=%s（%s %s番目 / %s）いまの値=%s種 分割数=%s',
@@ -1357,6 +1523,34 @@ def plan_axis_split(axis,parts,weights=None,total_rows=0):
                                       'total_rows':int(total_rows or 0),'expect_rows':expect,
                                       'weight':g['weight']}})
  return out
+
+def axis_skew(plan,weights=None):
+ """割り当てた片の重さの片寄り。並列で待たされるのは一番重い片なので、そこを見る。
+
+ 1つの値だけで全体の大半を占める軸は、何組に分けても一番重い片が縮まない。
+ 分割してもさほど速くならないとき、その理由がここに出る。
+ """
+ if not plan or len(plan)<2:return None
+ ws=[float((x.get('row_axis') or {}).get('weight') or 0) for x in plan]
+ rows=[int((x.get('row_axis') or {}).get('expect_rows') or 0) for x in plan]
+ base=rows if sum(rows)>0 else ws
+ total=sum(base)
+ if total<=0:return None
+ n=len(base);even=total/n;mx=max(base)
+ top=None
+ if weights:
+  try:top=max(float(v) for v in weights.values())/float(sum(float(v) for v in weights.values()) or 1)
+  except Exception:top=None
+ if top is None:
+  # 重みが無くても、単独の値しか入っていない片があればそれが最大の値そのもの。
+  solo=[(int((x.get('row_axis') or {}).get('expect_rows') or 0),len((x.get('row_axis') or {}).get('values') or []))
+        for x in plan]
+  one=[r for r,k in solo if k==1]
+  if one:top=max(one)/total
+ return {'parts':n,'max_rows':int(round(mx)),'even_rows':int(round(even)),
+         'ratio':round(mx/even,2) if even else 0,'total_rows':int(round(total)),
+         'top_share':round(top,4) if top else None,
+         'ceiling':round(total/mx,2) if mx else 0}
 
 def split_period_range(start,end,parts):
  """YYYYMMDD の期間を parts 等分する。月度指定（末尾00）はその形のまま返す。"""
@@ -2489,14 +2683,14 @@ def phase_log(phase,started=None,**values):
  if started is None:
   _phase_profile['depth']+=1
   log.info('STEP_START phase=%s %s',phase,parts)
-  for h in log.handlers:h.flush()
+  flush_log()
   return time.perf_counter()
  elapsed=time.perf_counter()-started
  _phase_profile['depth']=max(0,_phase_profile['depth']-1)
  # 入れ子の工程（format_conversion内のintermediate_parseなど）は二重計上しない。
  if _phase_profile['depth']==0:_phase_profile['phases'][phase]=_phase_profile['phases'].get(phase,0.0)+elapsed
  log.info('STEP_END phase=%s elapsed=%.2fs %s',phase,elapsed,parts)
- for h in log.handlers:h.flush()
+ flush_log()
  return elapsed
 
 def save_metrics(path,elapsed,rows):
@@ -4168,7 +4362,7 @@ def request_shutdown_from_tray():
  else:
   log.info('TRAY_EXIT_REQUESTED running=0 action=exit')
  with command_queue_lock:command_queue.clear()
- for h in log.handlers:h.flush()
+ flush_log()
  _flush_settings_on_exit('tray-exit');stop_event.set()
  if tray:
   try:tray.stop()
@@ -4227,7 +4421,7 @@ def heartbeat_watchdog():
     if reason:
      enter_residency(reason,ids);continue
     log.info('APP_TABS_EMPTY_CONFIRMED closing_clients=%s active_app_tabs=0 grace=%ss action=python_exit',ids,CLOSE_GRACE_SECONDS)
-    for h in log.handlers:h.flush()
+    flush_log()
     _flush_settings_on_exit('app-tabs-empty');stop_event.set();os._exit(0)
    elif active and residency_state['active']:
     leave_residency()
@@ -4716,34 +4910,27 @@ def _split_trial_run(data,c,job):
  mode=str(data.get('mode') or 'column').lower()
  if mode not in ('column','row','grid'):mode='column'
  measure=normalize_measure(data.get('measure'),bool(data.get('race')))
- row_axis=None;row_axis_all=[];row_drift=None;axis_hint={};row_parts_want=max(2,min(8,int(data.get('row_parts') or 2)))
+ row_axis=None;row_axis_all=[];row_drift=None;row_skew=None;axis_hint={};row_parts_want=max(2,min(8,int(data.get('row_parts') or 2)))
  row_parts=row_parts_want
  if mode in ('row','grid') and measure!='normal':
-  # 行を絞れるのは管理ポイントだけ。RNEから軸を読み、表側の先頭を既定にする。
-  # 直近の出力ファイルに頼らないので、どのRNEでもここまでは同じように進める。
-  try:
-   user0,pw0,server0,_=creds(resolve_path(c['symnavim_conf']))
-   ins=run_inspect_worker(dict(job,_read_names=True),c,user0,pw0,server0,['axes'],
-                          timeout=int(c['settings'].get('split_trial_timeout_seconds',1800) or 1800))
-   row_axis_all=(ins.get('axes') or []) if ins.get('ok') else []
-   if not ins.get('ok'):log.warning('SPLIT_TRIAL_AXES_FAILED rne=%s error=%s',rp,ins.get('error'))
-  except Exception as e:
-   log.exception('SPLIT_TRIAL_AXES_FAILED rne=%s',rp);row_axis_all=[]
+  # 行を絞れるのは管理ポイントだけ。「分け方を探す」で読んだ一覧があればそれを目安に使う。
+  # 同じ問い合わせは20秒前後かかるので、ここでは繰り返さない。本番の軸と値は実行の直前に読み直す。
+  sv=load_axis_survey(rp)
+  if sv:
+   row_axis_all=sv.get('axes') or []
+   log.info('SPLIT_TRIAL_AXES_CACHED rne=%s 軸=%s本（%s の下調べを目安に使います。実測は実行直前に読み直します）',
+            rp,len(row_axis_all),sv.get('taken_at'))
+  else:
+   log.info('SPLIT_TRIAL_AXES_SKIP rne=%s 下調べがないので、実行直前の読み直しだけで進めます',rp)
   row_axis,ranked=pick_row_axis(row_axis_all,row_parts,str(data.get('row_column') or ''))
   for x in ranked:
    log.info('SPLIT_TRIAL_AXIS 候補 %s#%s %s 型=%s 値=%s 使える=%s（%s）',x['location'],x['index']+1,x['name'],
             x['type_name'],x.get('category_count'),x['usable'] and x['enough'],x['reason'])
-  axis_hint=row_axis
-  if not row_axis:
-   return dict(ok=False,axes=ranked,
-               error='行を分けられる管理ポイントが見つかりませんでした。'
-                     f'{row_parts}分割するには、表側・表頭・条件のどれかに「{row_parts}種類以上の値を持つ管理ポイント」'
-                     'または「期間が設定された時間型」が要ります。'
-                     +('（読み取れた軸: '+'、'.join(f"{x['location']}/{x['name']}（{x['reason']}）" for x in ranked[:6])+'）'
-                       if ranked else '（管理ポイントを1つも読み取れませんでした）'))
-  log.info('SPLIT_TRIAL_AXIS_PICK rne=%s 軸=%s（%s %s番目 / %s）値=%s 期間=%s',
-           rp,row_axis['name'],row_axis['location'],row_axis['index']+1,row_axis['type_name'],
-           row_axis.get('category_count'),row_axis.get('period'))
+  axis_hint=row_axis or {}
+  if row_axis:
+   log.info('SPLIT_TRIAL_AXIS_PICK rne=%s 軸=%s（%s %s番目 / %s）値=%s 期間=%s',
+            rp,row_axis['name'],row_axis['location'],row_axis['index']+1,row_axis['type_name'],
+            row_axis.get('category_count'),row_axis.get('period'))
  work=LOCAL_RUNTIME/('split_trial_'+datetime.now().strftime('%Y%m%d_%H%M%S'));work.mkdir(parents=True,exist_ok=True)
  user,pw,server,_=creds(resolve_path(c['symnavim_conf']))
  log.info('SPLIT_TRIAL_START rne=%s job=%s mode=%s 列%s分割 行%s分割 columns=%s removable=%s keys=%s transfer_ratio=%.2f',
@@ -4802,6 +4989,13 @@ def _split_trial_run(data,c,job):
     log.info('SPLIT_TRIAL_ROWPART %s/%s %s 見込み%s行',x['index'],row_parts,
              (f"期間 {x['row_axis']['from']}〜{x['row_axis']['to']}" if x['row_axis']['kind']=='period'
               else f"値{len(x['row_axis']['values'])}種"),x['row_axis'].get('expect_rows'))
+   # 片寄りの見立て。1つの値に行が集中している軸は、何組に分けても一番重い片が全体を決める。
+   # 速くならない理由が分からないまま終わらないよう、ここで数字にしておく。
+   row_skew=axis_skew(ap,axis_value_weights(job,c,row_axis['name']))
+   if row_skew and row_skew['ratio']>=1.25:
+    log.warning('SPLIT_TRIAL_ROW_SKEW rne=%s 軸=%s 一番重い片=%s行（均等なら%s行 / %.2f倍）%s',
+                rp,row_axis['name'],row_skew['max_rows'],row_skew['even_rows'],row_skew['ratio'],
+                f"最大の値が単独で{row_skew['top_share']:.0%}を占めます" if row_skew.get('top_share') else '')
   if mode=='row':
    part_specs=[{'index':x['index'],'label':f'行{x["index"]}/{row_parts}','group':'split','drop':[],
                 'row_axis':x['row_axis'],'row_group':x['index'],'out_csv':work/f'row{x["index"]}.csv'} for x in ap]
@@ -4894,7 +5088,9 @@ def _split_trial_run(data,c,job):
    split_seconds=(normal_elapsed*predict_split_gain(columns,removable,col_parts,trials,load_rne_timing(rp),weights,split_link_profile(rp))
                   if mode=='column' else normal_elapsed)
    how=split_how_label(mode,col_parts,row_parts)
-   split_trial_stage(f'{how}を並列実行中（{pieces}プロセス同時・分割なしは {normal_elapsed:.0f}秒）',phase='split',progress=0)
+   # 基準が無い（「分割だけ測る」で、保存された基準も無い）ときに 0秒 と出すと嘘になる。
+   vs=f'・分割なしは {normal_elapsed:.0f}秒' if normal_elapsed>0 else '・くらべる基準はまだありません'
+   split_trial_stage(f'{how}を並列実行中（{pieces}プロセス同時{vs}）',phase='split',progress=0)
    t=time.perf_counter()
    results=_spawn_racers(job,c,user,pw,server,work,part_specs,trial_timeout,
                          on_tick=lambda el,st:split_trial_tick('split',f'{how}を並列実行中',
@@ -5010,7 +5206,7 @@ def _split_trial_run(data,c,job):
                  row_parts=row_parts if mode!='column' else 0,column_parts=col_parts,how=split_how_label(mode,col_parts,row_parts),
                  row_column=(row_axis or {}).get('name',''),row_axis=(dict(row_axis,categories=(row_axis.get('categories') or [])[:12]) if row_axis else None),
                  row_location=(row_axis or {}).get('location',''),row_type=(row_axis or {}).get('type_name',''),
-                 row_parts_want=row_parts_want,row_drift=row_drift,
+                 row_parts_want=row_parts_want,row_drift=row_drift,row_skew=row_skew,
                  row_part_rows=[{'part':r.get('part'),'rows':r.get('rows'),'expected':r.get('expected_rows')}
                                 for r in (results or []) if r.get('rows') is not None],
                  rows=mrows,cols=mcols,key_count=len(keys),
@@ -5165,6 +5361,8 @@ def row_split_plan():
  axis,ranked=pick_row_axis(axes,parts0)
  log.info('ROW_AXES rne=%s 読めた軸=%s 使える=%s 既定=%s',rp,len(axes),
           sum(1 for x in ranked if x['usable'] and x['enough']),(axis or {}).get('name','(なし)'))
+ # ここで読んだ一覧を覚えておく。影実行が同じ問い合わせを繰り返さずに済む（実行直前の読み直しは別途行う）。
+ save_axis_survey(rp,axes,parts0)
  state,cached=column_cache_state(rp)
  if not cached or not cached.get('columns'):
   return jsonify(ok=True,rne=str(rp),job=job['name'],parts=parts0,axes=ranked,axis=axis,axes_error=axes_error,
@@ -5410,6 +5608,9 @@ LOG_FILTERS={
  'all':('','すべて'),
 }
 def read_log_lines(limit=1200,q='',preset=''):
+ # 省略でまとめている最中の行はまだファイルに出ていない。読む直前に書き出して、
+ # 画面が「いま起きていること」より遅れて見えないようにする。
+ flush_log()
  p=LOCAL_LOGS/'app.log'
  if not p.exists():return [],0
  lines=p.read_text(encoding='utf-8',errors='replace').splitlines()
