@@ -1,4 +1,4 @@
-const UI_BUILD='1.49.1-loadingfix';
+const UI_BUILD='1.50.0-blankguard';
 let cfg,editing=null,editingRule=null,sortDir=1,scheduleInfo={},rowLive={},rowQueue={},statusFailCount=0,serverLostShown=false;const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)],E=s=>String(s??'').replace(/[&<>"']/g,x=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[x]));const uid=()=>crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random();function toast(t){$('#toast').textContent=t;$('#toast').style.display='block';setTimeout(()=>$('#toast').style.display='none',2500)}function dirty(){$('#dirty').textContent='未保存の変更があります'}$$('nav button').forEach(b=>b.onclick=()=>{$$('nav button,section').forEach(x=>x.classList.remove('on'));b.classList.add('on');$('#'+b.dataset.p).classList.add('on');if(b.dataset.p==='logs')loadLog();if(b.dataset.p==='calendar')openCalendar();if(b.dataset.p==='viewer')loadViewerJobs()});
 const paths={navigator_api_dll:['Navigator API DLL','file',[['DLLファイル','*.dll'],['すべて','*.*']]],symnavi_exe:['SymNavi.exe','file',[['実行ファイル','*.exe'],['すべて','*.*']]],symnavim_conf:['symnavim.conf','file',[['CONFファイル','*.conf'],['すべて','*.*']]],symnavim_def:['symnavim.def','file',[['DEFファイル','*.def'],['すべて','*.*']]],accdb_template:['ACCDB空テンプレート','file',[['Access Database','*.accdb'],['すべて','*.*']]],rne_folder:['RNE基本フォルダー','folder'],default_output_folder:['既定の出力先','folder'],backup_folder:['バックアップ先','folder']};
 let waitingTimer=null,waitingStarted=0;function currentEngine(){return $('#extract-engine')?.value||cfg?.settings?.extract_engine||'api'}function waitingEngineLabel(context='common'){if(context==='api'||(context==='engine'&&currentEngine()==='api'))return 'NAVIGATOR API';if(context==='dde'||(context==='engine'&&currentEngine()==='dde'))return 'DDE COMPATIBILITY';return 'COMMON OPERATION'}function showWaiting(title='確認中',detail='処理を続行しています...',context='common'){let d=$('#waiting-dialog');$('#waiting-engine').textContent=waitingEngineLabel(context);$('#waiting-title').textContent=title;$('#waiting-detail').textContent=detail;waitingStarted=Date.now();clearInterval(waitingTimer);let tick=()=>{let sec=Math.floor((Date.now()-waitingStarted)/1000);$('#waiting-elapsed').textContent=`経過 ${String(Math.floor(sec/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`};tick();waitingTimer=setInterval(tick,1000);if(!d.open)d.showModal()}function updateWaiting(title,detail,context){if(title)$('#waiting-title').textContent=title;if(detail)$('#waiting-detail').textContent=detail;if(context)$('#waiting-engine').textContent=waitingEngineLabel(context)}function hideWaiting(){clearInterval(waitingTimer);waitingTimer=null;let d=$('#waiting-dialog');if(d?.open)d.close()}async function convertPath(input,mode){showWaiting('パス変換中',mode==='relative'?'アプリフォルダー基準へ変換しています...':'実際の絶対パスを解決しています...');try{let r=await fetch('/api/path-convert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({value:input.value,mode})}),d=await r.json();if(!r.ok)return toast(d.error);input.value=d.value;updatePathBadge(input);dirty()}finally{hideWaiting()}}function updatePathBadge(input){let badge=input.closest('label')?.querySelector('.path-badge');if(!badge)return;let relative=input.value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(input.value);badge.textContent=relative?'相対パス / 基準: アプリフォルダー':'絶対パス';badge.className='path-badge '+(relative?'path-kind-relative':'path-kind-absolute')}function isRelativePath(value){return !!value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(value)}function enhancePathInput(input,kind='folder'){if(!input||input.dataset.pathEnhanced)return;input.dataset.pathEnhanced='1';let tools=document.createElement('div');tools.className='path-tools compact-path-tools';tools.innerHTML='<button type="button" class="pathmode path-toggle" title="絶対パスと相対パスを切り替えます"></button><small class="path-badge"></small>';input.closest('label')?.appendChild(tools);let toggle=tools.querySelector('.path-toggle');function refresh(){let relative=isRelativePath(input.value);toggle.textContent=relative?'相対 → 絶対':'絶対 → 相対';toggle.dataset.mode=relative?'absolute':'relative';updatePathBadge(input)}toggle.onclick=async()=>{await convertPath(input,toggle.dataset.mode);refresh()};input.addEventListener('input',refresh);input._refreshPathControl=refresh;refresh()}async function browse(kind,initial,types){showWaiting('参照画面を準備中','設定中のパスを解決して、その場所から開きます...');try{let url=kind==='folder'?'/api/pick-folder':'/api/pick-file',r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({initial,types})}),d=await r.json();if(!r.ok)toast(d.error);return d.path||''}finally{hideWaiting()}}
@@ -122,7 +122,7 @@ async function copyTextValue(v,label){try{await navigator.clipboard.writeText(v|
 async function openJobOutput(j){try{let r=await fetch('/api/open-path',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:j.output_folder||cfg.default_output_folder})}),d=await r.json();toast(r.ok&&d.ok?'出力先を開きました':d.error||'出力先を開けませんでした')}catch{toast('出力先を開けませんでした')}}
 function duplicateJob(j){let n=structuredClone(j);n.id=uid();n.name+=' コピー';n.schedules=(n.schedules||[]).map(r=>({...r,id:uid(),enabled:false}));cfg.jobs.splice(cfg.jobs.indexOf(j)+1,0,n);render();dirty()}
 if($('#job-context-menu')){$('#job-context-menu').onclick=e=>{let a=e.target.closest('[data-action]');if(!a||!contextJob)return;let j=contextJob,act=a.dataset.action;hideJobContextMenu();if(act==='edit')openEditor(j);else if(act==='run')runJobs([j.id]);else if(act==='open-output')openJobOutput(j);else if(act==='viewer'){document.querySelector('[data-p="viewer"]')?.click();setTimeout(()=>{let sel=$('#viewer-job');if(sel){sel.value=j.id;sel.dispatchEvent(new Event('change'))}},100)}else if(act==='copy-rne')copyTextValue(j.rne_path||j.rne,'RNEパス');else if(act==='copy-output')copyTextValue(j.output_folder||cfg.default_output_folder,'出力先');else if(act==='duplicate')duplicateJob(j);else if(act==='toggle'){j.enabled=!j.enabled;render();dirty();toast(j.enabled?'有効にしました':'無効にしました')}else if(act==='delete')deleteJob(j)};document.addEventListener('click',e=>{if(!e.target.closest('#job-context-menu'))hideJobContextMenu()});document.addEventListener('keydown',e=>{if(e.key==='Escape')hideJobContextMenu()});window.addEventListener('blur',hideJobContextMenu)}
-function openEditor(job){editing=structuredClone(job||{id:uid(),name:'新しい対象',enabled:true,rne:'NEW.RNE',rne_path:cfg.rne_folder+'\\NEW.RNE',output_folder:cfg.default_output_folder,output_format:'sqlite3',output_file:'NEW.sqlite3',table:'仕掛',sheet:'Page1',type:'詳細データ',naming_mode:'fixed',output_pattern:'',comment:'',split_mode:'auto',period:{enabled:false,control_point:'',unit:'month',from_offset:-1,to_offset:0},schedules:[]});$('#modal-title').textContent=job?'対象を編集':'対象を追加';$('#m-id').value=editing.id;$('#m-name').value=editing.name;$('#m-enabled').checked=editing.enabled;$('#m-rne-path').value=editing.rne_path||'';$('#m-output').value=editing.output_folder||cfg.default_output_folder;editing.output_format=normalizeFormat(editing.output_format);$('#m-format').value=editing.output_format;$('#m-output-file').value=editing.output_file;$('#m-table').value=editing.table;$('#m-sheet').value=editing.sheet;$('#m-type').value=editing.type;if($('#m-comment'))$('#m-comment').value=editing.comment||'';if($('#m-split-mode'))$('#m-split-mode').value=editing.split_mode||'auto';if($('#m-axis-mode'))$('#m-axis-mode').value=editing.row_axis_mode||'first';if($('#m-axis-index'))$('#m-axis-index').value=editing.row_axis_index||1;if($('#m-axis-name'))$('#m-axis-name').innerHTML=`<option value="${E(editing.row_axis_name||'')}">${E(editing.row_axis_name||'（先に「行を調べる」）')}</option>`;syncAxisPick();syncOutputExtension();initNaming(editing);setPeriodUI(editing.period);renderRuntimeSplit(null);inspReset();splitTrialPoll();rulesRender();updatePeriodBadge();setEditorTab('basic');$('#editor').showModal()}
+function openEditor(job){editing=structuredClone(job||{id:uid(),name:'新しい対象',enabled:true,rne:'NEW.RNE',rne_path:cfg.rne_folder+'\\NEW.RNE',output_folder:cfg.default_output_folder,output_format:'sqlite3',output_file:'NEW.sqlite3',table:'仕掛',sheet:'Page1',type:'詳細データ',naming_mode:'fixed',output_pattern:'',comment:'',split_mode:'auto',period:{enabled:false,control_point:'',unit:'month',from_offset:-1,to_offset:0},schedules:[]});$('#modal-title').textContent=job?'対象を編集':'対象を追加';$('#m-id').value=editing.id;$('#m-name').value=editing.name;$('#m-enabled').checked=editing.enabled;$('#m-rne-path').value=editing.rne_path||'';$('#m-output').value=editing.output_folder||cfg.default_output_folder;editing.output_format=normalizeFormat(editing.output_format);$('#m-format').value=editing.output_format;$('#m-output-file').value=editing.output_file;$('#m-table').value=editing.table;$('#m-sheet').value=editing.sheet;$('#m-type').value=editing.type;if($('#m-comment'))$('#m-comment').value=editing.comment||'';if($('#m-split-mode'))$('#m-split-mode').value=editing.split_mode||'auto';if($('#m-axis-mode'))$('#m-axis-mode').value=editing.row_axis_mode||'first';if($('#m-axis-index'))$('#m-axis-index').value=editing.row_axis_index||1;AXIS_PICK.forEach(g=>{if($(g.n))$(g.n).innerHTML=`<option value="${E(editing.row_axis_name||'')}">${E(editing.row_axis_name||'（先に「行を調べる」）')}</option>`;if($(g.m))$(g.m).value=editing.row_axis_mode||'first';if($(g.i))$(g.i).value=editing.row_axis_index||1});syncAxisPick();syncOutputExtension();initNaming(editing);setPeriodUI(editing.period);renderRuntimeSplit(null);inspReset();splitTrialPoll();rulesRender();updatePeriodBadge();setEditorTab('basic');$('#editor').showModal()}
 $('#m-format').onchange=()=>{syncOutputExtension();if(currentNamingMode()==='template')refreshNamePreview()};$('#m-rne-check').onclick=async()=>{showWaiting('RNEファイル確認中','設定場所と周辺フォルダーを検索しています...');try{let temp={item:'rne',job_id:editing.id,label:editing.rne,configured:$('#m-rne-path').value,resolved:$('#m-rne-path').value,candidates:[],ok:false};let r=await fetch('/api/path-check',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({item:'rne',job_id:editing.id,value:$('#m-rne-path').value,expected_name:$('#m-rne-path').value.split(/[\\/]/).pop()})}),d=await r.json();if(r.ok)showPathResult(d);else toast(d.error)}finally{hideWaiting()}};$('#m-rne-pick').onclick=async()=>{let p=await browse('file',$('#m-rne-path').value,[['RNEファイル','*.RNE'],['すべて','*.*']]);if(p){let i=$('#m-rne-path'),wasRel=i.value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(i.value);i.value=p;if(wasRel)await convertPath(i,'relative');updatePathBadge(i);i._refreshPathControl?.()}};$('#m-output-pick').onclick=async()=>{let p=await browse('folder',$('#m-output').value);if(p){let i=$('#m-output'),wasRel=i.value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(i.value);i.value=p;if(wasRel)await convertPath(i,'relative');updatePathBadge(i)}};enhancePathInput($('#m-rne-path'),'file');enhancePathInput($('#m-output'),'folder');$('#add-rule').onclick=()=>openRule({id:uid(),enabled:true,name:'実行ルール',type:'daily',time:'06:00'},true);$('#apply').onclick=async e=>{e.preventDefault();syncOutputExtension();const f=normalizeFormat($('#m-format').value),file=canonicalOutputFile($('#m-output-file').value,f),updated={...editing,name:$('#m-name').value.trim(),enabled:$('#m-enabled').checked,rne_path:$('#m-rne-path').value.trim(),rne:$('#m-rne-path').value.trim().split(/[\\/]/).pop(),output_folder:$('#m-output').value.trim(),output_format:f,output_file:file,table:$('#m-table').value.trim(),sheet:$('#m-sheet').value.trim(),type:$('#m-type').value,naming_mode:currentNamingMode(),output_pattern:$('#m-output-pattern').value.trim(),comment:($('#m-comment')?.value||'').trim(),split_mode:($('#m-split-mode')?.value||'auto'),row_axis_mode:($('#m-axis-mode')?.value||'first'),row_axis_index:Number($('#m-axis-index')?.value||1)||1,row_axis_name:($('#m-axis-name')?.value||''),period:currentPeriod()};let i=cfg.jobs.findIndex(j=>j.id===updated.id);if(i<0)cfg.jobs.unshift(updated);else cfg.jobs[i]=updated;let payload=structuredClone(cfg);delete payload.credential_status;showWaiting('設定を保存中',`${formatName(f)} / ${file}`);try{let r=await fetch('/api/config',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),d=await r.json();if(!r.ok)throw Error(d.error||'設定保存失敗');$('#editor').close();await init();toast(`保存完了: ${formatName(f)} / ${file}`)}catch(x){toast(x.message)}finally{hideWaiting()}};
 /* V35: dynamic output filename builder */
 let namePreviewTimer=null;
@@ -903,6 +903,9 @@ function syncTrialControls(){
  $$('.trial-parts[data-need]').forEach(l=>{
   if(meas==='normal'){l.hidden=true;return}
   l.hidden=!(l.dataset.need===m||m==='grid')});
+ // 軸の決め方は、行が絡む方式のときだけ出す（列分割には関係がない）。
+ let ap=$('#trial-axis-pick');
+ if(ap)ap.hidden=(meas==='normal')||!(m==='row'||m==='grid');
  let btn=$('#m-split-trial');
  if(btn)btn.textContent=({normal:'分割なしを測る',split:'分割を測る',both:'両方つづけて測る'})[meas]||'影実行を開始';
  let n=$('#trial-need');if(!n)return;
@@ -1035,6 +1038,51 @@ function renderColumnPlan(d){
    絞り込みと行数の上限はサーバー側でかけるので、実行中に何度読んでも重くならない。 */
 let ilogText='',ilogTimer=null,ilogBusy=false;
 function ilogOpen(){return !!$('#insp-log')?.open}
+function ilogLineHtml(x){
+ return `<div class="log-line ${logLevel(x)}${x.includes('LOG_DEDUP')?' dedup':''}">${E(x)}</div>`;
+}
+/* ログを「ユーザーの操作」単位でまとめる。1回の操作で何十行も出るので、
+   そのまま並べると、どこからどこまでが1つの操作なのかが読み取れない。
+   操作の始まりになる印を決めておき、次の印までを1かたまりとして畳む。 */
+const LOG_ACTIONS=[
+ [/処理開始 trigger=/,       '実行'],
+ [/SPLIT_TRIAL_START /,      '影実行（速さを試す）'],
+ [/INSPECT_TASK_START /,     '調べもの'],
+ // ROW_AXES / COLUMN_WEIGHTS などは操作の途中で出る。ここで切ると1つの操作が分かれてしまう。
+ // 区切りにするのは「利用者が押した瞬間」に出る印だけ。
+ [/設定保存 job=/,           '設定の保存'],
+ [/APP_START /,              'アプリの起動'],
+];
+function logActionOf(line){
+ for(let [re,label] of LOG_ACTIONS)if(re.test(line))return label;
+ return '';
+}
+function logActionTitle(line,label){
+ // 何に対する操作かが分かるよう、対象名かRNE名を添える
+ let m=line.match(/(?:job|rne)=([^\s]+)/);
+ let who=m?m[1].split(/[\\/]/).pop():'';
+ return label+(who?`： ${who}`:'');
+}
+function logActionHtml(lines){
+ let groups=[],cur=null;
+ for(let line of lines){
+  let label=logActionOf(line);
+  if(label||!cur){
+   cur={title:label?logActionTitle(line,label):'その他',at:line.slice(0,19),lines:[]};
+   groups.push(cur);
+  }
+  cur.lines.push(line);
+ }
+ // 新しい操作を上に出す。いま見たいのはたいてい直前の操作。
+ return groups.slice().reverse().map((g,i)=>{
+  let bad=g.lines.filter(x=>x.includes('[ERROR]')).length,
+      warn=g.lines.filter(x=>x.includes('[WARNING]')).length;
+  return `<details class="ilog-act${bad?' has-error':(warn?' has-warn':'')}" ${i===0?'open':''}>`
+   +`<summary><b>${E(g.title)}</b><span>${E(g.at)}</span>`
+   +`<em>${g.lines.length}行${bad?` · エラー${bad}`:''}${warn?` · 警告${warn}`:''}</em></summary>`
+   +g.lines.map(ilogLineHtml).join('')+`</details>`;
+ }).join('');
+}
 async function ilogLoad(scroll=false){
  let box=$('#ilog-body');if(!box||ilogBusy)return;
  ilogBusy=true;
@@ -1043,8 +1091,9 @@ async function ilogLoad(scroll=false){
   let d=await fetch('/api/log?'+q).then(r=>r.json());
   ilogText=d.text||'';
   let lines=ilogText?ilogText.split(/\r?\n/):[];
-  box.innerHTML=lines.length?lines.map(x=>`<div class="log-line ${logLevel(x)}${x.includes('LOG_DEDUP')?' dedup':''}">${E(x)}</div>`).join('')
-                            :'<p class="ri-note">この条件に当てはまるログはありません。</p>';
+  box.innerHTML=lines.length
+   ?(($('#ilog-group')?.value||'flat')==='action'?logActionHtml(lines):lines.map(ilogLineHtml).join(''))
+   :'<p class="ri-note">この条件に当てはまるログはありません。</p>';
   let c=$('#ilog-count');
   if(c)c.textContent=lines.length?`${lines.length}行 / 全${Number(d.total||0).toLocaleString()}行`:'該当なし';
   if(scroll)box.scrollTop=box.scrollHeight;
@@ -1057,6 +1106,7 @@ function ilogFollow(running){
  if(want&&!ilogTimer){ilogTimer=setInterval(()=>ilogLoad(true),2000);ilogLoad(true)}
  if(!want&&ilogTimer){clearInterval(ilogTimer);ilogTimer=null}
 }
+if($('#ilog-group'))$('#ilog-group').onchange=()=>ilogLoad(false);
 if($('#insp-log'))$('#insp-log').ontoggle=()=>{if(ilogOpen())ilogLoad(true);else ilogFollow(false)};
 if($('#ilog-reload'))$('#ilog-reload').onclick=()=>ilogLoad(true);
 if($('#ilog-filter'))$('#ilog-filter').onchange=()=>ilogLoad(true);
@@ -1117,39 +1167,54 @@ if($('#m-row-split'))$('#m-row-split').onclick=()=>inspTaskRun('row',
    probe:!!$('#m-row-probe')?.checked,...axisChoice()},renderRowPlan);
 /* 軸の決め方。調べずに決め打ちする道（表側#1・番号指定）と、調べてから選ぶ道（名前指定・
    偏りが少ないものを自動）の4通り。対象ごとに保存し、画面の無い本番の実行でも同じ軸を使う。 */
+/* 同じ「軸の決め方」を、手順2（分け方を探す）と手順3（速さを試す）の両方に置く。
+   影実行だけで完結させたいので、どちらで変えても両方に反映する。 */
+const AXIS_PICK=[{m:'#m-axis-mode',i:'#m-axis-index',n:'#m-axis-name',
+                  iw:'#m-axis-index-wrap',nw:'#m-axis-name-wrap',h:'#m-axis-hint'},
+                 {m:'#m-axis-mode-t',i:'#m-axis-index-t',n:'#m-axis-name-t',
+                  iw:'#m-axis-index-wrap-t',nw:'#m-axis-name-wrap-t',h:'#m-axis-hint-t'}];
+const AXIS_HINT={
+ first:'表側の1番目を使います。明細のRNEなら必ず1本はあるので、調べずに分けられます。',
+ index:'表側の指定番号を使います。調べずに分けられます。使えなければ1番目に戻ります。',
+ name:'名前で指定します。番号が動いても追随します。先に「行を調べる」で候補を出してください。',
+ balanced:'表側のうち、直近の出力で最も散らばっている軸を選びます。いちばん重い片が小さくなります。'};
 function axisChoice(){
  return {row_axis_mode:$('#m-axis-mode')?.value||'first',
          row_axis_index:Number($('#m-axis-index')?.value||1)||1,
          row_axis_name:$('#m-axis-name')?.value||''};
 }
-function syncAxisPick(){
- let m=$('#m-axis-mode')?.value||'first';
- let iw=$('#m-axis-index-wrap'),nw=$('#m-axis-name-wrap'),h=$('#m-axis-hint');
- if(iw)iw.hidden=m!=='index';
- if(nw)nw.hidden=m!=='name';
- if(h)h.textContent=({
-  first:'表側の1番目を使います。明細のRNEなら必ず1本はあるので、調べずに分けられます。',
-  index:'表側の指定番号を使います。調べずに分けられます。使えなければ1番目に戻ります。',
-  name:'名前で指定します。番号が動いても追随します。先に「行を調べる」で候補を出してください。',
-  balanced:'表側のうち、直近の出力で最も散らばっている軸を選びます。いちばん重い片が小さくなります。'
- })[m]||'';
- if(editing){editing.row_axis_mode=m;editing.row_axis_index=Number($('#m-axis-index')?.value||1)||1;
-             editing.row_axis_name=$('#m-axis-name')?.value||''}
+function syncAxisPick(from){
+ // どちらで変えても、もう一方へ写す
+ let src=AXIS_PICK.find(x=>x.m===from)||AXIS_PICK[0];
+ let m=$(src.m)?.value||'first',ix=Number($(src.i)?.value||1)||1,nm=$(src.n)?.value||'';
+ AXIS_PICK.forEach(g=>{
+  let sm=$(g.m);if(!sm)return;
+  sm.value=m;
+  if($(g.i))$(g.i).value=ix;
+  if($(g.n)&&nm&&[...$(g.n).options].some(o=>o.value===nm))$(g.n).value=nm;
+  if($(g.iw))$(g.iw).hidden=m!=='index';
+  if($(g.nw))$(g.nw).hidden=m!=='name';
+  if($(g.h))$(g.h).textContent=AXIS_HINT[m]||'';
+ });
+ if(editing){editing.row_axis_mode=m;editing.row_axis_index=ix;editing.row_axis_name=nm}
 }
-['#m-axis-mode','#m-axis-index','#m-axis-name'].forEach(id=>{
- let e=$(id);if(e)e.addEventListener('change',()=>{syncAxisPick();dirty()});
-});
+AXIS_PICK.forEach(g=>[g.m,g.i,g.n].forEach(id=>{
+ let e=$(id);if(e)e.addEventListener('change',()=>{syncAxisPick(g.m);dirty()});
+}));
 // 調べた結果から、名前で選べる候補を作る（使える軸だけ・散らばりも見せる）
 function fillAxisNames(d){
- let sel=$('#m-axis-name');if(!sel)return;
  let list=(d.axes||[]).filter(x=>x.usable&&x.enough);
- let cur=sel.value||editing?.row_axis_name||'';
- sel.innerHTML=list.length?list.map(x=>{
+ let cur=$('#m-axis-name')?.value||editing?.row_axis_name||'';
+ let html=list.length?list.map(x=>{
   let b=x.balance,extra=b?` / 最多${Math.round(b.top_share*100)}%`:'';
   return `<option value="${E(x.name)}">${E(x.location)}#${x.index+1} ${E(x.name)}（${Number(x.category_count||0).toLocaleString()}種${extra}）</option>`;
  }).join(''):'<option value="">（使える軸がありません）</option>';
- if(cur&&list.some(x=>x.name===cur))sel.value=cur;
- else if(d.axis?.name)sel.value=d.axis.name;
+ AXIS_PICK.forEach(g=>{
+  let sel=$(g.n);if(!sel)return;
+  sel.innerHTML=html;
+  if(cur&&list.some(x=>x.name===cur))sel.value=cur;
+  else if(d.axis?.name)sel.value=d.axis.name;
+ });
 }
 function renderRowPlan(d){
  let rb=$('#m-row-split-result');

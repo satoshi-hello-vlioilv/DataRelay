@@ -720,9 +720,12 @@ class NavigatorApi:
         """
         if not hasattr(self.dll,'NaviReloadCategory'):
             return False,'no_export',[]
-        forms=[('すべて読み込む（当てはまらない値も残す）',search,NAVI_NONMATCH),
-               ('すべて読み込む',search,0),
-               ('前方一致で読み込む（当てはまらない値も残す）',NAVI_FROMSTART,NAVI_NONMATCH),
+        # nonmatch=NAVI_NONMATCH は 2026-08-10 の実測でこのDLLに拒否された（rc=0x15 NAVI_ERROR_ZERO）。
+        # 「当てはまらない値だけを読む」の意味らしく、key が空だと該当0件になる。値が空の行を
+        # カテゴリとして拾う役には立たないので、通る形（nonmatch=0）を先に試す。
+        # 空の行の取りこぼしは、軸を選ぶ側で避ける（axis_blank_rows / 空のある軸は使わない）。
+        forms=[('すべて読み込む',search,0),
+               ('すべて読み込む（当てはまらない値も残す）',search,NAVI_NONMATCH),
                ('前方一致で読み込む',NAVI_FROMSTART,0),
                ('部分一致で読み込む',NAVI_PARTIAL,0)]
         tried=[]
