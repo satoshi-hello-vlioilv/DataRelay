@@ -352,27 +352,57 @@ Function StampedVersion()
     On Error GoTo 0
 End Function
 
+' loading.html は UTF-8。FileSystemObject の OpenTextFile / CreateTextFile は
+' ANSI(cp932)で読み書きするため、そのまま通すと日本語が壊れ、タグまで崩れて起動できなくなる
+' （v1.49.0 の実害）。UTF-8 を正しく扱える ADODB.Stream を使い、書き上がりを確かめてから差し替える。
+Function WriteLoadingWithVersion(src, dst, ver)
+    Dim si, so, html, tmp
+    WriteLoadingWithVersion = False
+    On Error Resume Next
+    If Len(ver) = 0 Then Exit Function
+    Set si = CreateObject("ADODB.Stream")
+    si.Type = 2 : si.Charset = "utf-8" : si.Open
+    si.LoadFromFile src
+    html = si.ReadText
+    si.Close
+    If Err.Number <> 0 Or Len(html) = 0 Then Err.Clear : Exit Function
+    If InStr(html, "{{APP_VERSION}}") = 0 Then Exit Function
+    ' 読めた中身がHTMLの体をなしているかを見る。文字化けしていれば必ずここで落ちる。
+    If InStr(html, "<!doctype html>") = 0 Or InStr(html, "</html>") = 0 Then Exit Function
+    html = Replace(html, "{{APP_VERSION}}", ver)
+    tmp = dst & ".tmp"
+    Set so = CreateObject("ADODB.Stream")
+    so.Type = 2 : so.Charset = "utf-8" : so.Open
+    so.WriteText html
+    so.SaveToFile tmp, 2
+    so.Close
+    ' 書けたものが本当にHTMLかを確かめてから置き換える。壊れたものを掴ませない。
+    If Err.Number = 0 And fso.FileExists(tmp) Then
+        If fso.GetFile(tmp).Size > 1000 Then
+            fso.CopyFile tmp, dst, True
+            If Err.Number = 0 Then WriteLoadingWithVersion = True
+        End If
+        fso.DeleteFile tmp, True
+    End If
+    Err.Clear
+    On Error GoTo 0
+End Function
+
 Sub OpenLoading()
-    Dim src, dst, appSh, ts, html, ver
+    Dim src, dst, appSh, ver, stamped
     On Error Resume Next
     src = fso.BuildPath(scriptDir, "loading.html")
     dst = fso.BuildPath(localRoot, "loading.html")
     If fso.FileExists(src) Then
         ver = StampedVersion()
-        Set ts = fso.OpenTextFile(src, 1, False)
-        html = ts.ReadAll
-        ts.Close
-        If Err.Number = 0 And Len(html) > 0 And Len(ver) > 0 Then
-            html = Replace(html, "{{APP_VERSION}}", ver)
-            Set ts = fso.CreateTextFile(dst, True)
-            ts.Write html
-            ts.Close
+        stamped = WriteLoadingWithVersion(src, dst, ver)
+        If stamped Then
             WriteLog "LOADING_MODAL version=" & ver
-        End If
-        ' 差し込めなかったときは今までどおり丸ごとコピーする（token は画面側が処理する）。
-        If Err.Number <> 0 Or Not fso.FileExists(dst) Then
+        Else
+            ' 差し込めなければ丸ごとコピーする。画面側が token を見て「確認中」と出す。
             Err.Clear
             fso.CopyFile src, dst, True
+            WriteLog "LOADING_MODAL version=(none) copied-as-is"
         End If
         If Err.Number = 0 And fso.FileExists(dst) Then
             Set appSh = CreateObject("Shell.Application")
