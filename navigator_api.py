@@ -330,6 +330,10 @@ class NavigatorApi:
         # (hCPoint, rc, locate, order, master, separator, category)
         if hasattr(d,'NaviGetCategory'):
             d.NaviGetCategory.argtypes=[L,P,L,L,L,S,S];d.NaviGetCategory.restype=None
+        # (hCPoint, rc, master, key, search, nonmatch, separator)
+        # 全値型の管理ポイントは、これを呼ぶまでカテゴリが空のまま（値の数=0）。
+        if hasattr(d,'NaviReloadCategory'):
+            d.NaviReloadCategory.argtypes=[L,P,L,S,L,L,S];d.NaviReloadCategory.restype=None
         # (hCPoint, rc, category, master, disp, order, separator)
         if hasattr(d,'NaviChangeCategory'):
             d.NaviChangeCategory.argtypes=[L,P,S,L,L,L,S];d.NaviChangeCategory.restype=None
@@ -680,14 +684,51 @@ class NavigatorApi:
                 item={'locate':locate,'location':locname,'index':idx,
                       'name':(self.get_name_cp(hcp) if read_names else '') or f'管理ポイント#{idx+1}',
                       'type':ctype,'type_name':CONTROLPOINT_TYPE_NAMES.get(ctype,'不明'),'is_time':is_time,
-                      'category_count':None,'categories':[],'category_error':'','period':None}
+                      'category_count':None,'categories':[],'category_error':'','period':None,
+                      'load_form':'','load_tried':[],'over8000':False,'prefix':None}
                 if is_time:
                     item['period']=self.get_period(hcp)
                 elif with_categories:
+                    self.category_diag=(False,'',[])
                     n,vals,err=self.list_categories(hcp,limit=int(with_categories))
+                    loaded,form,tried=getattr(self,'category_diag',(False,'',[]))
                     item['category_count']=n;item['categories']=vals;item['category_error']=err
+                    item['load_form']=form;item['load_tried']=tried[:4]
+                    item['over8000']=(form=='over8000')
+                    # 一覧にできない軸でも、先頭一致で分けられるなら道が残る。1回だけ確かめる。
+                    if item['over8000'] or (n or 0)>int(with_categories):
+                        item['prefix']=self.probe_category_prefix(hcp,'0')
                 out.append(item)
         return out
+
+    def reload_categories(self,h_cp,key='',search=NAVI_COMPLETE):
+        """カテゴリをデータベースから読み込む（NaviReloadCategory）。
+
+        全値型（NAVI_CONTROLPOINT_ALLVALUE）の管理ポイントは、決まった値の一覧を持たない。
+        値はデータの中にあるので、まずここで読み込ませないと NaviGetCategoryNumber は0を返す。
+        2026-08-10の実測で、表側64本すべてが 型=全値型 / 値の数=0 だったのはこれが理由。
+        呼び方が確定していないので、確からしい順に試して通った形を持ち帰る。
+        """
+        if not hasattr(self.dll,'NaviReloadCategory'):
+            return False,'no_export',[]
+        forms=[('すべて読み込む',dict(key=key,search=search)),
+               ('前方一致で読み込む',dict(key=key,search=NAVI_FROMSTART)),
+               ('部分一致で読み込む',dict(key=key,search=NAVI_PARTIAL))]
+        tried=[]
+        for label,kw in forms:
+            rc=ctypes.c_long(-1)
+            try:
+                self.dll.NaviReloadCategory(int(h_cp),ctypes.byref(rc),NAVI_LABEL,_ansi(kw['key']),
+                                            int(kw['search']),0,_ansi(''))
+            except Exception as e:
+                tried.append(f'{label}: {type(e).__name__} {e}');continue
+            if int(rc.value)==NAVI_OK:
+                return True,label,tried
+            code=self.error_code()
+            tried.append(f'{label}: rc=0x{int(rc.value):X} detail=0x{code:X} {ERROR_NAMES.get(code,"NAVI_ERROR_UNKNOWN")}')
+            if code==0x16:                      # NAVI_ERROR_OVER8000 は形の問題ではないので、ここで打ち切る
+                return False,'over8000',tried
+        return False,'',tried
 
     def category_number(self,h_cp,locate=NAVI_IN_DISP):
         """その管理ポイントに、いま何件のカテゴリがあるか。"""
@@ -699,13 +740,22 @@ class NavigatorApi:
             return None,f'rc=0x{int(rc.value):X} detail=0x{code:X} {ERROR_NAMES.get(code,"NAVI_ERROR_UNKNOWN")}'
         return int(num.value),''
 
-    def list_categories(self,h_cp,limit=2000,locate=NAVI_IN_DISP):
+    def list_categories(self,h_cp,limit=2000,locate=NAVI_IN_DISP,reload=True,key=''):
         """カテゴリ（その軸が取り得る値）を先頭から limit 件まで読む。
 
+        全値型は先に読み込ませないと0件になるので、既定で読み込みを試みる。
         件数だけは常に返す。8000件を超えるものはDLL側が扱えない（NAVI_ERROR_OVER8000）。
         """
+        loaded,form,tried=(False,'',[])
+        if reload:
+            loaded,form,tried=self.reload_categories(h_cp,key)
+            self.category_diag=(loaded,form,tried)
+            if form=='over8000':
+                return None,[],'値が8000件を超えるため一覧にできません（NAVI_ERROR_OVER8000）'
         n,err=self.category_number(h_cp,locate)
-        if n is None:return None,[],err
+        if n is None:return None,[],(err+(' / 読み込み: '+' / '.join(tried) if tried else ''))
+        if n==0 and tried:err=f'読み込めませんでした（{" / ".join(tried)}）'
+        if n==0:return 0,[],err
         if not hasattr(self.dll,'NaviGetCategory'):return n,[],'no_export'
         vals=[]
         for i in range(min(int(n),max(0,int(limit)))):
@@ -718,6 +768,29 @@ class NavigatorApi:
                 continue
             vals.append(text)
         return n,vals,''
+
+    def axis_categories(self,h_catalog,spec,limit=8000):
+        """選んだ軸1本だけ、値を全部読む。
+
+        列挙のときに全部読むと、管理ポイントの数×値の数だけ呼ぶことになって現実的でない
+        （表側64本×8000件）。数だけ先に見て、実際に使う1本をここで読み切る。
+        """
+        hcp,how=self.control_point_handle(h_catalog,spec)
+        n,vals,err=self.list_categories(hcp,limit=limit)
+        loaded,form,tried=getattr(self,'category_diag',(False,'',[]))
+        return {'name':spec.get('column') or spec.get('name',''),'how':how,'count':n,'values':vals,
+                'error':err,'load_form':form,'load_tried':tried[:4],'complete':(n is not None and len(vals)>=int(n or 0))}
+
+    def probe_category_prefix(self,h_cp,key):
+        """先頭一致でカテゴリを絞って読み込めるかを1回だけ試す。
+
+        値が8000件を超える軸は一覧にできないが、先頭一致で分けられるなら
+        「0で始まるもの / 1で始まるもの …」という分割が使える。使えるかどうかだけを見る。
+        """
+        ok,form,tried=self.reload_categories(h_cp,key,NAVI_FROMSTART)
+        if not ok:return {'key':key,'ok':False,'reason':' / '.join(tried) or form}
+        n,err=self.category_number(h_cp)
+        return {'key':key,'ok':n is not None,'count':n,'error':err,'form':form}
 
     def get_period(self,h_cp):
         """時間型管理ポイントに、いま設定されている期間を読む。等分割の材料にする。"""

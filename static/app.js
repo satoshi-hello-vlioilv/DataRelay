@@ -1,4 +1,4 @@
-const UI_BUILD='1.43.0-ilog';
+const UI_BUILD='1.44.0-reload';
 let cfg,editing=null,editingRule=null,sortDir=1,scheduleInfo={},rowLive={},rowQueue={},statusFailCount=0,serverLostShown=false;const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)],E=s=>String(s??'').replace(/[&<>"']/g,x=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[x]));const uid=()=>crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random();function toast(t){$('#toast').textContent=t;$('#toast').style.display='block';setTimeout(()=>$('#toast').style.display='none',2500)}function dirty(){$('#dirty').textContent='未保存の変更があります'}$$('nav button').forEach(b=>b.onclick=()=>{$$('nav button,section').forEach(x=>x.classList.remove('on'));b.classList.add('on');$('#'+b.dataset.p).classList.add('on');if(b.dataset.p==='logs')loadLog();if(b.dataset.p==='calendar')openCalendar();if(b.dataset.p==='viewer')loadViewerJobs()});
 const paths={navigator_api_dll:['Navigator API DLL','file',[['DLLファイル','*.dll'],['すべて','*.*']]],symnavi_exe:['SymNavi.exe','file',[['実行ファイル','*.exe'],['すべて','*.*']]],symnavim_conf:['symnavim.conf','file',[['CONFファイル','*.conf'],['すべて','*.*']]],symnavim_def:['symnavim.def','file',[['DEFファイル','*.def'],['すべて','*.*']]],accdb_template:['ACCDB空テンプレート','file',[['Access Database','*.accdb'],['すべて','*.*']]],rne_folder:['RNE基本フォルダー','folder'],default_output_folder:['既定の出力先','folder'],backup_folder:['バックアップ先','folder']};
 let waitingTimer=null,waitingStarted=0;function currentEngine(){return $('#extract-engine')?.value||cfg?.settings?.extract_engine||'api'}function waitingEngineLabel(context='common'){if(context==='api'||(context==='engine'&&currentEngine()==='api'))return 'NAVIGATOR API';if(context==='dde'||(context==='engine'&&currentEngine()==='dde'))return 'DDE COMPATIBILITY';return 'COMMON OPERATION'}function showWaiting(title='確認中',detail='処理を続行しています...',context='common'){let d=$('#waiting-dialog');$('#waiting-engine').textContent=waitingEngineLabel(context);$('#waiting-title').textContent=title;$('#waiting-detail').textContent=detail;waitingStarted=Date.now();clearInterval(waitingTimer);let tick=()=>{let sec=Math.floor((Date.now()-waitingStarted)/1000);$('#waiting-elapsed').textContent=`経過 ${String(Math.floor(sec/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`};tick();waitingTimer=setInterval(tick,1000);if(!d.open)d.showModal()}function updateWaiting(title,detail,context){if(title)$('#waiting-title').textContent=title;if(detail)$('#waiting-detail').textContent=detail;if(context)$('#waiting-engine').textContent=waitingEngineLabel(context)}function hideWaiting(){clearInterval(waitingTimer);waitingTimer=null;let d=$('#waiting-dialog');if(d?.open)d.close()}async function convertPath(input,mode){showWaiting('パス変換中',mode==='relative'?'アプリフォルダー基準へ変換しています...':'実際の絶対パスを解決しています...');try{let r=await fetch('/api/path-convert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({value:input.value,mode})}),d=await r.json();if(!r.ok)return toast(d.error);input.value=d.value;updatePathBadge(input);dirty()}finally{hideWaiting()}}function updatePathBadge(input){let badge=input.closest('label')?.querySelector('.path-badge');if(!badge)return;let relative=input.value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(input.value);badge.textContent=relative?'相対パス / 基準: アプリフォルダー':'絶対パス';badge.className='path-badge '+(relative?'path-kind-relative':'path-kind-absolute')}function isRelativePath(value){return !!value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(value)}function enhancePathInput(input,kind='folder'){if(!input||input.dataset.pathEnhanced)return;input.dataset.pathEnhanced='1';let tools=document.createElement('div');tools.className='path-tools compact-path-tools';tools.innerHTML='<button type="button" class="pathmode path-toggle" title="絶対パスと相対パスを切り替えます"></button><small class="path-badge"></small>';input.closest('label')?.appendChild(tools);let toggle=tools.querySelector('.path-toggle');function refresh(){let relative=isRelativePath(input.value);toggle.textContent=relative?'相対 → 絶対':'絶対 → 相対';toggle.dataset.mode=relative?'absolute':'relative';updatePathBadge(input)}toggle.onclick=async()=>{await convertPath(input,toggle.dataset.mode);refresh()};input.addEventListener('input',refresh);input._refreshPathControl=refresh;refresh()}async function browse(kind,initial,types){showWaiting('参照画面を準備中','設定中のパスを解決して、その場所から開きます...');try{let url=kind==='folder'?'/api/pick-folder':'/api/pick-file',r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({initial,types})}),d=await r.json();if(!r.ok)toast(d.error);return d.path||''}finally{hideWaiting()}}
@@ -1009,6 +1009,13 @@ if($('#ilog-copy-all'))$('#ilog-copy-all').onclick=async()=>{
  let d=await fetch('/api/log?limit=5000&filter=all').then(r=>r.json());
  textToClipboard(d.text||'','ログ全文をコピーしました');
 };
+// 消すのは絞り込んだ分ではなく実行ログ全体。取り返しがつかないので必ず確認する。
+if($('#ilog-clear'))$('#ilog-clear').onclick=async()=>{
+ if(!confirm('実行ログを消去しますか？（表示中の分だけでなく、ログ全体が消えます）'))return;
+ let r=await fetch('/api/log/clear',{method:'POST'});
+ if(r.ok){toast('ログを消去しました');ilogText='';await ilogLoad(true)}
+ else toast('ログを消去できませんでした');
+};
 
 let splitTrialTimer=null;
 // 本番の実行で分割が使われるかどうか。使われない場合は、その理由をそのまま出す。
@@ -1086,13 +1093,17 @@ function axisListHtml(d){
  let rows=ax.map(x=>{
   let good=x.usable&&x.enough,me=pick&&x.location===pick.location&&x.index===pick.index;
   let val=x.is_time?`期間 ${E((x.period||{}).from||'?')}〜${E((x.period||{}).to||'?')}`
+        :x.over8000?'値が8000件超'
         :(x.category_count!=null?`値 ${Number(x.category_count).toLocaleString()}種`:'値を読めません');
   return `<span class="ri-chip${me?' istime':(good?'':' unnamed')}">${me?'★ ':''}${E(x.location)}${x.index+1} ${E(x.name)}`
    +`<em>${E(x.type_name)} / ${val}${good?'':' / '+E(x.reason)}</em></span>`;
  }).join('');
  return head+`<div class="ri-chips">${rows}</div>`
   +`<p class="ri-note">★ が次に使う軸です。表側 → 表頭 → 条件 の順に、先頭から使える軸を選びます。`
-  +`値は<b>サーバーのマスタから</b>読んでいます（${usable.length}本が使えます）。</p>`
+  +`値は<b>サーバーのデータから読み込んで</b>数えています（${usable.length}本が使えます）。`
+  +`<b>全値型</b>の軸は決まった値の一覧を持たないので、読み込ませてから数える必要があります。</p>`
+  +(ax.some(x=>x.over8000)?`<p class="ri-note">「値が8000件超」と出ている軸は、DLLが一覧にできる上限`
+     +`（NAVI_ERROR_OVER8000）を超えています。値の数が少ない別の軸を使います。</p>`:'')
   +(pick&&!pick.is_time&&(pick.categories||[]).length
     ?`<details class="ri-list"><summary>「${E(pick.name)}」の値（先頭 ${pick.categories.length}件）</summary>`
      +`<div class="ri-chips">${pick.categories.slice(0,60).map(v=>`<span class="ri-chip">${E(v)}</span>`).join('')}</div>`
