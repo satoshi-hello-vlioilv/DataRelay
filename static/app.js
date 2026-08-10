@@ -1,4 +1,4 @@
-const UI_BUILD='1.47.0-partreload';
+const UI_BUILD='1.48.0-bgtask';
 let cfg,editing=null,editingRule=null,sortDir=1,scheduleInfo={},rowLive={},rowQueue={},statusFailCount=0,serverLostShown=false;const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)],E=s=>String(s??'').replace(/[&<>"']/g,x=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[x]));const uid=()=>crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random();function toast(t){$('#toast').textContent=t;$('#toast').style.display='block';setTimeout(()=>$('#toast').style.display='none',2500)}function dirty(){$('#dirty').textContent='未保存の変更があります'}$$('nav button').forEach(b=>b.onclick=()=>{$$('nav button,section').forEach(x=>x.classList.remove('on'));b.classList.add('on');$('#'+b.dataset.p).classList.add('on');if(b.dataset.p==='logs')loadLog();if(b.dataset.p==='calendar')openCalendar();if(b.dataset.p==='viewer')loadViewerJobs()});
 const paths={navigator_api_dll:['Navigator API DLL','file',[['DLLファイル','*.dll'],['すべて','*.*']]],symnavi_exe:['SymNavi.exe','file',[['実行ファイル','*.exe'],['すべて','*.*']]],symnavim_conf:['symnavim.conf','file',[['CONFファイル','*.conf'],['すべて','*.*']]],symnavim_def:['symnavim.def','file',[['DEFファイル','*.def'],['すべて','*.*']]],accdb_template:['ACCDB空テンプレート','file',[['Access Database','*.accdb'],['すべて','*.*']]],rne_folder:['RNE基本フォルダー','folder'],default_output_folder:['既定の出力先','folder'],backup_folder:['バックアップ先','folder']};
 let waitingTimer=null,waitingStarted=0;function currentEngine(){return $('#extract-engine')?.value||cfg?.settings?.extract_engine||'api'}function waitingEngineLabel(context='common'){if(context==='api'||(context==='engine'&&currentEngine()==='api'))return 'NAVIGATOR API';if(context==='dde'||(context==='engine'&&currentEngine()==='dde'))return 'DDE COMPATIBILITY';return 'COMMON OPERATION'}function showWaiting(title='確認中',detail='処理を続行しています...',context='common'){let d=$('#waiting-dialog');$('#waiting-engine').textContent=waitingEngineLabel(context);$('#waiting-title').textContent=title;$('#waiting-detail').textContent=detail;waitingStarted=Date.now();clearInterval(waitingTimer);let tick=()=>{let sec=Math.floor((Date.now()-waitingStarted)/1000);$('#waiting-elapsed').textContent=`経過 ${String(Math.floor(sec/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`};tick();waitingTimer=setInterval(tick,1000);if(!d.open)d.showModal()}function updateWaiting(title,detail,context){if(title)$('#waiting-title').textContent=title;if(detail)$('#waiting-detail').textContent=detail;if(context)$('#waiting-engine').textContent=waitingEngineLabel(context)}function hideWaiting(){clearInterval(waitingTimer);waitingTimer=null;let d=$('#waiting-dialog');if(d?.open)d.close()}async function convertPath(input,mode){showWaiting('パス変換中',mode==='relative'?'アプリフォルダー基準へ変換しています...':'実際の絶対パスを解決しています...');try{let r=await fetch('/api/path-convert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({value:input.value,mode})}),d=await r.json();if(!r.ok)return toast(d.error);input.value=d.value;updatePathBadge(input);dirty()}finally{hideWaiting()}}function updatePathBadge(input){let badge=input.closest('label')?.querySelector('.path-badge');if(!badge)return;let relative=input.value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(input.value);badge.textContent=relative?'相対パス / 基準: アプリフォルダー':'絶対パス';badge.className='path-badge '+(relative?'path-kind-relative':'path-kind-absolute')}function isRelativePath(value){return !!value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(value)}function enhancePathInput(input,kind='folder'){if(!input||input.dataset.pathEnhanced)return;input.dataset.pathEnhanced='1';let tools=document.createElement('div');tools.className='path-tools compact-path-tools';tools.innerHTML='<button type="button" class="pathmode path-toggle" title="絶対パスと相対パスを切り替えます"></button><small class="path-badge"></small>';input.closest('label')?.appendChild(tools);let toggle=tools.querySelector('.path-toggle');function refresh(){let relative=isRelativePath(input.value);toggle.textContent=relative?'相対 → 絶対':'絶対 → 相対';toggle.dataset.mode=relative?'absolute':'relative';updatePathBadge(input)}toggle.onclick=async()=>{await convertPath(input,toggle.dataset.mode);refresh()};input.addEventListener('input',refresh);input._refreshPathControl=refresh;refresh()}async function browse(kind,initial,types){showWaiting('参照画面を準備中','設定中のパスを解決して、その場所から開きます...');try{let url=kind==='folder'?'/api/pick-folder':'/api/pick-file',r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({initial,types})}),d=await r.json();if(!r.ok)toast(d.error);return d.path||''}finally{hideWaiting()}}
@@ -169,7 +169,7 @@ if($('#m-output-file'))$('#m-output-file').addEventListener('input',()=>{updateF
 /* v1.0.0: editor modal tabs (基本・入出力 / 自動実行) for a scroll-less layout */
 function setEditorTab(tab){$$('.editor-tab').forEach(b=>b.classList.toggle('on',b.dataset.etab===tab));$$('.editor-pane').forEach(p=>p.classList.toggle('on',p.dataset.etab===tab))}
 function currentEditorTab(){return document.querySelector('.editor-tab.on')?.dataset.etab||'basic'}
-$$('.editor-tab').forEach(b=>b.onclick=()=>setEditorTab(b.dataset.etab));
+$$('.editor-tab').forEach(b=>b.onclick=()=>{setEditorTab(b.dataset.etab);if(b.dataset.etab==='inspect')inspTaskResume()});   // 調べものが走っていれば途中から追いかける
 function updatePeriodBadge(){let b=$('#etab-period-on');if(b)b.hidden=!$('#m-period-enabled')?.checked}
 function updateRuleCount(){let n=(editing?.schedules||[]).length,active=(editing?.schedules||[]).filter(r=>r.enabled).length,badge=$('#etab-rule-count');if(!badge)return;badge.hidden=n===0;badge.textContent=active?`${active}/${n}`:String(n);badge.title=`登録ルール ${n}件 / 有効 ${active}件`}
 let ruleCalYM=null;
@@ -815,8 +815,69 @@ function inspPlanState(axis,text,tone){
   v.some(x=>x.tone==='ng')?'ng':(v.some(x=>x.tone==='ok')?'ok':''));
  syncTrialControls();
 }
+/* 調べものは20秒前後サーバーを待つ。これまでは待機モーダルで画面を塞いでいたが、
+   影実行と同じように裏で走らせる。進み具合はその手順の結果欄に出し、閉じても続く
+   （状態はサーバーが持っているので、開き直せば途中から追いつく）。 */
+const INSP_TASK={read:  {box:'#m-rne-inspect-result',btn:'#m-rne-inspect',needJob:false},
+                 column:{box:'#m-column-plan-result', btn:'#m-column-plan', needJob:true},
+                 row:   {box:'#m-row-split-result',   btn:'#m-row-split',   needJob:true}};
+let inspTaskTimer={},inspTaskRender={};
+function inspTaskProgress(kind,st){
+ let rb=$(INSP_TASK[kind].box);if(!rb)return;
+ rb.hidden=false;
+ let pct=Math.max(0,Math.min(100,Number(st.percent||0)));
+ rb.innerHTML=`<p class="ri-note"><b>${E(st.title||'')}</b>を実行中です（経過 ${fmtSeconds(st.elapsed||0)||'0.0秒'}）</p>`
+  +`<div class="tp-head"><span class="tp-phase">${E(st.stage||'準備中')}</span><b class="tp-pct">${pct.toFixed(0)}%</b></div>`
+  +`<div class="tp-track"><i class="tp-bar guess" style="width:${pct}%"></i></div>`
+  +`<p class="ri-note tp-guess">${st.measured?'前回の所要時間':'まだ実測がないため、おおよその見込み'}からの見当です`
+  +`（サーバーの応答は途中で測れないため、満杯にはしません）。</p>`
+  +`<p class="ri-note">この画面は閉じても構いません。実行中も他の機能を使えます。</p>`;
+}
+function inspTaskStop(kind){
+ if(inspTaskTimer[kind]){clearInterval(inspTaskTimer[kind]);inspTaskTimer[kind]=null}
+ let b=$(INSP_TASK[kind].btn);if(b)b.disabled=false;
+}
+async function inspTaskPoll(kind){
+ try{
+  let st=await fetch('/api/inspect-task/'+kind,{cache:'no-store'}).then(r=>r.json());
+  if(st.running){inspTaskProgress(kind,st);return}
+  inspTaskStop(kind);
+  let fn=inspTaskRender[kind];
+  if(fn&&st.result)fn(st.result);
+ }catch{}
+}
+async function inspTaskRun(kind,body,render){
+ let c=INSP_TASK[kind],rb=$(c.box);
+ if(c.needJob&&(!editing?.id||!cfg.jobs.some(j=>j.id===editing.id))){
+  if(rb){rb.hidden=false;rb.innerHTML=`<p class="ri-ng">先に「設定を反映」で対象を保存してください。</p>`}return}
+ inspTaskRender[kind]=render;
+ try{
+  let d=await fetch('/api/inspect-task/'+kind,{method:'POST',headers:{'Content-Type':'application/json'},
+       body:JSON.stringify(body)}).then(r=>r.json());
+  if(!d.ok){if(rb){rb.hidden=false;rb.innerHTML=`<p class="ri-ng">開始できませんでした。</p><p class="ri-note">${E(d.error||'')}</p>`}return}
+  let b=$(c.btn);if(b)b.disabled=true;
+  inspEmpty(kind,true);
+  inspTaskProgress(kind,{title:d.title,stage:d.stage,percent:0,elapsed:0,measured:false});
+  if(inspTaskTimer[kind])clearInterval(inspTaskTimer[kind]);
+  inspTaskTimer[kind]=setInterval(()=>inspTaskPoll(kind),1000);
+  inspTaskPoll(kind);   // 一度すぐ見る。もう終わっていれば1秒待たせない
+ }catch(x){if(rb){rb.hidden=false;rb.innerHTML=`<p class="ri-ng">開始時にエラーが発生しました。</p>`}}
+}
+// 手順を開き直したとき、まだ走っているものがあれば途中から追いかける。
+function inspTaskResume(){
+ Object.keys(INSP_TASK).forEach(async k=>{
+  if(inspTaskTimer[k])return;
+  try{
+   let st=await fetch('/api/inspect-task/'+k,{cache:'no-store'}).then(r=>r.json());
+   if(!st.running)return;
+   inspEmpty(k,true);inspTaskProgress(k,st);
+   inspTaskTimer[k]=setInterval(()=>inspTaskPoll(k),1000);
+  }catch{}
+ });
+}
 function inspEmpty(name,hide){let e=document.querySelector(`.ip-empty[data-empty="${name}"]`);if(e)e.hidden=!!hide}
 function inspReset(){
+ Object.keys(INSP_TASK).forEach(k=>{inspTaskStop(k);inspTaskRender[k]=null});
  ['#m-rne-inspect-result','#m-column-plan-result','#m-row-split-result','#m-split-trial-result']
   .forEach(id=>{let e=$(id);if(e){e.hidden=true;e.innerHTML=''}});
  $$('.ip-empty').forEach(e=>e.hidden=false);
@@ -872,11 +933,11 @@ syncTrialControls();
 
 /* RNEの中身を調べる：管理ポイント（行の軸）とデータ項目（出力される列）をまとめて見せる。
    時間管理ポイントの検出は「抽出期間」タブ側の目的に絞ってあるので、RNE全体の把握はこちらで行う。 */
-if($('#m-rne-inspect'))$('#m-rne-inspect').onclick=async()=>{
+if($('#m-rne-inspect'))$('#m-rne-inspect').onclick=()=>inspTaskRun('read',
+  {job_id:editing?.id,rne_path:$('#m-rne-path')?.value||'',job_name:editing?.name||''},renderRneInspect);
+function renderRneInspect(d){
  let rb=$('#m-rne-inspect-result');
- showWaiting('RNEを解析中','SymfoNaviに接続してRNEの管理ポイントとデータ項目を読み取っています...','api');
  try{
-  let r=await fetch('/api/period-control-points',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_id:editing?.id,rne_path:$('#m-rne-path')?.value||''})}),d=await r.json();
   if(rb)rb.hidden=false;
   if(!d.ok){if(rb)rb.innerHTML=`<p class="ri-ng">RNEを読み取れませんでした。</p><p class="ri-note">${E(d.error||'')}</p>`;inspEmpty('read',true);inspState('read','読み取れません','ng');return}
   let cps=d.points||[],tps=d.time_points||[],items=d.data_items||[],cols=d.output_columns||[];
@@ -896,18 +957,16 @@ if($('#m-rne-inspect'))$('#m-rne-inspect').onclick=async()=>{
   inspEmpty('read',true);
   inspState('read',`出力${cols.length||'—'}列 · 管理${cps.length} · 項目${items.length}`,'ok');
  }catch(x){if(rb){rb.hidden=false;rb.innerHTML=`<p class="ri-ng">解析中にエラーが発生しました。</p>`}inspEmpty('read',true);inspState('read','エラー','ng')}
- finally{hideWaiting()}
-};
+}
 
 /* 列の分割可否を調べる。分割で本当に効果が出るかは「分割して取得できる列」が何本あるかで決まるので、
    実装を進める前にこの数字だけを先に出せるようにしている。 */
 const SOURCE_LABEL={cache:'保存済みの列定義',output:'直近の出力ファイル',probe:'1行だけの問い合わせ'};
-if($('#m-column-plan'))$('#m-column-plan').onclick=async()=>{
+if($('#m-column-plan'))$('#m-column-plan').onclick=()=>inspTaskRun('column',
+  {job_id:editing?.id,job_name:editing?.name||''},renderColumnPlan);
+function renderColumnPlan(d){
  let rb=$('#m-column-plan-result');
- if(!editing?.id||!cfg.jobs.some(j=>j.id===editing.id)){if(rb){rb.hidden=false;rb.innerHTML=`<p class="ri-ng">先に「設定を反映」で対象を保存してください。</p>`}return}
- showWaiting('列を調べています','列定義を用意し、分割できる列を判定しています...','api');
  try{
-  let r=await fetch('/api/column-plan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_id:editing.id})}),d=await r.json();
   if(rb)rb.hidden=false;
   if(!d.ok){if(rb)rb.innerHTML=`<p class="ri-ng">調べられませんでした。</p><p class="ri-note">${E(d.error||'')}</p>`;inspEmpty('column',true);inspPlanState('column','列 調べられません','ng');return}
   let rem=d.removable_count||0,fix=d.fixed_count||0;
@@ -965,8 +1024,7 @@ if($('#m-column-plan'))$('#m-column-plan').onclick=async()=>{
   inspEmpty('column',true);
   inspPlanState('column',rem<2?`列 分割不可（${rem}本）`:`列 ${rem}/${total}本を分割可`,rem<2?'ng':'ok');
  }catch(x){if(rb){rb.hidden=false;rb.innerHTML=`<p class="ri-ng">調査中にエラーが発生しました。</p>`}inspEmpty('column',true);inspPlanState('column','列 エラー','ng')}
- finally{hideWaiting()}
-};
+}
 
 /* 分割の効果を試す（影実行）。分割あり・なしを続けて実行し、結合結果をバイト比較する。
    出力ファイルは更新しない。速いかどうかは実測でしか分からないため、判断材料をここで作る。 */
@@ -1054,14 +1112,12 @@ function renderRuntimeSplit(rs){
 }
 
 // 行分割の下調べ。分割できる列の候補と、所要時間の内訳を出す。
-if($('#m-row-split'))$('#m-row-split').onclick=async()=>{
+if($('#m-row-split'))$('#m-row-split').onclick=()=>inspTaskRun('row',
+  {job_id:editing?.id,job_name:editing?.name||'',parts:Number($('#m-row-parts')?.value||2),
+   probe:!!$('#m-row-probe')?.checked},renderRowPlan);
+function renderRowPlan(d){
  let rb=$('#m-row-split-result');
- if(!editing?.id||!cfg.jobs.some(j=>j.id===editing.id)){if(rb){rb.hidden=false;rb.innerHTML=`<p class="ri-ng">先に「設定を反映」で対象を保存してください。</p>`}return}
- let parts=Number($('#m-row-parts')?.value||2),probe=!!$('#m-row-probe')?.checked;
- showWaiting('行の分割を調べています',probe?'RNEから行の軸を読み、転送せずに問い合わせだけを実行して内訳を測ります...':'RNEを開いて、行を絞れる軸（管理ポイント）を読んでいます...','api');
  try{
-  let r=await fetch('/api/row-split-plan',{method:'POST',headers:{'Content-Type':'application/json'},
-       body:JSON.stringify({job_id:editing.id,parts,probe})}),d=await r.json();
   if(rb)rb.hidden=false;
   if(!d.ok){if(rb)rb.innerHTML=`<p class="ri-ng">調べられませんでした。</p><p class="ri-note">${E(d.error||'')}</p>`;inspEmpty('row',true);inspPlanState('row','行 調べられません','ng');return}
   if(rb)rb.innerHTML=rowSplitRender(d);
@@ -1069,8 +1125,7 @@ if($('#m-row-split'))$('#m-row-split').onclick=async()=>{
   let ax=d.axis;
   inspPlanState('row',ax?`行 ${d.parts}分割可（${ax.name}）`:'行 使える軸なし',ax?'ok':'ng');
  }catch(x){if(rb){rb.hidden=false;rb.innerHTML=`<p class="ri-ng">調査中にエラーが発生しました。</p>`}inspEmpty('row',true);inspPlanState('row','行 エラー','ng')}
- finally{hideWaiting()}
-};
+}
 // 行を絞れるのは管理ポイントだけ（出力される列に条件を付けても1行も絞れない）。
 // どの軸が使えるかを、置かれている場所（表側／表頭／条件）ごとに出す。
 function axisListHtml(d){

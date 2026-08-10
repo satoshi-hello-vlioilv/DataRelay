@@ -874,10 +874,19 @@ class NavigatorApi:
             rc=ctypes.c_long()
             self.dll.NaviChangeCategory(hcp,ctypes.byref(rc),_ansi(cat),NAVI_LABEL,int(disp),0,_ansi(separator))
             self._check('NaviChangeCategory',rc,f'cat={cat[:40]!r} disp={disp}')
+        def one_by_one():
+            """担当外を1件ずつ外し、担当ぶんは1件ずつ出す。
+
+            出す側を省いてはいけない。RNEに保存された時点で非表示になっている値があると、
+            外すだけでは戻らず、その行がどの片にも入らずに落ちる。2026-08-10の実測では
+            分割なし14241行に対し結合14205行で、36行がちょうどこの形で欠けた。
+            """
+            for v in others:change(v,NAVI_IN_NONDISP)
+            for v in mine:change(v,NAVI_IN_DISP)
         forms=[
             ('まとめて外して担当ぶんを戻す',lambda:(change(sep.join(others+mine),NAVI_IN_NONDISP,sep) if others or mine else None,
                                                   change(sep.join(mine),NAVI_IN_DISP,sep))),
-            ('担当外を1件ずつ外す',lambda:[change(v,NAVI_IN_NONDISP) for v in others]),
+            ('担当外を1件ずつ外し担当ぶんを1件ずつ出す',one_by_one),
             ('担当ぶんを対象に指定する',lambda:[self.change_condition_cp(hcp,v,NAVI_IN_TARGET) for v in mine]),
         ]
         tried=[]
