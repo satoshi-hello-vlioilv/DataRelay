@@ -1403,3 +1403,83 @@ body > main{max-width:1620px;padding-left:12px;padding-right:12px}
 /* 影実行の欄に置いた軸の決め方 */
 #trial-axis-pick{margin:0 0 10px}
 #trial-axis-pick[hidden]{display:none!important}
+
+/* ==== DDEの実績表示 ======================================================== */
+/* DDEは分割も競争もしないので「通常」では区別がつかない。方式そのものを出す。 */
+.rp-mode.dde{background:#eaf0dd;color:#4d6423}
+
+/* 進捗画面の結果一覧。終わった対象をその場で見せる（直列はライン表示が無い）。 */
+.progress-results{margin:12px 20px 0;display:grid;gap:4px;max-height:190px;overflow:auto}
+.pres-head{display:flex;gap:10px;align-items:baseline;font-size:11px;color:#425d68}
+.pres-head b{font-size:12px;color:#17505f}
+.pres-ng{color:#a33a31;font-weight:800}
+.pres-row{display:grid;grid-template-columns:18px minmax(90px,auto) minmax(0,1fr) auto;gap:8px;align-items:center;
+  padding:5px 8px;border:1px solid #e0e8eb;border-radius:6px;background:#fff;font-size:11px}
+.pres-row i{font-style:normal;font-weight:900;text-align:center}
+.pres-row b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pres-row span{color:#5f7480;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pres-row small{color:#8298a3;white-space:nowrap}
+.pres-row.is-ok i{color:#0b7a55}
+.pres-row.is-error{background:#fff5f3;border-color:#f0cfca}
+.pres-row.is-error i{color:#a33a31}
+
+/* ==== SymNaviA.dll の探索 ================================================= */
+.dll-block{max-width:760px}
+.dll-req{display:grid;gap:8px;padding:10px 12px;background:#f6f9fa;border:1px solid #dbe5e9;border-radius:8px}
+.dll-req-main{display:grid;gap:2px}
+.dll-req-main b{font-size:13px;color:#17505f}
+.dll-req-main span{font-size:11px;color:#5f7480;line-height:1.5}
+.dll-req-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:6px}
+.dll-req-grid>div{display:grid;gap:2px;padding:6px 8px;background:#fff;border:1px solid #e2eaed;border-radius:6px}
+.dll-req-grid small{font-size:10px;color:#7d919b}
+.dll-req-grid b{font-size:11px;color:#28505f;word-break:break-all}
+.dll-req-grid b.ok{color:#0b7a55}
+.dll-req-grid b.ng{color:#a33a31}
+.dll-req-grid b.dim{color:#93a6ae}
+.dll-req-folders{display:flex;flex-wrap:wrap;gap:5px}
+.dll-req-folders span{display:grid;gap:1px;padding:4px 8px;border-radius:6px;font-size:10.5px;font-weight:800;
+  border:1px solid #e0e8eb;background:#fff;color:#7f929b}
+.dll-req-folders span em{font-style:normal;font-weight:600;font-size:9.5px;color:#93a6ae}
+.dll-req-folders span.fits{border-color:#a9dcc6;background:#f0faf5;color:#0b6a4b}
+.dll-req-folders span.fits em{color:#3d8a70}
+
+.dll-roots{display:grid;gap:5px;margin-bottom:8px}
+.dll-root{display:grid;grid-template-columns:22px minmax(0,1fr) auto;gap:6px;align-items:center}
+.dll-root-no{font-size:10px;font-weight:800;color:#7d919b;text-align:center}
+.dll-root input{height:33px}
+.dll-root-btns{display:flex;gap:4px}
+.dll-root-btns button{height:33px;padding:4px 9px;font-size:11px}
+.dll-root-empty{padding:9px 11px;border:1px dashed #cbd9de;border-radius:7px;color:#7d919b;font-size:11px}
+.dll-root-actions{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.dll-depth-field{display:flex;align-items:center;gap:5px;font-size:11px;color:#5f7480;margin-left:auto}
+.dll-depth-field select{height:33px}
+
+.dll-found{display:grid;gap:5px;margin-top:9px;padding:9px;background:#f6f9fa;border:1px solid #dbe5e9;border-radius:8px}
+.dll-found-head{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;font-size:11px;color:#425d68}
+.dll-found-head b{font-size:12px;color:#17505f}
+.dll-found-head span{color:#7d919b}
+.dll-found-empty{margin:0;padding:8px 10px;background:#fff;border:1px solid #e2eaed;border-radius:6px;color:#5f7480;font-size:11px;line-height:1.55}
+.dll-scan-roots{display:flex;flex-wrap:wrap;gap:5px}
+.dll-scan-roots span{display:grid;gap:1px;padding:4px 8px;border-radius:6px;font-size:10px;border:1px solid #e0e8eb;background:#fff;color:#5f7480;word-break:break-all}
+.dll-scan-roots span em{font-style:normal;font-size:9.5px;color:#93a6ae}
+.dll-scan-roots span.hit{border-color:#a9dcc6;background:#f0faf5;color:#0b6a4b}
+.dll-scan-roots span.missing{border-style:dashed;color:#93a6ae}
+.dll-hit{display:grid;grid-template-columns:52px minmax(0,1fr) auto;gap:8px;align-items:center;padding:7px 8px;
+  background:#fff;border:1px solid #e0e8eb;border-radius:7px}
+.dll-hit>i{font-style:normal;text-align:center;font-size:9.5px;font-weight:900;border-radius:999px;padding:3px 4px}
+.dll-hit-main{display:grid;gap:2px;min-width:0}
+.dll-hit-main code{font-size:10.5px;color:#284d5c;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dll-hit-main span{font-size:10.5px;color:#5f7480}
+.dll-hit-main small{font-size:9.5px;color:#93a6ae}
+.dll-hit.is-ok{border-color:#a9dcc6;background:#f7fdfa}
+.dll-hit.is-ok>i{background:#dff2e9;color:#08704f}
+.dll-hit.is-ng>i{background:#fde1dd;color:#a33a31}
+.dll-use{height:31px;padding:4px 11px;font-size:11px}
+.dll-manual{display:grid;gap:4px}
+.dll-manual-state{margin-top:6px;padding:7px 10px;border-radius:6px;font-size:11px;line-height:1.5}
+.dll-manual-state.ok{background:#eef8f3;color:#0b6a4b;border:1px solid #bce2d0}
+.dll-manual-state.ng{background:#fff3f1;color:#94352d;border:1px solid #efc8c2}
+@media(max-width:700px){.dll-root{grid-template-columns:22px minmax(0,1fr)}.dll-root-btns{grid-column:2}
+  .dll-hit{grid-template-columns:52px minmax(0,1fr)}.dll-use{grid-column:2;justify-self:start}}
+/* display:grid は hidden 属性を上書きしてしまう。空の枠だけが残るのを防ぐ。 */
+.api-attempts[hidden],.dll-found[hidden],.dll-manual-state[hidden],.progress-results[hidden]{display:none!important}

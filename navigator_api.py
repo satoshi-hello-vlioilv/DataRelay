@@ -144,6 +144,118 @@ def pe_exports(path):
         return []
 
 NAVIAP_DEPLOY_FOLDERS=('debugdllVC14','debugdllVC14x64','dllVC14','dllVC14x64')
+DLL_FILE_NAME='SymNaviA.dll'
+NAVIAP_LOCAL_ROOT=r'C:\NAVIAP'
+# NAVIAPの配布フォルダー名の決まり。debug/製品版、VCのバージョン、x64の有無がそのまま名前に出る。
+NAVIAP_FOLDER_RX=re.compile(r'^(debugdll|dll)vc(\d+)(x64)?$',re.I)
+
+def describe_dll_folder(name):
+    """NAVIAPの配布フォルダー名から、そのDLLの素性を読み取る。
+
+    名前の規則が分かっていれば、ファイルを開かなくても「これは64bit版か」が言える。
+    実際のbit数はPEヘッダーで確かめるが、フォルダーが無い/空のときはこれしか手がかりがない。
+    """
+    m=NAVIAP_FOLDER_RX.match(str(name or '').strip())
+    if not m:return None
+    kind,vc,x64=m.group(1).lower(),m.group(2),bool(m.group(3))
+    return {'folder':str(name),'bits':64 if x64 else 32,'build':'デバッグ版' if kind=='debugdll' else '製品版',
+            'vc':'Visual C++ %s'%vc,'label':'%dbit / %s / VC%s'%(64 if x64 else 32,'デバッグ版' if kind=='debugdll' else '製品版',vc)}
+
+def process_bits():
+    return struct.calcsize('P')*8
+
+def required_runtime_dlls(bits=None):
+    """このbit数のプロセスがSymNaviA.dllを読み込むために要るVisual C++ランタイム。"""
+    bits=int(bits or process_bits())
+    return [x for x in VC_RUNTIME_DLLS if not (x=='vcruntime140_1.dll' and bits!=64)]
+
+def dll_requirement(base_dir=None,search_roots=None):
+    """このPCで必要なDLLの条件を、そのまま画面に出せる形で返す。
+
+    「どのDLLを持ってくればよいのか」は、bit数・フォルダー名・ランタイムの3つで決まる。
+    診断結果を読む前に、まずこの3つを見せる。別のPCで環境を作るときに要るのはここ。
+    """
+    bits=process_bits()
+    fits=[describe_dll_folder(x) for x in NAVIAP_DEPLOY_FOLDERS]
+    fits=[x for x in fits if x]
+    return {
+        'file_name':DLL_FILE_NAME,
+        'python_bits':bits,
+        'required_bits':bits,
+        'reason':'このアプリを動かしているPythonが%dbitのため、SymNaviA.dllも%dbit版でなければ読み込めません。'%(bits,bits),
+        'folders':fits,
+        'preferred_folders':[x['folder'] for x in fits if x['bits']==bits],
+        'rejected_folders':[x['folder'] for x in fits if x['bits']!=bits],
+        'runtime':required_runtime_dlls(bits),
+        'runtime_missing':missing_vc_runtime(),
+        'default_roots':[str(x) for x in default_search_roots(base_dir)],
+        'search_roots':[str(x) for x in (search_roots or default_search_roots(base_dir))],
+        'summary':'%dbit版の%s（フォルダー名の末尾がx64%s）と、同じフォルダーにある依存DLLが必要です。'%(
+            bits,DLL_FILE_NAME,'のもの' if bits==64 else 'でないもの'),
+    }
+
+def default_search_roots(base_dir=None):
+    """DLLを探す既定の範囲。製品側の配置を先に見て、無ければアプリ同梱側を見る。"""
+    roots=[Path(NAVIAP_LOCAL_ROOT)]
+    if base_dir:roots += [Path(base_dir)/'Config'/'NAVIAP',Path(base_dir)/'NAVIAP']
+    return roots
+
+def _dedupe_paths(seq):
+    out=[];seen=set()
+    for c in seq:
+        c=Path(c);key=os.path.normcase(os.path.normpath(str(c)))
+        if key not in seen:seen.add(key);out.append(c)
+    return out
+
+def scan_dll_roots(roots,max_depth=3,limit=200):
+    """指定した範囲を実際に歩いて SymNaviA.dll を集める。
+
+    フォルダー名の決まりに合わない場所へ置かれていても見つかるよう、名前ではなくファイルで探す。
+    深く潜るほど時間がかかるので、探す深さは呼び出し側（＝画面）から決められるようにしている。
+    """
+    bits=process_bits();found=[];seen=set();scanned=[]
+    for root in _dedupe_paths(roots or []):
+        entry={'root':str(root),'exists':False,'files':0,'error':''}
+        try:
+            if not root.is_dir():
+                scanned.append(entry);continue
+            entry['exists']=True
+            base=len(root.parts)
+            for dirpath,dirnames,filenames in os.walk(root):
+                here=Path(dirpath)
+                if len(here.parts)-base>=max_depth:dirnames[:]=[]
+                for name in filenames:
+                    if name.lower()!=DLL_FILE_NAME.lower():continue
+                    p=here/name;key=os.path.normcase(os.path.normpath(str(p)))
+                    if key in seen:continue
+                    seen.add(key);entry['files']+=1
+                    found.append(_describe_found_dll(p,root,bits))
+                    if len(found)>=limit:break
+                if len(found)>=limit:break
+        except OSError as e:entry['error']=str(e)
+        scanned.append(entry)
+    # 使えるものを先に、同じなら製品側(C:\NAVIAP)を先に出す。画面の一番上が「そのまま使える候補」になる。
+    local=os.path.normcase(os.path.normpath(NAVIAP_LOCAL_ROOT))
+    found.sort(key=lambda x:(not x['usable'],not os.path.normcase(os.path.normpath(x['path'])).startswith(local),x['path'].lower()))
+    return {'python_bits':bits,'max_depth':int(max_depth),'roots':scanned,'found':found,
+            'usable':[x for x in found if x['usable']],'truncated':len(found)>=limit}
+
+def _describe_found_dll(path,root,bits):
+    info=describe_dll_folder(path.parent.name) or {}
+    dll_bits=pe_bits(path)
+    try:st=path.stat();size,mtime=st.st_size,time.strftime('%Y-%m-%d %H:%M',time.localtime(st.st_mtime))
+    except OSError:size,mtime=0,''
+    usable=dll_bits==bits
+    if usable:reason='Python %dbitと一致するため、そのまま使えます。'%bits
+    elif dll_bits:reason='DLLが%dbit、Pythonが%dbitのため使えません。'%(dll_bits,bits)
+    else:reason='PEヘッダーを読めませんでした。DLLとして壊れているか、読み取り権限がありません。'
+    return {'path':str(path),'root':str(root),'folder':path.parent.name,'dll_bits':dll_bits,'python_bits':bits,
+            'usable':usable,'reason':reason,'size':size,'modified':mtime,'label':info.get('label',''),
+            'build':info.get('build',''),'siblings':_sibling_count(path)}
+
+def _sibling_count(path):
+    try:return sum(1 for x in path.parent.iterdir() if x.is_file() and x.suffix.lower()=='.dll')-1
+    except OSError:return 0
 
 def sync_naviap_runtime(base_dir,source_root=None):
     """Copy the four product-side NAVIAP runtime folders into Config/NAVIAP.
@@ -169,21 +281,25 @@ def sync_naviap_runtime(base_dir,source_root=None):
         except Exception as e:report['errors'].append(f'{sf}: {e}')
     return report
 
-def candidate_dlls(symnavi_exe=None,configured_path=None,extra_roots=None,local_only=False,local_root=None):
+def candidate_dlls(symnavi_exe=None,configured_path=None,extra_roots=None,local_only=False,local_root=None,search_roots=None):
     """C:\\NAVIAPを最優先し、利用可能なローカルDLLがなければ共有側を返す。
 
     local_rootは検証用の差し替え口。省略時は従来どおり C:\\NAVIAP を見る。
+    search_rootsを渡すと、その順番で探す（設定画面で指定した検索範囲）。
     """
     pybits=struct.calcsize('P')*8
-    local_root=Path(local_root) if local_root else Path(r'C:\NAVIAP')
-    rx=re.compile(r'(debugdll|dll)vc(\d+)(x64)?$',re.I)
+    local_root=Path(local_root) if local_root else Path(NAVIAP_LOCAL_ROOT)
+    roots_to_scan=[Path(x) for x in search_roots] if search_roots else [local_root]
+    rx=NAVIAP_FOLDER_RX
     local=[]
-    for name in NAVIAP_DEPLOY_FOLDERS:
-        local.append(local_root/name/'SymNaviA.dll')
-    try:
-        if local_root.is_dir():
-            local.extend(x/'SymNaviA.dll' for x in local_root.iterdir() if x.is_dir() and rx.match(x.name))
-    except OSError:pass
+    for root in roots_to_scan:
+        for name in NAVIAP_DEPLOY_FOLDERS:
+            local.append(root/name/DLL_FILE_NAME)
+        try:
+            if root.is_dir():
+                local.extend(x/DLL_FILE_NAME for x in root.iterdir() if x.is_dir() and rx.match(x.name))
+                local.append(root/DLL_FILE_NAME)
+        except OSError:pass
     def unique(seq):
         out=[];seen=set()
         for c in seq:
@@ -191,6 +307,16 @@ def candidate_dlls(symnavi_exe=None,configured_path=None,extra_roots=None,local_
             if key not in seen:seen.add(key);out.append(c)
         return out
     local=unique(local)
+    # 手動で指定されたDLLが実在してbit数も合うなら、それを最優先で使う。
+    # 利用者が明示した指定を自動探索が黙って追い越すと、指定した意味が無くなる。
+    configured=None
+    if configured_path:
+        cp=Path(os.path.expandvars(os.path.expanduser(str(configured_path).strip())))
+        configured=cp/DLL_FILE_NAME if cp.suffix.lower()!='.dll' else cp
+        try:
+            if configured.is_file() and pe_bits(configured)==pybits:
+                local=unique([configured]+local)
+        except OSError:pass
     # 64/32bit一致の実在DLLがローカルにあれば、BOX側には一切触れない。
     usable=[];other=[]
     for c in local:
@@ -201,10 +327,7 @@ def candidate_dlls(symnavi_exe=None,configured_path=None,extra_roots=None,local_
     if usable or local_only:
         return usable+other
     fallback=[]
-    configured=None
-    if configured_path:
-        cp=Path(os.path.expandvars(os.path.expanduser(str(configured_path).strip())))
-        configured=cp/'SymNaviA.dll' if cp.suffix.lower()!='.dll' else cp
+    if configured:
         fallback.append(configured)
     roots=[Path(x) for x in (extra_roots or [])]
     if configured:
@@ -244,14 +367,16 @@ class NavigatorApiError(RuntimeError):
         super().__init__(f'{operation}失敗 rc=0x{int(rc):X} name={self.name} {detail}'.strip())
 
 class NavigatorApi:
-    def __init__(self,symnavi_exe=None,logger=None,dll_path=None,base_dir=None):
+    def __init__(self,symnavi_exe=None,logger=None,dll_path=None,base_dir=None,search_roots=None):
         if os.name!='nt':raise RuntimeError('Navigator APIはWindowsでのみ利用できます')
         self.deploy_report=None
         extra_roots=[Path(base_dir)/'Config'/'NAVIAP',Path(base_dir)/'NAVIAP'] if base_dir else []
+        self.search_roots=[Path(x) for x in search_roots] if search_roots else default_search_roots(base_dir)
+        self.base_dir=base_dir;self.configured_path=str(dll_path or '')
         self.log=logger;self.dll=None;self.dll_path='';self.dll_dirs=[];errors=[]
         self.attempts=[]
         pybits=struct.calcsize('P')*8
-        for candidate in candidate_dlls(symnavi_exe,dll_path,extra_roots):
+        for candidate in candidate_dlls(symnavi_exe,dll_path,extra_roots,search_roots=self.search_roots):
             bits=pe_bits(candidate) if Path(candidate).is_file() else None
             if bits and bits!=pybits:
                 msg=f'{candidate}: DLL={bits}bit / Python={pybits}bit のため対象外';errors.append(msg);self.attempts.append({'path':str(candidate),'exists':True,'dll_bits':bits,'python_bits':pybits,'result':'bit_mismatch'});continue
@@ -270,7 +395,13 @@ class NavigatorApi:
                     vc=missing_vc_runtime()
                     detail+=(f' / DLL自体は存在します。Visual C++ 再頒布可能パッケージ({pybits}bit)が見つかりません: '+', '.join(vc)) if vc else ' / DLL自体は存在します。同一フォルダー内の依存DLLを確認してください'
                 errors.append(f'{candidate}: {detail}');self.attempts.append({'path':str(candidate),'exists':cp.is_file(),'dll_bits':bits,'python_bits':pybits,'result':'load_error','error':detail})
-        if not self.dll:raise RuntimeError('SymNaviA.dllを読み込めません。設定したDLLパスと同一フォルダー内の依存DLLを確認してください。'+' | '.join(errors))
+        if not self.dll:
+            # 何が足りないのかを、探した範囲と必要な条件つきで返す。別のPCで環境を作るとき、
+            # 「読み込めません」だけでは次に何をすればよいのか分からない。
+            req=dll_requirement(base_dir,self.search_roots)
+            hint='必要: %dbit版%s / 探した範囲: %s'%(req['required_bits'],DLL_FILE_NAME,' , '.join(req['search_roots']) or '(なし)')
+            if req['runtime_missing']:hint+=' / Visual C++ ランタイム不足: '+', '.join(req['runtime_missing'])
+            raise RuntimeError('SymNaviA.dllを読み込めません。'+hint+' | '+' | '.join(errors))
         self._bind();self.opened=False;self.catalog=0
     def _bind(self):
         # Navigator APIのInteger/Longは32bit。Windowsではc_longも32bitだが、幅の前提を残さないため
@@ -368,14 +499,16 @@ class NavigatorApi:
         # マニュアルで裏が取れるまで呼び出さない（列の削除は実行前に行えば不要）。
         self.bound={n for n in dir(d) if n.startswith('Navi') and getattr(getattr(d,n,None),'argtypes',None) is not None}
     def info(self):
-        pybits=struct.calcsize('P')*8;dllbits=pe_bits(self.dll_path);norm=os.path.normcase(os.path.normpath(str(self.dll_path)));local=os.path.normcase(os.path.normpath(r'C:\NAVIAP'))
-        if norm==local or norm.startswith(local+os.sep):reason='ローカルのC:\\NAVIAP配下に、Pythonと同じ%d bitの利用可能なDLLがあるため最優先で選択しました。'%pybits
+        pybits=struct.calcsize('P')*8;dllbits=pe_bits(self.dll_path);norm=os.path.normcase(os.path.normpath(str(self.dll_path)));local=os.path.normcase(os.path.normpath(NAVIAP_LOCAL_ROOT))
+        configured=os.path.normcase(os.path.normpath(str(self.configured_path))) if self.configured_path else ''
+        if configured and norm==configured:reason='設定画面で手動指定されたDLLが実在し、Pythonと同じ%d bitのため、そのまま使用しました。'%pybits
+        elif norm==local or norm.startswith(local+os.sep):reason='ローカルのC:\\NAVIAP配下に、Pythonと同じ%d bitの利用可能なDLLがあるため最優先で選択しました。'%pybits
         elif 'config'+os.sep+'naviap' in norm.lower():reason='ローカルのC:\\NAVIAP配下に利用可能な%d bit DLLがなかったため、アプリ側Config\\NAVIAPのDLLをフォールバック選択しました。'%pybits
         else:reason='ローカル標準配置に利用可能なDLLがないため、互換候補の中からPythonと同じ%d bitのDLLを選択しました。'%pybits
         exports=pe_exports(self.dll_path)
         navi=[x for x in exports if x.lower().startswith('navi')]
         bound=sorted(getattr(self,'bound',set()))
-        return {'ok':True,'dll':self.dll_path,'dll_bits':dllbits,'python_bits':pybits,'mode':'Navigator API','attempts':self.attempts,'deploy_report':self.deploy_report,'selection_reason':reason,'exports':navi,'exports_total':len(exports),'exports_bound':bound,'bit_diagnosis':f'Python {pybits} bit / DLL {dllbits or "不明"} bit / '+('一致' if dllbits==pybits else '不一致')}
+        return {'ok':True,'dll':self.dll_path,'dll_bits':dllbits,'python_bits':pybits,'mode':'Navigator API','attempts':self.attempts,'deploy_report':self.deploy_report,'selection_reason':reason,'exports':navi,'exports_total':len(exports),'exports_bound':bound,'requirement':dll_requirement(self.base_dir,self.search_roots),'search_roots':[str(x) for x in self.search_roots],'bit_diagnosis':f'Python {pybits} bit / DLL {dllbits or "不明"} bit / '+('一致' if dllbits==pybits else '不一致')}
     def error_code(self):
         code=ctypes.c_long()
         try:self.dll.NaviGetErrorCode(ctypes.byref(code));return int(code.value)
