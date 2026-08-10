@@ -25,7 +25,7 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.51.0'; APP_VERSION_TITLE='DDEの進捗と結果を直す／必要なDLLを探せるようにする'; APP_RELEASED_AT='2026-08-10'
+APP_VERSION='1.51.1'; APP_VERSION_TITLE='起動待ち画面のバージョンを初回から正しく出す'; APP_RELEASED_AT='2026-08-10'
 BUILD_VERSION=f'{APP_VERSION}-ddeprogress'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリに同梱する仕様書。ここに登録したものだけが画面から開ける。
 # 画面からはこのidしか受け取らないので、任意のパスを読ませることはできない。
@@ -43,7 +43,13 @@ def docs_dir():
 
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
-{'version':'1.51.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+{'version':'1.51.1','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'【起動待ち画面のバージョンが古い／初回は出ない】起動待ち画面へ差し込む版は、アプリが起動するたびに書き出す控え(runtime\\version.txt)から読んでいました。控えは前回の起動で書かれたものなので、更新した直後は1つ前の版が出て、控えがまだ無い初回起動では何も出ませんでした。',
+'ランチャーが app.py の APP_VERSION を直接読むようにしました。前回の起動に依存しないため、初回起動でも更新した直後でも、これから起動する版がそのまま出ます。読めないときだけ従来の控えへ戻り、どちらも駄目なときだけ「バージョン確認中」と出します。どちらから読んだかは起動ログ(vbs_launcher.log)に残します。',
+'APP_VERSION は APP_VERSION_TITLE や BUILD_VERSION の中にも現れます。「直後が = で、その先が引用符」のものだけを版として受け取り、当てはまらなければ次の出現位置へ進みます。取り出した値は数字と点だけかを確かめてから画面へ出します。',
+'サーバーが起動したあとに表示が「1.51.1」から「1.51.1-ddeprogress」へ変わって見えていました。/api/instance が版とビルド名を分けて返すようにし、画面は版のほうを出します。',
+]},
+{'version':'1.51.0','date':'2026-08-10','title':'DDEの進捗と結果を直す／必要なDLLを探せるようにする','notes':[
 '【DDE方式の進捗が途中で前へ戻っていました】工程の並びが「閉じる → 検証」の順で書かれていたのに、実際は「検証 → 閉じる」の順に流れます。そのため「ファイル生成・安定確認」まで進んだあとに「抽出画面を閉じる」へ戻って見えていました。実際の順番へ揃えました。',
 '進捗画面の抽出方式が、DDEで実行していても「API安定運転 1ライン」と出ていました。「DDE互換 / 1件ずつ直列」と出します。',
 '工程一覧に「実行対象の準備」が無く、その間だけどの工程も光らない時間がありました。追加して、常にどこかが現在地になるようにしました。',
@@ -6517,7 +6523,9 @@ def validate():
 
 @app.get('/api/instance')
 def instance_info():
- r=app.make_response(jsonify(app=APP_ID,instance_id=INSTANCE_ID,display_name='SymfoNavi Data Hub',build_version=BUILD_VERSION,pid=os.getpid(),port=PORT,path=str(BASE)))
+ # versionは版だけ、build_versionは版＋ビルド名。起動待ちモーダルは前者を出す（差し込んだ値と
+ # 同じ形にして、サーバーが立った瞬間に表示が変わって見えないようにする）。
+ r=app.make_response(jsonify(app=APP_ID,instance_id=INSTANCE_ID,display_name='SymfoNavi Data Hub',version=APP_VERSION,build_version=BUILD_VERSION,pid=os.getpid(),port=PORT,path=str(BASE)))
  # 起動待ちモーダル(loading.html)がfile://から状態を確認できるよう、ローカル情報に限りCORSを許可する。
  r.headers['Access-Control-Allow-Origin']='*'; r.headers['Cache-Control']='no-store'; return r
 
