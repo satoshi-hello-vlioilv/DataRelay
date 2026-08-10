@@ -1,4 +1,4 @@
-const UI_BUILD='1.42.0-live';
+const UI_BUILD='1.43.0-ilog';
 let cfg,editing=null,editingRule=null,sortDir=1,scheduleInfo={},rowLive={},rowQueue={},statusFailCount=0,serverLostShown=false;const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)],E=s=>String(s??'').replace(/[&<>"']/g,x=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[x]));const uid=()=>crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random();function toast(t){$('#toast').textContent=t;$('#toast').style.display='block';setTimeout(()=>$('#toast').style.display='none',2500)}function dirty(){$('#dirty').textContent='未保存の変更があります'}$$('nav button').forEach(b=>b.onclick=()=>{$$('nav button,section').forEach(x=>x.classList.remove('on'));b.classList.add('on');$('#'+b.dataset.p).classList.add('on');if(b.dataset.p==='logs')loadLog();if(b.dataset.p==='calendar')openCalendar();if(b.dataset.p==='viewer')loadViewerJobs()});
 const paths={navigator_api_dll:['Navigator API DLL','file',[['DLLファイル','*.dll'],['すべて','*.*']]],symnavi_exe:['SymNavi.exe','file',[['実行ファイル','*.exe'],['すべて','*.*']]],symnavim_conf:['symnavim.conf','file',[['CONFファイル','*.conf'],['すべて','*.*']]],symnavim_def:['symnavim.def','file',[['DEFファイル','*.def'],['すべて','*.*']]],accdb_template:['ACCDB空テンプレート','file',[['Access Database','*.accdb'],['すべて','*.*']]],rne_folder:['RNE基本フォルダー','folder'],default_output_folder:['既定の出力先','folder'],backup_folder:['バックアップ先','folder']};
 let waitingTimer=null,waitingStarted=0;function currentEngine(){return $('#extract-engine')?.value||cfg?.settings?.extract_engine||'api'}function waitingEngineLabel(context='common'){if(context==='api'||(context==='engine'&&currentEngine()==='api'))return 'NAVIGATOR API';if(context==='dde'||(context==='engine'&&currentEngine()==='dde'))return 'DDE COMPATIBILITY';return 'COMMON OPERATION'}function showWaiting(title='確認中',detail='処理を続行しています...',context='common'){let d=$('#waiting-dialog');$('#waiting-engine').textContent=waitingEngineLabel(context);$('#waiting-title').textContent=title;$('#waiting-detail').textContent=detail;waitingStarted=Date.now();clearInterval(waitingTimer);let tick=()=>{let sec=Math.floor((Date.now()-waitingStarted)/1000);$('#waiting-elapsed').textContent=`経過 ${String(Math.floor(sec/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`};tick();waitingTimer=setInterval(tick,1000);if(!d.open)d.showModal()}function updateWaiting(title,detail,context){if(title)$('#waiting-title').textContent=title;if(detail)$('#waiting-detail').textContent=detail;if(context)$('#waiting-engine').textContent=waitingEngineLabel(context)}function hideWaiting(){clearInterval(waitingTimer);waitingTimer=null;let d=$('#waiting-dialog');if(d?.open)d.close()}async function convertPath(input,mode){showWaiting('パス変換中',mode==='relative'?'アプリフォルダー基準へ変換しています...':'実際の絶対パスを解決しています...');try{let r=await fetch('/api/path-convert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({value:input.value,mode})}),d=await r.json();if(!r.ok)return toast(d.error);input.value=d.value;updatePathBadge(input);dirty()}finally{hideWaiting()}}function updatePathBadge(input){let badge=input.closest('label')?.querySelector('.path-badge');if(!badge)return;let relative=input.value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(input.value);badge.textContent=relative?'相対パス / 基準: アプリフォルダー':'絶対パス';badge.className='path-badge '+(relative?'path-kind-relative':'path-kind-absolute')}function isRelativePath(value){return !!value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(value)}function enhancePathInput(input,kind='folder'){if(!input||input.dataset.pathEnhanced)return;input.dataset.pathEnhanced='1';let tools=document.createElement('div');tools.className='path-tools compact-path-tools';tools.innerHTML='<button type="button" class="pathmode path-toggle" title="絶対パスと相対パスを切り替えます"></button><small class="path-badge"></small>';input.closest('label')?.appendChild(tools);let toggle=tools.querySelector('.path-toggle');function refresh(){let relative=isRelativePath(input.value);toggle.textContent=relative?'相対 → 絶対':'絶対 → 相対';toggle.dataset.mode=relative?'absolute':'relative';updatePathBadge(input)}toggle.onclick=async()=>{await convertPath(input,toggle.dataset.mode);refresh()};input.addEventListener('input',refresh);input._refreshPathControl=refresh;refresh()}async function browse(kind,initial,types){showWaiting('参照画面を準備中','設定中のパスを解決して、その場所から開きます...');try{let url=kind==='folder'?'/api/pick-folder':'/api/pick-file',r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({initial,types})}),d=await r.json();if(!r.ok)toast(d.error);return d.path||''}finally{hideWaiting()}}
@@ -972,6 +972,44 @@ if($('#m-column-plan'))$('#m-column-plan').onclick=async()=>{
    出力ファイルは更新しない。速いかどうかは実測でしか分からないため、判断材料をここで作る。 */
 /* 影実行は数分かかるため、開始だけして裏で走らせる。画面は閉じてもよく、
    実行中もログ・診断など他の機能をそのまま使える。進み具合は結果欄に出す。 */
+/* 影実行のログを、モーダルの中でそのまま追えるようにする。
+   「ログ・診断」タブへ行き来しなくても、走らせながら見て、そのままコピーできる。
+   絞り込みと行数の上限はサーバー側でかけるので、実行中に何度読んでも重くならない。 */
+let ilogText='',ilogTimer=null,ilogBusy=false;
+function ilogOpen(){return !!$('#insp-log')?.open}
+async function ilogLoad(scroll=false){
+ let box=$('#ilog-body');if(!box||ilogBusy)return;
+ ilogBusy=true;
+ try{
+  let q=new URLSearchParams({limit:'400',filter:$('#ilog-filter')?.value||'split',q:$('#ilog-q')?.value||''});
+  let d=await fetch('/api/log?'+q).then(r=>r.json());
+  ilogText=d.text||'';
+  let lines=ilogText?ilogText.split(/\r?\n/):[];
+  box.innerHTML=lines.length?lines.map(x=>`<div class="log-line ${logLevel(x)}">${E(x)}</div>`).join('')
+                            :'<p class="ri-note">この条件に当てはまるログはありません。</p>';
+  let c=$('#ilog-count');
+  if(c)c.textContent=lines.length?`${lines.length}行 / 全${Number(d.total||0).toLocaleString()}行`:'該当なし';
+  if(scroll)box.scrollTop=box.scrollHeight;
+ }catch{if(box)box.innerHTML='<p class="ri-ng">ログを読めませんでした。</p>'}
+ finally{ilogBusy=false}
+}
+// 実行中は勝手に追いかける。止まったら追いかけるのもやめる（無駄に読みに行かない）。
+function ilogFollow(running){
+ let want=running&&ilogOpen()&&!!$('#ilog-follow')?.checked;
+ if(want&&!ilogTimer){ilogTimer=setInterval(()=>ilogLoad(true),2000);ilogLoad(true)}
+ if(!want&&ilogTimer){clearInterval(ilogTimer);ilogTimer=null}
+}
+if($('#insp-log'))$('#insp-log').ontoggle=()=>{if(ilogOpen())ilogLoad(true);else ilogFollow(false)};
+if($('#ilog-reload'))$('#ilog-reload').onclick=()=>ilogLoad(true);
+if($('#ilog-filter'))$('#ilog-filter').onchange=()=>ilogLoad(true);
+if($('#ilog-q'))$('#ilog-q').oninput=()=>{clearTimeout($('#ilog-q')._t);$('#ilog-q')._t=setTimeout(()=>ilogLoad(true),300)};
+if($('#ilog-follow'))$('#ilog-follow').onchange=()=>ilogFollow(!!splitTrialTimer);
+if($('#ilog-copy'))$('#ilog-copy').onclick=()=>textToClipboard(ilogText,'表示中のログをコピーしました');
+if($('#ilog-copy-all'))$('#ilog-copy-all').onclick=async()=>{
+ let d=await fetch('/api/log?limit=5000&filter=all').then(r=>r.json());
+ textToClipboard(d.text||'','ログ全文をコピーしました');
+};
+
 let splitTrialTimer=null;
 // 本番の実行で分割が使われるかどうか。使われない場合は、その理由をそのまま出す。
 function renderRuntimeSplit(rs){
@@ -1281,7 +1319,8 @@ async function splitTrialPoll(){
  try{
   let r=await fetch('/api/column-split-trial/status'),d=await r.json();
   splitTrialRender(d);
-  if(!d.running){clearInterval(splitTrialTimer);splitTrialTimer=null}
+  if(!d.running){clearInterval(splitTrialTimer);splitTrialTimer=null;ilogFollow(false);if(ilogOpen())ilogLoad(true)}
+  else ilogFollow(true);
  }catch{}
 }
 if($('#m-split-trial'))$('#m-split-trial').onclick=async()=>{
@@ -1301,7 +1340,7 @@ if($('#m-split-trial'))$('#m-split-trial').onclick=async()=>{
   inspGo('trial');inspEmpty('trial',true);inspState('trial','開始しました','run');
   splitTrialRender({running:true,job:d.job,stage:'準備中',elapsed:0});
   if(splitTrialTimer)clearInterval(splitTrialTimer);
-  splitTrialTimer=setInterval(splitTrialPoll,2000);splitTrialPoll();
+  splitTrialTimer=setInterval(splitTrialPoll,2000);splitTrialPoll();ilogFollow(true);
  }catch(x){if(rb){rb.hidden=false;rb.innerHTML=`<p class="ri-ng">開始時にエラーが発生しました。</p>`}}
 };
 
