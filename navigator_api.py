@@ -840,10 +840,35 @@ class NavigatorApi:
         if not hasattr(self.dll,'NaviChangeCategory'):
             raise RuntimeError('このDLLは NaviChangeCategory を公開していません')
         hcp,how=self.control_point_handle(h_catalog,spec)
-        mine=[str(x) for x in (spec.get('values') or [])]
-        others=[str(x) for x in (spec.get('others') or [])]
-        if not mine:
+        want=[str(x) for x in (spec.get('values') or [])]
+        skip=[str(x) for x in (spec.get('others') or [])]
+        if not want:
             raise NavigatorApiError('行分割:カテゴリ',NAVI_ERROR,'この片が担当する値がありません')
+        # 全値型はカタログを開くたびにカテゴリが空になる。パートは自分でカタログを開くので、
+        # ここで読み込ませないと、どの名前も見つからず NAVI_ERROR_NONMATCH になる（2026-08-10の実測）。
+        # 軸を調べたのは別のプロセスであって、その読み込みはこの手元の管理ポイントには残っていない。
+        loaded,form,tried_load=self.reload_categories(hcp)
+        n,have,err=self.list_categories(hcp,limit=8200,reload=False)
+        if not have:
+            raise NavigatorApiError('行分割:カテゴリ',NAVI_ERROR,
+                                    f'「{spec.get("column","")}」の値をこのプロセスへ読み込めませんでした'
+                                    f'（読み込み={form or "失敗"} / 件数={n} / {err or "-"}）。'
+                                    +('試した形: '+' / '.join(tried_load) if tried_load else ''))
+        # 実際にDLLが持っている文字列を使う。手元で持ち回った文字列と細部が違うことがある。
+        mineset=set(want);skipset=set(skip)
+        mine=[v for v in have if v in mineset]
+        others=[v for v in have if v not in mineset]
+        # 調べた時点に無かった値。どの片にも入れないと結果から落ちるので、最後の片が引き取る。
+        unknown=[v for v in have if v not in mineset and v not in skipset]
+        last=int(spec.get('part') or 0)>0 and int(spec.get('part') or 0)>=int(spec.get('parts') or 0)
+        if unknown and last:
+            mine=[v for v in have if v in mineset or v in set(unknown)]
+            others=[v for v in have if v not in set(mine)]
+        if not mine:
+            raise NavigatorApiError('行分割:カテゴリ',NAVI_ERROR,
+                                    f'「{spec.get("column","")}」に、この片が担当する値が1つもありません'
+                                    f'（いまDLLが持っているのは{len(have)}種。担当予定は{len(want)}種）。'
+                                    '調べた時点と実行時で値が入れ替わった可能性があります')
         sep='\t'
         def change(cat,disp,separator=''):
             rc=ctypes.c_long()
@@ -860,11 +885,14 @@ class NavigatorApi:
             try:
                 run()
                 return {'column':spec.get('column',''),'handle':hcp,'form':label,'locate':spec.get('location',''),
-                        'how':how,'tried':tried,'values':len(mine),'others':len(others)}
+                        'how':how,'tried':tried,'values':len(mine),'others':len(others),
+                        'loaded':len(have),'load_form':form,'unknown':len(unknown),'took_unknown':bool(unknown and last)}
             except Exception as e:
                 tried.append(f'{label}: {e}')
         raise NavigatorApiError('行分割:カテゴリ',NAVI_ERROR,
-                                f'「{spec.get("column","")}」のカテゴリを絞れませんでした。試した形: '+' / '.join(tried))
+                                f'「{spec.get("column","")}」のカテゴリを絞れませんでした'
+                                f'（読み込み={form or "失敗"} / DLLが持っている値={len(have)}種 / '
+                                f'担当={len(mine)}種 / 外す={len(others)}種）。試した形: '+' / '.join(tried))
 
     def change_condition_cp(self,h_cp,category,target):
         """管理ポイントを条件として絞る（NaviChangeConditionCP: hCPoint, rc, category, master, target）。"""
