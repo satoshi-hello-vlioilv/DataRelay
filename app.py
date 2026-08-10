@@ -25,8 +25,8 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.46.0'; APP_VERSION_TITLE='同じ内容が続くログを1本にまとめる'; APP_RELEASED_AT='2026-08-10'
-BUILD_VERSION=f'{APP_VERSION}-logdedup'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.47.0'; APP_VERSION_TITLE='パート側でも軸の値を読み込む'; APP_RELEASED_AT='2026-08-10'
+BUILD_VERSION=f'{APP_VERSION}-partreload'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリに同梱する仕様書。ここに登録したものだけが画面から開ける。
 # 画面からはこのidしか受け取らないので、任意のパスを読ませることはできない。
 DOCS=[
@@ -43,7 +43,16 @@ def docs_dir():
 
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
-{'version':'1.46.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+{'version':'1.47.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'【原因判明】行分割が NAVI_ERROR_NONMATCH（0x17）で止まっていたのは、パート側の管理ポイントに値が1つも載っていなかったためです。全値型はカタログを開くたびにカテゴリが空になります。軸を調べたのは別のプロセスなので、その読み込みはパートの手元には残っていません。',
+'パートでも、絞る前に NaviReloadCategory で値を読み込ませるようにしました。読み込めた件数と読み込み方はログに残します。',
+'絞り込みに使う文字列は、いまDLLが持っている一覧からそのまま取ります。手元で持ち回った文字列と細部が違っても食い違いません。',
+'調べた時点に無かった値は、最後の片が引き取ります。どの片にも入らない値があると、その行が結果から落ちるためです。',
+'重みの分からない値へ「平均」を配るのをやめ、中央値にしました。実測では614種で全14279行を説明できているのに、残り255種へ平均を配って合計を42%水増しし、片寄りを実際より軽く見せていました。',
+'その結果、片寄りの見立てが実態に合うようになりました。検査番号は値ひとつで約9割を占めるため、一番重い片は約12,300行（均等なら7,140行 / 1.7倍）、この軸で縮む上限は約1.16倍です。分割数を増やしても頭打ちです。',
+'片寄りの数字を同じ物差しでそろえました。「単独で9割なのに一番重い片は6割」のような噛み合わない表示は出ません。',
+]},
+{'version':'1.46.0','date':'2026-08-10','title':'同じ内容が続くログを1本にまとめる','notes':[
 '短い間に同じことを言い続ける行を、1本にまとめるようにしました。待機中・進捗・途絶の警告などが延々と並ばなくなり、ログが軽くなります。',
 'まとめても時間は測れます。残すのは「続きはじめの1行」と「最後の1行」で、最後の1行は発生した時刻のまま出します。区間の両端が残るので、いつからいつまで同じ状態だったかを後から出せます。',
 '最後の1行には「同じ内容を◯行省略（◯秒間・これが最後の1行）」と書き足します。何を省いたかが分からないまま消えることはありません。',
@@ -1457,15 +1466,21 @@ def axis_usable_parts(axis,want):
 def balance_values(values,parts,weights=None):
  """値を parts 組へ配る。重み（その値の行数の目安）があれば、重みの合計が均等になるように配る。
 
- 重みが分からない値は「平均くらい」として扱う。実行時に増えていた値がここに入る。
+ 重みが分からない値は「よくある大きさ」＝中央値として扱う。実行時に増えていた値がここに入る。
+ 平均ではなく中央値を使う。ひとつの値が全体の9割を占めるような軸では、平均が実態から大きく
+ 離れるためで、2026-08-10の実測では 614種で全14279行を説明できているのに、重みの無い255種へ
+ 平均(23.3)を配って合計を42%も水増しし、片寄りを実際より軽く見せていた。
  重みそのものが目安なので、狙うのは完全な均等ではなく、極端な偏りを避けること。
  """
  vals=[str(v) for v in (values or [])]
  parts=max(1,int(parts))
  if len(vals)<parts or parts<1:return None
  w={str(k):float(v) for k,v in (weights or {}).items() if str(k) in set(vals)}
- avg=(sum(w.values())/len(w)) if w else 1.0
- items=sorted(((float(w.get(v,avg)),v) for v in vals),key=lambda x:(-x[0],x[1]))
+ fill=1.0
+ if w:
+  s=sorted(w.values());m=len(s)
+  fill=max(1.0,(s[m//2] if m%2 else (s[m//2-1]+s[m//2])/2))
+ items=sorted(((float(w.get(v,fill)),v) for v in vals),key=lambda x:(-x[0],x[1]))
  bins=[[0.0,[]] for _ in range(parts)]
  for wt,v in items:
   b=min(bins,key=lambda x:(x[0],len(x[1])))
@@ -1506,7 +1521,7 @@ def plan_axis_split(axis,parts,weights=None,total_rows=0):
   if not cuts:return None
   each=int(total_rows/parts) if total_rows else 0
   return [{'index':i+1,'row_axis':{'kind':'period','column':axis['name'],'locate':axis['locate'],
-                                   'location':axis['location'],'index':axis['index'],'parts':parts,
+                                   'location':axis['location'],'index':axis['index'],'part':i+1,'parts':parts,
                                    'from':f,'to':t,'total_rows':int(total_rows or 0),'expect_rows':each}}
           for i,(f,t) in enumerate(cuts)]
  vals=[str(x) for x in (axis.get('categories') or [])]
@@ -1517,8 +1532,11 @@ def plan_axis_split(axis,parts,weights=None,total_rows=0):
  for i,g in enumerate(groups):
   mine=set(g['values'])
   expect=int(round(total_rows*g['weight']/total_w)) if (total_rows and total_w) else 0
+  # part は「何番目の片か」。実行時に増えていた値を最後の片が引き取るために要る
+  # （どの片にも入らない値があると、その行が結果から落ちる）。index は管理ポイントの並び順。
   out.append({'index':i+1,'row_axis':{'kind':'category','column':axis['name'],'locate':axis['locate'],
-                                      'location':axis['location'],'index':axis['index'],'parts':parts,
+                                      'location':axis['location'],'index':axis['index'],
+                                      'part':i+1,'parts':parts,
                                       'values':g['values'],'others':[v for v in vals if v not in mine],
                                       'total_rows':int(total_rows or 0),'expect_rows':expect,
                                       'weight':g['weight']}})
@@ -1537,16 +1555,15 @@ def axis_skew(plan,weights=None):
  total=sum(base)
  if total<=0:return None
  n=len(base);even=total/n;mx=max(base)
+ # 占有率は、行数の見込みと同じ物差しで出す。別々の分母で出すと
+ # 「単独で9割なのに一番重い片は6割」のような、噛み合わない数字が並ぶ。
  top=None
- if weights:
+ solo=[(b,len((x.get('row_axis') or {}).get('values') or [])) for b,x in zip(base,plan)]
+ one=[r for r,k in solo if k==1]
+ if one:top=max(one)/total
+ if top is None and weights:
   try:top=max(float(v) for v in weights.values())/float(sum(float(v) for v in weights.values()) or 1)
   except Exception:top=None
- if top is None:
-  # 重みが無くても、単独の値しか入っていない片があればそれが最大の値そのもの。
-  solo=[(int((x.get('row_axis') or {}).get('expect_rows') or 0),len((x.get('row_axis') or {}).get('values') or []))
-        for x in plan]
-  one=[r for r,k in solo if k==1]
-  if one:top=max(one)/total
  return {'parts':n,'max_rows':int(round(mx)),'even_rows':int(round(even)),
          'ratio':round(mx/even,2) if even else 0,'total_rows':int(round(total)),
          'top_share':round(top,4) if top else None,
@@ -3465,7 +3482,11 @@ def process_split_part(j,cfg,user,pw,server,out_csv,drop_columns,part_label='',r
             part_label,applied['column'],row_axis.get('location'),int(row_axis.get('index') or 0)+1,
             row_axis.get('kind'),applied.get('form'),applied.get('how'),
             (f"期間={applied.get('from')}〜{applied.get('to')}" if row_axis.get('kind')=='period'
-             else f"担当={applied.get('values')}種 / 外した={applied.get('others')}種"),
+             else (f"このプロセスへ読み込めた={applied.get('loaded')}種({applied.get('load_form')}) "
+                   f"担当={applied.get('values')}種 / 外した={applied.get('others')}種"
+                   +(f" / 調べた時点に無かった値={applied.get('unknown')}種"
+                     +('をこの片が引き取りました' if applied.get('took_unknown') else 'は後ろの片が引き取ります')
+                     if applied.get('unknown') else ''))),
             time.perf_counter()-t)
    for x in (applied.get('tried') or []):log.info('SPLIT_PART_ROWAXIS_TRIED part=%s %s',part_label,x)
   if row_condition:
