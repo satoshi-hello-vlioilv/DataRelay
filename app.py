@@ -25,8 +25,8 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.42.0'; APP_VERSION_TITLE='分割点を実行時のデータで決める'; APP_RELEASED_AT='2026-08-08'
-BUILD_VERSION=f'{APP_VERSION}-live'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.43.0'; APP_VERSION_TITLE='影実行の画面でログも追える'; APP_RELEASED_AT='2026-08-08'
+BUILD_VERSION=f'{APP_VERSION}-ilog'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリに同梱する仕様書。ここに登録したものだけが画面から開ける。
 # 画面からはこのidしか受け取らないので、任意のパスを読ませることはできない。
 DOCS=[
@@ -43,6 +43,15 @@ def docs_dir():
 
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
+{'version':'1.43.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'「RNEを調べる」の手順3（速さを試す）に、ログの簡易ビューワを付けました。影実行を見ながら、そのままログを追えます。「ログ・診断」タブへ行き来する必要がなくなります。',
+'表示は「分割まわり / エラーと警告 / すべて」から選べます。既定の「分割まわり」は SPLIT_・AXIS_・ROW_・COLUMN_ の行だけを出すので、影実行に関係のない行が混ざりません。',
+'語での絞り込みもできます（正規表現も可。壊れた式でも落ちず、そのまま語として扱います）。',
+'影実行が走っている間は2秒ごとに自動更新し、新しい行が見えるところまで送ります。実行が終われば止まります。閉じている間は読みに行きません。',
+'「表示中をコピー」で絞り込んだ内容を、「全文コピー」で絞り込み無しの全文を、その場でクリップボードへ入れられます。',
+'色分けは「ログ・診断」と同じです（エラーは赤、警告は黄）。',
+'絞り込みと行数の上限はサーバー側でかけています（/api/log の filter・q・limit）。実行中に何度読んでも重くなりません。',
+]},
 {'version':'1.42.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
 '分割点を、実行するその場のデータで決めるようにしました。事前の下調べは目安として表示するだけで、実際の割り当てには使いません。',
 '実行の直前に軸の値をサーバーから読み直し、その結果だけで組を作ります。仕掛のように件数が動くものでも、増えた値・消えた値をその場で取り込みます。',
@@ -5347,9 +5356,38 @@ def navigator_api_status():
   _log_api_exports(exports_dll,exports,[])
   return jsonify(ok=False,error=str(e),mode='Navigator API',cached=False,attempts=attempts,exports=exports,exports_bound=[],issues=dll_diagnostic_issues(attempts,pybits,exports,[])),200
 
+# 影実行を見ながらログも追いたい、という使い方が多い。1行ずつ全部返すと重いので、
+# 絞り込みと行数の上限をサーバー側で受けられるようにする。既定の挙動は今までどおり。
+LOG_FILTERS={
+ 'split':(r'SPLIT_|AXIS_|ROW_|COLUMN_|CONDITION_ITEMS|SPLIT_BASELINE','分割まわり'),
+ 'problem':(r'\[ERROR\]|\[WARNING\]','エラーと警告'),
+ 'all':('','すべて'),
+}
+def read_log_lines(limit=1200,q='',preset=''):
+ p=LOCAL_LOGS/'app.log'
+ if not p.exists():return [],0
+ lines=p.read_text(encoding='utf-8',errors='replace').splitlines()
+ total=len(lines)
+ pat=(LOG_FILTERS.get(preset) or ('',''))[0]
+ if pat:
+  try:rx=re.compile(pat)
+  except re.error:rx=None
+  if rx:lines=[x for x in lines if rx.search(x)]
+ q=str(q or '').strip()
+ if q:
+  try:rq=re.compile(q,re.I)
+  except re.error:rq=None
+  lines=[x for x in lines if (rq.search(x) if rq else q.lower() in x.lower())]
+ n=max(1,min(int(limit or 1200),5000))
+ return lines[-n:],total
+
 @app.get('/api/log')
 def get_log():
- p=LOCAL_LOGS/'app.log'; return jsonify(text='\n'.join(p.read_text(encoding='utf-8',errors='replace').splitlines()[-1200:]) if p.exists() else '')
+ try:limit=int(request.args.get('limit') or 1200)
+ except Exception:limit=1200
+ lines,total=read_log_lines(limit,request.args.get('q') or '',request.args.get('filter') or '')
+ return jsonify(text='\n'.join(lines),total=total,matched=len(lines),
+                filters=[{'id':k,'label':v[1]} for k,v in LOG_FILTERS.items()])
 @app.post('/api/log/clear')
 def clear_log():
  p=LOCAL_LOGS/'app.log'; p.parent.mkdir(exist_ok=True)
