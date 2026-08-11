@@ -380,6 +380,36 @@ tr:has(.rowprogress.is-running) td{background:#f6fcfd}tr:has(.rowprogress.is-err
 .naming-format-field{display:grid;gap:4px;font-size:12px;font-weight:800;color:#3f5661;min-width:230px}
 .naming-format-field select{min-width:230px}
 .naming-format-row .format-note{flex:1 1 260px;min-width:0;margin-top:0;color:#0a6c86;font-weight:700;line-height:1.5;align-self:center}
+/* --- 同時に出す形式 -----------------------------------------------------
+   主の形式と対等に見えると「どれが本命か」が読めなくなる。主は選べない印として
+   出し、追加は押せるものとして並べる。選んだ結果は名前で見せる（想像させない）。 */
+.alsofmt{margin:0 0 11px;padding:11px 12px;border:1px solid #dce7ec;border-radius:9px;background:#f8fbfc}
+.af-head{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap;margin-bottom:8px}
+.af-head b{font-size:12px;color:#22404d}
+.af-head small{font-size:10.5px;color:#7f929a;line-height:1.5}
+.af-chips{display:flex;flex-wrap:wrap;gap:6px}
+.af-chip{display:grid;gap:1px;justify-items:start;text-align:left;padding:6px 11px;border:1px solid #cfdde3;
+ border-radius:7px;background:#fff;color:#3f5661;font-size:12px;font-weight:800;cursor:pointer;line-height:1.35}
+.af-chip i{font-style:normal;font-size:10px;font-weight:600;color:#8b9ca3}
+.af-chip:hover{border-color:#8fb6c2;background:#f3fafb}
+.af-chip.on{border-color:#118899;background:#e7f6f8;color:#0a5b6b;box-shadow:inset 0 0 0 1px #118899}
+.af-chip.on i{color:#3f8b98}
+.af-chip.is-primary{cursor:default;border-style:dashed;background:#eef4f6;color:#5d7681}
+.af-chip.is-primary i{display:inline-block;margin-top:1px;padding:0 5px;border-radius:999px;
+ background:#5d7681;color:#fff;font-size:9.5px;font-weight:800}
+.af-plan{margin-top:9px;font-size:11px;color:#7f929a}
+.af-plan.on{padding-top:9px;border-top:1px dashed #d3e0e6}
+.af-plan b{display:block;font-size:11.5px;color:#22404d;margin-bottom:5px}
+.af-plan small{display:block;margin-top:6px;line-height:1.6}
+.af-files{display:flex;flex-wrap:wrap;gap:5px}
+.af-file{display:inline-flex;align-items:center;gap:6px;padding:4px 9px;border-radius:6px;background:#fff;
+ border:1px solid #dce7ec;font:11px/1.5 Consolas,monospace;color:#3f5661}
+.af-file i{font-style:normal;font:9.5px/1 sans-serif;font-weight:800;color:#7f929a}
+.af-file b{font:inherit;font-weight:400}
+.af-file.is-primary{border-color:#9fd0d9;background:#f2fbfc}
+.af-file.is-primary i{color:#0a6c86}
+.also-badge{display:inline-block;margin-left:5px;padding:0 5px;border-radius:999px;background:#e7f6f8;
+ color:#0a5b6b;font-size:9.5px;font-weight:800;vertical-align:1px}
 .filename-combo{display:flex;align-items:stretch;border:1px solid #aebdc6;border-radius:6px;overflow:hidden;background:#fff}
 .filename-combo:focus-within{outline:3px solid #ccebef;border-color:#118899}
 .filename-combo input{border:0!important;border-radius:0;flex:1 1 auto;min-width:0}
@@ -1761,6 +1791,13 @@ body:has(.autosave-state.is-saving) .autosave-mark{background:#0b8ea8;box-shadow
 .mp-row.is-ng{border-color:#efcdc7;background:#fdf6f5}
 .mp-row.is-ng>i{color:#a4463d;background:#fbe9e6}
 .mp-row.is-fix>i{color:#7d8f97}
+/* 予備・いま不要のものは、あることは見せつつ主張を落とす（緑にすると要るものと紛れる） */
+.mp-row.is-fb>i{color:#5d7681;background:#eef3f5}
+.mp-row.is-un{background:#fafcfc;border-color:#eaf0f2}
+.mp-row.is-un>i{color:#8b9ca3;background:#f1f5f6}
+.mp-row.is-un .mp-main b,.mp-row.is-un .mp-main code{color:#8b9ca3}
+.mp-row.is-fb .mp-main small,.mp-row.is-un .mp-main small{color:#7f929a}
+.mp-divider{margin:9px 2px 3px;font-size:10.5px;color:#93a4ab;letter-spacing:.04em}
 .mp-main{display:grid;gap:2px;min-width:0}
 .mp-main b{font-size:12px;color:#22404d}
 .mp-main code{font:10.5px/1.5 Consolas,monospace;color:#5d7681;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

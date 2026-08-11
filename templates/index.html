@@ -102,6 +102,11 @@
 <div class="naming-sub"><b>出力ファイル名と形式</b><small>ファイル名と拡張子（出力形式）はここでまとめて設定します</small></div>
 <div class="naming-box">
 <div class="naming-format-row"><label class="naming-format-field">出力形式（＝拡張子）<select id="m-format"><option value="sqlite3">SQLite3 (.sqlite3)</option><option value="txt">TXT (.txt)</option><option value="csv">CSV (.csv)</option><option value="xlsx">EXCEL (.xlsx)</option><option value="accdb">ACCESS (.accdb)</option></select></label><small id="m-format-note" class="format-note"></small></div>
+<div class="alsofmt">
+<div class="af-head"><b>同時に出す形式</b><small>抽出はこれまでどおり1回。同じデータから、選んだ形式のファイルも一緒に作ります</small></div>
+<div class="af-chips" id="m-also"></div>
+<div class="af-plan" id="m-also-plan"></div>
+</div>
 <div class="naming-mode" role="tablist"><button type="button" id="naming-mode-fixed" class="naming-tab on" data-mode="fixed">固定名</button><button type="button" id="naming-mode-template" class="naming-tab" data-mode="template">変数で自動命名</button></div>
 <div id="naming-fixed" class="naming-pane on"><label class="naming-field">ファイル名<small class="naming-hint-inline">拡張子は入力しません（自動付与）</small><div class="filename-combo"><input id="m-output-file" list="suggest-output-file" placeholder="例: SIKALOTDEF"><span id="m-ext-suffix" class="ext-suffix">.sqlite3</span></div></label><p class="hint">同じ名前で毎回上書きします。末尾の拡張子は上の「出力形式」に自動で追従します。</p></div>
 <div id="naming-template" class="naming-pane"><label class="naming-field">命名パターン<input id="m-output-pattern" placeholder="例: {rne}_{now:%Y%m%d}"></label>

@@ -25,8 +25,8 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.59.0'; APP_VERSION_TITLE='下の帯に中身がもぐらない／横の余白に上限を決めて広い画面でも釣り合う'; APP_RELEASED_AT='2026-08-12'
-BUILD_VERSION=f'{APP_VERSION}-shell'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.60.0'; APP_VERSION_TITLE='使っていない設定の不足で診断を赤くしない／1回の抽出から複数の形式をまとめて出す'; APP_RELEASED_AT='2026-08-13'
+BUILD_VERSION=f'{APP_VERSION}-multiformat'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリに同梱する仕様書。ここに登録したものだけが画面から開ける。
 # 画面からはこのidしか受け取らないので、任意のパスを読ませることはできない。
 DOCS=[
@@ -43,7 +43,21 @@ def docs_dir():
 
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
-{'version':'1.59.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+{'version':'1.60.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'【RNEの置き場所を設定しているのに、診断が「位置検出NG」を出していました】設定のパス診断が、1つずつ「その場所が実在するか」だけを見ていました。対象がすべて個別のパス（.¥config¥rne¥○○.RNE など）で解決できていても、既定のままの「RNE基本フォルダー」が無いというだけで赤を出していました。実行は問題なく通るのに診断だけが赤い、という食い違いが起きていました。',
+'診断が、それぞれの設定が「いまの構成で本当に要るのか」を先に判断するようにしました。必ず要るもの・欠けたときだけ使う予備・いまの方式では使わないもの、の3つに分けます。赤くするのは「いま要るのに使えない」ものだけです。',
+'あわせて、いまの抽出方式で使わない設定（Navigator API方式のときの SymNavi.exe・symnavim.conf/def、DDE方式のときのAPI DLL）や、ACCDBで出す対象が無いときのACCDBテンプレートも、不足を理由に赤くしません。それぞれ「なぜ要らないのか」を書き添えます。',
+'ただし他の利用者のフォルダーを指している設定は、いま使っていなくても赤いままです（別のPCで必ず詰まるため）。',
+'一覧は「直すべきもの → いま使うもの → いまの構成では使わないもの」の順に並べ替え、使わないものは色を落として出すようにしました。',
+'',
+'【1回の抽出から、複数の形式をまとめて出せるようにしました】これまでは対象1件につき形式1つで、SQLite3とCSVの両方が要るなら同じ対象を2件作って2回抽出していました。抽出（問い合わせ・転送）は形式に関係なく共通で、形式ごとに違うのはそこから先の変換だけです。',
+'対象の編集画面「2 ファイル名」に【同時に出す形式】を追加しました。出力形式のほかに最大4つまで選べます。選んだその場に、1回の実行でできるファイル名が並びます。',
+'抽出は1回のままです。増えるのは変換と公開だけなので、対象を分けて2回走らせるより速く、同じ瞬間のデータで全形式がそろいます。ファイル名は主の形式と同じで、拡張子だけが違います。',
+'追加した形式の変換で転んでも、主の出力は公開済みのまま実行を続けます（追加のために本命を落とさないため）。結果の行に「同時出力 2/2形式（CSV・EXCEL）」のように出ます。',
+'対象の一覧では、出力形式のうしろに「＋CSV・EXCEL」の印が付きます。実行前診断にも、1回の実行で何ができるのかを出します。',
+'なお EXCEL(xlsx) を主にしていて同時出力も使う場合は、APIからXLSXを直接受け取る近道を使わず、共通の中間データを通します（受け取ったXLSXからは他の形式へ作り直せないため）。',
+]},
+{'version':'1.59.0','date':'2026-08-12','title':'下の帯に中身がもぐらない／横の余白に上限を決めて広い画面でも釣り合う','notes':[
 '【ログを見ていると、中身が下の帯の下へもぐって読めなくなっていました】画面はヘッダー・中身・下の帯の3段で組んでありますが、中身の入れ物が「はみ出したら隠す」設定のまま、帯の高さを差し引かない高さで伸びていました。帯の下に入った部分はスクロールしてもたどり着けませんでした（実測 1440x900 でセクション下端1097px・帯の上端844px、253pxが到達不能）。',
 '中身の入れ物を、帯を除いた高さにきちんと収め、入り切らないぶんはその中でスクロールするようにしました。ログ・カレンダーのどちらも、いちばん下まで読めます。ログ本体の高さも画面の高さに追従させ、背の低い画面では先にそこが縮むようにしました。',
 '',
@@ -1044,6 +1058,8 @@ def ensure_schema_upgrades():
   if 'row_axis_mode' not in cols:c.execute("ALTER TABLE jobs ADD COLUMN row_axis_mode TEXT NOT NULL DEFAULT 'first'")
   if 'row_axis_index' not in cols:c.execute('ALTER TABLE jobs ADD COLUMN row_axis_index INTEGER NOT NULL DEFAULT 1')
   if 'row_axis_name' not in cols:c.execute("ALTER TABLE jobs ADD COLUMN row_axis_name TEXT NOT NULL DEFAULT ''")
+  # 同時に出す形式。抽出は1回のままで、変換と公開だけを形式のぶん繰り返す。
+  if 'extra_formats' not in cols:c.execute("ALTER TABLE jobs ADD COLUMN extra_formats TEXT NOT NULL DEFAULT ''")
   rc=[r['name'] for r in c.execute('PRAGMA table_info(rne_columns)')]
   if rc and 'classify_json' not in rc:c.execute("ALTER TABLE rne_columns ADD COLUMN classify_json TEXT NOT NULL DEFAULT ''")
   # 条件欄のデータ項目。絞り込みの条件が付くのはここにある項目だけなので、行分割の判断に要る。
@@ -1101,6 +1117,40 @@ def normalize_output_format(value,filename=''):
 
 def output_extension(fmt):
  return {'sqlite3':'.sqlite3','txt':'.txt','csv':'.csv','xlsx':'.xlsx','accdb':'.accdb'}.get(fmt,'.sqlite3')
+OUTPUT_FORMAT_LABEL={'sqlite3':'SQLite3','txt':'TXT','csv':'CSV','xlsx':'EXCEL','accdb':'ACCESS'}
+def parse_output_format(value):
+ """形式名として読めたものだけを返す。読めなければ空（既定へ倒さない）。
+
+ normalize_output_format は分からない値を sqlite3 として扱う。同時出力の一覧に
+ 使うと、打ち間違いが黙って sqlite3 として増えてしまうので、ここは厳密にする。"""
+ fmt=str(value or '').strip().lower()
+ fmt={'sqlite':'sqlite3','db':'sqlite3','access':'accdb','excel':'xlsx','xls':'xlsx'}.get(fmt,fmt)
+ return fmt if fmt in OUTPUT_FORMAT_LABEL else ''
+
+def job_extra_formats(job):
+ """1回の抽出から、主の形式に加えて出す形式。主と重なるもの・読めないものは落とす。"""
+ primary=normalize_output_format(job.get('output_format'),job.get('output_file'))
+ raw=job.get('extra_formats')
+ if isinstance(raw,str):
+  try:raw=json.loads(raw or '[]')
+  except Exception:raw=[x for x in re.split(r'[,\s]+',raw) if x]
+ out=[]
+ for v in (raw or []):
+  f=parse_output_format(v)
+  if f and f!=primary and f not in out:out.append(f)
+ return out[:4]
+
+def job_output_plan(job,cfg,now=None):
+ """この対象が1回の実行で作るファイルの一覧。先頭が主で、名前は拡張子だけが違う。
+
+ 抽出は共通の中間データ（CSV）まで一度で済むので、形式を増やしても増えるのは
+ 変換と公開だけ。取り直しは発生しない。"""
+ base=resolve_output_filename(job,cfg,now)
+ primary=normalize_output_format(job.get('output_format'),job.get('output_file'))
+ plan=[{'format':primary,'file':base,'primary':True}]
+ for f in job_extra_formats(job):
+  plan.append({'format':f,'file':canonical_output_file(base,f),'primary':False})
+ return plan
 def canonical_output_file(filename,fmt):
  ext={'sqlite3':'.sqlite3','txt':'.txt','csv':'.csv','xlsx':'.xlsx','accdb':'.accdb'}[fmt]
  stem=Path(str(filename or 'output')).stem
@@ -3067,7 +3117,7 @@ def load():
     if x['month_days_json']:q['month_days']=json.loads(x['month_days_json'])
     if x['dates_json']:q['dates']=json.loads(x['dates_json'])
     rules.append(q)
-   fmt=normalize_output_format(r['output_format'],r['output_file']); jobs.append({'id':r['id'],'enabled':bool(r['enabled']),'name':r['name'],'rne':r['rne'],'rne_path':r['rne_path'],'output_folder':r['output_folder'],'output_format':fmt,'output_file':canonical_output_file(r['output_file'],fmt),'table':r['table_name'],'sheet':r['sheet_name'],'type':r['read_type'],'naming_mode':(r['naming_mode'] if 'naming_mode' in r.keys() else 'fixed'),'output_pattern':(r['output_pattern'] if 'output_pattern' in r.keys() else ''),'comment':(r['comment'] if 'comment' in r.keys() else ''),'split_mode':normalize_split_mode(r['split_mode'] if 'split_mode' in r.keys() else ''),'split_shape':normalize_split_shape(r['split_shape'] if 'split_shape' in r.keys() else ''),'row_axis_mode':normalize_row_axis_mode(r['row_axis_mode'] if 'row_axis_mode' in r.keys() else ''),'row_axis_index':int((r['row_axis_index'] if 'row_axis_index' in r.keys() else 1) or 1),'row_axis_name':str((r['row_axis_name'] if 'row_axis_name' in r.keys() else '') or ''),'period':_decode_period(r['period_json'] if 'period_json' in r.keys() else ''),'schedules':rules})
+   fmt=normalize_output_format(r['output_format'],r['output_file']); jobs.append({'id':r['id'],'enabled':bool(r['enabled']),'name':r['name'],'rne':r['rne'],'rne_path':r['rne_path'],'output_folder':r['output_folder'],'output_format':fmt,'output_file':canonical_output_file(r['output_file'],fmt),'table':r['table_name'],'sheet':r['sheet_name'],'type':r['read_type'],'naming_mode':(r['naming_mode'] if 'naming_mode' in r.keys() else 'fixed'),'output_pattern':(r['output_pattern'] if 'output_pattern' in r.keys() else ''),'comment':(r['comment'] if 'comment' in r.keys() else ''),'split_mode':normalize_split_mode(r['split_mode'] if 'split_mode' in r.keys() else ''),'split_shape':normalize_split_shape(r['split_shape'] if 'split_shape' in r.keys() else ''),'row_axis_mode':normalize_row_axis_mode(r['row_axis_mode'] if 'row_axis_mode' in r.keys() else ''),'row_axis_index':int((r['row_axis_index'] if 'row_axis_index' in r.keys() else 1) or 1),'row_axis_name':str((r['row_axis_name'] if 'row_axis_name' in r.keys() else '') or ''),'extra_formats':job_extra_formats({'output_format':fmt,'output_file':r['output_file'],'extra_formats':(r['extra_formats'] if 'extra_formats' in r.keys() else '')}),'period':_decode_period(r['period_json'] if 'period_json' in r.keys() else ''),'schedules':rules})
   cfg['jobs']=jobs; cfg.setdefault('settings',{}); cfg['settings'].setdefault('extract_engine','api'); cfg['settings'].setdefault('api_parallel_max_lines',PARALLEL_LINES_SUPPORTED_MAX); cfg['settings'].setdefault('api_parallel_model','process')
   # 既定の並列ラインは6。旧テスト実装では stability_profile='stable_api_serial' の環境で読込のたびに api_parallel_lines を1へ強制していた（毎回1ラインへ戻る不具合の原因）。
   # その名残マーカーが残る環境（または初期状態）だけ一度2へ引き上げ、以降はユーザーが保存した値をそのまま尊重する。
@@ -3105,7 +3155,7 @@ def _save_local(v):
   keep=[]
   for order,j in enumerate(jobs):
    jid=j.get('id') or str(uuid.uuid4()); keep.append(jid)
-   fmt=normalize_output_format(j.get('output_format'),j.get('output_file')); output_file=canonical_output_file(j.get('output_file'),fmt); log.info('設定保存 job=%s requested_format=%s saved_format=%s requested_file=%s saved_file=%s',j.get('name'),j.get('output_format'),fmt,j.get('output_file'),output_file); c.execute('INSERT OR REPLACE INTO jobs (id,display_order,enabled,name,rne,rne_path,output_folder,output_format,output_file,table_name,sheet_name,read_type,naming_mode,output_pattern,comment,split_mode,split_shape,row_axis_mode,row_axis_index,row_axis_name,period_json,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',(jid,order,int(bool(j.get('enabled',True))),j.get('name',''),j.get('rne',''),j.get('rne_path',''),j.get('output_folder',''),fmt,output_file,j.get('table','仕掛'),j.get('sheet','Page1'),j.get('type','詳細データ'),str(j.get('naming_mode') or 'fixed'),str(j.get('output_pattern') or ''),str(j.get('comment') or ''),normalize_split_mode(j.get('split_mode')),normalize_split_shape(j.get('split_shape')),normalize_row_axis_mode(j.get('row_axis_mode')),max(1,min(200,int(j.get('row_axis_index') or 1))),str(j.get('row_axis_name') or ''),json.dumps(_decode_period(json.dumps(j.get('period') or {},ensure_ascii=False)),ensure_ascii=False),now))
+   fmt=normalize_output_format(j.get('output_format'),j.get('output_file')); output_file=canonical_output_file(j.get('output_file'),fmt); log.info('設定保存 job=%s requested_format=%s saved_format=%s requested_file=%s saved_file=%s',j.get('name'),j.get('output_format'),fmt,j.get('output_file'),output_file); c.execute('INSERT OR REPLACE INTO jobs (id,display_order,enabled,name,rne,rne_path,output_folder,output_format,output_file,table_name,sheet_name,read_type,naming_mode,output_pattern,comment,split_mode,split_shape,row_axis_mode,row_axis_index,row_axis_name,extra_formats,period_json,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',(jid,order,int(bool(j.get('enabled',True))),j.get('name',''),j.get('rne',''),j.get('rne_path',''),j.get('output_folder',''),fmt,output_file,j.get('table','仕掛'),j.get('sheet','Page1'),j.get('type','詳細データ'),str(j.get('naming_mode') or 'fixed'),str(j.get('output_pattern') or ''),str(j.get('comment') or ''),normalize_split_mode(j.get('split_mode')),normalize_split_shape(j.get('split_shape')),normalize_row_axis_mode(j.get('row_axis_mode')),max(1,min(200,int(j.get('row_axis_index') or 1))),str(j.get('row_axis_name') or ''),json.dumps(job_extra_formats({**j,'output_format':fmt}),ensure_ascii=False),json.dumps(_decode_period(json.dumps(j.get('period') or {},ensure_ascii=False)),ensure_ascii=False),now))
    c.execute('DELETE FROM schedules WHERE job_id=?',(jid,))
    for ro,q in enumerate(j.get('schedules',[])):
     c.execute('INSERT INTO schedules VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',(q.get('id') or str(uuid.uuid4()),jid,ro,int(bool(q.get('enabled',True))),q.get('name','実行ルール'),q.get('type','daily'),q.get('time','06:00'),q.get('interval_minutes'),json.dumps(q.get('weekdays'),ensure_ascii=False) if 'weekdays' in q else None,json.dumps(q.get('month_days'),ensure_ascii=False) if 'month_days' in q else None,json.dumps(q.get('dates'),ensure_ascii=False) if 'dates' in q else None,now))
@@ -4014,6 +4064,55 @@ def publish(src,dst,backup_root,generations,from_pending=False,backup_enabled=Tr
    try:incoming.unlink()
    except OSError:pass
 
+def publish_extra_formats(j,cfg,intermediate,out_dir,work_dir,backup,stamp,line=''):
+ """主の形式を公開したあと、同じ中間データから残りの形式も作って公開する。
+
+ 抽出（Navigatorへの問い合わせと転送）は済んでいるので、ここで増えるのは変換と
+ 公開だけ。取り直しは一切しない。1つ転んでも残りは続ける ―― 追加の形式のために
+ 主の出力まで落とすと、本末転倒になるため。"""
+ extras=job_extra_formats(j)
+ if not extras or not intermediate:return []
+ s=cfg['settings'];made=[]
+ for fmt in extras:
+  started=time.perf_counter();name=canonical_output_file(j['output_file'],fmt)
+  target=out_dir/name;work=work_dir/f'{Path(name).stem}_{stamp}{Path(name).suffix}'
+  row={'format':fmt,'file':name,'target':str(target),'ok':False,'published':False,'error':''}
+  try:
+   sub=dict(j);sub['output_format']=fmt;sub['output_file']=name
+   apply_pending(target,backup,int(s['backup_generations']),backup_enabled=bool(s.get('backup_enabled',True)),
+                 retention_days=int(s.get('backup_retention_days',30)),
+                 generation_limit_enabled=bool(s.get('backup_generation_limit_enabled',True)),
+                 backup_mode=str(s.get('backup_mode','generations')))
+   t=phase_log('extra_format_conversion',job=j['name'],line=line,format=fmt)
+   nr,nc=export_data(intermediate,work,sub,bool(s['reject_zero_rows']))
+   phase_log('extra_format_conversion',t,job=j['name'],line=line,format=fmt,rows=nr,columns=nc)
+   pub=publish(work,target,backup,int(s['backup_generations']),backup_enabled=bool(s.get('backup_enabled',True)),
+               retention_days=int(s.get('backup_retention_days',30)),
+               generation_limit_enabled=bool(s.get('backup_generation_limit_enabled',True)),
+               backup_mode=str(s.get('backup_mode','generations')))
+   row.update({'ok':True,'published':pub['published'],'pending':pub.get('pending',''),
+               'rows':nr,'columns':nc,'elapsed':round(time.perf_counter()-started,2)})
+   log.info('EXTRA_FORMAT_PUBLISHED line=%s job=%s format=%s rows=%s columns=%s elapsed=%.2fs target=%s published=%s',
+            line,j['name'],fmt,nr,nc,time.perf_counter()-started,target,pub['published'])
+  except Exception as e:
+   row['error']=str(e)
+   log.warning('EXTRA_FORMAT_FAILED line=%s job=%s format=%s error=%s（主の出力は公開済みのため実行は続けます）',
+               line,j['name'],fmt,e)
+  finally:
+   try:
+    if work.exists():work.unlink()
+   except OSError:pass
+  made.append(row)
+ return made
+
+def extra_format_note(extras):
+ """結果の1行に足す、同時出力のまとめ。"""
+ if not extras:return ''
+ done=[x for x in extras if x['ok']];bad=[x for x in extras if not x['ok']]
+ text=f' / 同時出力 {len(done)}/{len(extras)}形式（'+'・'.join(OUTPUT_FORMAT_LABEL.get(x['format'],x['format']) for x in done)+'）' if done else ''
+ if bad:text+=f' / 失敗 '+'・'.join(OUTPUT_FORMAT_LABEL.get(x['format'],x['format']) for x in bad)
+ return text
+
 def process_catalog_inspect(j,cfg,user,pw,server,want=None):
  """RNEを開いて中身を読み取る。ワーカープロセスから呼ばれる。
 
@@ -4653,8 +4752,14 @@ def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,
   stamp=datetime.now().strftime('%Y%m%d_%H%M%S_%f')+f'_L{job_index}'
   xls=dde_work/f'navi_{job_index}_{stamp}.xls';local_export=dde_work/'export';local_export.mkdir(parents=True,exist_ok=True)
   db=local_export/f'{Path(j["output_file"]).stem}_{stamp}{Path(j["output_file"]).suffix}'
-  common_intermediate='API_DIRECT_XLSX' if fmt=='xlsx' else 'CSV'
-  planned=db if fmt=='xlsx' else dde_work/f'navi_{job_index}_{stamp}.csv'
+  # 同時に出す形式があるなら、共通の中間データ(CSV)を必ず通す。XLSXの直接受信は速いが、
+  # 受け取ったXLSXからは他の形式へ作り直せないので、1回の抽出で複数形式を出せなくなる。
+  extras=job_extra_formats(j)
+  allow_direct_xlsx=(fmt=='xlsx' and not extras)
+  common_intermediate='API_DIRECT_XLSX' if allow_direct_xlsx else 'CSV'
+  planned=db if allow_direct_xlsx else dde_work/f'navi_{job_index}_{stamp}.csv'
+  if extras:
+   log.info('MULTI_FORMAT job=%s primary=%s extras=%s intermediate=CSV note=抽出は1回のまま変換と公開だけを繰り返します',j['name'],fmt,','.join(extras))
   phase_profile_add('job_preflight',max(0.0,time.perf_counter()-_preflight_started-_pending_elapsed))
   update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='開始',percent=line_percent('session',0),detail=fmt,phase='session');log.info('PARALLEL_JOB_START line=%s job=%s index=%s/%s format=%s target=%s',line_name,j['name'],job_index,total_jobs,fmt,target)
   log.info('PIPELINE job=%s engine=api parallel_line=%s common_intermediate=%s format=%s planned_intermediate=%s converted=%s target=%s',j['name'],line_name,common_intermediate,fmt,planned,db,target)
@@ -4714,7 +4819,7 @@ def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,
    phase_log('api_execute_catalog',t,job=j['name'],line=line_name,number=api_number,api_elapsed=f'{api_elapsed:.2f}s',rows_per_sec=f'{api_number/api_elapsed:.0f}' if api_elapsed>0 else '0')
    t=phase_log('api_get_dimensions',job=j['name'],line=line_name);expected_rows,expected_cols=api_client.dimensions(handle);phase_log('api_get_dimensions',t,job=j['name'],line=line_name,rows=expected_rows,columns=expected_cols)
    api_direct_output=False
-   if fmt=='xlsx':
+   if allow_direct_xlsx:
     update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='受信・保存',percent=line_percent('transfer',0),detail='XLSXを直接受信',phase='transfer')
     try:
      if db.exists():
@@ -4749,6 +4854,10 @@ def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,
   else:
    t=phase_log('format_conversion',job=j['name'],line=line_name,format=fmt);nr,nc=export_data(intermediate,db,j,bool(cfg['settings']['reject_zero_rows']),expected_rows,expected_cols);phase_log('format_conversion',t,job=j['name'],line=line_name,format=fmt,rows=nr,columns=nc)
   update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='公開',percent=line_percent('publish',0),detail=f'{Path(target).name} へ公開中',phase='publish');t=phase_log('publish',job=j['name'],line=line_name);pub=publish(db,target,backup,int(cfg['settings']['backup_generations']),backup_enabled=bool(cfg['settings'].get('backup_enabled',True)),retention_days=int(cfg['settings'].get('backup_retention_days',30)),generation_limit_enabled=bool(cfg['settings'].get('backup_generation_limit_enabled',True)),backup_mode=str(cfg['settings'].get('backup_mode','generations')));phase_log('publish',t,job=j['name'],line=line_name,published=pub['published'])
+  extra_results=[]
+  if extras:
+   update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='同時出力',percent=line_percent('publish',0.6),detail=f'あと{len(extras)}形式を同じデータから作成中',phase='publish')
+   extra_results=publish_extra_formats(j,cfg,intermediate,out_dir,local_export,backup,stamp,line_name)
   total=time.perf_counter()-job_started
   update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='完了',percent=100,detail=f'{nr}件/{nc}列',elapsed=round(total,1));log.info('PARALLEL_JOB_RESULT line=%s job=%s format=%s rows=%s columns=%s elapsed=%.2fs target=%s published=%s',line_name,j['name'],fmt,nr,nc,total,target,pub['published'])
   log.info('JOB_PROFILE line=%s job=%s rows=%s columns=%s %s',line_name,j['name'],nr,nc,phase_profile_summary())
@@ -4758,7 +4867,7 @@ def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,
   split_label=('' if not split_used else
                (f' / 競争は{"分割なし" if race_winner=="normal" else split_shape_text}の勝ち' if race_winner
                 else f' / {split_shape_text}'))
-  result=f'{j["name"]}: {nr}件/{nc}列 / {total:.1f}秒'+split_label+('' if pub['published'] else f' / 更新保留: {pub["pending"]}')
+  result=f'{j["name"]}: {nr}件/{nc}列 / {total:.1f}秒'+split_label+('' if pub['published'] else f' / 更新保留: {pub["pending"]}')+extra_format_note(extra_results)
   # 列名はここでしか分からないので、作業ファイルの見出しだけ読んで持ち帰る。書き込みは親プロセスが行う
   # （ワーカーが同時に設定DBへ書くと競合するため）。失敗しても抽出結果には影響させない。
   column_names=[]
@@ -4778,7 +4887,7 @@ def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,
    try:tbytes=Path(intermediate).stat().st_size if intermediate and Path(intermediate).is_file() else 0
    except Exception:tbytes=0
   return {'ok':True,'job':j['name'],'format':fmt,'rows':nr,'columns':nc,'elapsed':total,'target':str(target),'result':result,
-          'column_names':column_names,'rne_path':str(rp),
+          'column_names':column_names,'rne_path':str(rp),'extra_formats':extra_results,
           'split_parts':(int(run_stats.get('parts') or 0) or (len(split_used['plan']) if split_used else 0)) if split_used else 0,
           'split_shape':(split_used['mode'] if split_used else ''),'split_how':split_shape_text if split_used else '',
           'row_axis':run_stats.get('row_axis') or '','axis_seconds':run_stats.get('axis_seconds'),
@@ -5007,7 +5116,11 @@ def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=No
    phase_profile_reset(); preflight_started=phase_log('job_preflight',job=j['name']); progress('open',f'{j["name"]}: 入出力先を確認しています',22,activity_detail='事前確認',activity_value='出力先・保留ファイル・RNEを確認'); rp=resolve_rne_path(j,cfg); out_dir=resolve_path(j.get('output_folder') or cfg['default_output_folder']); fmt=validate_output_contract(j,'before-extraction'); j['_accdb_template']=str(resolve_path(cfg.get('accdb_template','.\\assets\\empty.accdb'))); target=out_dir/j['output_file']; set_status(output_target=str(target)); log.info('実行設定 job=%s format=%s output_file=%s target=%s',j['name'],fmt,j['output_file'],target); apply_pending(target,backup,int(cfg['settings']['backup_generations']),backup_enabled=bool(cfg['settings'].get('backup_enabled',True)),retention_days=int(cfg['settings'].get('backup_retention_days',30)),generation_limit_enabled=bool(cfg['settings'].get('backup_generation_limit_enabled',True)),backup_mode=str(cfg['settings'].get('backup_mode','generations'))); phase_log('job_preflight',preflight_started,job=j['name'],rne=rp,target=target)
    if not rp.is_file():raise FileNotFoundError('RNEがありません: '+str(rp))
    stamp=datetime.now().strftime('%Y%m%d_%H%M%S_%f'); xls=dde_work/f'navi_{job_index}_{stamp}.xls'; local_export=dde_work/'export'; local_export.mkdir(parents=True,exist_ok=True); db=local_export/f'{Path(j["output_file"]).stem}_{stamp}{Path(j["output_file"]).suffix}'; log.info('変換作業先 local=%s',db); esc=lambda x:str(x).replace('"','""')
-   api_planned=(db if engine=='api' and fmt=='xlsx' else (dde_work/f'navi_{job_index}_{stamp}.csv' if engine=='api' else xls));common_intermediate=('API_DIRECT_XLSX' if engine=='api' and fmt=='xlsx' else ('CSV' if engine=='api' else 'XLS'))
+   # 同時に出す形式があるなら、共通の中間データを必ず通す（XLSXの直接受信からは他形式へ作り直せない）
+   extras=job_extra_formats(j)
+   allow_direct_xlsx=(engine=='api' and fmt=='xlsx' and not extras)
+   api_planned=(db if allow_direct_xlsx else (dde_work/f'navi_{job_index}_{stamp}.csv' if engine=='api' else xls));common_intermediate=('API_DIRECT_XLSX' if allow_direct_xlsx else ('CSV' if engine=='api' else 'XLS'))
+   if extras:log.info('MULTI_FORMAT job=%s primary=%s extras=%s note=抽出は1回のまま変換と公開だけを繰り返します',j['name'],fmt,','.join(extras))
    job_started=time.perf_counter(); log.info('PIPELINE job=%s engine=%s common_intermediate=%s format=%s planned_intermediate=%s converted=%s target=%s',j['name'],engine,common_intermediate,fmt,api_planned,db,target)
    if engine=='api':
     progress('open',f'{j["name"]}: APIでRNEを読み込んでいます',28,current_job_id=j['id'],activity_detail='Navigator API 1/3',activity_value=str(rp))
@@ -5034,7 +5147,7 @@ def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=No
     t=phase_log('api_execute_catalog',job=j['name']); api_number,api_elapsed=api_client.execute(handle); phase_log('api_execute_catalog',t,job=j['name'],number=api_number,api_elapsed=f'{api_elapsed:.2f}s',rows_per_sec=f'{api_number/api_elapsed:.0f}' if api_elapsed>0 else '0')
     t=phase_log('api_get_dimensions',job=j['name']);expected_rows,expected_cols=api_client.dimensions(handle);phase_log('api_get_dimensions',t,job=j['name'],rows=expected_rows,columns=expected_cols)
     api_direct_output=False;api_csv=None
-    if fmt=='xlsx':
+    if allow_direct_xlsx:
      progress('wait',f'{j["name"]}: APIからXLSXへ直接保存しています',50,activity_detail='Navigator API 3/3',activity_value=str(db))
      try:
       if db.exists():
@@ -5072,7 +5185,7 @@ def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=No
     t=phase_log('rne_close',job=j['name']); dde_exec(conv,'Close','[Close()]'); phase_log('rne_close',t,job=j['name'])
    if fmt=='accdb' and access_prewarm_thread is not None:
     join_started=time.perf_counter();alive_before=access_prewarm_thread.is_alive();access_prewarm_thread.join(timeout=2.0);log.info('ACCDB_PREWARM_JOIN alive_before=%s alive_after=%s elapsed=%.2fs',alive_before,access_prewarm_thread.is_alive(),time.perf_counter()-join_started)
-   if engine=='api' and fmt=='xlsx' and locals().get('api_direct_output'):
+   if allow_direct_xlsx and locals().get('api_direct_output'):
     progress('export',f'{j["name"]}: API直接XLSXを検証しています',70,activity_detail='形式別変換工程',activity_value='CSV変換なし / API直接出力')
     t=phase_log('format_conversion',job=j['name'],format=fmt,mode='api_direct_xlsx');nr,nc=int(expected_rows),int(expected_cols);phase_log('format_conversion',t,job=j['name'],format=fmt,mode='api_direct_xlsx',rows=nr,columns=nc)
    else:
@@ -5080,8 +5193,12 @@ def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=No
     t=phase_log('format_conversion',job=j['name'],format=fmt); nr,nc=export_data(intermediate,db,j,bool(cfg['settings']['reject_zero_rows']),expected_rows,expected_cols); phase_log('format_conversion',t,job=j['name'],format=fmt,rows=nr,columns=nc)
    progress('publish',f'{j["name"]}: 検査済みファイルを公開しています',90,activity_detail='公開工程',activity_value=str(target))
    t=phase_log('publish',job=j['name']); pub=publish(db,target,backup,int(cfg['settings']['backup_generations']),backup_enabled=bool(cfg['settings'].get('backup_enabled',True)),retention_days=int(cfg['settings'].get('backup_retention_days',30)),generation_limit_enabled=bool(cfg['settings'].get('backup_generation_limit_enabled',True)),backup_mode=str(cfg['settings'].get('backup_mode','generations'))); phase_log('publish',t,job=j['name'],published=pub['published'])
+   extra_results=[]
+   if extras:
+    progress('publish',f'{j["name"]}: 同じデータからあと{len(extras)}形式を作成しています',95,activity_detail='同時出力',activity_value='・'.join(OUTPUT_FORMAT_LABEL.get(x,x) for x in extras))
+    extra_results=publish_extra_formats(j,cfg,intermediate,out_dir,local_export,backup,stamp)
    total=time.perf_counter()-job_started
-   detail=f'{nr}件/{nc}列 / {total:.1f}秒'+('' if pub['published'] else f' / 更新保留: {pub["pending"]}')
+   detail=f'{nr}件/{nc}列 / {total:.1f}秒'+('' if pub['published'] else f' / 更新保留: {pub["pending"]}')+extra_format_note(extra_results)
    results.append(f'{j["name"]}: '+detail); completed_ids.append(j['id'])
    # 直列（DDE / アプリ内API）でも並列と同じ実績を残す。ここを空にすると一覧の実績欄が
    # 「件数だけ」になり、所要も転送量も後から追えなくなる。
@@ -5495,6 +5612,9 @@ def get_config():
     j['output_file_segments']=segs
    except Exception:
     j['output_file_preview']='';j['output_file_segments']=[]
+  # 1回の実行で実際に何ができるのか。名前まで組み立てて返す（画面で作り直さない）
+  try:j['output_plan']=job_output_plan(j,c,now)
+  except Exception:j['output_plan']=[]
  return jsonify(c)
 @app.put('/api/config')
 def put_config():save(request.get_json(force=True));return jsonify(ok=True)
@@ -7489,30 +7609,94 @@ def path_writable(p):
   return True
  except Exception:return False
 
+def path_setting_roles(c):
+ """それぞれのパス設定が、いまの構成で本当に要るのかを決める。
+
+ これまでは1つずつ「実体があるか」だけを見ていたため、使ってすらいない設定まで
+ 「このPCでは使えません」と赤で出していた。実測 2026-08-12: 対象がすべて個別の
+ パスで解決できているのに、既定のままの RNE基本フォルダー(.\rne)が無いという理由で
+ NGになり、実行は問題なく通るのに診断だけが赤かった。
+
+ 返す役割は3つ。
+   required … いまの構成で必ず要る。無ければ実行が止まる
+   fallback … 何かが欠けたときにだけ使う。無くても実行できるなら赤くしない
+   unused   … いまの抽出方式・出力形式では使わない
+ """
+ jobs=c.get('jobs') or []
+ engine=str((c.get('settings') or {}).get('extract_engine') or 'api').lower()
+ # RNE基本フォルダーを実際に使うのは、対象が「ファイル名だけ」を持っているとき。
+ # 個別のパス（絶対・UNC・.\ 始まり）を持つ対象は、この設定を一切見ない。
+ def leans_on_rne_root(j):
+  raw=str(j.get('rne_path') or j.get('rne') or '').strip()
+  if not raw:return True
+  expanded=os.path.expandvars(os.path.expanduser(raw))
+  if Path(expanded).is_absolute() or expanded.startswith('\\\\'):return False
+  return not raw.startswith(('.\\','..\\','./','../'))
+ rne_users=[j for j in jobs if leans_on_rne_root(j)]
+ out_users=[j for j in jobs if not str(j.get('output_folder') or '').strip()]
+ def nobody(kind):
+  return '対象がまだ無いため、いまは使いません' if not jobs else f'登録済みの{len(jobs)}件はすべて{kind}'
+ # 同時に出す形式にACCDBが入っていれば、主の形式が何であってもテンプレートは要る
+ accdb=[j for j in jobs if normalize_output_format(j.get('output_format'),j.get('output_file'))=='accdb'
+        or 'accdb' in job_extra_formats(j)]
+ roles={}
+ # 対象のRNEが見つからないことは、この設定の落ち度ではない。個別のパスを持つ対象は
+ # 基本フォルダーを一切見ないため（resolve_rne_pathが参照しない）、ここを直しても解決しない。
+ # 見つからない対象は、その対象自身の問題として実行前診断が出す。
+ roles['rne_folder']=('required',f'{len(rne_users)}件の対象がこの場所を基準にします') if rne_users else \
+   ('fallback',nobody('個別のパスで解決できるため、この設定は使っていません'))
+ roles['default_output_folder']=('required',f'{len(out_users)}件の対象がこの場所へ出力します') if out_users else \
+   ('fallback',nobody('出力先を個別に持っています'))
+ dde=('required','DDE互換方式で使います') if engine=='dde' else ('unused','いまの抽出方式（Navigator API）では使いません')
+ for k in ('symnavi_exe','symnavim_conf','symnavim_def'):roles[k]=dde
+ roles['navigator_api_dll']=(('fallback','手動で指定したときだけ使います。空なら探す範囲から自動で選びます')
+   if engine=='api' else ('unused','いまの抽出方式（DDE互換）では使いません'))
+ roles['accdb_template']=(('required',f'{len(accdb)}件の対象がACCDBで出力します') if accdb
+   else ('unused','ACCDBで出力する対象がないため使いません'))
+ roles['backup_folder']=(('required','出力を差し替える前に、いまのファイルをここへ控えます')
+   if (c.get('settings') or {}).get('backup_enabled')!=False
+   else ('unused','控えを取らない設定のため使いません'))
+ return roles
+
 def machine_path_view():
  """設定値が、このPCではどこを指すのか。設定・実体・状態を1か所で見せる。
 
  別のPCへ持って行くと壊れる設定（他人のプロファイル配下）が、いちばん見つけにくい。
  実際に走らせてから「アクセスが拒否されました」で気づくことになるので、先に出す。
+
+ 赤くするのは「いま要るのに使えない」ものだけ。使っていない設定の不足で赤を出すと、
+ 本当に直すべきものが埋もれる。
  """
- c=load();rows=[]
+ c=load();rows=[];roles=path_setting_roles(c)
  for key,label in PATH_SETTING_LABEL.items():
   raw=str(c.get(key) or '')
   kind=PATH_SETTING_KIND.get(key,'folder')
+  role,why=roles.get(key,('required',''))
   try:real=resolve_path(raw)
   except Exception:real=Path(raw or '.')
-  exists=Path(real).exists()
+  exists=bool(raw) and Path(real).exists()
   foreign=foreign_profile_path(raw)
   writable=path_writable(real) if (kind=='folder' and exists) else None
-  state='ok' if exists else 'ng'
   note=''
   if foreign:
+   # 他人のフォルダーは、使う予定が無くても直す価値がある（別のPCで必ず詰まる）
    state='ng';note=f'別の利用者のフォルダー（{foreign}）を指しています。このPCでは使えません'
-  elif is_pc_path(raw):note='このPCのローカル領域（PCごとに実体が変わります）'
-  elif not exists:note=('フォルダーがありません' if kind=='folder' else 'ファイルがありません')
-  elif writable is False:state='warn';note='書き込めません（権限を確認してください）'
+  elif exists:
+   state='ok'
+   if is_pc_path(raw):note='このPCのローカル領域（PCごとに実体が変わります）'
+   if writable is False:state='warn';note='書き込めません（権限を確認してください）'
+  elif role=='required':
+   state='ng';note=('フォルダーがありません。'+why if kind=='folder' else 'ファイルがありません。'+why)
+  elif role=='unused':
+   state='ok';note=why+('' if raw else '（未設定）')
+  else:   # fallback ―― 無くても実行できる。理由を添えて、赤くはしない
+   state='ok'
+   if not raw:note=why
+   elif key=='default_output_folder':note=f'いまはありません（{why}）。出力するときに作られます'
+   else:note=f'いまはありませんが、{why}'
   rows.append({'key':key,'label':label,'kind':kind,'configured':raw,'resolved':str(real),
-               'exists':exists,'writable':writable,'portable':is_pc_path(raw) or not Path(raw).is_absolute() if raw else True,
+               'exists':exists,'writable':writable,'role':role,'why':why,
+               'portable':is_pc_path(raw) or not Path(raw).is_absolute() if raw else True,
                'foreign':foreign or '','state':state,'note':note})
  fixed=[{'label':'アプリの場所','path':str(BASE),'note':'このPCに置いてある実体'},
         {'label':'このPCのローカル領域','path':str(LOCAL_ROOT),'note':'<PC> が指す先。作業・控え・ログ・キャッシュの親'},
@@ -7521,10 +7705,14 @@ def machine_path_view():
         {'label':'設定の控え（このPC）','path':str(SETTINGS_DB),'note':'マスターから写した作業用'},
         {'label':'設定のマスター','path':str(MASTER_SETTINGS_DB),'note':'BOX上の正本。全PCで共有'}]
  bad=[x for x in rows if x['state']=='ng']
+ warn=[x for x in rows if x['state']=='warn']
+ used=[x for x in rows if x['role']!='unused']
+ if bad:summary=f'{len(bad)}件がこのPCでは使えません'
+ elif warn:summary=f'{len(warn)}件に注意があります'
+ else:summary=f'いま使う{len(used)}件はすべてこのPCで解決できます'
  return {'ok':not bad,'rows':rows,'fixed':fixed,'profile':str(Path.home()),
          'user':os.environ.get('USERNAME') or os.environ.get('USER') or '',
-         'host':socket.gethostname(),
-         'summary':(f'{len(bad)}件がこのPCでは使えません' if bad else f'{len(rows)}件すべてこのPCで解決できます')}
+         'host':socket.gethostname(),'summary':summary}
 
 @app.get('/api/machine-paths')
 def machine_paths():
@@ -7734,8 +7922,17 @@ def validate():
   add('RNE配置',j.get('name','対象')+' RNE',exists,rp,configured=j.get('rne_path'),item='rne',job_id=j.get('id'),candidates=candidates,needs_reselect=not exists and not candidates)
   op=resolve_path(j.get('output_folder') or c.get('default_output_folder','.\\output'))
   add('出力先',j.get('name','対象')+' 出力先',op.is_dir(),op,item='')
- # 出力形式に応じて必要なテンプレートだけを検査。
- accdb_jobs=[j for j in c.get('jobs',[]) if normalize_output_format(j.get('output_format'),j.get('output_file'))=='accdb']
+ # 同時出力を設定している対象は、1回の実行で何ができるのかをそのまま出す。
+ for j in c.get('jobs',[]):
+  extras=job_extra_formats(j)
+  if not extras:continue
+  try:names=' / '.join(x['file'] for x in job_output_plan(j,c))
+  except Exception:names=''
+  add('出力先',j.get('name','対象')+' 同時出力',True,
+      f'1回の抽出から {len(extras)+1}形式を作ります: {names}',item='')
+ # 出力形式に応じて必要なテンプレートだけを検査（同時出力のACCDBも含める）。
+ accdb_jobs=[j for j in c.get('jobs',[]) if normalize_output_format(j.get('output_format'),j.get('output_file'))=='accdb'
+             or 'accdb' in job_extra_formats(j)]
  if accdb_jobs:
   ap=resolve_path(c.get('accdb_template','.\\assets\\empty.accdb'));add('変換環境','ACCDB空テンプレート',ap.is_file(),ap,configured=c.get('accdb_template',''),item='accdb_template',needs_reselect=not ap.is_file())
  counts={'ok':sum(1 for x in checks if x['level']=='ok'),'warning':sum(1 for x in checks if x['level']=='warning'),'error':sum(1 for x in checks if x['level']=='error')}
