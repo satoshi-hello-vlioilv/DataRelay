@@ -1,4 +1,4 @@
-const UI_BUILD='1.56.0-onesurvey';
+const UI_BUILD='1.57.0-allin';
 let cfg,editing=null,editingRule=null,sortDir=1,scheduleInfo={},rowLive={},rowQueue={},statusFailCount=0,serverLostShown=false;const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)],E=s=>String(s??'').replace(/[&<>"']/g,x=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[x]));const uid=()=>crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random();function toast(t){$('#toast').textContent=t;$('#toast').style.display='block';setTimeout(()=>$('#toast').style.display='none',2500)}/* 設定は変えた瞬間に保存する。保存ボタンの押し忘れで、画面に見えている設定と
    実際に使われる設定が食い違うことがあったため、押す操作そのものを無くした。 */
 let saveTimer=null,saveSeq=0,saveRetry=0;
@@ -1100,6 +1100,8 @@ function renderMaster(m){
  let head={fresh:'調査済み ― 調べ直す必要はありません',stale:'RNEが更新されています ― 調べ直してください',
            none:'まだ調査していません',missing:'RNEファイルが見つかりません'}[m.state]||m.why;
  let c=m.columns||{},ax=m.axes||{},tm=m.timing||{},plans=m.plans||[];
+ masterTiming=Number(tm.total||0)||0;
+ if(typeof allinRefreshPlan==='function')allinRefreshPlan();
  let cells=[
   ['列',c.have?`${c.count}本`:'—',c.have?`外せる ${c.removable} / 固定 ${c.fixed}`:'未取得'],
   ['行の軸',ax.have?`${ax.count}本`:'—',ax.have?`分割に使える ${ax.usable}本`:'未取得'],
@@ -1213,6 +1215,9 @@ function inspReset(){
  $$('.ip-empty').forEach(e=>e.hidden=false);
  inspPlan={column:null,row:null};
  inspState('read','未実行');inspState('trial','未実行');
+ if(allinTimer){clearInterval(allinTimer);allinTimer=null}
+ ['#allin-state','#allin-result'].forEach(id=>{let e=$(id);if(e){e.hidden=true;e.innerHTML=''}});
+ allinFillAxes([]);allinSetKind('methods');allinRefreshPlan();allinResume();
  renderInspTarget();
  inspGo('read');syncTrialControls();
 }
@@ -1631,6 +1636,7 @@ function renderRowPlan(d){
   if(!d.ok){if(rb)rb.innerHTML=`<p class="ri-ng">調べられませんでした。</p><p class="ri-note">${E(d.error||'')}</p>`;inspEmpty('row',true);inspFind('row','行 調べられません','ng');return}
   if(rb)rb.innerHTML=rowSplitRender(d);
   fillAxisNames(d);
+  allinFillAxes(d.axes);
   inspEmpty('row',true);
   let ax=d.axis;
   inspFind('row',ax?`行 ${d.parts}分割可（${ax.name}）`:'行 使える軸なし',ax?'ok':'ng');
@@ -1763,6 +1769,8 @@ function partProgressHtml(list){
 }
 function splitTrialRender(d){
  let rb=$('#m-split-trial-result');if(!rb)return;
+ // 走ってもいない・結果も無いなら、空の枠を残さない（何も無い箱が1つ増えるだけ）。
+ if(!d.running&&!d.result){rb.hidden=true;rb.innerHTML='';return}
  rb.hidden=false;
  if(d.running){
   // 進み具合は「書き出されつつあるファイルの大きさ ÷ 見込みの大きさ」で出している。
@@ -1941,6 +1949,162 @@ if($('#m-split-trial'))$('#m-split-trial').onclick=async()=>{
   splitTrialTimer=setInterval(splitTrialPoll,2000);splitTrialPoll();ilogFollow(true);
  }catch(x){if(rb){rb.hidden=false;rb.innerHTML=`<p class="ri-ng">開始時にエラーが発生しました。</p>`}}
 };
+
+/* ==== まとめて測る（ALL-IN） =================================================
+   1本ずつ測らせると「どれとどれを、どの基準で比べたのか」を利用者が覚えることに
+   なる。同じ基準の上で続けて測り、速い順に並べたものを1枚で返す。
+   押すのは1つ、読むのは順位の表だけ、という形にしてある。 */
+let allinTimer=null,allinKind='methods',allinAxes=[],masterTiming=0;
+function allinShapes(){return $$('.allin-shape:checked').map(x=>x.value)}
+function allinRowParts(){return Number($('#allin-row-parts')?.value||2)||2}
+function allinParts(){return Number($('#allin-parts')?.value||0)||0}
+function allinAxisPick(){return [$('#allin-axis-a')?.value||'',$('#allin-axis-b')?.value||''].filter(Boolean)}
+/* 始める前に「何を何回測るか」を出す。押してから知るのでは遅い。 */
+function allinPlanList(){
+ let list=[],reuse=!!$('#allin-reuse')?.checked;
+ if(!reuse)list.push('分割なし（基準）');
+ if(allinKind==='axes')allinAxisPick().forEach(a=>list.push(`行${allinRowParts()}分割（${a}）`));
+ else allinShapes().forEach(sh=>list.push(split_shape_label_js(sh)));
+ return list;
+}
+function split_shape_label_js(shape){
+ let c=allinParts()||2,r=allinRowParts();
+ return shape==='row'?`行${r}分割`:shape==='grid'?`行${r}×列${c}（${r*c}片）`:`列${c}分割`;
+}
+function allinRefreshPlan(){
+ let p=$('#allin-plan');if(!p)return;
+ let list=allinPlanList(),n=list.length;
+ let one=Number(masterTiming||0);
+ let est=one?`／見込み 約${fmtSeconds(one*n)}`:'';
+ let go=$('#allin-start');
+ let measured=allinKind==='axes'?allinAxisPick().length:allinShapes().length;
+ if(go)go.disabled=!measured;
+ p.textContent=measured?`${n}本を続けて測ります: ${list.join(' → ')}${est}`
+   :(allinKind==='axes'?'比べる軸を選んでください':'比べる分け方を1つ以上選んでください');
+}
+function allinSetKind(k){
+ allinKind=k;
+ $$('.allin-kind button').forEach(b=>b.classList.toggle('on',b.dataset.akind===k));
+ $$('.allin-body').forEach(x=>x.hidden=x.dataset.akind!==k);
+ allinRefreshPlan();
+}
+/* 調べた軸を、そのまま比較の候補にする。使えない軸は出さない（測っても失敗するため）。 */
+function allinFillAxes(axes){
+ allinAxes=(axes||[]).filter(x=>x&&x.usable!==false&&x.name);
+ [['#allin-axis-a',0],['#allin-axis-b',1]].forEach(([id,i])=>{
+  let sel=$(id);if(!sel)return;
+  let keep=sel.value;
+  sel.innerHTML=allinAxes.length?allinAxes.map(a=>`<option value="${E(a.name)}">${E(a.name)}`
+    +`（${E(a.location||'')}${a.category_count?' '+Number(a.category_count).toLocaleString()+'種':''}）</option>`).join('')
+   :'<option value="">（先に「RNEを調査」）</option>';
+  if(keep&&allinAxes.some(a=>a.name===keep))sel.value=keep;
+  else if(allinAxes[i])sel.value=allinAxes[i].name;
+ });
+ allinRefreshPlan();
+}
+function allinItemRow(x){
+ let tone=x.state==='完了'?(x.identical===false?'is-ng':'is-ok'):x.state==='失敗'?'is-ng':
+          x.state==='実行中'?'is-run':x.state==='中止'?'is-off':'';
+ return `<div class="ai-item ${tone}"><i>${E(x.state)}</i><b>${E(x.label)}</b>`
+  +`<span>${x.elapsed?fmtSeconds(x.elapsed):E(x.error||x.why||'')}</span>`
+  +`${x.speedup?`<em>${x.speedup}倍</em>`:'<em></em>'}</div>`;
+}
+function allinRender(d){
+ let box=$('#allin-state'),res=$('#allin-result');
+ let items=d.items||[],sum=d.summary||{};
+ if(box){
+  box.hidden=!items.length;
+  let ng=items.filter(x=>x.state==='失敗').length,off=items.filter(x=>x.state==='中止').length;
+  box.innerHTML=items.length?`<div class="ai-head"><b>${d.running?`測定中 ${d.index}/${d.total}`
+    :`測定おわり ― 完了 ${items.filter(x=>x.state==='完了').length}件`+(ng?` / 失敗 ${ng}件`:'')+(off?` / 中止 ${off}件`:'')}</b>`
+   +`<span>${E(d.rne||'')}${d.elapsed?` / 経過 ${fmtSeconds(d.elapsed)}`:''}</span></div>`
+   +items.map(allinItemRow).join(''):'';
+ }
+ let stop=$('#allin-stop'),go=$('#allin-start');
+ if(stop)stop.hidden=!d.running;
+ if(go)go.disabled=!!d.running;
+ // 手順2のレールにも結果を出す。開かなくても、何がいちばん速かったかが分かる。
+ if(items.length)inspState('trial',d.running?`測定中 ${d.index}/${d.total}`
+   :(sum.best?`最速 ${sum.best.label}`:'使える分け方なし'),
+   d.running?'run':(sum.best?'ok':'ng'));
+ if(!res)return;
+ let rank=sum.ranked||[];
+ if(!rank.length&&!(sum.rejected||[]).length){res.hidden=true;res.innerHTML='';return}
+ res.hidden=false;
+ res.innerHTML=(sum.baseline?`<p class="ri-note">基準（分割なし）は <b>${fmtSeconds(sum.baseline)}</b>。下の順位はこの時間と比べたものです。`
+   +`行を使う形は、本番で毎回かかる<b>軸の読み直し</b>も含めた実力値です。</p>`:'')
+  +(rank.length?`<div class="ai-rank">${rank.map(x=>`<div class="ai-row${x.rank===1?' is-best':''}">`
+    +`<i class="ai-no">${x.rank}</i><b>${E(x.label)}</b>`
+    +`<span class="ai-time">${fmtSeconds(x.elapsed)}</span>`
+    +`<span class="ai-up">${x.speedup?x.speedup+'倍':'—'}</span>`
+    +`<span class="ai-save">${x.saved>0?`${fmtSeconds(x.saved)}短縮`:'短縮なし'}</span>`
+    +`<button type="button" class="secondary ai-use" data-shape="${E(x.shape)}" data-axis="${E(x.axis||'')}">本番で使う</button>`
+    +`</div>`).join('')}</div>`
+   :'<p class="ri-ng">使える分け方がありませんでした。</p>')
+  +((sum.rejected||[]).length?`<details class="ri-list"><summary>使えなかったもの（${sum.rejected.length}件）</summary>`
+    +`<div class="ai-bad">${sum.rejected.map(x=>`<div><b>${E(x.label)}</b><span>${E(x.why)}</span></div>`).join('')}</div></details>`:'');
+ $$('.ai-use').forEach(b=>b.onclick=()=>{
+  let sh=b.dataset.shape,ax=b.dataset.axis;
+  if($('#m-split-shape'))$('#m-split-shape').value=sh;
+  if($('#m-split-mode'))$('#m-split-mode').value='auto';
+  if(ax){AXIS_PICK.forEach(g=>{let n=$(g.n);if(n&&![...n.options].some(o=>o.value===ax))n.add(new Option(ax,ax))});
+   if($('#m-axis-mode'))$('#m-axis-mode').value='name';
+   if($('#m-axis-name'))$('#m-axis-name').value=ax;
+   syncAxisPick('#m-axis-mode')}
+  if(editing){editing.split_shape=sh;editing.split_mode='auto'}
+  loadRuntimeSplit();
+  toast(`本番の分け方を「${SPLIT_SHAPE_JP[sh]||sh}」${ax?`（軸 ${ax}）`:''}にしました。「設定を反映」で確定します`);
+ });
+}
+const SPLIT_SHAPE_JP={column:'列分割',row:'行分割',grid:'行×列'};
+/* 開き直したときに、まだ走っていれば途中から追いかける。画面を閉じても続くため。 */
+async function allinResume(){
+ try{
+  let d=await fetch('/api/split-trial-batch/status',{cache:'no-store'}).then(r=>r.json());
+  if(!d.running)return;
+  if(d.job_id&&editing?.id&&String(d.job_id)!==String(editing.id))return;
+  allinRender(d);
+  if(allinTimer)clearInterval(allinTimer);
+  allinTimer=setInterval(allinPoll,1500);
+ }catch{}
+}
+async function allinPoll(){
+ try{
+  let d=await fetch('/api/split-trial-batch/status',{cache:'no-store'}).then(r=>r.json());
+  // 別の対象のまとめ測定を、この画面へ出さない
+  if(d.job_id&&editing?.id&&String(d.job_id)!==String(editing.id)){
+   if(allinTimer){clearInterval(allinTimer);allinTimer=null}return}
+  allinRender(d);
+  if(d.running)splitTrialPoll();
+  else if(allinTimer){clearInterval(allinTimer);allinTimer=null;loadRuntimeSplit();ilogFollow(false)}
+ }catch{}
+}
+if($('#allin-start'))$('#allin-start').onclick=async()=>{
+ let res=$('#allin-result');
+ if(!editing?.id||!cfg.jobs.some(j=>j.id===editing.id))
+  return toast('先に「設定を反映」で対象を保存してください');
+ let payload={job_id:editing.id,kind:allinKind,parts:allinParts(),row_parts:allinRowParts(),
+              reuse_baseline:!!$('#allin-reuse')?.checked,
+              shapes:allinShapes(),axes:allinAxisPick(),...axisChoice()};
+ try{
+  let d=await fetch('/api/split-trial-batch',{method:'POST',headers:{'Content-Type':'application/json'},
+       body:JSON.stringify(payload)}).then(r=>r.json());
+  if(!d.ok)return toast(d.error||'開始できませんでした');
+  if(res){res.hidden=true;res.innerHTML=''}
+  inspEmpty('trial',true);inspState('trial',`まとめて測定中 0/${d.total}`,'run');
+  toast(`${d.total}本の測定を開始しました。実行中も他の機能を使えます`);
+  if(allinTimer)clearInterval(allinTimer);
+  allinTimer=setInterval(allinPoll,1500);allinPoll();ilogFollow(true);
+ }catch{toast('開始時にエラーが発生しました')}
+};
+if($('#allin-stop'))$('#allin-stop').onclick=async()=>{
+ let d=await fetch('/api/split-trial-batch/stop',{method:'POST'}).then(r=>r.json()).catch(()=>({}));
+ toast(d.ok?'いま測っている1本を終えたら止めます':(d.error||'止められませんでした'));
+};
+$$('.allin-kind button').forEach(b=>b.onclick=()=>allinSetKind(b.dataset.akind));
+['#allin-parts','#allin-row-parts','#allin-reuse','#allin-axis-a','#allin-axis-b']
+ .forEach(id=>{let e=$(id);if(e)e.addEventListener('change',allinRefreshPlan)});
+$$('.allin-shape').forEach(x=>x.addEventListener('change',allinRefreshPlan));
 
 /* ============================================================
    v1.18.0 データビュワー：データ一覧 / 集計表 / グラフ の3タブ構成。

@@ -1685,3 +1685,59 @@ body:has(.autosave-state.is-saving) .autosave-mark{background:#0b8ea8;box-shadow
 .rc-hint{margin-left:auto;margin-right:12px;font-size:11px;color:#80939b}
 .rc-hint b{color:#0b6d86}
 @media(max-width:1100px){.rc-hint{display:none}}
+
+
+/* V1.57: まとめて測る（ALL-IN）。押すのは1つ、読むのは順位の表だけ。 */
+.allin{border:1px solid #cfe2e7;border-radius:11px;background:#f7fcfd;padding:13px 14px;margin:11px 0}
+.allin-head{display:grid;gap:3px;margin-bottom:9px}
+.allin-head b{font-size:14px;color:#123f4d}
+.allin-head small{font-size:11px;color:#5d7681;line-height:1.6}
+.allin-kind{margin-bottom:9px}
+.allin-picks{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;margin-bottom:9px}
+.allin-pick{display:flex;align-items:center;gap:9px;padding:9px 11px;border:1px solid #dbe6ea;border-radius:9px;
+ background:#fff;cursor:pointer}
+.allin-pick input{width:16px;height:16px;flex:none;margin:0}
+.allin-pick span{display:grid;gap:1px;min-width:0}
+.allin-pick b{font-size:12.5px;color:#22404d}
+.allin-pick small{font-size:10.5px;color:#7f929a}
+.allin-pick:has(input:checked){border-color:#8ecdd9;background:#f0fafc;box-shadow:inset 3px 0 0 #16a0a4}
+.allin-opts{margin-bottom:9px}
+.allin-go{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.allin-go #allin-plan{font-size:11px;color:#5d7681}
+.allin-state{margin-top:11px;border:1px solid #dfe8eb;border-radius:9px;background:#fff;overflow:hidden}
+.ai-head{display:flex;align-items:baseline;gap:9px;padding:8px 11px;border-bottom:1px solid #eef3f5;background:#f4f9fa}
+.ai-head b{font-size:12px;color:#22404d}
+.ai-head span{font-size:10.5px;color:#81949c;margin-left:auto}
+.ai-item{display:grid;grid-template-columns:62px minmax(0,1fr) auto 62px;gap:9px;align-items:center;
+ padding:7px 11px;border-top:1px solid #f2f6f7}
+.ai-item:first-of-type{border-top:0}
+.ai-item>i{font-style:normal;font-size:10px;font-weight:900;text-align:center;color:#7d8f97;
+ background:#eef3f5;border-radius:999px;padding:3px 0}
+.ai-item>b{font-size:12px;color:#22404d;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ai-item>span{font-size:11px;color:#7f929a;text-align:right}
+.ai-item>em{font-style:normal;font-size:11.5px;font-weight:800;color:#0b6d86;text-align:right}
+.ai-item.is-run>i{color:#0b6d86;background:#dcf0f4}
+.ai-item.is-ok>i{color:#0c6b4d;background:#e4f4ec}
+.ai-item.is-ng>i{color:#a4463d;background:#fbe9e6}
+.ai-item.is-off{opacity:.55}
+.allin-result{margin-top:11px;display:grid;gap:8px}
+.ai-rank{display:grid;gap:6px}
+.ai-row{display:grid;grid-template-columns:30px minmax(0,1fr) 76px 62px 96px auto;gap:9px;align-items:center;
+ padding:9px 11px;border:1px solid #dfe8eb;border-radius:9px;background:#fff}
+.ai-row .ai-no{font-style:normal;font-size:12px;font-weight:900;color:#7d8f97;background:#eef3f5;
+ border-radius:999px;text-align:center;padding:3px 0}
+.ai-row>b{font-size:13px;color:#22404d;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ai-time{font:12.5px/1 Consolas,monospace;color:#17505f;text-align:right}
+.ai-up{font-size:12.5px;font-weight:900;color:#0b6d86;text-align:right}
+.ai-save{font-size:10.5px;color:#7f929a;text-align:right}
+.ai-row button{padding:5px 10px;font-size:11px}
+.ai-row.is-best{border-color:#16805d;background:#f2fbf7;box-shadow:0 3px 12px #16805d1f}
+.ai-row.is-best .ai-no{color:#fff;background:#16805d}
+.ai-row.is-best>b::after{content:'いちばん速い';margin-left:9px;font-size:9.5px;font-weight:900;color:#0c6b4d;
+ background:#dff1e9;border-radius:999px;padding:3px 8px;vertical-align:middle}
+.ai-bad{display:grid;gap:4px;padding:6px 9px 9px}
+.ai-bad>div{display:grid;grid-template-columns:minmax(0,150px) minmax(0,1fr);gap:9px}
+.ai-bad b{font-size:11px;color:#22404d}
+.ai-bad span{font-size:10.5px;color:#a4463d}
+.allin-single>summary{margin-top:4px}
+@media(max-width:820px){.ai-row{grid-template-columns:30px minmax(0,1fr) auto}.ai-save,.ai-up{display:none}}

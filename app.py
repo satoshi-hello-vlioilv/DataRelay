@@ -25,8 +25,8 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.56.0'; APP_VERSION_TITLE='調査は「RNEを調査」1つに／どのRNEの結果かを取り違えない／一覧の右クリック'; APP_RELEASED_AT='2026-08-12'
-BUILD_VERSION=f'{APP_VERSION}-onesurvey'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.57.0'; APP_VERSION_TITLE='まとめて測る（ALL-IN）― 分け方と行の軸を同じ基準で比べ、速い順に並べる'; APP_RELEASED_AT='2026-08-12'
+BUILD_VERSION=f'{APP_VERSION}-allin'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリに同梱する仕様書。ここに登録したものだけが画面から開ける。
 # 画面からはこのidしか受け取らないので、任意のパスを読ませることはできない。
 DOCS=[
@@ -43,7 +43,24 @@ def docs_dir():
 
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
-{'version':'1.56.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+{'version':'1.57.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'【分け方を一括で測れるようにしました】分割なし・列分割・行分割・行×列を、続けて測って速い順に並べます。手順2「速さを試す」の「まとめて測る」から、押すのは1回だけです。',
+'基準（分割なし）は最初に1回だけ測り、以降の分け方はその基準と比べます。3通りを測るのに4本で済み、分け方ごとに基準を測り直しません。保存済みの基準を使えば、さらに1本ぶん短くなります。',
+'結果は順位の表になります。1位から順に、分け方・所要時間・倍率・何秒短くなるかが1行で読めます。比べた相手（基準の秒数）も明記します。行を使う形の倍率は、本番で毎回かかる軸の読み直しを含めた実力値です。',
+'順位の行にある「本番で使う」を押すと、手順3の分け方がその形になります（「設定を反映」で確定します）。測った結果を手作業で書き写す必要はありません。',
+'',
+'【行の軸を2つ比べられるようにしました】どの管理ポイントで行を絞ると速いかは、値の散らばり方で変わります。候補から2つ選ぶと、同じ分割数・同じ基準で続けて測り、どちらが速いかを実測で返します。',
+'候補には「RNEを調査」で読んだ軸のうち、実際に使えるものだけを出します。値の種類も一緒に出すので、条件式が長くなりすぎる軸を選ぶ前に避けられます。',
+'採用すると、軸の決め方が「名前で指定」になり、その軸が本番でも使われます。',
+'',
+'【測っている間と、測れなかったものの見せ方】始める前に「何を何回測るか」を並べて出します。押してから知るのでは遅いためです。控えの所要時間があれば、おおよその見込み時間も出します。',
+'測定中は「2/4 列2分割」のように何本目かを出し、終わったもの・いま測っているもの・これからを1つの表に並べます。上のバーにも出るので、画面を閉じても走っていることが分かります。',
+'途中で止められます。いま測っている1本は最後まで測ります。途中で切ると、その1本が測れていないのか遅いのかが分からなくなるためです。残りは「中止」として残します。',
+'1つ失敗しても残りは測り切ります。失敗したものと結果が一致しなかったものは順位に混ぜず、理由と一緒に別立てで出します。',
+'まとめて測っている間は、1本ずつの影実行を始められません（逆も同じです）。同じRNEに2つの測定を同時にかけると、どちらの数字も回線の奪い合いで沈むためです。',
+'1本ずつ細かく指定する操作は、折りたたみの中へ移しました。',
+]},
+{'version':'1.56.0','date':'2026-08-12','title':'調査は「RNEを調査」1つに／どのRNEの結果かを取り違えない／一覧の右クリック','notes':[
 '【調査の押し場所を「RNEを調査」1つにしました】手順2の「分け方を探す」を無くしました。「列を調べる」「行を調べる」「中身だけ読む」も画面から外し、押すのは手順1の「RNEを調査」だけです。読むものは同じで、どれをどの順で押すかを覚える必要はありませんでした。',
 '調べた結果は手順1の中に「中身」「列の分け方」「行の分け方」の3つ折りで並びます。要点は折りたたみの見出しに1行で出るので、開かなくても分かります。読めなかったものは自動で開きます。畳んだままだと、何が引っかかったのかに気づけないためです。',
 '手順は5つから4つ（RNEを調査／速さを試す／本番の動作／実績）になりました。手順1のレールには控えの状態（調査済み・要再調査・未調査・RNEなし）を出します。調べ直す必要があるかどうかが、そこでの判断材料だからです。',
@@ -6468,6 +6485,9 @@ def column_split_trial_start():
  if not job:return jsonify(ok=False,error='保存済みの対象を選んでください'),200
  if str(c['settings'].get('extract_engine') or 'api').lower()!='api':
   return jsonify(ok=False,error='列分割はNavigator API方式のときに使用できます'),200
+ with split_batch_lock:
+  if split_batch_state.get('running'):
+   return jsonify(ok=False,error=f'まとめて測るが進行中です（{split_batch_state.get("job")}）。終わるまでお待ちください',busy=True),200
  with split_trial_lock:
   if split_trial_state.get('running'):
    return jsonify(ok=False,error=f'影実行が進行中です（{split_trial_state.get("job")}）。終わるまでお待ちください',busy=True),200
@@ -6493,6 +6513,158 @@ def column_split_trial_status():
   st=dict(split_trial_state)
  if st.get('running'):st['elapsed']=round(time.time()-(st.get('started') or time.time()),1)
  return jsonify(ok=True,**st)
+
+# ==== まとめて測る（ALL-IN） =============================================
+# 1本ずつ測らせると、どれとどれを比べたのか、基準はいつのものか、を利用者が
+# 覚えることになる。同じ基準の上で続けて測り、速い順に並べたものを返す。
+#
+# 基準（分割なし）は最初に1回だけ測る。以降の分け方は measure='split' で
+# その基準と比べるので、N通りを測るのに N+1 回で済む（2N回にならない）。
+SPLIT_BATCH_SHAPES=('column','row','grid')
+SPLIT_BATCH_MAX=8
+split_batch_lock=threading.RLock()
+def split_batch_blank(**over):
+ st={'running':False,'kind':'','job':'','job_id':'','rne':'','started':0.0,'elapsed':0.0,
+     'index':0,'total':0,'items':[],'error':'','stop':False,'finished_at':''}
+ st.update(over);return st
+split_batch_state=split_batch_blank()
+
+def split_batch_items(kind,data,job):
+ """何を何回測るかを、始める前に確定させる。画面にもそのまま出す。"""
+ items=[]
+ parts=max(0,min(8,int(data.get('parts') or 0)))
+ row_parts=max(2,min(8,int(data.get('row_parts') or 2)))
+ if not data.get('reuse_baseline') or not load_split_baseline(resolve_rne_path(job,load())):
+  items.append({'key':'normal','label':'分割なし（基準）','shape':'normal','axis':'',
+                'why':'ほかの分け方は、この時間と比べます'})
+ if kind=='axes':
+  for name in [str(x).strip() for x in (data.get('axes') or []) if str(x).strip()][:SPLIT_BATCH_MAX]:
+   items.append({'key':f'row:{name}','label':f'行{row_parts}分割（{name}）','shape':'row','axis':name,
+                 'why':'この軸で行を絞ったときの速さ'})
+ else:
+  # 指定が無ければ3通りとも。空の一覧を渡されたときは「1つも選んでいない」として扱う
+  # （既定へ勝手に戻すと、外したはずの分け方が測られる）。
+  raw=data.get('shapes')
+  want=[x for x in (SPLIT_BATCH_SHAPES if raw is None else raw) if x in SPLIT_BATCH_SHAPES]
+  for shape in want:
+   items.append({'key':shape,'label':split_how_label(shape,parts or 2,row_parts),'shape':shape,'axis':'',
+                 'why':{'column':'列を分けて横につなぐ','row':'行を絞って縦に積む',
+                        'grid':'行と列の両方で分ける'}[shape]})
+ for x in items:x.update(state='待機',elapsed=None,speedup=None,identical=None,rows=None,error='',detail='')
+ return items[:SPLIT_BATCH_MAX+1]
+
+def split_batch_run_data(item,data):
+ """1件ぶんの影実行に渡す指定。基準は1回だけ測り、以降はそれと比べる。"""
+ d={'job_id':data.get('job_id'),'parts':int(data.get('parts') or 0),
+    'row_parts':max(2,min(8,int(data.get('row_parts') or 2))),'race':False}
+ if item['shape']=='normal':return dict(d,mode='column',measure='normal')
+ d.update(mode=item['shape'],measure='split')
+ if item.get('axis'):d.update(row_axis_mode='name',row_axis_name=item['axis'],row_axis_index=1)
+ else:
+  d.update(row_axis_mode=data.get('row_axis_mode'),row_axis_name=data.get('row_axis_name'),
+           row_axis_index=data.get('row_axis_index'))
+ return d
+
+def split_batch_summary(items):
+ """速い順に並べる。結果が一致しなかったものは順位を付けない（使えないため）。"""
+ done=[x for x in items if x['state']=='完了' and x.get('elapsed')]
+ base=next((x['elapsed'] for x in done if x['shape']=='normal'),None)
+ rank=sorted([x for x in done if x['shape']!='normal' and x.get('identical')],key=lambda x:x['elapsed'])
+ out=[]
+ for i,x in enumerate(rank,1):
+  out.append({'rank':i,'key':x['key'],'label':x['label'],'shape':x['shape'],'axis':x.get('axis',''),
+              'elapsed':x['elapsed'],'speedup':x.get('speedup'),
+              'saved':round(base-x['elapsed'],1) if base else None})
+ return {'baseline':base,'ranked':out,
+         'best':out[0] if out else None,
+         'rejected':[{'label':x['label'],'why':x.get('error') or ('結果が一致しませんでした' if x.get('identical') is False else '測れませんでした')}
+                     for x in items if x['state'] in ('失敗','完了') and not (x['state']=='完了' and (x.get('identical') or x['shape']=='normal'))]}
+
+@app.post('/api/split-trial-batch')
+def split_trial_batch_start():
+ data=request.get_json(force=True) or {};c=load()
+ job=next((x for x in c['jobs'] if x['id']==data.get('job_id')),None) if data.get('job_id') else None
+ if not job:return jsonify(ok=False,error='保存済みの対象を選んでください'),200
+ if str(c['settings'].get('extract_engine') or 'api').lower()!='api':
+  return jsonify(ok=False,error='まとめて測るのはNavigator API方式のときに使用できます'),200
+ kind='axes' if str(data.get('kind') or 'methods')=='axes' else 'methods'
+ try:items=split_batch_items(kind,data,job)
+ except Exception as e:return jsonify(ok=False,error=str(e)),200
+ measured=[x for x in items if x['shape']!='normal']
+ if not measured:
+  return jsonify(ok=False,error='測る対象がありません。分け方か軸を1つ以上選んでください'),200
+ with split_batch_lock,split_trial_lock:
+  if split_batch_state.get('running'):
+   return jsonify(ok=False,error=f'まとめて測るが進行中です（{split_batch_state.get("job")}）。終わるまでお待ちください',busy=True),200
+  if split_trial_state.get('running'):
+   return jsonify(ok=False,error=f'影実行が進行中です（{split_trial_state.get("job")}）。終わるまでお待ちください',busy=True),200
+  split_batch_state.clear()
+  split_batch_state.update(split_batch_blank(running=True,kind=kind,job=job['name'],
+    job_id=str(job.get('id') or ''),rne=str(job.get('rne') or ''),started=time.time(),
+    total=len(items),items=items))
+ def worker():
+  t0=time.perf_counter()
+  for i,item in enumerate(items):
+   with split_batch_lock:
+    if split_batch_state.get('stop'):
+     for rest in items[i:]:rest['state']='中止'
+     break
+    item['state']='実行中';split_batch_state.update(index=i+1,items=items)
+   with split_trial_lock:
+    split_trial_state.clear()
+    split_trial_state.update(split_trial_blank(running=True,stage='準備中',job=job['name'],
+      job_id=str(job.get('id') or ''),rne=str(job.get('rne') or ''),started=time.time()))
+    _split_stage_logged.update(text='',at=0.0)
+   log.info('SPLIT_BATCH_ITEM %s/%s job=%s %s',i+1,len(items),job.get('name'),item['label'])
+   try:res=_split_trial_run(split_batch_run_data(item,data),c,job)
+   except Exception as e:
+    log.exception('SPLIT_BATCH_ITEM_FAILED %s',item['label']);res={'ok':False,'error':str(e)}
+   with split_trial_lock:
+    split_trial_state.update(running=False,stage='完了',result=res,
+      elapsed=round(time.time()-(split_trial_state.get('started') or time.time()),1))
+   with split_batch_lock:
+    if res.get('ok'):
+     item.update(state='完了',
+       elapsed=res.get('normal_elapsed') if item['shape']=='normal' else res.get('split_elapsed'),
+       speedup=res.get('run_speedup') or res.get('speedup'),
+       identical=True if item['shape']=='normal' else bool(res.get('identical')),
+       rows=res.get('rows'),detail=res.get('how') or '',
+       error='' if (item['shape']=='normal' or res.get('identical')) else '結果が一致しませんでした')
+    else:
+     item.update(state='失敗',error=str(res.get('error') or '失敗しました'))
+    split_batch_state.update(items=items)
+   log.info('SPLIT_BATCH_ITEM_END %s/%s %s → %s %s',i+1,len(items),item['label'],item['state'],
+            f"{item.get('elapsed')}s" if item.get('elapsed') else item.get('error',''))
+  el=time.perf_counter()-t0
+  with split_batch_lock:
+   split_batch_state.update(running=False,elapsed=round(el,1),index=len(items),
+     finished_at=datetime.now().isoformat(timespec='seconds'),items=items)
+  s=split_batch_summary(items)
+  log.info('SPLIT_BATCH_END job=%s 件数=%s 所要=%.1fs 最速=%s',job.get('name'),len(items),el,
+           (s.get('best') or {}).get('label') or '（なし）')
+ threading.Thread(target=worker,daemon=True,name='split-batch').start()
+ log.info('SPLIT_BATCH_START job=%s kind=%s 件数=%s 内訳=%s',job.get('name'),kind,len(items),
+          ' / '.join(x['label'] for x in items))
+ return jsonify(ok=True,started=True,job=job['name'],total=len(items),
+                items=[{'key':x['key'],'label':x['label'],'why':x['why']} for x in items])
+
+@app.get('/api/split-trial-batch/status')
+def split_trial_batch_status():
+ with split_batch_lock:
+  st=dict(split_batch_state);st['items']=[dict(x) for x in (st.get('items') or [])]
+ if st.get('running'):st['elapsed']=round(time.time()-(st.get('started') or time.time()),1)
+ st['summary']=split_batch_summary(st.get('items') or [])
+ return jsonify(ok=True,**st)
+
+@app.post('/api/split-trial-batch/stop')
+def split_trial_batch_stop():
+ """走っている1件は最後まで測る。途中で切ると、その1件が測れていないのか
+ 遅いのかが分からなくなるため。次の1件へ進む前に止める。"""
+ with split_batch_lock:
+  if not split_batch_state.get('running'):return jsonify(ok=False,error='まとめて測るは動いていません'),200
+  split_batch_state['stop']=True
+ log.info('SPLIT_BATCH_STOP_REQUEST job=%s',split_batch_state.get('job'))
+ return jsonify(ok=True,stopping=True)
 
 # ==== 調べものを裏で走らせる ============================================
 # 「中身を読む」「分け方を探す」はサーバーへ問い合わせるので20秒前後かかる。
@@ -6682,9 +6854,18 @@ def background_tasks():
                'stage':st.get('stage') or '','job':st.get('job') or '','job_id':st.get('job_id') or '',
                'rne':st.get('rne') or '','percent':inspect_task_percent(st),
                'elapsed':round(time.time()-(st.get('started') or time.time()),1)})
+ with split_batch_lock:
+  bt=dict(split_batch_state)
+ if bt.get('running'):
+  cur=next((x for x in (bt.get('items') or []) if x.get('state')=='実行中'),{})
+  out.append({'type':'batch','kind':'batch','title':'まとめて測る',
+              'stage':f"{bt.get('index')}/{bt.get('total')} {cur.get('label') or '準備中'}",
+              'job':bt.get('job') or '','job_id':bt.get('job_id') or '','rne':bt.get('rne') or '',
+              'percent':round(max(0,(int(bt.get('index') or 1)-1))/max(1,int(bt.get('total') or 1))*100,1),
+              'elapsed':round(time.time()-(bt.get('started') or time.time()),1)})
  with split_trial_lock:
   st=dict(split_trial_state)
- if st.get('running'):
+ if st.get('running') and not bt.get('running'):
   out.append({'type':'trial','kind':'trial','title':'速さを試す（影実行）',
               'stage':st.get('stage') or '','job':st.get('job') or '','job_id':st.get('job_id') or '',
               'rne':st.get('rne') or '','percent':float(st.get('percent') or 0),
