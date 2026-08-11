@@ -25,8 +25,8 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.57.0'; APP_VERSION_TITLE='まとめて測る（ALL-IN）― 分け方と行の軸を同じ基準で比べ、速い順に並べる'; APP_RELEASED_AT='2026-08-12'
-BUILD_VERSION=f'{APP_VERSION}-allin'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.58.0'; APP_VERSION_TITLE='PCごとに変わる場所を設定に固定しない／調べてから設定まで一続きに／APIの状態を1か所で'; APP_RELEASED_AT='2026-08-12'
+BUILD_VERSION=f'{APP_VERSION}-perpc'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリに同梱する仕様書。ここに登録したものだけが画面から開ける。
 # 画面からはこのidしか受け取らないので、任意のパスを読ませることはできない。
 DOCS=[
@@ -43,7 +43,22 @@ def docs_dir():
 
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
-{'version':'1.57.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+{'version':'1.58.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'【別のPCで実行すると止まっていました】バックアップ先に、設定を作ったPCの利用者フォルダー（C:¥Users¥<誰か>¥AppData¥Local¥…）が絶対パスのまま入っていました。設定はBOXのマスターを通じて全PCへ配られるため、別のPCでは他人のフォルダーを指すことになり、作成すらできずに実行が失敗していました（WinError 5 アクセスが拒否されました）。',
+'PCごとに実体が変わる場所は <PC> という印で持ち、使うときにそのPCのローカル領域へ直すようにしました。設定にPC固有の値が残りません。すでに他人のフォルダーを指している設定は、読み込むときに <PC>¥backup へ読み替え、その旨をログに残します。',
+'控えが取れないことは、公開そのものを止める理由になりません。バックアップ先が使えないときは、このPCのローカルへ逃がして公開を続けます（切り替えた理由はログに残します）。',
+'共通設定に「このPCでの実際の場所」を追加しました。設定値・このPCでの実体・使えるかどうかを1行ずつ並べます。他人のフォルダーを指している設定は赤で出し、「このPCの場所へ直す」で直せます。アプリが自分で使う場所（作業・ログ・設定の控えとマスター）も畳んで置いてあります。',
+'',
+'【調べた内容が、次の手順に届いていませんでした】「調査済み ― 調べ直す必要はありません」と出ているのに、軸を選ぶ欄は「（先に「RNEを調査」）」のままでした。控えに軸の一覧はあるのに、画面へ渡していなかったためです。控えの軸を、手順3の「軸の決め方」とまとめて測るの候補へ同時に入れるようにしました。',
+'手順1に「次にすること」の帯を出すようにしました。未調査なら調査へ、調査済みで実測がなければ速さの測定へ、裏付けがあれば本番の設定へ。どの手順にいても、次の一手とその理由が1行で分かります。',
+'「まとめて測る」の順位表にある「本番で使う」を押すと、その場で対象の設定として保存するようにしました。これまでは選んだあとに「設定を反映」を押す必要があり、押し忘れると測った意味が無くなっていました。押したあとは手順3を開いて、本番でどう動くかをそのまま見せます。',
+'重複していた操作を外しました。「控えを確認」は手順を開くたびに自動で読むので不要でした。手順1の説明文も、控えの状態と重ねて書いていた部分を1つにまとめました。',
+'',
+'【APIの状態が、そろっていると足りていないで食い違っていました】「必要なDLL」「探す範囲」「手動で指定」「DLL診断」の4か所が、それぞれ別の言い方で状態を出していました。同じ画面に「そろっています」と「不足しています」が並び、どちらが本当なのか読み取れませんでした。',
+'判定をサーバーの1か所へ寄せ、画面はその結果だけを出すようにしました。いちばん上に「使えます／使えません」と理由を1行、その下に要るものを5項目（本体DLL・bit数の一致・依存ランタイム・必要な関数・探す範囲）で並べます。各項目に「要件」「いまの実体」「対処」が付きます。',
+'候補ごとの確認結果と必要条件の一覧は畳みました。直し方（探すフォルダー・手動で指定）も畳み、足りないときだけ自動で開きます。そろっているのに直し方が開いていると、何が問題なのか紛れるためです。',
+]},
+{'version':'1.57.0','date':'2026-08-12','title':'まとめて測る（ALL-IN）― 分け方と行の軸を同じ基準で比べ、速い順に並べる','notes':[
 '【分け方を一括で測れるようにしました】分割なし・列分割・行分割・行×列を、続けて測って速い順に並べます。手順2「速さを試す」の「まとめて測る」から、押すのは1回だけです。',
 '基準（分割なし）は最初に1回だけ測り、以降の分け方はその基準と比べます。3通りを測るのに4本で済み、分け方ごとに基準を測り直しません。保存済みの基準を使えば、さらに1本ぶん短くなります。',
 '結果は順位の表になります。1位から順に、分け方・所要時間・倍率・何秒短くなるかが1行で読めます。比べた相手（基準の秒数）も明記します。行を使う形の倍率は、本番で毎回かかる軸の読み直しを含めた実力値です。',
@@ -2938,6 +2953,14 @@ def rne_master_view(job,cfg):
                     'captured_at':cached.get('captured_at',''),'fresh':col_fresh,'source':cached.get('source','')},
          'axes':{'have':bool(axes),'count':len(axes),
                  'usable':len([a for a in axes if axis_usable(a,2)[0]]),
+                 # 使える軸の一覧そのものを返す。控えがあるのに画面が
+                 # 「先に『RNEを調査』」と出すのは、ここを渡していなかったため。
+                 'list':[{'name':a.get('name',''),'location':a.get('location',''),
+                          'index':a.get('index',0),'type_name':a.get('type_name',''),
+                          'is_time':bool(a.get('is_time')),
+                          'category_count':a.get('category_count'),
+                          'usable':bool(axis_usable(a,2)[0]),'enough':bool(a.get('enough',True))}
+                         for a in axes if axis_usable(a,2)[0]][:200],
                  'captured_at':survey.get('taken_at',''),'fresh':axis_fresh,
                  'blocked':[{'name':k,'reason':v.get('reason',''),'values':v.get('values'),'at':v.get('at','')}
                             for k,v in blocks.items()]},
@@ -3048,8 +3071,17 @@ def load():
    cfg['navigator_api_search_roots']=list(DEFAULT_DLL_SEARCH_ROOTS)
   try:cfg['navigator_api_search_depth']=max(1,min(6,int(cfg.get('navigator_api_search_depth',3) or 3)))
   except (TypeError,ValueError):cfg['navigator_api_search_depth']=3
- if str(cfg.get('backup_folder') or '').strip().lower() in ('','.\\backup','backup','.\\config\\backup'):
-  cfg['backup_folder']=str(LOCAL_BACKUP)
+ # バックアップ先はPCごとに変わる場所。絶対パスで持つと別のPCで他人のフォルダーを
+ # 指してしまうので、<PC> の印で持つ（実測 2026-08-11 の WinError 5 はこれが原因）。
+ bf=str(cfg.get('backup_folder') or '').strip()
+ if bf.lower() in ('','.\\backup','backup','.\\config\\backup') or _looks_generated_backup(bf):
+  cfg['backup_folder']=pc_path('backup')
+ else:
+  foreign=foreign_profile_path(bf)
+  if foreign:
+   log.warning('PATH_FOREIGN_PROFILE key=backup_folder value=%s profile=%s → %s へ読み替えます',
+               bf,foreign,pc_path('backup'))
+   cfg['backup_folder']=pc_path('backup')
  return cfg
 
 def _save_local(v):
@@ -3107,10 +3139,68 @@ def update_parallel_line(line,**v):
    except Exception:pass
 
 
+# ==== PCごとに実体が変わる場所 ==========================================
+# 設定は BOX 上のマスターを通じて別のPCへも配られる。そこへ絶対パスのまま
+# 「C:/Users/<作った人>/AppData/Local/...」を書くと、別のPCでは他人のプロファイル
+# を指すことになり、作成すらできない（実測 2026-08-11: WinError 5 アクセス拒否）。
+# そこで、PCごとに変わる場所は <PC> という印で持ち、使うときに実体へ直す。
+PC_TOKEN='<PC>'
+def pc_path(*parts):
+ """このPCのローカル領域を指す、持ち運べる書き方を作る。"""
+ return '\\'.join([PC_TOKEN]+[str(x) for x in parts if str(x)])
+def is_pc_path(value):
+ return str(value or '').strip().startswith(PC_TOKEN)
+
+PROFILE_DIR_NAMES=('users','ユーザー','documents and settings')
+def _split_any(p):
+ """区切りは / でも \ でもよい。Windowsで作った設定をLinuxで読むこともある。"""
+ return [x for x in re.split(r'[\\/]+',str(p or '')) if x!='']
+
+def _profile_root(p):
+ r"""C:\Users\<誰か> のような、利用者プロファイルの根を返す（無ければ None）。"""
+ parts=_split_any(p)
+ for i,x in enumerate(parts):
+  if x.lower() in PROFILE_DIR_NAMES and i+1<len(parts):
+   return '\\'.join(parts[:i+2])
+ return None
+
+def foreign_profile_path(value):
+ """別の利用者のプロファイル配下を指していないか。
+
+ 指していれば、そのPCでは読み書きできない（できてしまうと、それはそれで問題）。
+ 自分のプロファイル配下や、プロファイルと無関係の場所は None を返す。
+ """
+ raw=str(value or '').strip()
+ if not raw or is_pc_path(raw):return None
+ try:target=Path(os.path.expandvars(os.path.expanduser(raw)))
+ except Exception:return None
+ # Windowsの絶対パスは、Linux上では相対に見える（区切りが違う）。文字の形で見る。
+ win_abs=bool(re.match(r'^[A-Za-z]:[\\/]',str(target))) or str(target).startswith('\\\\')
+ if not (target.is_absolute() or win_abs):return None
+ root=_profile_root(target)
+ if not root:return None
+ mine=_profile_root(Path.home()) or '\\'.join(_split_any(Path.home()))
+ if str(root).lower()==str(mine).lower():return None
+ return str(root)
+
+def _looks_generated_backup(value):
+ """アプリが自分で作った控え置き場（…/SymfoNaviDataHub/backup）かどうか。
+
+ これを絶対パスのまま設定へ残すと、別のPCでは他人のフォルダーを指す。中身は
+ このPCのローカルなので、どのPCで作られたものでも <PC> へ読み替えてよい。
+ """
+ parts=[x.lower() for x in _split_any(value)]
+ return len(parts)>=2 and parts[-1]=='backup' and parts[-2]=='symfonavidatahub'
+
 def resolve_path(value,base=BASE):
  """Resolve absolute, UNC, or app-relative paths without changing stored values."""
  if value is None:return base
- raw=os.path.expandvars(os.path.expanduser(str(value).strip()))
+ raw=str(value).strip()
+ # <PC> は、いま動いているPCのローカル領域へ直す。設定にはPC固有の値を残さない。
+ if raw.startswith(PC_TOKEN):
+  rest=raw[len(PC_TOKEN):].strip().lstrip('\\/')
+  return (LOCAL_ROOT/rest) if rest else LOCAL_ROOT
+ raw=os.path.expandvars(os.path.expanduser(raw))
  p=Path(raw)
  if p.is_absolute() or raw.startswith('\\'):return p
  return (Path(base)/p).resolve()
@@ -3841,7 +3931,17 @@ def publish(src,dst,backup_root,generations,from_pending=False,backup_enabled=Tr
  """
  dst.parent.mkdir(parents=True,exist_ok=True)
  bdir=backup_root/dst.stem
- if backup_enabled:bdir.mkdir(parents=True,exist_ok=True)
+ if backup_enabled:
+  # 控えが取れないことは、公開そのものを止める理由にはならない。使えない場所を
+  # 指していたら、このPCのローカルへ逃がして続ける（理由はログに残す）。
+  try:bdir.mkdir(parents=True,exist_ok=True)
+  except Exception as be:
+   fallback=LOCAL_BACKUP/dst.stem
+   log.warning('BACKUP_DIR_UNUSABLE path=%s error=%s → %s へ切り替えます',bdir,be,fallback)
+   try:
+    fallback.mkdir(parents=True,exist_ok=True);bdir=fallback
+   except Exception as be2:
+    log.warning('BACKUP_DISABLED_THIS_RUN error=%s 控えを取らずに公開します',be2);backup_enabled=False
  stamp=datetime.now().strftime('%Y%m%d_%H%M%S')
  incoming=dst.parent/f'.{dst.name}.{os.getpid()}.incoming'
  try:
@@ -7015,10 +7115,10 @@ def navigator_api_status():
   cached=_read_api_diag_cache()
   if cached:
    log.info('API_DIAG cache_hit=1 dll=%s dll_bits=%s',cached.get('dll'),cached.get('dll_bits'));_log_api_exports(cached.get('dll'),cached.get('exports'),cached.get('exports_bound'))
-   cached=dict(cached);cached['cached']=True;cached['requirement']=_dll_requirement(c);cached['search_roots']=[str(x) for x in dll_search_roots(c)];cached['issues']=dll_diagnostic_issues(cached.get('attempts') or [],cached.get('python_bits'),cached.get('exports'),cached.get('exports_bound'),cached['requirement']);return jsonify(cached)
+   cached=dict(cached);cached['cached']=True;cached['requirement']=_dll_requirement(c);cached['search_roots']=[str(x) for x in dll_search_roots(c)];cached['issues']=dll_diagnostic_issues(cached.get('attempts') or [],cached.get('python_bits'),cached.get('exports'),cached.get('exports_bound'),cached['requirement']);cached['readiness']=api_readiness(cached);return jsonify(cached)
  try:
   from navigator_api import NavigatorApi
-  started=time.perf_counter();api=NavigatorApi(resolve_path(c.get('symnavi_exe','')),log,resolve_path(c.get('navigator_api_dll')) if c.get('navigator_api_dll') else None,base_dir=BASE,search_roots=dll_search_roots(c));info=api.info();api.close();info['elapsed']=round(time.perf_counter()-started,3);info['cached']=False;info['issues']=dll_diagnostic_issues(info.get('attempts') or [],info.get('python_bits'),info.get('exports'),info.get('exports_bound'),info.get('requirement'));log.info('API_DIAG cache_hit=0 elapsed=%.3fs dll=%s dll_bits=%s attempts=%s selection=%s',info.get('elapsed'),info.get('dll'),info.get('dll_bits'),len(info.get('attempts') or []),info.get('selection_reason'));_log_api_exports(info.get('dll'),info.get('exports'),info.get('exports_bound'));_write_api_diag_cache(info);return jsonify(info)
+  started=time.perf_counter();api=NavigatorApi(resolve_path(c.get('symnavi_exe','')),log,resolve_path(c.get('navigator_api_dll')) if c.get('navigator_api_dll') else None,base_dir=BASE,search_roots=dll_search_roots(c));info=api.info();api.close();info['elapsed']=round(time.perf_counter()-started,3);info['cached']=False;info['issues']=dll_diagnostic_issues(info.get('attempts') or [],info.get('python_bits'),info.get('exports'),info.get('exports_bound'),info.get('requirement'));info['readiness']=api_readiness(info);log.info('API_DIAG cache_hit=0 elapsed=%.3fs dll=%s dll_bits=%s attempts=%s selection=%s',info.get('elapsed'),info.get('dll'),info.get('dll_bits'),len(info.get('attempts') or []),info.get('selection_reason'));_log_api_exports(info.get('dll'),info.get('exports'),info.get('exports_bound'));_write_api_diag_cache(info);return jsonify(info)
  except Exception as e:
   exports=[];exports_dll=''
   try:
@@ -7035,7 +7135,73 @@ def navigator_api_status():
   log.warning('API_DIAG cache_hit=0 result=failed attempts=%s error=%s',len(attempts),e)
   _log_api_exports(exports_dll,exports,[])
   req=_dll_requirement(c)
-  return jsonify(ok=False,error=str(e),mode='Navigator API',cached=False,attempts=attempts,exports=exports,exports_bound=[],requirement=req,search_roots=req.get('search_roots') or [],issues=dll_diagnostic_issues(attempts,pybits,exports,[],req)),200
+  payload={'ok':False,'error':str(e),'mode':'Navigator API','cached':False,'attempts':attempts,
+           'exports':exports,'exports_bound':[],'requirement':req,'python_bits':pybits,
+           'search_roots':req.get('search_roots') or [],
+           'issues':dll_diagnostic_issues(attempts,pybits,exports,[],req)}
+  payload['readiness']=api_readiness(payload)
+  return jsonify(payload),200
+
+def api_readiness(info):
+ """APIが使えるか、使えないなら何が足りないかを、ここだけで決める。
+
+ これまでは「必要なDLL」「探す範囲」「手動で指定」「DLL診断」の4か所がそれぞれ
+ 別の言い方で状態を出していた。同じ画面に「そろっています」と「不足しています」が
+ 並ぶことがあり、どちらが本当なのか読み取れなかった。判定はこの関数だけが行い、
+ 画面はその結果をそのまま出す。
+ """
+ req=info.get('requirement') or {}
+ attempts=info.get('attempts') or []
+ pybits=info.get('python_bits') or req.get('python_bits') or 0
+ used=str(info.get('dll') or '')
+ loaded=bool(info.get('ok'))
+ found=[a for a in attempts if a.get('exists')]
+ fit=[a for a in found if a.get('dll_bits') and a.get('dll_bits')==pybits]
+ exports=[x for x in (info.get('exports') or []) if str(x).lower().startswith('navi')]
+ miss_rt=list(req.get('runtime_missing') or [])
+ roots=[str(x) for x in (info.get('search_roots') or req.get('search_roots') or [])]
+ items=[]
+ items.append({'key':'dll','label':'SymNaviA.dll 本体',
+   'need':f"{req.get('file_name','SymNaviA.dll')} が、探す範囲のどこかにあること",
+   'have':(used or (found[0]['path'] if found else '')),
+   'state':'ok' if (loaded and used) else ('warn' if found else 'ng'),
+   'fix':'' if (loaded and used) else ('見つかってはいますが読み込めていません。下のbit数と依存ランタイムを確認してください'
+         if found else '「DLLを探すフォルダー」に置き場所を足すか、「手動で指定」でファイルを直接選んでください')})
+ dbits=info.get('dll_bits') or (fit[0].get('dll_bits') if fit else (found[0].get('dll_bits') if found else 0))
+ items.append({'key':'bits','label':'bit数の一致',
+   'need':f'このアプリのPythonは {pybits}bit。DLLも {pybits}bit 版であること',
+   'have':(f'{dbits}bit' if dbits else ''),
+   'state':('ok' if (dbits and dbits==pybits) else ('ng' if found else 'unknown')),
+   'fix':'' if (dbits and dbits==pybits) else
+         (f'見つかったDLLは {dbits}bit です。{pybits}bit 版（フォルダー名の末尾が'
+          +('x64' if pybits==64 else 'x64でないもの')+'）を指してください' if dbits
+          else 'DLLが見つかっていないため確認できません')})
+ items.append({'key':'runtime','label':'依存ランタイム（Visual C++）',
+   'need':'DLLが要求するVisual C++ 再頒布可能パッケージがこのPCに入っていること',
+   'have':('不足なし' if not miss_rt else '不足: '+'、'.join(miss_rt)),
+   'state':'ok' if not miss_rt else 'ng',
+   'fix':'' if not miss_rt else 'Microsoft Visual C++ 再頒布可能パッケージを入れてください'})
+ items.append({'key':'exports','label':'必要な関数',
+   'need':'NaviOpenCatalog などの関数がDLLに含まれていること',
+   'have':(f'{len(exports)}個を確認' if exports else ''),
+   'state':'ok' if exports else ('ng' if found else 'unknown'),
+   'fix':'' if exports else ('このファイルはNavigator APIのDLLではない可能性があります' if found
+         else 'DLLが見つかっていないため確認できません')})
+ items.append({'key':'roots','label':'探す範囲',
+   'need':'DLLの置き場所が、探す範囲に入っていること',
+   'have':(f'{len(roots)}か所を探して {len(found)}件を検出' if roots else ''),
+   'state':'ok' if found else 'ng',
+   'fix':'' if found else '「DLLを探すフォルダー」へ、NAVIAPの置き場所を足してください'})
+ ng=[x for x in items if x['state']=='ng']
+ warn=[x for x in items if x['state']=='warn']
+ return {'ok':loaded,'items':items,
+         'ready':len([x for x in items if x['state']=='ok']),'total':len(items),
+         'blocking':(ng[0] if ng else (warn[0] if warn else None)),
+         'used':used,'used_bits':info.get('dll_bits') or 0,'python_bits':pybits,
+         'candidates':len(found),'fit':len(fit),
+         'headline':('Navigator APIを使えます' if loaded else 'Navigator APIを使えません'),
+         'detail':(f'{used}（{info.get("dll_bits") or pybits}bit）を使用します' if loaded
+                   else (ng[0]['fix'] if ng else (warn[0]['fix'] if warn else '原因を特定できませんでした')))}
 
 def _dll_requirement(cfg=None):
  """このPCで必要なDLLの条件。診断が失敗したときこそ必要な情報なので、常に返せるようにする。"""
@@ -7283,6 +7449,64 @@ def check_path_item(value,kind='file',expected_name=''):
  p=resolve_path(value); ok=p.is_file() if kind=='file' else p.is_dir(); candidates=[]
  if not ok and kind=='file':candidates=find_nearby_file(expected_name or p.name)
  return {'ok':ok,'configured':str(value),'resolved':str(p),'candidates':candidates,'needs_reselect':not ok and not candidates}
+
+PATH_SETTING_LABEL={'rne_folder':'RNE基本フォルダー','default_output_folder':'既定の出力先',
+ 'backup_folder':'バックアップ先','symnavi_exe':'SymNavi.exe','symnavim_conf':'symnavim.conf',
+ 'symnavim_def':'symnavim.def','accdb_template':'ACCDB空テンプレート','navigator_api_dll':'Navigator API DLL'}
+PATH_SETTING_KIND={'rne_folder':'folder','default_output_folder':'folder','backup_folder':'folder',
+ 'symnavi_exe':'file','symnavim_conf':'file','symnavim_def':'file','accdb_template':'file',
+ 'navigator_api_dll':'file'}
+
+def path_writable(p):
+ """書けるかどうかは、実際に書いてみないと分からない（権限は見ただけでは分からない）。"""
+ try:
+  p=Path(p)
+  if not p.is_dir():return None
+  probe=p/f'.probe_{os.getpid()}'
+  probe.write_bytes(b'x');probe.unlink()
+  return True
+ except Exception:return False
+
+def machine_path_view():
+ """設定値が、このPCではどこを指すのか。設定・実体・状態を1か所で見せる。
+
+ 別のPCへ持って行くと壊れる設定（他人のプロファイル配下）が、いちばん見つけにくい。
+ 実際に走らせてから「アクセスが拒否されました」で気づくことになるので、先に出す。
+ """
+ c=load();rows=[]
+ for key,label in PATH_SETTING_LABEL.items():
+  raw=str(c.get(key) or '')
+  kind=PATH_SETTING_KIND.get(key,'folder')
+  try:real=resolve_path(raw)
+  except Exception:real=Path(raw or '.')
+  exists=Path(real).exists()
+  foreign=foreign_profile_path(raw)
+  writable=path_writable(real) if (kind=='folder' and exists) else None
+  state='ok' if exists else 'ng'
+  note=''
+  if foreign:
+   state='ng';note=f'別の利用者のフォルダー（{foreign}）を指しています。このPCでは使えません'
+  elif is_pc_path(raw):note='このPCのローカル領域（PCごとに実体が変わります）'
+  elif not exists:note=('フォルダーがありません' if kind=='folder' else 'ファイルがありません')
+  elif writable is False:state='warn';note='書き込めません（権限を確認してください）'
+  rows.append({'key':key,'label':label,'kind':kind,'configured':raw,'resolved':str(real),
+               'exists':exists,'writable':writable,'portable':is_pc_path(raw) or not Path(raw).is_absolute() if raw else True,
+               'foreign':foreign or '','state':state,'note':note})
+ fixed=[{'label':'アプリの場所','path':str(BASE),'note':'このPCに置いてある実体'},
+        {'label':'このPCのローカル領域','path':str(LOCAL_ROOT),'note':'<PC> が指す先。作業・控え・ログ・キャッシュの親'},
+        {'label':'作業フォルダー','path':str(LOCAL_ROOT/'work'),'note':'抽出の途中ファイル。起動時に空にします'},
+        {'label':'ログ','path':str(LOCAL_LOGS),'note':'実行ログの実体'},
+        {'label':'設定の控え（このPC）','path':str(SETTINGS_DB),'note':'マスターから写した作業用'},
+        {'label':'設定のマスター','path':str(MASTER_SETTINGS_DB),'note':'BOX上の正本。全PCで共有'}]
+ bad=[x for x in rows if x['state']=='ng']
+ return {'ok':not bad,'rows':rows,'fixed':fixed,'profile':str(Path.home()),
+         'user':os.environ.get('USERNAME') or os.environ.get('USER') or '',
+         'host':socket.gethostname(),
+         'summary':(f'{len(bad)}件がこのPCでは使えません' if bad else f'{len(rows)}件すべてこのPCで解決できます')}
+
+@app.get('/api/machine-paths')
+def machine_paths():
+ return jsonify(**machine_path_view())
 
 @app.post('/api/path-check')
 def path_check():
