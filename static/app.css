@@ -1574,3 +1574,64 @@ body > main{max-width:1620px;padding-left:12px;padding-right:12px}
 .rs-line.is-ng>b{color:#a33a31}
 @media(max-width:700px){.rs-line{grid-template-columns:minmax(0,1fr) 62px}.rs-line time{grid-column:1/-1}}
 .rs-fixed{font-style:normal;font-size:10px;color:#93a6ae;margin-left:auto}
+
+
+/* V1.55: 設定は変更した時点で保存する。下のバーは「保存する場所」ではなく
+   「保存できているかを見る場所」になったので、状態が一目で分かる形にする。 */
+footer{justify-content:flex-start;gap:10px}
+.autosave-mark{width:9px;height:9px;border-radius:50%;background:#16805d;flex:none;box-shadow:0 0 0 3px #16805d22}
+.autosave-lead{font-size:12px;font-weight:800;color:#33505c}
+.autosave-state{margin-left:auto;font-size:12px;color:var(--muted);display:inline-flex;align-items:center;gap:6px;padding:4px 11px;border-radius:999px;background:#f1f5f7;border:1px solid #e2eaee}
+.autosave-state.is-saving{color:#0b6d86;background:#e9f5f8;border-color:#cbe6ee}
+.autosave-state.is-ok{color:#0c6b4d;background:#eaf6f1;border-color:#cbe6da}
+.autosave-state.is-ng{color:var(--bad);background:#fdeeec;border-color:#f2cfca;font-weight:800}
+body:has(.autosave-state.is-ng) .autosave-mark{background:var(--bad);box-shadow:0 0 0 3px #b93b3222}
+body:has(.autosave-state.is-saving) .autosave-mark{background:#0b8ea8;box-shadow:0 0 0 3px #0b8ea822}
+
+/* V1.55: バージョン情報。版・題・変更点の3層を、上から順に読むだけで分かる形へ。 */
+.version-modal{width:min(880px,94vw);max-height:88vh;display:grid;grid-template-rows:auto auto minmax(0,1fr);background:#fff}
+.version-hero{display:flex;align-items:flex-start;gap:14px;padding:18px 22px 15px;background:linear-gradient(115deg,#153247,#1e6079);color:#fff}
+.version-hero-main{min-width:0;flex:1}
+.version-hero small{font-size:10px;font-weight:900;letter-spacing:.14em;color:#a9d8e2}
+.version-hero h2{margin:4px 0 0;font-size:25px;line-height:1.3;color:#fff}
+.version-hero .iconbtn{color:#cfe6ec;flex:none}
+.version-chips{display:flex;flex-wrap:wrap;gap:7px;margin-top:11px}
+.vchip{display:inline-flex;align-items:baseline;gap:6px;background:#ffffff1c;border:1px solid #ffffff33;border-radius:999px;padding:3px 11px}
+.vchip i{font-style:normal;font-size:10px;font-weight:800;color:#a9d8e2;letter-spacing:.04em}
+.vchip b{font:11.5px/1 Consolas,monospace;color:#eaf7fa}
+.version-bar{display:flex;align-items:center;gap:10px;padding:9px 22px;border-bottom:1px solid var(--line);background:#f7fafb}
+.version-bar b{font-size:13px;color:#22404d}
+.version-count{font-size:11px;color:var(--muted)}
+.version-bar-actions{margin-left:auto;display:flex;gap:6px}
+.version-bar-actions button{padding:5px 10px;font-size:11px}
+.version-modal .modalbody{overflow:auto;padding:14px 22px 20px}
+.changelog{display:grid;gap:8px;margin-top:0}
+.cl-entry{border:1px solid var(--line);border-radius:10px;background:#fff;overflow:hidden}
+.cl-entry>summary{display:flex;align-items:center;gap:10px;cursor:pointer;padding:10px 13px;list-style:none}
+.cl-entry>summary::-webkit-details-marker{display:none}
+.cl-entry>summary:hover{background:#f6fafb}
+.cl-entry[open]>summary{border-bottom:1px solid #eef3f5;background:#f6fafb}
+.cl-ver{font:900 12px/1 Consolas,monospace;color:#0b6d86;background:#e6f3f6;border-radius:999px;padding:5px 11px;flex:none}
+.cl-flag{font-style:normal;font-size:10px;font-weight:900;color:#fff;background:#16805d;border-radius:999px;padding:4px 9px;flex:none}
+.cl-title{font-size:13px;font-weight:800;color:#22404d;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cl-meta{margin-left:auto;display:flex;align-items:center;gap:9px;flex:none}
+.cl-meta time{font-size:11px;color:#8494a0}
+.cl-meta em{font-style:normal;font-size:10.5px;color:#7d8f9a;background:#eef3f5;border-radius:999px;padding:3px 8px}
+.cl-entry.is-latest{border-color:#b6dbe4;box-shadow:0 4px 14px #0b6d8614}
+.cl-body{padding:4px 13px 12px;display:grid;gap:10px}
+.cl-sec{border-left:3px solid #d9e6eb;padding-left:11px}
+.cl-sec h4{margin:8px 0 5px;font-size:12.5px;font-weight:900;color:#0b5f77}
+.cl-sec ul{margin:0;padding-left:17px;display:grid;gap:5px}
+.cl-sec li{font-size:12px;color:#425661;line-height:1.72}
+@media(max-width:720px){.cl-entry>summary{flex-wrap:wrap}.cl-title{white-space:normal;flex:1 1 100%;order:3}.cl-meta{margin-left:0}}
+
+/* V1.55: ログを実行指令のまとまりごとに選んで消せるようにする。 */
+.log-group-select{width:16px;height:16px;flex:none;margin:0;padding:0;cursor:pointer;accent-color:#16a0a4;background:#fff;border-radius:3px}
+.log-action>summary>.log-group-select{align-self:center}
+.log-action.is-picked{border-color:#1d8f96}
+.log-action.is-picked>summary{background:#123b45;box-shadow:inset 4px 0 0 #16a0a4}
+.log-commandbar{flex-wrap:wrap}
+.log-bulk-actions{gap:10px}
+.log-act-group{display:inline-flex;align-items:center;gap:4px;padding:3px 6px 3px 4px;border:1px solid #e0e8eb;border-radius:9px;background:#fbfdfd}
+.log-act-group>i{font-style:normal;font-size:10px;font-weight:900;color:#5e747e;letter-spacing:.06em;padding:0 4px}
+.log-act-group.is-danger>i{color:#a4463d}

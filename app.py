@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 import atexit, calendar, configparser, contextlib, copy, csv, gc, json, logging, os, re, shutil, socket, sqlite3, struct, subprocess, sys, tempfile, threading, time, traceback, uuid, webbrowser
 from collections import deque
 from datetime import datetime, timedelta
@@ -25,8 +25,8 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.54.0'; APP_VERSION_TITLE='RNEを1回で調べて控える／条件式が長すぎる軸を使わない'; APP_RELEASED_AT='2026-08-11'
-BUILD_VERSION=f'{APP_VERSION}-rnemaster'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.55.0'; APP_VERSION_TITLE='設定は変えた時点で保存／版の履歴を読みやすく／ログを実行指令ごとに消す'; APP_RELEASED_AT='2026-08-12'
+BUILD_VERSION=f'{APP_VERSION}-autosave'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリに同梱する仕様書。ここに登録したものだけが画面から開ける。
 # 画面からはこのidしか受け取らないので、任意のパスを読ませることはできない。
 DOCS=[
@@ -43,7 +43,25 @@ def docs_dir():
 
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
-{'version':'1.54.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+{'version':'1.55.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'【設定の保存ボタンを廃止しました】下のバーにあった「設定を保存」を無くし、値を変えた時点で保存するようにしました。押し忘れると、画面に見えている設定と実際に使われる設定が食い違ったまま実行されてしまうためです。',
+'数値の欄は打っている途中に何度も送らないよう、手が止まってから約0.5秒で保存します。選択肢や切替は変えた時点ですぐ保存します。',
+'下のバーは「保存する場所」から「保存できているかを見る場所」に変わりました。左の丸と文言で、保存中・保存済み・保存できない、のどれなのかが分かります。保存した時刻も出します。',
+'保存に失敗したときは、赤い表示に変えたうえで3秒おきに3回まで自動で再試行します。それでも駄目なときは画面の再読込を促します。',
+'対象ファイルの編集画面を開いている間は自動保存しません。編集中の下書きを触っているためで、これまでどおり編集画面の保存で確定します。',
+'並び順の入れ替え、複製、有効・無効の切替、削除も、保存ボタン無しでそのまま残るようになりました。',
+'',
+'【バージョン情報のモーダルを作り直しました】幅を560pxから880pxへ広げ、上から「版と題」「更新履歴の見出し」「変更点」の順に読めば分かる並びにしました。',
+'更新履歴の本文は【見出し】と空行で話題が区切ってあるのに、これまでは全部が同じ点の列でした。見出し・箇条書き・版の3層に組み直したので、どこからどこまでが1つの話題なのかが目で分かります。',
+'版ごとに折りたたみ、最新の版だけを開いた状態にしました。「すべて開く」「最新だけ開く」で切り替えられます。版の見出しには日付と変更点の件数を出します。',
+'リリース日・ビルド・画面側の版を、上の帯にまとめて出すようにしました。設定タブのバージョン情報も同じ組み直しが効きます。',
+'',
+'【ログを実行指令のまとまりごとに選んで消せるようにしました】これまでは1件ずつの「削除」しかなく、まとめて消すには行を1行ずつ選ぶ必要がありました。',
+'実行指令の見出しにチェック欄を付けました。「実行指令を全選択」で一括、もう一度押すと解除します。選んだまとまりは色が変わります。',
+'「選択した実行指令を削除」で、選んだまとまりに属する行をまとめて消します。消す前に件数と行数を確認します。「選択した実行指令をコピー」も同じ選択のまま使えます。',
+'表示の要約に「実行指令 N件」を足したので、いま何件選んでいるかが分かります。',
+]},
+{'version':'1.54.0','date':'2026-08-11','title':'RNEを1回で調べて控える／条件式が長すぎる軸を使わない','notes':[
 '【分割が「検索条件式が長すぎる」で失敗していました】行を絞るときは、担当しない値をすべて条件式へ並べます。値が多いほど式が長くなり、ある長さを超えるとデータベースが受け付けません（KVR52020）。実測では 876種（約7,000字）は通り、3641種（約29,000字）で拒否されました。',
 '値の種類ではなく「条件式の長さ」で決まるため、そこを見積もってから軸を選ぶようにしました。通った実績を下回らない上限（約9,000字）を超える軸は、走り出す前に候補から外します。分割数が増えると1片が外す値も増えるので、分割数も込みで判定します。',
 'それでもサーバーに拒否されたときは、その軸を「使わない」と記録して次から選ばないようにしました。毎回2分かけて拒否されるのを避けるためです。本番の実行で拒否された場合は、保存済みの割り当ても取り下げて分割なしへ戻します。記録は手順1から取り消せます。',
