@@ -25,8 +25,8 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.55.0'; APP_VERSION_TITLE='設定は変えた時点で保存／版の履歴を読みやすく／ログを実行指令ごとに消す'; APP_RELEASED_AT='2026-08-12'
-BUILD_VERSION=f'{APP_VERSION}-autosave'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.56.0'; APP_VERSION_TITLE='調査は「RNEを調査」1つに／どのRNEの結果かを取り違えない／一覧の右クリック'; APP_RELEASED_AT='2026-08-12'
+BUILD_VERSION=f'{APP_VERSION}-onesurvey'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリに同梱する仕様書。ここに登録したものだけが画面から開ける。
 # 画面からはこのidしか受け取らないので、任意のパスを読ませることはできない。
 DOCS=[
@@ -43,7 +43,28 @@ def docs_dir():
 
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
-{'version':'1.55.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+{'version':'1.56.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'【調査の押し場所を「RNEを調査」1つにしました】手順2の「分け方を探す」を無くしました。「列を調べる」「行を調べる」「中身だけ読む」も画面から外し、押すのは手順1の「RNEを調査」だけです。読むものは同じで、どれをどの順で押すかを覚える必要はありませんでした。',
+'調べた結果は手順1の中に「中身」「列の分け方」「行の分け方」の3つ折りで並びます。要点は折りたたみの見出しに1行で出るので、開かなくても分かります。読めなかったものは自動で開きます。畳んだままだと、何が引っかかったのかに気づけないためです。',
+'手順は5つから4つ（RNEを調査／速さを試す／本番の動作／実績）になりました。手順1のレールには控えの状態（調査済み・要再調査・未調査・RNEなし）を出します。調べ直す必要があるかどうかが、そこでの判断材料だからです。',
+'「行の軸の決め方」は本番の実行で使う設定なので、手順3「本番の動作」へ移しました。調査の細かい設定（想定の分割数・所要時間の内訳）は手順1の折りたたみへ入れました。',
+'調べた結果に応じて、手順2の方式の既定を決めるようにしました。列だけが使えるなら列分割、行だけなら行分割を選んでおきます。',
+'',
+'【どのRNEの調査結果なのかを取り違えないようにしました】どの対象の編集画面を開いても、前に調べた対象の結果がそのまま出ていました。調べものの状態をサーバーが1つしか持っておらず、画面側もどの対象のものか確かめていなかったためです。',
+'状態に「どの対象・どのRNEか」を持たせ、画面はそれが自分のものか確かめてから出すようにしました。別の対象の調査中の表示や結果は、もう出ません。影実行も同じ直し方をしています。',
+'手順1の先頭に「調査対象」の帯を置きました。RNE名・対象名・パスが常に見えるので、どのファイルを調べているのかを結果から推し量る必要はありません。未保存の対象では、その旨も出ます。',
+'調査の進み具合にも対象のRNE名を入れました。',
+'',
+'【裏で走っていることが、どの画面からでも分かるようにしました】調べものも影実行も、画面を閉じても続きます。これまでは編集画面を開いていないと走っていることが分からず、終わったのか始まってすらいないのかを確かめる手立てがありませんでした。',
+'上のバーに、走っているものを出すようにしました。何を・どのRNEで・何%・経過何秒かが出て、押すとその対象の画面が開きます。複数走っていれば件数も出ます。',
+'',
+'【対象ファイル一覧に右クリックメニューを付けました】行を右クリックすると、その対象について「よくやること」へ直行できます。先頭に対象名とRNE名を出すので、どれに対する操作かが分かります。',
+'実行、設定を開く、RNEの調査を開く、いますぐ調査する（画面を開かずに裏で実行）、出力先フォルダー・RNEのフォルダーを開く、データビュワーで表示、この対象でログを絞り込む、RNEパス・出力先・出力ファイル名のコピー、上へ・下へ移動、複製、有効無効の切替、削除の14通りです。',
+'行を選んだ状態で右クリックすると、選択した全件が対象になります。「選択した3件を実行」のように件数で言い直します。',
+'「上へ」「下へ」を追加したので、並べ替えにドラッグが要らなくなりました。有効・無効の切替は、いまの状態に合わせて「無効にする」「有効にする」と言い方が変わります。',
+'一覧の上に、右クリックできることを書きました。',
+]},
+{'version':'1.55.0','date':'2026-08-12','title':'設定は変えた時点で保存／版の履歴を読みやすく／ログを実行指令ごとに消す','notes':[
 '【設定の保存ボタンを廃止しました】下のバーにあった「設定を保存」を無くし、値を変えた時点で保存するようにしました。押し忘れると、画面に見えている設定と実際に使われる設定が食い違ったまま実行されてしまうためです。',
 '数値の欄は打っている途中に何度も送らないよう、手が止まってから約0.5秒で保存します。選択肢や切替は変えた時点ですぐ保存します。',
 '下のバーは「保存する場所」から「保存できているかを見る場所」に変わりました。左の丸と文言で、保存中・保存済み・保存できない、のどれなのかが分かります。保存した時刻も出します。',
@@ -6156,7 +6177,7 @@ def split_trial_blank(**over):
  前は running と stage だけを書き換えていたので、percent・バイト数・片ごとの進み具合が
  前回のまま残り、始めた直後に「前回の100%のバー」と「前回の片」が見えていた。
  """
- st={'running':False,'stage':'','job':'','started':0.0,'elapsed':0.0,'result':None,'parts':0,
+ st={'running':False,'stage':'','job':'','job_id':'','rne':'','started':0.0,'elapsed':0.0,'result':None,'parts':0,
      'percent':0,'phase':'','phase_index':0,'phase_total':4,'bytes':0,'expected_bytes':0,'note':'',
      'part_progress':[],'mode':'','pieces':0}
  st.update(over);return st
@@ -6452,7 +6473,8 @@ def column_split_trial_start():
    return jsonify(ok=False,error=f'影実行が進行中です（{split_trial_state.get("job")}）。終わるまでお待ちください',busy=True),200
   # 前回の残りを持ち越さない。バーも片の一覧も、始めた時点では空でなければならない。
   split_trial_state.clear()
-  split_trial_state.update(split_trial_blank(running=True,stage='準備中',job=job['name'],started=time.time()))
+  split_trial_state.update(split_trial_blank(running=True,stage='準備中',job=job['name'],
+                          job_id=str(job.get('id') or ''),rne=str(job.get('rne') or ''),started=time.time()))
   _split_stage_logged.update(text='',at=0.0)
  def worker():
   try:
@@ -6494,9 +6516,28 @@ INSPECT_ALL_SPEC=('RNEを調査','中身・列・行をまとめて読み、こ�
                   sum(INSPECT_TASK_SPECS[k][4] for k in INSPECT_ALL_ORDER))
 inspect_task_lock=threading.RLock()
 def inspect_task_blank(**over):
- st={'running':False,'kind':'','stage':'','title':'','job':'','started':0.0,'elapsed':0.0,
+ st={'running':False,'kind':'','stage':'','title':'','job':'','job_id':'','rne':'',
+     'started':0.0,'elapsed':0.0,
      'percent':0.0,'result':None,'error':'','expected':0.0,'measured':False}
  st.update(over);return st
+
+def task_target(data):
+ """どの対象・どのRNEを調べているのかを、状態と一緒に持ち回るために取り出す。
+
+ これが無いと、画面はどの調べものの結果なのか区別できず、別の対象の編集画面を
+ 開いても前の結果がそのまま出ていた（同じ内容がどのRNEでも出る、の原因）。
+ """
+ jid=str(data.get('job_id') or '')
+ name=str(data.get('job_name') or '')
+ rne=Path(str(data.get('rne_path') or '')).name
+ if jid and (not rne or not name):
+  try:
+   job=next((x for x in load()['jobs'] if x['id']==jid),None)
+   if job:
+    rne=rne or str(job.get('rne') or Path(str(job.get('rne_path') or '')).name)
+    name=name or str(job.get('name') or '')
+  except Exception:pass
+ return jid,name,rne
 inspect_tasks={k:inspect_task_blank(kind=k) for k in INSPECT_TASK_SPECS}
 inspect_tasks['all']=inspect_task_blank(kind='all')
 inspect_task_seconds={}   # 種類ごとの直近の所要秒。見込みの分母にだけ使う
@@ -6532,9 +6573,10 @@ def start_inspect_all():
  with inspect_task_lock:
   if inspect_tasks['all'].get('running'):
    return jsonify(ok=False,error='「RNEを調査」はすでに実行中です。終わるまでお待ちください',busy=True),200
+  jid,jname,jrne=task_target(data)
   inspect_tasks['all']=inspect_task_blank(
     kind='all',running=True,title=title,stage=detail,started=time.time(),
-    job=str(data.get('job_name') or ''),steps=[],
+    job=jname,job_id=jid,rne=jrne,steps=[],
     expected=float(inspect_task_seconds.get('all') or expected),
     measured='all' in inspect_task_seconds)
  def worker():
@@ -6586,9 +6628,10 @@ def start_inspect_task(kind):
  with inspect_task_lock:
   if inspect_tasks[kind].get('running'):
    return jsonify(ok=False,error=f'「{title}」はすでに実行中です。終わるまでお待ちください',busy=True),200
+  jid,jname,jrne=task_target(data)
   inspect_tasks[kind]=inspect_task_blank(
     kind=kind,running=True,title=title,stage=detail,started=time.time(),
-    job=str(data.get('job_name') or ''),
+    job=jname,job_id=jid,rne=jrne,
     expected=float(inspect_task_seconds.get(kind) or default_seconds),
     measured=kind in inspect_task_seconds)
  view=app.view_functions.get(endpoint)
@@ -6623,6 +6666,30 @@ def get_inspect_task(kind):
   st['elapsed']=round(time.time()-(st.get('started') or time.time()),1)
   st['percent']=inspect_task_percent(st)
  return jsonify(ok=True,**st)
+
+@app.get('/api/background-tasks')
+def background_tasks():
+ """いま裏で走っているものを1か所で答える。
+
+ 調べものも影実行も、画面を閉じても続く。どの画面にいても「何がどのRNEで走って
+ いるか」が分かるようにしないと、終わったのかどうかを確かめる方法が無くなる。
+ """
+ out=[]
+ with inspect_task_lock:
+  for kind,st in inspect_tasks.items():
+   if not st.get('running'):continue
+   out.append({'type':'inspect','kind':kind,'title':st.get('title') or '調べもの',
+               'stage':st.get('stage') or '','job':st.get('job') or '','job_id':st.get('job_id') or '',
+               'rne':st.get('rne') or '','percent':inspect_task_percent(st),
+               'elapsed':round(time.time()-(st.get('started') or time.time()),1)})
+ with split_trial_lock:
+  st=dict(split_trial_state)
+ if st.get('running'):
+  out.append({'type':'trial','kind':'trial','title':'速さを試す（影実行）',
+              'stage':st.get('stage') or '','job':st.get('job') or '','job_id':st.get('job_id') or '',
+              'rne':st.get('rne') or '','percent':float(st.get('percent') or 0),
+              'elapsed':round(time.time()-(st.get('started') or time.time()),1)})
+ return jsonify(ok=True,count=len(out),tasks=out)
 
 @app.post('/api/run')
 def run_all():

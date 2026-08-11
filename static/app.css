@@ -1635,3 +1635,53 @@ body:has(.autosave-state.is-saving) .autosave-mark{background:#0b8ea8;box-shadow
 .log-act-group{display:inline-flex;align-items:center;gap:4px;padding:3px 6px 3px 4px;border:1px solid #e0e8eb;border-radius:9px;background:#fbfdfd}
 .log-act-group>i{font-style:normal;font-size:10px;font-weight:900;color:#5e747e;letter-spacing:.06em;padding:0 4px}
 .log-act-group.is-danger>i{color:#a4463d}
+
+
+/* V1.56: 調査は「RNEを調査」1つに寄せる。何をどのRNEで調べたのかを常に見せる。 */
+.insp-target{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin:0 0 9px;padding:8px 11px;
+ border:1px solid #cfe2e7;border-left:4px solid #0d8191;border-radius:9px;background:#f2fafb}
+.insp-target .it-badge{font-style:normal;font-size:9.5px;font-weight:900;letter-spacing:.08em;color:#0b6d86;
+ background:#dcf0f4;border-radius:999px;padding:3px 9px;flex:none}
+.insp-target>b{font-size:14px;color:#123f4d}
+.insp-target>span{font-size:11.5px;color:#4d6873}
+.insp-target>code{flex:1 1 220px;min-width:0;font:10.5px Consolas,monospace;color:#7c8f97;
+ overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right}
+.insp-target.is-draft{border-left-color:#bd8a3b;background:#fdf8f0}
+.insp-target .it-draft{font-style:normal;font-size:10.5px;font-weight:800;color:#8a5f19}
+.insp-findings{display:grid;gap:7px;margin-top:11px}
+.ri-fold{border:1px solid #dfe8eb;border-radius:9px;background:#fbfdfd;overflow:hidden}
+.ri-fold>summary{display:flex;align-items:center;gap:9px;cursor:pointer;padding:8px 11px;list-style:none}
+.ri-fold>summary::-webkit-details-marker{display:none}
+.ri-fold>summary:hover{background:#f2f8f9}
+.ri-fold>summary>b{font-size:12px;color:#22404d;flex:none}
+.ri-fold>summary>small{font-size:10.5px;color:#8b9ba3;margin-left:auto;text-align:right}
+.ri-fold .rf-state{font-style:normal;font-size:10.5px;font-weight:800;color:#6c8089;
+ background:#eef3f5;border-radius:999px;padding:3px 9px}
+.ri-fold .rf-state.ok{color:#0c6b4d;background:#e4f4ec}
+.ri-fold .rf-state.ng{color:#a4463d;background:#fbe9e6}
+.ri-fold.is-ok{border-color:#c3e3d5}
+.ri-fold.is-ng{border-color:#efcdc7}
+.ri-fold>div{padding:2px 11px 11px}
+
+/* V1.56: 裏で走っているものを、どの画面からでも1か所で見せる。 */
+.bg-task{display:flex;align-items:center;gap:9px;background:#ffffff1c;border:1px solid #ffffff3d;color:#eaf7fa}
+.bg-task[hidden]{display:none!important}
+.bg-task:hover{background:#ffffff2e}
+.bg-task .bg-text{display:grid;gap:1px;text-align:left;min-width:0}
+.bg-task .bg-text b{font-size:11.5px;font-weight:800;white-space:nowrap}
+.bg-task .bg-text span{font-size:10px;color:#b9dde5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:230px}
+.bg-spin{width:13px;height:13px;flex:none;border-radius:50%;border:2px solid #ffffff45;border-top-color:#8ee0e2;
+ animation:bgspin .9s linear infinite}
+@keyframes bgspin{to{transform:rotate(360deg)}}
+
+/* V1.56: 右クリックの操作盤。どの対象への操作かを先頭で言い、種類ごとにまとめる。 */
+.job-context-menu{width:236px;max-height:min(86vh,620px);overflow:auto}
+.jcm-head{display:grid;gap:1px;padding:7px 9px 8px;margin:-6px -6px 5px;border-bottom:1px solid #e5ecef;background:#f4f9fa;border-radius:9px 9px 0 0}
+.jcm-head b{font-size:12px;color:#17384e;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.jcm-head span{font:10px Consolas,monospace;color:#7b8f98;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.jcm-label{display:block;font-style:normal;font-size:9.5px;font-weight:900;letter-spacing:.06em;color:#8fa1a9;padding:7px 9px 3px}
+.jcm-pair{display:grid;grid-template-columns:1fr 1fr;gap:4px}
+.jcm-pair button{text-align:center}
+.rc-hint{margin-left:auto;margin-right:12px;font-size:11px;color:#80939b}
+.rc-hint b{color:#0b6d86}
+@media(max-width:1100px){.rc-hint{display:none}}

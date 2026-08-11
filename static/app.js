@@ -1,4 +1,4 @@
-const UI_BUILD='1.55.0-autosave';
+const UI_BUILD='1.56.0-onesurvey';
 let cfg,editing=null,editingRule=null,sortDir=1,scheduleInfo={},rowLive={},rowQueue={},statusFailCount=0,serverLostShown=false;const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)],E=s=>String(s??'').replace(/[&<>"']/g,x=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[x]));const uid=()=>crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random();function toast(t){$('#toast').textContent=t;$('#toast').style.display='block';setTimeout(()=>$('#toast').style.display='none',2500)}/* 設定は変えた瞬間に保存する。保存ボタンの押し忘れで、画面に見えている設定と
    実際に使われる設定が食い違うことがあったため、押す操作そのものを無くした。 */
 let saveTimer=null,saveSeq=0,saveRetry=0;
@@ -144,13 +144,68 @@ function fillSuggestions(){let sets={names:cfg.jobs.map(j=>j.name),rne:cfg.jobs.
 function rulesRender(){let box=$('#m-rules');box.innerHTML=editing.schedules.length?editing.schedules.map(r=>`<div class="rule-row" data-id="${r.id}"><input class="rule-toggle" type="checkbox" ${r.enabled?'checked':''}><b>${E(r.name)}</b><span class="rule-type">${typeName(r.type)}</span><span class="rule-summary">${E(scheduleSummary(r))}</span><button class="rule-edit secondary" type="button">編集</button><button class="rule-delete danger" type="button">削除</button></div>`).join(''):'<div class="empty">自動実行ルールはありません。手動実行のみです。</div>';box.querySelectorAll('.rule-row').forEach(el=>{let r=editing.schedules.find(x=>x.id===el.dataset.id);el.querySelector('.rule-toggle').onchange=e=>{r.enabled=e.target.checked;dirty()};el.querySelector('.rule-edit').onclick=()=>openRule(r);el.querySelector('.rule-delete').onclick=()=>{editing.schedules=editing.schedules.filter(x=>x.id!==r.id);rulesRender()}});updateRuleCount()}
 let contextJob=null,contextRow=null;
 function hideJobContextMenu(){let m=$('#job-context-menu');if(m)m.hidden=true;contextJob=null;contextRow=null}
-function showJobContextMenu(e,j,tr){let m=$('#job-context-menu');if(!m)return;contextJob=j;contextRow=tr;m.hidden=false;let x=Math.min(e.clientX,innerWidth-m.offsetWidth-8),y=Math.min(e.clientY,innerHeight-m.offsetHeight-8);m.style.left=Math.max(8,x)+'px';m.style.top=Math.max(8,y)+'px'}
+function showJobContextMenu(e,j,tr){let m=$('#job-context-menu');if(!m)return;contextJob=j;contextRow=tr;m.hidden=false;let ids=contextTargets(),many=ids.length>1;if($('#jcm-name'))$('#jcm-name').textContent=many?`選択した ${ids.length}件`:(j.name||'');if($('#jcm-rne'))$('#jcm-rne').textContent=many?'まとめて実行できます':(j.rne||'');let rb=m.querySelector('[data-action="run"]');if(rb)rb.textContent=many?`選択した ${ids.length}件を実行`:'実行';let tb=m.querySelector('[data-action="toggle"]');if(tb)tb.textContent=j.enabled?'無効にする':'有効にする';let x=Math.min(e.clientX,innerWidth-m.offsetWidth-8),y=Math.min(e.clientY,innerHeight-m.offsetHeight-8);m.style.left=Math.max(8,x)+'px';m.style.top=Math.max(8,y)+'px'}
 async function copyTextValue(v,label){try{await navigator.clipboard.writeText(v||'');toast(label+'をコピーしました')}catch{toast('クリップボードへコピーできませんでした')}}
 async function openJobOutput(j){try{let r=await fetch('/api/open-path',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:j.output_folder||cfg.default_output_folder})}),d=await r.json();toast(r.ok&&d.ok?'出力先を開きました':d.error||'出力先を開けませんでした')}catch{toast('出力先を開けませんでした')}}
 function duplicateJob(j){let n=structuredClone(j);n.id=uid();n.name+=' コピー';n.schedules=(n.schedules||[]).map(r=>({...r,id:uid(),enabled:false}));cfg.jobs.splice(cfg.jobs.indexOf(j)+1,0,n);render();dirty()}
-if($('#job-context-menu')){$('#job-context-menu').onclick=e=>{let a=e.target.closest('[data-action]');if(!a||!contextJob)return;let j=contextJob,act=a.dataset.action;hideJobContextMenu();if(act==='edit')openEditor(j);else if(act==='run')runJobs([j.id]);else if(act==='open-output')openJobOutput(j);else if(act==='viewer'){document.querySelector('[data-p="viewer"]')?.click();setTimeout(()=>{let sel=$('#viewer-job');if(sel){sel.value=j.id;sel.dispatchEvent(new Event('change'))}},100)}else if(act==='copy-rne')copyTextValue(j.rne_path||j.rne,'RNEパス');else if(act==='copy-output')copyTextValue(j.output_folder||cfg.default_output_folder,'出力先');else if(act==='duplicate')duplicateJob(j);else if(act==='toggle'){j.enabled=!j.enabled;render();dirty();toast(j.enabled?'有効にしました':'無効にしました')}else if(act==='delete')deleteJob(j)};document.addEventListener('click',e=>{if(!e.target.closest('#job-context-menu'))hideJobContextMenu()});document.addEventListener('keydown',e=>{if(e.key==='Escape')hideJobContextMenu()});window.addEventListener('blur',hideJobContextMenu)}
-function openEditor(job){editing=structuredClone(job||{id:uid(),name:'新しい対象',enabled:true,rne:'NEW.RNE',rne_path:cfg.rne_folder+'\\NEW.RNE',output_folder:cfg.default_output_folder,output_format:'sqlite3',output_file:'NEW.sqlite3',table:'仕掛',sheet:'Page1',type:'詳細データ',naming_mode:'fixed',output_pattern:'',comment:'',split_mode:'auto',split_shape:'auto',period:{enabled:false,control_point:'',unit:'month',from_offset:-1,to_offset:0},schedules:[]});$('#modal-title').textContent=job?'対象を編集':'対象を追加';$('#m-id').value=editing.id;$('#m-name').value=editing.name;$('#m-enabled').checked=editing.enabled;$('#m-rne-path').value=editing.rne_path||'';$('#m-output').value=editing.output_folder||cfg.default_output_folder;editing.output_format=normalizeFormat(editing.output_format);$('#m-format').value=editing.output_format;$('#m-output-file').value=editing.output_file;$('#m-table').value=editing.table;$('#m-sheet').value=editing.sheet;$('#m-type').value=editing.type;if($('#m-comment'))$('#m-comment').value=editing.comment||'';if($('#m-split-mode'))$('#m-split-mode').value=editing.split_mode||'auto';if($('#m-split-shape'))$('#m-split-shape').value=editing.split_shape||'auto';if($('#m-axis-mode'))$('#m-axis-mode').value=editing.row_axis_mode||'first';if($('#m-axis-index'))$('#m-axis-index').value=editing.row_axis_index||1;AXIS_PICK.forEach(g=>{if($(g.n))$(g.n).innerHTML=`<option value="${E(editing.row_axis_name||'')}">${E(editing.row_axis_name||'（先に「行を調べる」）')}</option>`;if($(g.m))$(g.m).value=editing.row_axis_mode||'first';if($(g.i))$(g.i).value=editing.row_axis_index||1});syncAxisPick();syncOutputExtension();initNaming(editing);setPeriodUI(editing.period);renderRuntimeSplit(null);inspReset();loadMaster(false);splitTrialPoll();rulesRender();updatePeriodBadge();setEditorTab('basic');$('#editor').showModal()}
-$('#m-format').onchange=()=>{syncOutputExtension();if(currentNamingMode()==='template')refreshNamePreview()};$('#m-rne-check').onclick=async()=>{showWaiting('RNEファイル確認中','設定場所と周辺フォルダーを検索しています...');try{let temp={item:'rne',job_id:editing.id,label:editing.rne,configured:$('#m-rne-path').value,resolved:$('#m-rne-path').value,candidates:[],ok:false};let r=await fetch('/api/path-check',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({item:'rne',job_id:editing.id,value:$('#m-rne-path').value,expected_name:$('#m-rne-path').value.split(/[\\/]/).pop()})}),d=await r.json();if(r.ok)showPathResult(d);else toast(d.error)}finally{hideWaiting()}};$('#m-rne-pick').onclick=async()=>{let p=await browse('file',$('#m-rne-path').value,[['RNEファイル','*.RNE'],['すべて','*.*']]);if(p){let i=$('#m-rne-path'),wasRel=i.value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(i.value);i.value=p;if(wasRel)await convertPath(i,'relative');updatePathBadge(i);i._refreshPathControl?.()}};$('#m-output-pick').onclick=async()=>{let p=await browse('folder',$('#m-output').value);if(p){let i=$('#m-output'),wasRel=i.value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(i.value);i.value=p;if(wasRel)await convertPath(i,'relative');updatePathBadge(i)}};enhancePathInput($('#m-rne-path'),'file');enhancePathInput($('#m-output'),'folder');$('#add-rule').onclick=()=>openRule({id:uid(),enabled:true,name:'実行ルール',type:'daily',time:'06:00'},true);$('#apply').onclick=async e=>{e.preventDefault();syncOutputExtension();const f=normalizeFormat($('#m-format').value),file=canonicalOutputFile($('#m-output-file').value,f),updated={...editing,name:$('#m-name').value.trim(),enabled:$('#m-enabled').checked,rne_path:$('#m-rne-path').value.trim(),rne:$('#m-rne-path').value.trim().split(/[\\/]/).pop(),output_folder:$('#m-output').value.trim(),output_format:f,output_file:file,table:$('#m-table').value.trim(),sheet:$('#m-sheet').value.trim(),type:$('#m-type').value,naming_mode:currentNamingMode(),output_pattern:$('#m-output-pattern').value.trim(),comment:($('#m-comment')?.value||'').trim(),split_mode:($('#m-split-mode')?.value||'auto'),split_shape:($('#m-split-shape')?.value||'auto'),row_axis_mode:($('#m-axis-mode')?.value||'first'),row_axis_index:Number($('#m-axis-index')?.value||1)||1,row_axis_name:($('#m-axis-name')?.value||''),period:currentPeriod()};let i=cfg.jobs.findIndex(j=>j.id===updated.id);if(i<0)cfg.jobs.unshift(updated);else cfg.jobs[i]=updated;let payload=structuredClone(cfg);delete payload.credential_status;showWaiting('設定を保存中',`${formatName(f)} / ${file}`);try{let r=await fetch('/api/config',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),d=await r.json();if(!r.ok)throw Error(d.error||'設定保存失敗');$('#editor').close();await init();toast(`保存完了: ${formatName(f)} / ${file}`)}catch(x){toast(x.message)}finally{hideWaiting()}};
+/* 右クリックの操作盤。一覧の行から、その対象について「よくやること」へ直行できる。
+   どの対象に対する操作なのかが分からないと押せないので、先頭に名前とRNEを出す。
+   行を選んだ状態で右クリックしたときは、選択した全件が対象になる。 */
+function contextTargets(){
+ let ids=$$('#jobs-body .rowcheck:checked').map(x=>x.closest('tr').dataset.id);
+ if(contextJob&&ids.includes(contextJob.id)&&ids.length>1)return ids;
+ return contextJob?[contextJob.id]:[];
+}
+function jobFolder(path){return String(path||'').replace(/[\\/][^\\/]*$/,'')}
+async function inspectNow(j){
+ try{
+  let d=await fetch('/api/inspect-task/all',{method:'POST',headers:{'Content-Type':'application/json'},
+   body:JSON.stringify({job_id:j.id,rne_path:j.rne_path||j.rne,job_name:j.name,parts:2})}).then(r=>r.json());
+  if(d.ok){toast(`「${j.name}」の調査を裏で始めました`);loadBgTasks()}else toast(d.error||'調査を始められませんでした');
+ }catch{toast('調査を始められませんでした')}
+}
+function showJobLog(j){
+ document.querySelector('[data-p="logs"]')?.click();
+ setTimeout(()=>{let q=$('#log-filter-text');if(q){q.value=j.name;applyLogFilter()}
+  toast(`ログを「${j.name}」で絞り込みました`)},120);
+}
+async function moveJob(j,dir){
+ let i=cfg.jobs.findIndex(x=>x.id===j.id),to=i+dir;
+ if(i<0||to<0||to>=cfg.jobs.length)return toast(dir<0?'すでに先頭です':'すでに最後です');
+ await reorderJobs(j.id,cfg.jobs[to].id,dir>0);
+}
+if($('#job-context-menu')){$('#job-context-menu').onclick=e=>{
+ let a=e.target.closest('[data-action]');if(!a||!contextJob)return;
+ let j=contextJob,act=a.dataset.action,ids=contextTargets();
+ hideJobContextMenu();
+ if(act==='edit')openEditor(j);
+ else if(act==='inspect'){openEditor(j);setEditorTab('inspect');inspGo('read')}
+ else if(act==='inspect-now')inspectNow(j);
+ else if(act==='run')runJobs(ids);
+ else if(act==='open-output')openJobOutput(j);
+ else if(act==='open-rne')openFolderPath(jobFolder(j.rne_path||j.rne)||cfg.rne_folder,'RNEのフォルダー');
+ else if(act==='log')showJobLog(j);
+ else if(act==='viewer'){document.querySelector('[data-p="viewer"]')?.click();setTimeout(()=>{let sel=$('#viewer-job');if(sel){sel.value=j.id;sel.dispatchEvent(new Event('change'))}},100)}
+ else if(act==='copy-rne')copyTextValue(j.rne_path||j.rne,'RNEパス');
+ else if(act==='copy-output')copyTextValue(j.output_folder||cfg.default_output_folder,'出力先');
+ else if(act==='copy-file')copyTextValue(j.output_file||'','出力ファイル名');
+ else if(act==='move-up')moveJob(j,-1);
+ else if(act==='move-down')moveJob(j,1);
+ else if(act==='duplicate')duplicateJob(j);
+ else if(act==='toggle'){j.enabled=!j.enabled;render();dirty();toast(j.enabled?'有効にしました':'無効にしました')}
+ else if(act==='delete')deleteJob(j)};
+ document.addEventListener('click',e=>{if(!e.target.closest('#job-context-menu'))hideJobContextMenu()});
+ document.addEventListener('keydown',e=>{if(e.key==='Escape')hideJobContextMenu()});
+ window.addEventListener('blur',hideJobContextMenu)}
+async function openFolderPath(path,label){
+ if(!path)return toast(`${label}が設定されていません`);
+ try{let d=await fetch('/api/open-path',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({path})}).then(r=>r.json());
+  toast(d.ok?`${label}を開きました`:(d.error||`${label}を開けませんでした`))}
+ catch{toast(`${label}を開けませんでした`)}
+}
+function openEditor(job){editing=structuredClone(job||{id:uid(),name:'新しい対象',enabled:true,rne:'NEW.RNE',rne_path:cfg.rne_folder+'\\NEW.RNE',output_folder:cfg.default_output_folder,output_format:'sqlite3',output_file:'NEW.sqlite3',table:'仕掛',sheet:'Page1',type:'詳細データ',naming_mode:'fixed',output_pattern:'',comment:'',split_mode:'auto',split_shape:'auto',period:{enabled:false,control_point:'',unit:'month',from_offset:-1,to_offset:0},schedules:[]});$('#modal-title').textContent=job?'対象を編集':'対象を追加';$('#m-id').value=editing.id;$('#m-name').value=editing.name;$('#m-enabled').checked=editing.enabled;$('#m-rne-path').value=editing.rne_path||'';$('#m-output').value=editing.output_folder||cfg.default_output_folder;editing.output_format=normalizeFormat(editing.output_format);$('#m-format').value=editing.output_format;$('#m-output-file').value=editing.output_file;$('#m-table').value=editing.table;$('#m-sheet').value=editing.sheet;$('#m-type').value=editing.type;if($('#m-comment'))$('#m-comment').value=editing.comment||'';if($('#m-split-mode'))$('#m-split-mode').value=editing.split_mode||'auto';if($('#m-split-shape'))$('#m-split-shape').value=editing.split_shape||'auto';if($('#m-axis-mode'))$('#m-axis-mode').value=editing.row_axis_mode||'first';if($('#m-axis-index'))$('#m-axis-index').value=editing.row_axis_index||1;AXIS_PICK.forEach(g=>{if($(g.n))$(g.n).innerHTML=`<option value="${E(editing.row_axis_name||'')}">${E(editing.row_axis_name||'（先に「RNEを調査」）')}</option>`;if($(g.m))$(g.m).value=editing.row_axis_mode||'first';if($(g.i))$(g.i).value=editing.row_axis_index||1});syncAxisPick();syncOutputExtension();initNaming(editing);setPeriodUI(editing.period);renderRuntimeSplit(null);inspReset();loadMaster(false);splitTrialPoll();rulesRender();updatePeriodBadge();setEditorTab('basic');$('#editor').showModal()}
+$('#m-format').onchange=()=>{syncOutputExtension();if(currentNamingMode()==='template')refreshNamePreview()};$('#m-rne-check').onclick=async()=>{showWaiting('RNEファイル確認中','設定場所と周辺フォルダーを検索しています...');try{let temp={item:'rne',job_id:editing.id,label:editing.rne,configured:$('#m-rne-path').value,resolved:$('#m-rne-path').value,candidates:[],ok:false};let r=await fetch('/api/path-check',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({item:'rne',job_id:editing.id,value:$('#m-rne-path').value,expected_name:$('#m-rne-path').value.split(/[\\/]/).pop()})}),d=await r.json();if(r.ok)showPathResult(d);else toast(d.error)}finally{hideWaiting()}};$('#m-rne-pick').onclick=async()=>{let p=await browse('file',$('#m-rne-path').value,[['RNEファイル','*.RNE'],['すべて','*.*']]);if(p){let i=$('#m-rne-path'),wasRel=i.value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(i.value);i.value=p;if(wasRel)await convertPath(i,'relative');updatePathBadge(i);i._refreshPathControl?.()}};$('#m-output-pick').onclick=async()=>{let p=await browse('folder',$('#m-output').value);if(p){let i=$('#m-output'),wasRel=i.value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(i.value);i.value=p;if(wasRel)await convertPath(i,'relative');updatePathBadge(i)}};enhancePathInput($('#m-rne-path'),'file');enhancePathInput($('#m-output'),'folder');$('#m-rne-path').addEventListener('input',()=>renderInspTarget());$('#m-name').addEventListener('input',()=>renderInspTarget());$('#add-rule').onclick=()=>openRule({id:uid(),enabled:true,name:'実行ルール',type:'daily',time:'06:00'},true);$('#apply').onclick=async e=>{e.preventDefault();syncOutputExtension();const f=normalizeFormat($('#m-format').value),file=canonicalOutputFile($('#m-output-file').value,f),updated={...editing,name:$('#m-name').value.trim(),enabled:$('#m-enabled').checked,rne_path:$('#m-rne-path').value.trim(),rne:$('#m-rne-path').value.trim().split(/[\\/]/).pop(),output_folder:$('#m-output').value.trim(),output_format:f,output_file:file,table:$('#m-table').value.trim(),sheet:$('#m-sheet').value.trim(),type:$('#m-type').value,naming_mode:currentNamingMode(),output_pattern:$('#m-output-pattern').value.trim(),comment:($('#m-comment')?.value||'').trim(),split_mode:($('#m-split-mode')?.value||'auto'),split_shape:($('#m-split-shape')?.value||'auto'),row_axis_mode:($('#m-axis-mode')?.value||'first'),row_axis_index:Number($('#m-axis-index')?.value||1)||1,row_axis_name:($('#m-axis-name')?.value||''),period:currentPeriod()};let i=cfg.jobs.findIndex(j=>j.id===updated.id);if(i<0)cfg.jobs.unshift(updated);else cfg.jobs[i]=updated;let payload=structuredClone(cfg);delete payload.credential_status;showWaiting('設定を保存中',`${formatName(f)} / ${file}`);try{let r=await fetch('/api/config',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),d=await r.json();if(!r.ok)throw Error(d.error||'設定保存失敗');$('#editor').close();await init();toast(`保存完了: ${formatName(f)} / ${file}`)}catch(x){toast(x.message)}finally{hideWaiting()}};
 /* V35: dynamic output filename builder */
 let namePreviewTimer=null;
 function currentNamingMode(){return document.querySelector('.naming-tab.on')?.dataset.mode||'fixed'}
@@ -950,29 +1005,32 @@ function inspState(step,text,tone=''){
  if(e){e.textContent=text;e.className='is-state'+(tone?' '+tone:'')}
  b.classList.toggle('done',tone==='ok');
 }
-// 手順2は列と行の2本立てなので、両方の結果を1行にまとめて出す。
-function inspPlanState(axis,text,tone){
- inspPlan[axis]={text,tone};
- let v=[inspPlan.column,inspPlan.row].filter(Boolean);
- if(!v.length)return inspState('plan','未実行','');
- inspState('plan',v.map(x=>x.text).join(' / '),
-  v.some(x=>x.tone==='ng')?'ng':(v.some(x=>x.tone==='ok')?'ok':''));
+/* 調べた結果は「中身」「列の分け方」「行の分け方」の3つ折りに出す。
+   以前は手順2「分け方を探す」という別の手順に分かれていたが、読むものは同じで、
+   分けて押す理由が無かった。押す場所は手順1の「RNEを調査」1つだけにする。 */
+function inspFind(kind,text,tone){
+ if(kind==='column'||kind==='row')inspPlan[kind]={text,tone};
+ let f=document.querySelector(`.ri-fold[data-find="${kind}"]`);
+ if(f){let e=f.querySelector('.rf-state');
+  if(e){e.textContent=text;e.className='rf-state'+(tone?' '+tone:'')}
+  f.classList.toggle('is-ng',tone==='ng');f.classList.toggle('is-ok',tone==='ok');
+  // 駄目だったものは畳まない。畳むと、何が引っかかったのかを開くまで気づけない。
+  if(tone==='ng')f.open=true}
+ // レールの手順1には控えの状態（調査済み／要再調査／未調査）を出す。何度も調べ直す
+ // 必要があるかどうかが、そこでの唯一の判断材料だから。個々の結果は折りたたみに出す。
  syncTrialControls();
 }
 /* 調べものは20秒前後サーバーを待つ。これまでは待機モーダルで画面を塞いでいたが、
    影実行と同じように裏で走らせる。進み具合はその手順の結果欄に出し、閉じても続く
    （状態はサーバーが持っているので、開き直せば途中から追いつく）。 */
-const INSP_TASK={read:  {box:'#m-rne-inspect-result',btn:'#m-rne-inspect',needJob:false},
-                 column:{box:'#m-column-plan-result', btn:'#m-column-plan', needJob:true},
-                 row:   {box:'#m-row-split-result',   btn:'#m-row-split',   needJob:true},
-                 // 3つを1回で走らせる。利用者から見れば「そのRNEを調べる」1つの用事。
-                 all:   {box:'#m-rne-inspect-result',  btn:'#m-rne-inspect-all',needJob:true}};
+const INSP_TASK={all:{box:'#m-rne-inspect-result',btn:'#m-rne-inspect-all',needJob:true}};
 let inspTaskTimer={},inspTaskRender={};
 function inspTaskProgress(kind,st){
  let rb=$(INSP_TASK[kind].box);if(!rb)return;
  rb.hidden=false;
  let pct=Math.max(0,Math.min(100,Number(st.percent||0)));
- rb.innerHTML=`<p class="ri-note"><b>${E(st.title||'')}</b>を実行中です（経過 ${fmtSeconds(st.elapsed||0)||'0.0秒'}）</p>`
+ rb.innerHTML=`<p class="ri-note"><b>${E(st.title||'')}</b>を実行中です`
+  +`${st.rne?` ― 対象 <b>${E(st.rne)}</b>`:''}（経過 ${fmtSeconds(st.elapsed||0)||'0.0秒'}）</p>`
   +`<div class="tp-head"><span class="tp-phase">${E(st.stage||'準備中')}</span><b class="tp-pct">${pct.toFixed(0)}%</b></div>`
   +`<div class="tp-track"><i class="tp-bar guess" style="width:${pct}%"></i></div>`
   +`<p class="ri-note tp-guess">${st.measured?'前回の所要時間':'まだ実測がないため、おおよその見込み'}からの見当です`
@@ -983,9 +1041,18 @@ function inspTaskStop(kind){
  if(inspTaskTimer[kind]){clearInterval(inspTaskTimer[kind]);inspTaskTimer[kind]=null}
  let b=$(INSP_TASK[kind].btn);if(b)b.disabled=false;
 }
+/* いま開いている対象のものか。サーバーは1つしか状態を持たないので、ここで確かめないと
+   別の対象の編集画面を開いたときに、前の対象の調査結果がそのまま出てしまう。 */
+function inspTaskMine(st){
+ if(!st)return false;
+ // どの対象のものか名乗っていない状態は、他人のものだと決めつけない（古い状態が残っている場合）。
+ if(!st.job_id)return true;
+ return String(st.job_id)===String(editing?.id||'');
+}
 async function inspTaskPoll(kind){
  try{
   let st=await fetch('/api/inspect-task/'+kind,{cache:'no-store'}).then(r=>r.json());
+  if(!inspTaskMine(st)){inspTaskStop(kind);return}
   if(st.running){inspTaskProgress(kind,st);return}
   inspTaskStop(kind);
   let fn=inspTaskRender[kind];
@@ -1015,8 +1082,9 @@ function inspTaskResume(){
   if(inspTaskTimer[k])return;
   try{
    let st=await fetch('/api/inspect-task/'+k,{cache:'no-store'}).then(r=>r.json());
-   if(!st.running)return;
-   inspEmpty(k,true);inspTaskProgress(k,st);
+   if(!st.running||!inspTaskMine(st))return;   // 別の対象の調査は、この画面へ出さない
+   inspEmpty('read',true);inspTaskProgress(k,st);
+   inspTaskRender[k]=inspTaskRender[k]||renderInspectAll;
    inspTaskTimer[k]=setInterval(()=>inspTaskPoll(k),1000);
   }catch{}
  });
@@ -1100,25 +1168,66 @@ async function loadRneStats(){
 }
 if($('#m-master-refresh'))$('#m-master-refresh').onclick=()=>loadMaster(false);
 if($('#m-stats-reload'))$('#m-stats-reload').onclick=loadRneStats;
+/* 裏で走っているものを、どの画面からでも見えるようにする。
+   調べものも影実行も画面を閉じても続くので、走っていることが分からないと
+   「終わったのか、始まってすらいないのか」を確かめる手立てが無くなる。 */
+let bgTasks=[],bgTimer=null;
+function renderBgTasks(){
+ let box=$('#bg-task');if(!box)return;
+ if(!bgTasks.length){box.hidden=true;return}
+ let t=bgTasks[0],more=bgTasks.length-1;
+ box.hidden=false;
+ $('#bg-task-title').textContent=t.title+(more>0?` ほか${more}件`:'');
+ $('#bg-task-sub').textContent=`${t.rne||t.job||'対象不明'} / ${Math.round(t.percent||0)}% / 経過 ${fmtSeconds(t.elapsed||0)}`;
+ box.title=bgTasks.map(x=>`${x.title}: ${x.rne||x.job||'—'} ${Math.round(x.percent||0)}%\n${x.stage||''}`).join('\n\n');
+}
+async function loadBgTasks(){
+ try{
+  let d=await fetch('/api/background-tasks',{cache:'no-store'}).then(r=>r.json());
+  bgTasks=d.tasks||[];
+ }catch{bgTasks=[]}
+ renderBgTasks();
+}
+if($('#bg-task'))$('#bg-task').onclick=()=>{
+ let t=bgTasks[0];if(!t)return;
+ let j=t.job_id&&cfg?.jobs?.find(x=>x.id===t.job_id);
+ if(!j)return toast(`${t.title}: ${t.rne||t.job||''} ${t.stage||''}`);
+ if($('#editor')?.open&&String(editing?.id)===String(j.id))return setEditorTab('inspect');
+ if($('#editor')?.open)$('#editor').close();
+ openEditor(j);setEditorTab('inspect');inspGo(t.type==='trial'?'trial':'read');
+};
+bgTimer=setInterval(loadBgTasks,2000);loadBgTasks();
 function inspEmpty(name,hide){let e=document.querySelector(`.ip-empty[data-empty="${name}"]`);if(e)e.hidden=!!hide}
+/* 対象を開き直すたびに白紙へ戻す。前に開いていた対象の調査結果が残っていると、
+   どのRNEを見ているのか分からなくなる（同じ内容がどのRNEでも出る、の原因）。 */
 function inspReset(){
  Object.keys(INSP_TASK).forEach(k=>{inspTaskStop(k);inspTaskRender[k]=null});
  let ms=$('#m-master-state');if(ms){ms.className='master-state';ms.textContent='確認中'}
  let sb=$('#m-stats-body');if(sb)sb.innerHTML='';
- ['#m-rne-inspect-result','#m-column-plan-result','#m-row-split-result','#m-split-trial-result']
-  .forEach(id=>{let e=$(id);if(e){e.hidden=true;e.innerHTML=''}});
+ let tb=$('#m-rne-inspect-result');if(tb){tb.hidden=true;tb.innerHTML=''}
+ let sr=$('#m-split-trial-result');if(sr){sr.hidden=true;sr.innerHTML=''}
+ ['#m-rne-detail-result','#m-column-plan-result','#m-row-split-result']
+  .forEach(id=>{let e=$(id);if(e)e.innerHTML='<p class="ri-note">「RNEを調査」を実行すると、ここに出ます。</p>'});
+ $$('.ri-fold').forEach(f=>{f.open=false;f.classList.remove('is-ok','is-ng');
+  let e=f.querySelector('.rf-state');if(e){e.textContent='未取得';e.className='rf-state'}});
  $$('.ip-empty').forEach(e=>e.hidden=false);
  inspPlan={column:null,row:null};
- inspState('read','未実行');inspState('plan','未実行');inspState('trial','未実行');
- inspGo('read');planAxis('column');
+ inspState('read','未実行');inspState('trial','未実行');
+ renderInspTarget();
+ inspGo('read');syncTrialControls();
 }
-// 列/行の切り替え。探した軸をそのまま手順3の既定にして、選び直す手間をなくす。
-function planAxis(axis){
- $$('#plan-axis button').forEach(b=>b.classList.toggle('on',b.dataset.axis===axis));
- $$('.ip-sub').forEach(x=>x.classList.toggle('on',x.dataset.axis===axis));
- let t=$('#m-split-mode-trial');
- if(t&&t.value!=='grid'&&t.value!==axis)t.value=axis;
- syncTrialControls();
+/* いまどのRNEを調べているのかを、手順1の先頭に必ず出す。ここが空だと、
+   どの対象の画面なのかが結果からしか分からない。 */
+function renderInspTarget(){
+ let box=$('#m-insp-target');if(!box)return;
+ if(!editing){box.className='insp-target';box.textContent='対象を確認中';return}
+ let saved=!!(editing.id&&cfg?.jobs?.some(j=>j.id===editing.id));
+ let path=($('#m-rne-path')?.value||editing.rne_path||'').trim();
+ let name=path.split(/[\\/]/).pop()||editing.rne||'（未設定）';
+ box.className='insp-target'+(saved?'':' is-draft');
+ box.innerHTML=`<i class="it-badge">調査対象</i><b>${E(name)}</b><span>${E(editing.name||'')}</span>`
+  +`<code title="${E(path)}">${E(path||'RNEのパスが未設定です')}</code>`
+  +(saved?'':'<em class="it-draft">未保存 ― 先に「設定を反映」を押してください</em>');
 }
 // 方式に関係のない選択肢は出さない。列分割のときに「行」の数を選べても意味がないため。
 function syncTrialControls(){
@@ -1150,9 +1259,9 @@ function syncTrialControls(){
  let done=m==='grid'?(inspPlan.column?.tone==='ok'&&inspPlan.row?.tone==='ok'):inspPlan[m]?.tone==='ok';
  let ready=({column:'列の割り当てができています。',row:'行の区切りができています。',
   grid:'列と行の両方がそろっています。片の数は 行×列 になります。'})[m];
- let todo=({column:'先に手順2の「列を調べる」を実行してください。',
+ let todo=({column:'先に手順1の「RNEを調査」を実行してください。',
   row:'先に手順1の「RNEを調査」を実行してください。',
-  grid:'先に手順2で「列を調べる」と「行を調べる」の両方を実行してください。片の数は 行×列 になります。'})[m];
+  grid:'先に手順1の「RNEを調査」を実行してください。片の数は 行×列 になります。'})[m];
  n.innerHTML=(done?ready:todo)+'<b>出力ファイルは更新しません</b>（比較するだけで、結果は公開しません）。';
 }
 $$('.insp-step').forEach(b=>b.onclick=()=>{
@@ -1161,18 +1270,17 @@ $$('.insp-step').forEach(b=>b.onclick=()=>{
  if(k==='read')loadMaster(false);
  if(k==='stats')loadRneStats();
 });
-$$('#plan-axis button').forEach(b=>b.onclick=()=>planAxis(b.dataset.axis));
 if($('#m-split-mode-trial'))$('#m-split-mode-trial').onchange=syncTrialControls;
 if($('#m-split-measure'))$('#m-split-measure').onchange=syncTrialControls;
 syncTrialControls();
 
 /* RNEの中身を調べる：管理ポイント（行の軸）とデータ項目（出力される列）をまとめて見せる。
    時間管理ポイントの検出は「抽出期間」タブ側の目的に絞ってあるので、RNE全体の把握はこちらで行う。 */
-if($('#m-rne-inspect'))$('#m-rne-inspect').onclick=()=>inspTaskRun('read',
-  {job_id:editing?.id,rne_path:$('#m-rne-path')?.value||'',job_name:editing?.name||''},renderRneInspect);
 // RNEを1回で調べ切る。終わったら控えの状態と、手順2〜4の中身をまとめて出し直す。
 if($('#m-rne-inspect-all'))$('#m-rne-inspect-all').onclick=()=>inspTaskRun('all',
-  {job_id:editing?.id,rne_path:$('#m-rne-path')?.value||'',job_name:editing?.name||'',parts:2},renderInspectAll);
+  {job_id:editing?.id,rne_path:$('#m-rne-path')?.value||'',job_name:editing?.name||'',
+   parts:Number($('#m-row-parts')?.value||2)||2,probe:!!$('#m-row-probe')?.checked,
+   ...axisChoice()},renderInspectAll);
 function renderInspectAll(d){
  let rb=$('#m-rne-inspect-result');if(rb)rb.hidden=false;
  let steps=d.steps||[];
@@ -1188,10 +1296,18 @@ function renderInspectAll(d){
  if(d.read?.ok)try{renderRneInspect(d.read)}catch{}
  if(d.column?.ok)try{renderColumnPlan(d.column)}catch{}
  if(d.row?.ok)try{renderRowPlan(d.row)}catch{}
+ // 調べた結果を手順2の既定にする。片方しか使えないなら、そちらを選んでおく。
+ let tm=$('#m-split-mode-trial');
+ if(tm&&tm.value!=='grid'){
+  let col=inspPlan.column?.tone,row=inspPlan.row?.tone;
+  if(col==='ok'&&row!=='ok')tm.value='column';
+  else if(row==='ok'&&col!=='ok')tm.value='row';
+  syncTrialControls();
+ }
  loadRuntimeSplit();
 }
 function renderRneInspect(d){
- let rb=$('#m-rne-inspect-result');
+ let rb=$('#m-rne-detail-result');
  try{
   if(rb)rb.hidden=false;
   if(!d.ok){if(rb)rb.innerHTML=`<p class="ri-ng">RNEを読み取れませんでした。</p><p class="ri-note">${E(d.error||'')}</p>`;inspEmpty('read',true);inspState('read','読み取れません','ng');return}
@@ -1217,13 +1333,11 @@ function renderRneInspect(d){
 /* 列の分割可否を調べる。分割で本当に効果が出るかは「分割して取得できる列」が何本あるかで決まるので、
    実装を進める前にこの数字だけを先に出せるようにしている。 */
 const SOURCE_LABEL={cache:'保存済みの列定義',output:'直近の出力ファイル',probe:'1行だけの問い合わせ'};
-if($('#m-column-plan'))$('#m-column-plan').onclick=()=>inspTaskRun('column',
-  {job_id:editing?.id,job_name:editing?.name||''},renderColumnPlan);
 function renderColumnPlan(d){
  let rb=$('#m-column-plan-result');
  try{
   if(rb)rb.hidden=false;
-  if(!d.ok){if(rb)rb.innerHTML=`<p class="ri-ng">調べられませんでした。</p><p class="ri-note">${E(d.error||'')}</p>`;inspEmpty('column',true);inspPlanState('column','列 調べられません','ng');return}
+  if(!d.ok){if(rb)rb.innerHTML=`<p class="ri-ng">調べられませんでした。</p><p class="ri-note">${E(d.error||'')}</p>`;inspEmpty('column',true);inspFind('column','列 調べられません','ng');return}
   let rem=d.removable_count||0,fix=d.fixed_count||0;
   let total=(rem+fix)||d.column_count||0;
   let pct=total?Math.round(rem/total*100):0;
@@ -1277,8 +1391,8 @@ function renderColumnPlan(d){
   if(rb)rb.innerHTML=body;
   renderRuntimeSplit(d.runtime_split);
   inspEmpty('column',true);
-  inspPlanState('column',rem<2?`列 分割不可（${rem}本）`:`列 ${rem}/${total}本を分割可`,rem<2?'ng':'ok');
- }catch(x){if(rb){rb.hidden=false;rb.innerHTML=`<p class="ri-ng">調査中にエラーが発生しました。</p>`}inspEmpty('column',true);inspPlanState('column','列 エラー','ng')}
+  inspFind('column',rem<2?`列 分割不可（${rem}本）`:`列 ${rem}/${total}本を分割可`,rem<2?'ng':'ok');
+ }catch(x){if(rb){rb.hidden=false;rb.innerHTML=`<p class="ri-ng">調査中にエラーが発生しました。</p>`}inspEmpty('column',true);inspFind('column','列 エラー','ng')}
 }
 
 /* 分割の効果を試す（影実行）。分割あり・なしを続けて実行し、結合結果をバイト比較する。
@@ -1459,10 +1573,6 @@ if($('#m-split-refresh'))$('#m-split-refresh').onclick=loadRuntimeSplit;
 if($('#m-split-shape'))$('#m-split-shape').onchange=loadRuntimeSplit;
 if($('#m-split-mode'))$('#m-split-mode').onchange=loadRuntimeSplit;
 
-// 行分割の下調べ。分割できる列の候補と、所要時間の内訳を出す。
-if($('#m-row-split'))$('#m-row-split').onclick=()=>inspTaskRun('row',
-  {job_id:editing?.id,job_name:editing?.name||'',parts:Number($('#m-row-parts')?.value||2),
-   probe:!!$('#m-row-probe')?.checked,...axisChoice()},renderRowPlan);
 /* 軸の決め方。調べずに決め打ちする道（表側#1・番号指定）と、調べてから選ぶ道（名前指定・
    偏りが少ないものを自動）の4通り。対象ごとに保存し、画面の無い本番の実行でも同じ軸を使う。 */
 /* 同じ「軸の決め方」を、手順2（分け方を探す）と手順3（速さを試す）の両方に置く。
@@ -1474,7 +1584,7 @@ const AXIS_PICK=[{m:'#m-axis-mode',i:'#m-axis-index',n:'#m-axis-name',
 const AXIS_HINT={
  first:'表側の1番目を使います。明細のRNEなら必ず1本はあるので、調べずに分けられます。',
  index:'表側の指定番号を使います。調べずに分けられます。使えなければ1番目に戻ります。',
- name:'名前で指定します。番号が動いても追随します。先に「行を調べる」で候補を出してください。',
+ name:'名前で指定します。番号が動いても追随します。先に手順1の「RNEを調査」で候補を出してください。',
  balanced:'表側のうち、直近の出力で最も散らばっている軸を選びます。いちばん重い片が小さくなります。'};
 function axisChoice(){
  return {row_axis_mode:$('#m-axis-mode')?.value||'first',
@@ -1518,13 +1628,13 @@ function renderRowPlan(d){
  let rb=$('#m-row-split-result');
  try{
   if(rb)rb.hidden=false;
-  if(!d.ok){if(rb)rb.innerHTML=`<p class="ri-ng">調べられませんでした。</p><p class="ri-note">${E(d.error||'')}</p>`;inspEmpty('row',true);inspPlanState('row','行 調べられません','ng');return}
+  if(!d.ok){if(rb)rb.innerHTML=`<p class="ri-ng">調べられませんでした。</p><p class="ri-note">${E(d.error||'')}</p>`;inspEmpty('row',true);inspFind('row','行 調べられません','ng');return}
   if(rb)rb.innerHTML=rowSplitRender(d);
   fillAxisNames(d);
   inspEmpty('row',true);
   let ax=d.axis;
-  inspPlanState('row',ax?`行 ${d.parts}分割可（${ax.name}）`:'行 使える軸なし',ax?'ok':'ng');
- }catch(x){if(rb){rb.hidden=false;rb.innerHTML=`<p class="ri-ng">調査中にエラーが発生しました。</p>`}inspEmpty('row',true);inspPlanState('row','行 エラー','ng')}
+  inspFind('row',ax?`行 ${d.parts}分割可（${ax.name}）`:'行 使える軸なし',ax?'ok':'ng');
+ }catch(x){if(rb){rb.hidden=false;rb.innerHTML=`<p class="ri-ng">調査中にエラーが発生しました。</p>`}inspEmpty('row',true);inspFind('row','行 エラー','ng')}
 }
 // 行を絞れるのは管理ポイントだけ（出力される列に条件を付けても1行も絞れない）。
 // どの軸が使えるかを、置かれている場所（表側／表頭／条件）ごとに出す。
@@ -1797,6 +1907,9 @@ let splitTrialSeen='';
 async function splitTrialPoll(){
  try{
   let r=await fetch('/api/column-split-trial/status'),d=await r.json();
+  // 別の対象の影実行を、この画面へ出さない（サーバーは1件しか状態を持たない）
+  if(d.job_id&&editing?.id&&String(d.job_id)!==String(editing.id)){
+   if(splitTrialTimer){clearInterval(splitTrialTimer);splitTrialTimer=null}return}
   splitTrialRender(d);
   if(!d.running){
    clearInterval(splitTrialTimer);splitTrialTimer=null;ilogFollow(false);if(ilogOpen())ilogLoad(true);
