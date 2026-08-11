@@ -25,8 +25,8 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.62.0'; APP_VERSION_TITLE='自動実行の失敗に気づける／失敗した対象だけを自動で取り直す'; APP_RELEASED_AT='2026-08-15'
-BUILD_VERSION=f'{APP_VERSION}-alerts'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.63.0'; APP_VERSION_TITLE='ログが際限なく育たない／データの鮮度と実績の推移が見える／まとめて変更できる'; APP_RELEASED_AT='2026-08-16'
+BUILD_VERSION=f'{APP_VERSION}-upkeep'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリに同梱する仕様書。ここに登録したものだけが画面から開ける。
 # 画面からはこのidしか受け取らないので、任意のパスを読ませることはできない。
 DOCS=[
@@ -43,7 +43,30 @@ def docs_dir():
 
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
-{'version':'1.62.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+{'version':'1.63.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'【ログ（app.log）が際限なく育っていました】付け替えの仕組みが無く、実行するたびに追記され続けていました。さらに表示・絞り込み・削除のすべてが、毎回ファイル全体をメモリへ読み込んでいたため、育つほど画面が重くなり、いずれ開けなくなる作りでした。',
+'一定の大きさを超えたら app.1.log へ送り、新しいログを始めるようにしました。既定は10MB・5世代です。設定「安全性とバックアップ」の【ログの大きさ】で変えられます。',
+'付け替えるのは本体だけ、しかも実行していない瞬間だけです。並列実行では複数のワーカープロセスが同じファイルへ書いているため、途中で付け替えると他のプロセスが書き先を見失います（Windowsでは開いている最中のファイル名変更がそもそも失敗します）。実行が終わるまでは少し育ちますが、安全側に倒しています。',
+'ログを読むときは、末尾（既定4MB）だけを読み込むようにしました。実測 53MBのログで、全文を読む場合 2.02秒・233MB に対し、末尾だけなら 0.22秒・11MB です。画面には「53.4MB（末尾4MBを表示）」のように、いま何を見ているのかを必ず出します。',
+'ログ画面に【いまここで区切る】を追加しました。実行中は押しても断ります（理由も出します）。',
+'',
+'【データがいつのものか、まとめて見る場所がありませんでした】読み手にとっていちばん大事な情報が、対象一覧の実績欄に散っていました。予定を過ぎても実行されていないものも、数えないと分かりませんでした。',
+'対象ファイルの一覧の上に、予定どおりに新しくなっていない対象だけを出すようにしました。失敗・遅れ・未実行を、最終実行からの経過と次の予定と一緒に並べます。押すとその対象が開きます。すべて予定どおりなら何も出しません（問題が無いときに場所を取らない）。',
+'',
+'【実績が2000件も溜まっているのに、使い道がありませんでした】これまではカレンダーの実施記録にしか使っていませんでした。',
+'対象を開くと、直近30回の「件数」と「所要」の推移が折れ線で出るようにしました。前回からどれだけ変わったかも数字で出します。件数が急に減った・だんだん遅くなっている、はここで気づけます。',
+'',
+'【中身が変わっていなくても、毎回まるごと公開していました】公開先（多くはネットワーク共有）への書き込み、他アプリとのロック衝突、控えの世代が同じ内容で埋まること ―― 中身が同じならすべて無駄になります。',
+'対象の編集画面「2 ファイル名」に【前回と中身が同じなら更新しない】を追加しました。判定は抽出結果（中間データ）側で行います。SQLite3の出力には作成日時を書き込んでいるため、中身が同じでもファイルは毎回変わり、出力ファイル同士では比べられないためです。',
+'既定は従来どおり「毎回更新する」です。入れると出力の「作成日時」が更新されなくなるため、読み手が更新時刻で鮮度を見ている場合は使わないでください。',
+'',
+'【SQLite3の出力に索引が1つもありませんでした】読み手（BI・アプリ）は絞り込んで読むのに、索引が無いと毎回すべての行を走査していました。',
+'対象ごとに【SQLite3の索引を付ける列】を指定できるようにしました。最大4つまで、調査済みの列から選べます。実測 6万行で、索引なしは全行走査（SCAN）、索引ありは索引を使う（SEARCH）になります。書き出しは少し長くなり、ファイルは少し大きくなります（2.2MB→3.0MB）。どの列に付けたかは出力の _更新情報 にも残します。',
+'',
+'【対象が増えるほど、1件ずつ開いて直すのが苦痛でした】',
+'2件以上を選ぶと【選択した対象をまとめて変更】が出るようにしました。有効・無効／出力先／同時に出す形式／前回と同じなら更新しない／分け方 を、チェックした項目だけまとめて適用します。触っていない項目は、それぞれの対象の設定のままです。適用前に「何件に何をするか」を一覧で確かめられます。',
+]},
+{'version':'1.62.0','date':'2026-08-15','title':'自動実行の失敗に気づける／失敗した対象だけを自動で取り直す','notes':[
 '【自動実行が失敗しても、画面を開くまで気づけませんでした】失敗は実績として記録していましたが、知らせる手立てがありませんでした。自動実行は誰も見ていない時間に走るため、翌朝データが古いままだと気づいて初めて分かる、という状態でした。',
 '上の帯に「知らせ」の印を出すようにしました。失敗があるときだけ出て、押すと何が起きたのか（対象名と原因）が読めます。常駐アイコン（通知領域）が使える環境では、そこへも通知します。',
 '読んだら「すべて確認済みにする」で消せます。消すまでは出続けます。',
@@ -942,6 +965,10 @@ log_dedup=None
 if not log.handlers:
  # 並列実行では複数プロセスが同じログへ追記するため、行だけを見るとどのプロセスの出来事か分からない。
  # プロセスIDを常に出して、後からライン単位で追跡できるようにする（先頭の日時と[LEVEL]の位置は画面側の解析に合わせて維持）。
+ # RotatingFileHandlerは使わない。並列実行では複数のワーカープロセスが同じファイルへ
+ # 追記するため、どれか1つが勝手に付け替えると他のプロセスの書き先が消えたファイルを
+ # 指したままになる（Windowsでは開いている最中のリネームがそもそも失敗する）。
+ # 付け替えは、ワーカーが1つも居ない瞬間に本体だけが行う（rotate_log_if_needed）。
  h=logging.FileHandler(LOCAL_LOGS/'app.log',encoding='utf-8'); h.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] [pid %(process)d] %(message)s')); log.addHandler(h)
  log_dedup=LogDedupFilter(h); h.addFilter(log_dedup)
  # 溜めたままプロセスが終わると最後の1行が消える。終了時には必ず書き出す。
@@ -954,6 +981,85 @@ def flush_log():
  for x in log.handlers:
   try:x.flush()
   except Exception:pass
+LOG_PATH=LOCAL_LOGS/'app.log'
+def log_files():
+ """新しい順に、いま残っているログファイル。app.log → app.1.log → app.2.log …"""
+ out=[LOG_PATH] if LOG_PATH.exists() else []
+ out+= [p for p in sorted(LOCAL_LOGS.glob('app.*.log'),
+        key=lambda p:int(re.sub(r'\D','',p.stem.split('.')[-1]) or 0)) if p.is_file()]
+ return out
+
+def rotate_log_if_needed(cfg=None,force=False):
+ """大きくなったログを付け替える。
+
+ これまでは付け替えが一切なく、app.log が際限なく育っていた。読み出しも毎回
+ 全文を読んでいたため、育つほど画面が重くなり、いずれ読めなくなる。
+
+ 付け替えるのは本体だけ、しかもワーカーが1つも居ない瞬間だけ。並列実行中に
+ やると、他のプロセスが書き先を見失う（Windowsでは開いている最中のリネームが
+ 失敗する）。実行が終わるまで少し育つが、それは安全side。"""
+ if WORKER_MODE:return None
+ if not force:
+  if status.get('running'):return None
+  with active_workers_lock:
+   if active_workers:return None
+ try:
+  s=(cfg or load()).get('settings') or {}
+ except Exception:s={}
+ limit=max(1,min(500,int(s.get('log_max_mb',10) or 10)))*1024*1024
+ keep=max(0,min(20,int(s.get('log_keep',5) or 0)))
+ try:
+  if not LOG_PATH.exists() or (LOG_PATH.stat().st_size<limit and not force):return None
+  size=LOG_PATH.stat().st_size
+  flush_log()
+  for x in log.handlers:
+   try:x.close()
+   except Exception:pass
+  # 古いほうから順に1つずつ後ろへ送る（app.2→app.3、app.1→app.2、…）。
+  # いちばん古いものは押し出されて消える。最後に app.log を app.1.log にする。
+  for n in range(keep,1,-1):
+   src=LOCAL_LOGS/f'app.{n-1}.log';dst=LOCAL_LOGS/f'app.{n}.log'
+   if not src.exists():continue
+   if dst.exists():
+    try:dst.unlink()
+    except OSError:pass
+   try:os.replace(src,dst)
+   except OSError as e:log.warning('LOG_ROTATE_MOVE_FAILED src=%s dst=%s error=%s',src,dst,e)
+  if keep>=1:
+   dst=LOCAL_LOGS/'app.1.log'
+   if dst.exists():
+    try:dst.unlink()
+    except OSError:pass
+   try:os.replace(LOG_PATH,dst)
+   except OSError as e:log.warning('LOG_ROTATE_MOVE_FAILED src=%s dst=%s error=%s',LOG_PATH,dst,e)
+  else:
+   try:LOG_PATH.unlink()
+   except OSError:pass
+  for old in LOCAL_LOGS.glob('app.*.log'):
+   try:
+    if int(re.sub(r'\D','',old.stem.split('.')[-1]) or 0)>keep:old.unlink()
+   except Exception:pass
+  log.info('LOG_ROTATED size=%s limit_mb=%s keep=%s note=ワーカーが居ない間に付け替えました',size,limit//1024//1024,keep)
+  return size
+ except Exception:
+  log.exception('LOG_ROTATE_FAILED');return None
+
+def tail_lines(path,max_bytes):
+ """ファイルの末尾だけを読む。全文をメモリへ載せない。
+
+ 先頭が途中で切れることがあるので、最初の1行は捨てる（行の途中から始まった
+ 半端な行を、正しい1行として見せないため）。"""
+ try:size=path.stat().st_size
+ except OSError:return [],0,False
+ start=max(0,size-max_bytes)
+ with path.open('rb') as f:
+  if start:f.seek(start)
+  raw=f.read()
+ text=raw.decode('utf-8',errors='replace')
+ lines=text.splitlines()
+ if start and lines:lines=lines[1:]
+ return lines,size,bool(start)
+
 # COMオブジェクトの明示解放が正常経路で数秒停止する環境があるため、
 # Quit済みAccess.Applicationの参照だけをプロセス内に遅延保持する。
 # データ作成・件数検査・Quit完了後なので、出力精度には影響させない。
@@ -1082,6 +1188,10 @@ def ensure_schema_upgrades():
   if 'row_axis_name' not in cols:c.execute("ALTER TABLE jobs ADD COLUMN row_axis_name TEXT NOT NULL DEFAULT ''")
   # 同時に出す形式。抽出は1回のままで、変換と公開だけを形式のぶん繰り返す。
   if 'extra_formats' not in cols:c.execute("ALTER TABLE jobs ADD COLUMN extra_formats TEXT NOT NULL DEFAULT ''")
+  # SQLite3出力に付ける索引の列。読み手が絞り込みで使う列を対象ごとに覚えておく。
+  if 'index_columns' not in cols:c.execute("ALTER TABLE jobs ADD COLUMN index_columns TEXT NOT NULL DEFAULT ''")
+  # 前回と中身が同じなら公開しない（対象ごとに選ぶ。既定は従来どおり毎回公開する）。
+  if 'skip_if_unchanged' not in cols:c.execute('ALTER TABLE jobs ADD COLUMN skip_if_unchanged INTEGER NOT NULL DEFAULT 0')
   rc=[r['name'] for r in c.execute('PRAGMA table_info(rne_columns)')]
   if rc and 'classify_json' not in rc:c.execute("ALTER TABLE rne_columns ADD COLUMN classify_json TEXT NOT NULL DEFAULT ''")
   # 条件欄のデータ項目。絞り込みの条件が付くのはここにある項目だけなので、行分割の判断に要る。
@@ -1349,6 +1459,12 @@ def resolve_output_filename(job,cfg,now=None):
  else:
   base=Path(str(job.get('output_file') or 'output')).stem
  return canonical_output_file(base,fmt)
+
+def _json_list(text):
+ """控えDBに入っているJSON配列を、文字列の一覧として読む。"""
+ try:v=json.loads(text or '[]')
+ except Exception:return []
+ return [str(x).strip() for x in v if str(x).strip()] if isinstance(v,list) else []
 
 def _json_or_empty(text):
  try:return json.loads(text or '{}') or {}
@@ -3034,7 +3150,9 @@ def rne_master_view(job,cfg):
                     'removable':len([x for x in (cached.get('classify') or []) if x.get('removable')]),
                     'fixed':len([x for x in (cached.get('classify') or []) if not x.get('removable')]),
                     'condition':len(cached.get('condition') or []),
-                    'captured_at':cached.get('captured_at',''),'fresh':col_fresh,'source':cached.get('source','')},
+                    'captured_at':cached.get('captured_at',''),'fresh':col_fresh,'source':cached.get('source',''),
+                    # 索引に使う列を選ぶための候補。打ち間違いを減らす。
+                    'list':[str(x) for x in (cached.get('columns') or [])][:400]},
          'axes':{'have':bool(axes),'count':len(axes),
                  'usable':len([a for a in axes if axis_usable(a,2)[0]]),
                  # 使える軸の一覧そのものを返す。控えがあるのに画面が
@@ -3139,14 +3257,14 @@ def load():
     if x['month_days_json']:q['month_days']=json.loads(x['month_days_json'])
     if x['dates_json']:q['dates']=json.loads(x['dates_json'])
     rules.append(q)
-   fmt=normalize_output_format(r['output_format'],r['output_file']); jobs.append({'id':r['id'],'enabled':bool(r['enabled']),'name':r['name'],'rne':r['rne'],'rne_path':r['rne_path'],'output_folder':r['output_folder'],'output_format':fmt,'output_file':canonical_output_file(r['output_file'],fmt),'table':r['table_name'],'sheet':r['sheet_name'],'type':r['read_type'],'naming_mode':(r['naming_mode'] if 'naming_mode' in r.keys() else 'fixed'),'output_pattern':(r['output_pattern'] if 'output_pattern' in r.keys() else ''),'comment':(r['comment'] if 'comment' in r.keys() else ''),'split_mode':normalize_split_mode(r['split_mode'] if 'split_mode' in r.keys() else ''),'split_shape':normalize_split_shape(r['split_shape'] if 'split_shape' in r.keys() else ''),'row_axis_mode':normalize_row_axis_mode(r['row_axis_mode'] if 'row_axis_mode' in r.keys() else ''),'row_axis_index':int((r['row_axis_index'] if 'row_axis_index' in r.keys() else 1) or 1),'row_axis_name':str((r['row_axis_name'] if 'row_axis_name' in r.keys() else '') or ''),'extra_formats':job_extra_formats({'output_format':fmt,'output_file':r['output_file'],'extra_formats':(r['extra_formats'] if 'extra_formats' in r.keys() else '')}),'period':_decode_period(r['period_json'] if 'period_json' in r.keys() else ''),'schedules':rules})
+   fmt=normalize_output_format(r['output_format'],r['output_file']); jobs.append({'id':r['id'],'enabled':bool(r['enabled']),'name':r['name'],'rne':r['rne'],'rne_path':r['rne_path'],'output_folder':r['output_folder'],'output_format':fmt,'output_file':canonical_output_file(r['output_file'],fmt),'table':r['table_name'],'sheet':r['sheet_name'],'type':r['read_type'],'naming_mode':(r['naming_mode'] if 'naming_mode' in r.keys() else 'fixed'),'output_pattern':(r['output_pattern'] if 'output_pattern' in r.keys() else ''),'comment':(r['comment'] if 'comment' in r.keys() else ''),'split_mode':normalize_split_mode(r['split_mode'] if 'split_mode' in r.keys() else ''),'split_shape':normalize_split_shape(r['split_shape'] if 'split_shape' in r.keys() else ''),'row_axis_mode':normalize_row_axis_mode(r['row_axis_mode'] if 'row_axis_mode' in r.keys() else ''),'row_axis_index':int((r['row_axis_index'] if 'row_axis_index' in r.keys() else 1) or 1),'row_axis_name':str((r['row_axis_name'] if 'row_axis_name' in r.keys() else '') or ''),'extra_formats':job_extra_formats({'output_format':fmt,'output_file':r['output_file'],'extra_formats':(r['extra_formats'] if 'extra_formats' in r.keys() else '')}),'index_columns':_json_list(r['index_columns'] if 'index_columns' in r.keys() else ''),'skip_if_unchanged':bool(r['skip_if_unchanged'] if 'skip_if_unchanged' in r.keys() else 0),'period':_decode_period(r['period_json'] if 'period_json' in r.keys() else ''),'schedules':rules})
   cfg['jobs']=jobs; cfg.setdefault('settings',{}); cfg['settings'].setdefault('extract_engine','api'); cfg['settings'].setdefault('api_parallel_max_lines',PARALLEL_LINES_SUPPORTED_MAX); cfg['settings'].setdefault('api_parallel_model','process')
   # 既定の並列ラインは6。旧テスト実装では stability_profile='stable_api_serial' の環境で読込のたびに api_parallel_lines を1へ強制していた（毎回1ラインへ戻る不具合の原因）。
   # その名残マーカーが残る環境（または初期状態）だけ一度2へ引き上げ、以降はユーザーが保存した値をそのまま尊重する。
   _prev_profile=cfg['settings'].get('stability_profile')
   if _prev_profile in (None,'stable_api_serial'):
    cfg['settings']['api_parallel_lines']=6; cfg['settings']['stability_profile']='balanced_api_parallel'
-  cfg['settings'].setdefault('api_parallel_lines',6); cfg['settings'].setdefault('stability_profile','balanced_api_parallel'); cfg['settings'].setdefault('backup_enabled',True); _backup_mode_missing='backup_mode' not in cfg['settings']; cfg['settings'].setdefault('backup_mode','generations'); cfg['settings'].setdefault('backup_retention_days',30); cfg['settings'].setdefault('backup_generation_limit_enabled',True); cfg['settings'].setdefault('backup_generations',3); cfg['settings'].setdefault('schedule_catchup_minutes',30); cfg['settings'].setdefault('api_worker_stagger_ms',700); cfg['settings'].setdefault('split_trial_timeout_seconds',1800); cfg['settings'].setdefault('split_anchor_limit',3); cfg['settings'].setdefault('split_min_part_mb',2.0); cfg['settings'].setdefault('split_min_gain_seconds',5.0); cfg['settings'].setdefault('split_min_speedup',1.05); cfg['settings'].setdefault('split_run_enabled',True); cfg['settings'].setdefault('retry_enabled',True); cfg['settings'].setdefault('retry_max',1); cfg['settings'].setdefault('retry_delay_minutes',5)
+  cfg['settings'].setdefault('api_parallel_lines',6); cfg['settings'].setdefault('stability_profile','balanced_api_parallel'); cfg['settings'].setdefault('backup_enabled',True); _backup_mode_missing='backup_mode' not in cfg['settings']; cfg['settings'].setdefault('backup_mode','generations'); cfg['settings'].setdefault('backup_retention_days',30); cfg['settings'].setdefault('backup_generation_limit_enabled',True); cfg['settings'].setdefault('backup_generations',3); cfg['settings'].setdefault('schedule_catchup_minutes',30); cfg['settings'].setdefault('api_worker_stagger_ms',700); cfg['settings'].setdefault('split_trial_timeout_seconds',1800); cfg['settings'].setdefault('split_anchor_limit',3); cfg['settings'].setdefault('split_min_part_mb',2.0); cfg['settings'].setdefault('split_min_gain_seconds',5.0); cfg['settings'].setdefault('split_min_speedup',1.05); cfg['settings'].setdefault('split_run_enabled',True); cfg['settings'].setdefault('retry_enabled',True); cfg['settings'].setdefault('retry_max',1); cfg['settings'].setdefault('retry_delay_minutes',5); cfg['settings'].setdefault('log_max_mb',10); cfg['settings'].setdefault('log_keep',5)
   if _backup_mode_missing:cfg['settings']['backup_generations']=3
   if int(cfg['settings'].get('api_parallel_lines',6) or 6)==2:cfg['settings']['api_parallel_lines']=6
   cfg.setdefault('navigator_api_dll',r'.\Config\NAVIAP\debugdllVC14x64\SymNaviA.dll'); cfg.setdefault('accdb_template','.\\assets\\empty.accdb');
@@ -3177,7 +3295,7 @@ def _save_local(v):
   keep=[]
   for order,j in enumerate(jobs):
    jid=j.get('id') or str(uuid.uuid4()); keep.append(jid)
-   fmt=normalize_output_format(j.get('output_format'),j.get('output_file')); output_file=canonical_output_file(j.get('output_file'),fmt); log.info('設定保存 job=%s requested_format=%s saved_format=%s requested_file=%s saved_file=%s',j.get('name'),j.get('output_format'),fmt,j.get('output_file'),output_file); c.execute('INSERT OR REPLACE INTO jobs (id,display_order,enabled,name,rne,rne_path,output_folder,output_format,output_file,table_name,sheet_name,read_type,naming_mode,output_pattern,comment,split_mode,split_shape,row_axis_mode,row_axis_index,row_axis_name,extra_formats,period_json,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',(jid,order,int(bool(j.get('enabled',True))),j.get('name',''),j.get('rne',''),j.get('rne_path',''),j.get('output_folder',''),fmt,output_file,j.get('table','仕掛'),j.get('sheet','Page1'),j.get('type','詳細データ'),str(j.get('naming_mode') or 'fixed'),str(j.get('output_pattern') or ''),str(j.get('comment') or ''),normalize_split_mode(j.get('split_mode')),normalize_split_shape(j.get('split_shape')),normalize_row_axis_mode(j.get('row_axis_mode')),max(1,min(200,int(j.get('row_axis_index') or 1))),str(j.get('row_axis_name') or ''),json.dumps(job_extra_formats({**j,'output_format':fmt}),ensure_ascii=False),json.dumps(_decode_period(json.dumps(j.get('period') or {},ensure_ascii=False)),ensure_ascii=False),now))
+   fmt=normalize_output_format(j.get('output_format'),j.get('output_file')); output_file=canonical_output_file(j.get('output_file'),fmt); log.info('設定保存 job=%s requested_format=%s saved_format=%s requested_file=%s saved_file=%s',j.get('name'),j.get('output_format'),fmt,j.get('output_file'),output_file); c.execute('INSERT OR REPLACE INTO jobs (id,display_order,enabled,name,rne,rne_path,output_folder,output_format,output_file,table_name,sheet_name,read_type,naming_mode,output_pattern,comment,split_mode,split_shape,row_axis_mode,row_axis_index,row_axis_name,extra_formats,index_columns,skip_if_unchanged,period_json,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',(jid,order,int(bool(j.get('enabled',True))),j.get('name',''),j.get('rne',''),j.get('rne_path',''),j.get('output_folder',''),fmt,output_file,j.get('table','仕掛'),j.get('sheet','Page1'),j.get('type','詳細データ'),str(j.get('naming_mode') or 'fixed'),str(j.get('output_pattern') or ''),str(j.get('comment') or ''),normalize_split_mode(j.get('split_mode')),normalize_split_shape(j.get('split_shape')),normalize_row_axis_mode(j.get('row_axis_mode')),max(1,min(200,int(j.get('row_axis_index') or 1))),str(j.get('row_axis_name') or ''),json.dumps(job_extra_formats({**j,'output_format':fmt}),ensure_ascii=False),json.dumps([str(x).strip() for x in (j.get('index_columns') or []) if str(x).strip()][:4],ensure_ascii=False),int(bool(j.get('skip_if_unchanged'))),json.dumps(_decode_period(json.dumps(j.get('period') or {},ensure_ascii=False)),ensure_ascii=False),now))
    c.execute('DELETE FROM schedules WHERE job_id=?',(jid,))
    for ro,q in enumerate(j.get('schedules',[])):
     c.execute('INSERT INTO schedules VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',(q.get('id') or str(uuid.uuid4()),jid,ro,int(bool(q.get('enabled',True))),q.get('name','実行ルール'),q.get('type','daily'),q.get('time','06:00'),q.get('interval_minutes'),json.dumps(q.get('weekdays'),ensure_ascii=False) if 'weekdays' in q else None,json.dumps(q.get('month_days'),ensure_ascii=False) if 'month_days' in q else None,json.dumps(q.get('dates'),ensure_ascii=False) if 'dates' in q else None,now))
@@ -3865,7 +3983,16 @@ def export_data(source,dst,job,reject,expected_rows=None,expected_cols=None,data
    insert_started=time.perf_counter()
    if body:c.executemany(f'INSERT INTO {qi(job["table"])} VALUES ('+','.join('?' for _ in hs)+')',body)
    log.info('SQLITE_INSERT rows=%s columns=%s elapsed=%.2fs',len(body),len(hs),time.perf_counter()-insert_started)
-   c.execute('CREATE TABLE _更新情報 (項目 TEXT PRIMARY KEY, 値 TEXT)'); c.executemany('INSERT INTO _更新情報 VALUES (?,?)',[('作成日時',datetime.now().isoformat(timespec='seconds')),('RNE',job['rne']),('件数',str(len(body)))])
+   # 読み手（BI・アプリ）は絞り込んで読む。索引が1つも無いと毎回すべての行を走査する。
+   # どの列で絞るかはこのアプリからは分からないので、対象ごとに指定してもらう。
+   want=[x for x in (job.get('index_columns') or []) if x in hs]
+   for n,col in enumerate(want[:4],1):
+    idx_started=time.perf_counter()
+    c.execute(f'CREATE INDEX {qi("idx_"+str(n))} ON {qi(job["table"])} ({qi(col)})')
+    log.info('SQLITE_INDEX column=%s rows=%s elapsed=%.2fs',col,len(body),time.perf_counter()-idx_started)
+   missing=[x for x in (job.get('index_columns') or []) if x not in hs]
+   if missing:log.warning('SQLITE_INDEX_SKIPPED columns=%s reason=出力に無い列です',missing)
+   c.execute('CREATE TABLE _更新情報 (項目 TEXT PRIMARY KEY, 値 TEXT)'); c.executemany('INSERT INTO _更新情報 VALUES (?,?)',[('作成日時',datetime.now().isoformat(timespec='seconds')),('RNE',job['rne']),('件数',str(len(body)))]+([('索引',' / '.join(want))] if want else []))
    c.commit(); ck=c.execute('PRAGMA integrity_check').fetchone()[0]; ct=c.execute(f'SELECT COUNT(*) FROM {qi(job["table"])}').fetchone()[0]
    if ck!='ok' or ct!=len(body):raise RuntimeError('SQLite整合性検査に失敗')
    log.info('SQLITE_VALIDATION integrity=%s rows=%s expected_rows=%s total_elapsed=%.2fs',ck,ct,len(body),time.perf_counter()-sqlite_started)
@@ -4021,6 +4148,48 @@ def export_data(source,dst,job,reject,expected_rows=None,expected_cols=None,data
  if not dst.exists() or dst.stat().st_size==0:raise RuntimeError('出力ファイルの作成に失敗しました')
  log.info('出力検証完了 format=%s file=%s size=%s rows=%s columns=%s',fmt,dst,dst.stat().st_size,len(body),len(hs))
  return len(body),len(hs)
+
+def _fingerprint_dir():
+ d=LOCAL_ROOT/'cache'/'fingerprints';d.mkdir(parents=True,exist_ok=True);return d
+
+def _fingerprint_path(target):
+ import hashlib
+ return _fingerprint_dir()/(hashlib.sha1(str(target).lower().encode('utf-8',errors='replace')).hexdigest()[:16]+'.json')
+
+def intermediate_fingerprint(path):
+ """抽出した中身の指紋。前回と同じかどうかだけを見る。
+
+ 出力ファイル側では判定できない。SQLite3の出力には作成日時を書き込んでいるため、
+ 中身が同じでもバイト列は毎回変わる。判定するなら抽出結果（中間データ）側。"""
+ import hashlib
+ h=hashlib.sha1()
+ try:
+  with Path(path).open('rb') as f:
+   for chunk in iter(lambda:f.read(1024*1024),b''):h.update(chunk)
+ except OSError:return ''
+ return h.hexdigest()
+
+def unchanged_since_last(target,digest):
+ """前回公開したものと中身が同じで、公開先も当時のまま残っているか。"""
+ if not digest:return False
+ p=_fingerprint_path(target)
+ try:
+  saved=json.loads(p.read_text(encoding='utf-8'))
+ except Exception:return False
+ if saved.get('digest')!=digest:return False
+ try:
+  st=Path(target).stat()
+ except OSError:return False   # 公開先が消えていれば作り直す
+ return int(saved.get('size') or -1)==st.st_size
+
+def remember_published(target,digest,rows=0,cols=0):
+ if not digest:return
+ try:
+  st=Path(target).stat()
+  _fingerprint_path(target).write_text(json.dumps(
+   {'target':str(target),'digest':digest,'size':st.st_size,'rows':rows,'cols':cols,
+    'at':datetime.now().isoformat(timespec='seconds')},ensure_ascii=False),encoding='utf-8')
+ except Exception as e:log.warning('FINGERPRINT_SAVE_FAILED target=%s error=%s',target,e)
 
 def _replace_once(src,dst):
  os.replace(src,dst)
@@ -4920,6 +5089,22 @@ def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,
     intermediate=api_csv
    t=phase_log('api_close_catalog',job=j['name'],line=line_name);api_client.close_catalog();phase_log('api_close_catalog',t,job=j['name'],line=line_name)
   update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='変換・検証',percent=line_percent('convert',0),detail=f'{fmt.upper()}へ変換中 · {int(expected_rows or 0):,}件',phase='convert')
+  # 前回と中身が同じなら、変換も公開もしない。公開先（多くはネットワーク共有）への
+  # 書き込みが消え、ロック衝突の窓そのものが無くなり、控えの世代が同じ中身で埋まらない。
+  # ただし出力の「作成日時」は進まなくなるので、対象ごとに選んでもらう（既定は従来どおり）。
+  digest=intermediate_fingerprint(intermediate) if j.get('skip_if_unchanged') else ''
+  if digest and not extras and unchanged_since_last(target,digest):
+   total=time.perf_counter()-job_started
+   update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='変更なし',percent=100,detail='前回と同じ内容のため更新しませんでした',elapsed=round(total,1))
+   log.info('PUBLISH_SKIPPED_UNCHANGED line=%s job=%s target=%s digest=%s elapsed=%.2fs',line_name,j['name'],target,digest[:12],total)
+   _tm2=load_rne_timing(rp) or {}
+   return {'ok':True,'job':j['name'],'format':fmt,'rows':int(expected_rows or 0),'columns':int(expected_cols or 0),
+           'elapsed':total,'target':str(target),'unchanged':True,
+           'result':f'{j["name"]}: 前回と同じ内容のため更新しませんでした / {total:.1f}秒',
+           'column_names':[],'rne_path':str(rp),'extra_formats':[],
+           'split_parts':0,'split_shape':'','split_how':'','row_axis':'','axis_seconds':None,
+           'split_reason':'','race_winner':'','execute_seconds':0,'save_seconds':0,
+           'total_seconds':round(total,2),'transfer_bytes':0,'merge_seconds':0,'transfer_kbs':None}
   # 同時出力があるときは、中間データの解析をここで1回だけ行い、全形式で使い回す。
   shared=None
   if extras and not api_direct_output:
@@ -4931,6 +5116,7 @@ def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,
   else:
    t=phase_log('format_conversion',job=j['name'],line=line_name,format=fmt);nr,nc=export_data(intermediate,db,j,bool(cfg['settings']['reject_zero_rows']),expected_rows,expected_cols,data=shared);phase_log('format_conversion',t,job=j['name'],line=line_name,format=fmt,rows=nr,columns=nc)
   update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='公開',percent=line_percent('publish',0),detail=f'{Path(target).name} へ公開中',phase='publish');t=phase_log('publish',job=j['name'],line=line_name);pub=publish(db,target,backup,int(cfg['settings']['backup_generations']),backup_enabled=bool(cfg['settings'].get('backup_enabled',True)),retention_days=int(cfg['settings'].get('backup_retention_days',30)),generation_limit_enabled=bool(cfg['settings'].get('backup_generation_limit_enabled',True)),backup_mode=str(cfg['settings'].get('backup_mode','generations')));phase_log('publish',t,job=j['name'],line=line_name,published=pub['published'])
+  if digest:remember_published(target,digest,nr,nc)
   extra_results=[]
   if extras:
    update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='同時出力',percent=line_percent('publish',0.6),detail=f'あと{len(extras)}形式を同じデータから作成中',phase='publish')
@@ -5735,6 +5921,7 @@ def scheduler():
   try:
    if status['running']:continue
    cfg=load(); now=datetime.now(); st=load_scheduler_state()
+   rotate_log_if_needed(cfg)
    # 取り直しは予定より先に流す。待たせるほどデータが古いままになる。
    for r in due_retries():
     try:
@@ -5812,6 +5999,86 @@ def set_parallel_lines():
 def schedule_preview():
  c=load(); now=datetime.now(); runs=load_job_runs()
  return jsonify(items=[{**job_schedule_preview(j,now),**last_run_info(runs.get(j['id']))} for j in c['jobs']])
+def freshness_view():
+ """いまのデータが、いつのものか。
+
+ 読み手にとっていちばん大事なのは「このファイルはいつのデータか」だが、これまでは
+ 対象一覧の実績欄に散っていて、まとめて見る場所が無かった。予定を過ぎても実行されて
+ いないものも、カレンダーを開いて数えないと分からなかった。"""
+ c=load();now=datetime.now();runs=load_job_runs();items=[]
+ for j in c['jobs']:
+  if not j.get('enabled'):continue
+  run=runs.get(j['id']) or {}
+  info=last_run_info(run)
+  last=info.get('last_run') or ''
+  age=None
+  if last:
+   try:age=int((now-datetime.fromisoformat(last)).total_seconds()//60)
+   except Exception:age=None
+  prev=job_schedule_preview(j,now)
+  nxt=prev.get('next_run')
+  # 予定を持っている対象は、その間隔を「これくらいで新しくなるはず」の目安に使う。
+  gap=schedule_gap_minutes(j)
+  overdue=bool(gap and age is not None and age>gap*2)
+  if info.get('last_status')=='failed':state='failed'
+  elif not last:state='never'
+  elif overdue:state='stale'
+  else:state='ok'
+  items.append({'id':j['id'],'name':j['name'],'state':state,'last_run':last,'age_minutes':age,
+                'next_run':nxt,'hint':prev.get('hint',''),'expect_minutes':gap,
+                'status':info.get('last_status',''),'rows':(run.get('rows') if run else None),
+                'output':info.get('last_output','')})
+ bad=[x for x in items if x['state']!='ok']
+ items.sort(key=lambda x:({'failed':0,'stale':1,'never':2,'ok':3}[x['state']],-(x['age_minutes'] or 0)))
+ return {'ok':not bad,'items':items,'attention':len(bad),
+         'summary':(f'{len(bad)}件が確認待ちです' if bad else f'{len(items)}件すべて予定どおり新しくなっています')}
+
+def schedule_gap_minutes(job):
+ """この対象が新しくなる間隔の目安（分）。予定が無ければ None。"""
+ best=None
+ for r in job.get('schedules',[]):
+  if not r.get('enabled'):continue
+  k=r.get('type','daily')
+  m={'interval':max(1,int(r.get('interval_minutes',60) or 60)),
+     'daily':1440,'weekdays':1440*max(1,7//max(1,len(r.get('weekdays') or [1]))),
+     'monthly':1440*30,'specific_dates':1440*30}.get(k,1440)
+  best=m if best is None else min(best,m)
+ return best
+
+@app.get('/api/freshness')
+def freshness():
+ return jsonify(**freshness_view())
+
+@app.get('/api/job-trend/<job_id>')
+def job_trend(job_id):
+ """直近の実績の並び。件数が急に減った・だんだん遅くなっている、に気づくため。
+
+ run_history には2000件ぶん溜まっているのに、これまではカレンダーの実施記録に
+ しか使っていなかった。"""
+ limit=max(5,min(200,int(request.args.get('limit') or 30)))
+ rows=[]
+ try:
+  with settings_connection() as conn:
+   for r in conn.execute('SELECT finished_at,status,rows,cols,detail FROM run_history WHERE job_id=? ORDER BY id DESC LIMIT ?',(job_id,limit)):
+    sec=None
+    m=re.search(r'/\s*([\d.]+)秒',str(r['detail'] or ''))
+    if m:
+     try:sec=float(m.group(1))
+     except Exception:sec=None
+    rows.append({'at':r['finished_at'],'status':r['status'],'rows':r['rows'],'cols':r['cols'],'seconds':sec})
+ except Exception:
+  log.exception('JOB_TREND_FAILED job=%s',job_id)
+ rows.reverse()
+ counts=[x['rows'] for x in rows if isinstance(x['rows'],int)]
+ secs=[x['seconds'] for x in rows if isinstance(x['seconds'],float)]
+ def spread(v):
+  if len(v)<2:return {}
+  return {'min':min(v),'max':max(v),'first':v[0],'last':v[-1],
+          'change':round((v[-1]-v[0])/v[0]*100,1) if v[0] else None}
+ return jsonify(ok=True,items=rows,count=len(rows),
+                rows_spread=spread(counts),seconds_spread=spread(secs),
+                failed=len([x for x in rows if x['status']=='failed']))
+
 @app.get('/api/calendar')
 def calendar_view():
  # カレンダービュー用: 指定月の予定（scheduled）と実施履歴（executed）を日付ごとに返す。
@@ -7614,13 +7881,16 @@ LOG_FILTERS={
  'problem':(r'\[ERROR\]|\[WARNING\]','エラーと警告'),
  'all':('','すべて'),
 }
+LOG_READ_BYTES=4*1024*1024   # 末尾4MB。178列のログでも数万行ぶんある
 def read_log_lines(limit=1200,q='',preset=''):
  # 省略でまとめている最中の行はまだファイルに出ていない。読む直前に書き出して、
  # 画面が「いま起きていること」より遅れて見えないようにする。
  flush_log()
- p=LOCAL_LOGS/'app.log'
- if not p.exists():return [],0
- lines=p.read_text(encoding='utf-8',errors='replace').splitlines()
+ p=LOG_PATH
+ if not p.exists():return [],0,0,False
+ # 全文をメモリへ載せない。画面が見るのは末尾なので、末尾だけを読む。
+ # 以前は毎回ファイル全体を read_text しており、育つほど1回の表示が重くなっていた。
+ lines,size,clipped=tail_lines(p,LOG_READ_BYTES)
  total=len(lines)
  pat=(LOG_FILTERS.get(preset) or ('',''))[0]
  if pat:
@@ -7633,24 +7903,34 @@ def read_log_lines(limit=1200,q='',preset=''):
   except re.error:rq=None
   lines=[x for x in lines if (rq.search(x) if rq else q.lower() in x.lower())]
  n=max(1,min(int(limit or 1200),5000))
- return lines[-n:],total
+ return lines[-n:],total,size,clipped
 
 @app.get('/api/log')
 def get_log():
  try:limit=int(request.args.get('limit') or 1200)
  except Exception:limit=1200
- lines,total=read_log_lines(limit,request.args.get('q') or '',request.args.get('filter') or '')
+ lines,total,size,clipped=read_log_lines(limit,request.args.get('q') or '',request.args.get('filter') or '')
+ older=[{'name':p.name,'mb':round(p.stat().st_size/1024/1024,1)} for p in log_files()[1:]]
  return jsonify(text='\n'.join(lines),total=total,matched=len(lines),
+                size_mb=round(size/1024/1024,1),clipped=clipped,
+                window_mb=round(LOG_READ_BYTES/1024/1024,1),older=older,
                 filters=[{'id':k,'label':v[1]} for k,v in LOG_FILTERS.items()])
 @app.post('/api/log/clear')
 def clear_log():
- p=LOCAL_LOGS/'app.log'; p.parent.mkdir(exist_ok=True)
+ p=LOG_PATH; p.parent.mkdir(exist_ok=True)
  p.write_text('',encoding='utf-8')
  return jsonify(ok=True)
+@app.post('/api/log/rotate')
+def rotate_log_now():
+ """いますぐ付け替える。実行中はワーカーが書いているのでできない。"""
+ if status.get('running'):return jsonify(ok=False,error='実行中は付け替えできません（ワーカーが同じファイルへ書いています）'),409
+ size=rotate_log_if_needed(force=True)
+ return jsonify(ok=True,rotated=bool(size),size_mb=round((size or 0)/1024/1024,1))
 @app.post('/api/log/delete-lines')
 def delete_log_lines():
  data=request.get_json(silent=True) or {}; remove=set(data.get('lines') or [])
- p=LOCAL_LOGS/'app.log'
+ if status.get('running'):return jsonify(ok=False,error='実行中は削除できません（ワーカーが同じファイルへ書いています）'),409
+ p=LOG_PATH
  if not p.exists():return jsonify(ok=True,removed=0)
  lines=p.read_text(encoding='utf-8',errors='replace').splitlines()
  kept=[x for x in lines if x not in remove]
@@ -7661,8 +7941,9 @@ def delete_log_lines():
 def delete_old_log():
  data=request.get_json(silent=True) or {}
  days=max(1,min(3650,int(data.get('days',30) or 30)))
+ if status.get('running'):return jsonify(ok=False,error='実行中は削除できません（ワーカーが同じファイルへ書いています）'),409
  cutoff=datetime.now().timestamp()-(days*86400)
- p=LOCAL_LOGS/'app.log'
+ p=LOG_PATH
  if not p.exists():return jsonify(ok=True,removed=0,kept=0,days=days)
  lines=p.read_text(encoding='utf-8',errors='replace').splitlines()
  kept=[];removed=0

@@ -1,4 +1,4 @@
-const UI_BUILD='1.62.0-alerts';
+const UI_BUILD='1.63.0-upkeep';
 let cfg,editing=null,editingRule=null,sortDir=1,scheduleInfo={},rowLive={},rowQueue={},statusFailCount=0,serverLostShown=false;const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)],E=s=>String(s??'').replace(/[&<>"']/g,x=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[x]));const uid=()=>crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random();function toast(t){$('#toast').textContent=t;$('#toast').style.display='block';setTimeout(()=>$('#toast').style.display='none',2500)}/* 設定は変えた瞬間に保存する。保存ボタンの押し忘れで、画面に見えている設定と
    実際に使われる設定が食い違うことがあったため、押す操作そのものを無くした。 */
 let saveTimer=null,saveSeq=0,saveRetry=0;
@@ -18,6 +18,8 @@ function collectSettings(){if(!cfg||!cfg.settings)return;let s=cfg.settings,v=id
  if(v('#retry-enabled'))s.retry_enabled=v('#retry-enabled').checked;
  if(v('#retry-delay'))s.retry_delay_minutes=Math.max(1,Math.min(180,Number(v('#retry-delay').value)||5));
  if(v('#retry-max'))s.retry_max=Math.max(0,Math.min(5,Number(v('#retry-max').value)||0));
+ if(v('#log-max-mb'))s.log_max_mb=Math.max(1,Math.min(500,Number(v('#log-max-mb').value)||10));
+ if(v('#log-keep'))s.log_keep=Math.max(0,Math.min(20,Number(v('#log-keep').value)||0));
  if(v('#hide-profile'))s.symnavi_hide_profile=v('#hide-profile').value;
  if(v('#hide-interval'))s.symnavi_hide_interval_seconds=Math.max(1,Number(v('#hide-interval').value)||2);
  if(v('#hide-action-duration'))s.symnavi_hide_action_duration_seconds=Math.max(.2,Number(v('#hide-action-duration').value)||.5);
@@ -66,6 +68,23 @@ function alsoPlanNames(){
  if(!stem)stem=outputStem($('#m-output-file')?.value||'')||'output';
  return [f].concat(alsoFormats()).map(x=>({format:x,file:stem+expectedExt(x)}));
 }
+/* 索引に使う列。カンマ区切りで受け取り、空と重複を落として最大4つまで。
+   どの列があるかは調査済みの列一覧から出す（打ち間違いを減らす）。 */
+function indexColumns(){
+ let raw=($('#m-index-columns')?.value||'').split(/[,、]/).map(x=>x.trim()).filter(Boolean);
+ return raw.filter((x,i)=>raw.indexOf(x)===i).slice(0,4);
+}
+function fillIndexSuggestions(cols){
+ let dl=$('#suggest-index-columns');if(!dl)return;
+ dl.innerHTML=(cols||[]).slice(0,400).map(x=>`<option value="${E(x)}">`).join('');
+}
+/* 索引はSQLite3だけの話。他の形式では出しても意味がないので隠す。 */
+function updateIndexField(){
+ let on=[normalizeFormat($('#m-format')?.value)].concat(alsoFormats()).includes('sqlite3');
+ let f=$('#m-index-field'),n=$('#m-index-note');
+ if(f)f.style.display=on?'':'none';
+ if(n)n.style.display=on?'':'none';
+}
 function renderAlsoFormats(){
  let box=$('#m-also');if(!box)return;
  let f=normalizeFormat($('#m-format')?.value),on=alsoFormats();
@@ -77,6 +96,7 @@ function renderAlsoFormats(){
  let plan=$('#m-also-plan');if(!plan)return;
  let names=alsoPlanNames();
  plan.className='af-plan'+(on.length?' on':'');
+ updateIndexField();
  plan.innerHTML=on.length
   ?`<b>1回の実行でできるファイル（${names.length}件）</b><div class="af-files">`
     +names.map((x,i)=>`<span class="af-file${i?'':' is-primary'}"><i>${E(formatName(x.format))}</i><b>${E(x.file)}</b></span>`).join('')
@@ -138,7 +158,93 @@ function updateSelCount(){
  let n=$$('#jobs-body .rowcheck:checked').length,b=$('#run-selected'),c=$('#sel-count');
  if(c){c.textContent=n;c.hidden=!n}
  if(b){b.disabled=!n;b.title=n?`チェックした ${n}件 を実行します`:'実行したい対象にチェックを入れてください'}
+ let e=$('#bulk-edit');
+ if(e){e.hidden=n<2;e.textContent=`選択した${n}件をまとめて変更`}
 }
+/* ==== まとめて変更 ==========================================================
+   出力先の付け替え・同時出力の追加・有効無効の切替は、対象が増えるほど
+   1件ずつ開くのが苦痛になる。触った項目だけを、選んだ全部へ適用する。
+   触っていない項目はそれぞれの設定のままにする（勝手に揃えない）。 */
+function selectedJobs(){
+ return $$('#jobs-body .rowcheck:checked').map(x=>cfg.jobs.find(j=>j.id===x.closest('tr').dataset.id)).filter(Boolean);
+}
+let bulkAlso=[];
+function bulkFields(){
+ return $$('#bulk-dialog .bulk-on input:checked').map(x=>x.dataset.bf);
+}
+function bulkValues(){
+ let v={};
+ for(let f of bulkFields()){
+  if(f==='enabled')v.enabled=$('#bulk-enabled').value==='1';
+  if(f==='output_folder')v.output_folder=$('#bulk-output').value.trim();
+  if(f==='extra_formats')v.extra_formats=bulkAlso.slice();
+  if(f==='skip_if_unchanged')v.skip_if_unchanged=$('#bulk-skip').value==='1';
+  if(f==='split_shape')v.split_shape=$('#bulk-shape').value;
+ }
+ return v;
+}
+function bulkRender(){
+ let on=bulkFields();
+ $('#bulk-enabled').disabled=!on.includes('enabled');
+ $('#bulk-output').disabled=!on.includes('output_folder');
+ $('#bulk-skip').disabled=!on.includes('skip_if_unchanged');
+ $('#bulk-shape').disabled=!on.includes('split_shape');
+ $$('#bulk-also .af-chip').forEach(b=>b.disabled=!on.includes('extra_formats'));
+ let v=bulkValues(),jobs=selectedJobs();
+ $('#bulk-apply').disabled=!on.length||!jobs.length;
+ let label={enabled:'有効・無効',output_folder:'出力先',extra_formats:'同時に出す形式',
+            skip_if_unchanged:'前回と同じなら更新しない',split_shape:'分け方'};
+ let show=x=>x===true?'有効':x===false?'無効':Array.isArray(x)?(x.length?x.map(formatName).join('・'):'なし'):(x||'（空）');
+ $('#bulk-preview').innerHTML=on.length
+  ?`<b>${jobs.length}件に、次の${on.length}項目を適用します</b>`
+   +`<ul>${on.map(f=>`<li>${E(label[f])} → <code>${E(show(v[f]))}</code></li>`).join('')}</ul>`
+   +`<small>ここに出ていない項目は、それぞれの対象の設定のままです。</small>`
+  :'<small>変更したい項目にチェックを入れてください。</small>';
+}
+function openBulk(){
+ let jobs=selectedJobs();
+ if(jobs.length<2)return toast('2件以上を選んでから使ってください');
+ bulkAlso=[];
+ $$('#bulk-dialog .bulk-on input').forEach(x=>x.checked=false);
+ $('#bulk-output').value=jobs[0].output_folder||cfg.default_output_folder||'';
+ $('#bulk-title').textContent=`選択した${jobs.length}件を変更`;
+ $('#bulk-targets').innerHTML=jobs.map(j=>`<span class="bt-chip">${E(j.name)}</span>`).join('');
+ $('#bulk-also').innerHTML=ALL_FORMATS.map(x=>
+  `<button type="button" class="af-chip" data-f="${E(x)}" aria-pressed="false">${E(formatName(x))}<i>${E(FORMAT_USE[x]||'')}</i></button>`).join('');
+ $$('#bulk-also .af-chip').forEach(b=>b.onclick=()=>{
+  let i=bulkAlso.indexOf(b.dataset.f);
+  if(i<0)bulkAlso.push(b.dataset.f);else bulkAlso.splice(i,1);
+  b.classList.toggle('on',i<0);b.setAttribute('aria-pressed',i<0);bulkRender();
+ });
+ bulkRender();$('#bulk-dialog').showModal();
+}
+if($('#bulk-edit'))$('#bulk-edit').onclick=openBulk;
+$$('#bulk-dialog .bulk-on input').forEach(x=>x.onchange=bulkRender);
+['#bulk-enabled','#bulk-output','#bulk-skip','#bulk-shape'].forEach(sel=>{
+ let e=$(sel);if(e){e.addEventListener('input',bulkRender);e.addEventListener('change',bulkRender)}});
+if($('#bulk-close'))$('#bulk-close').onclick=()=>$('#bulk-dialog').close();
+if($('#bulk-cancel'))$('#bulk-cancel').onclick=()=>$('#bulk-dialog').close();
+if($('#bulk-apply'))$('#bulk-apply').onclick=async()=>{
+ let v=bulkValues(),jobs=selectedJobs();
+ if(!Object.keys(v).length||!jobs.length)return;
+ for(let j of jobs){
+  let i=cfg.jobs.findIndex(x=>x.id===j.id);
+  if(i<0)continue;
+  let next={...cfg.jobs[i],...v};
+  // 同時出力は主の形式と重ねられない。対象ごとに主が違うので、ここで落とす。
+  if(v.extra_formats)next.extra_formats=v.extra_formats.filter(f=>f!==normalizeFormat(next.output_format));
+  cfg.jobs[i]=next;
+ }
+ $('#bulk-dialog').close();
+ showWaiting('まとめて変更中',`${jobs.length}件へ適用しています...`);
+ try{
+  let payload=structuredClone(cfg);delete payload.credential_status;
+  let r=await fetch('/api/config',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+  if(!r.ok)throw Error('保存できませんでした');
+  await init();toast(`${jobs.length}件へ変更を適用しました`);
+ }catch(e){toast(e.message)}
+ finally{hideWaiting()}
+};
 function render(){let a=filtered(),body=$('#jobs-body');let canReorder=(!$('#search').value.trim()&&$('#filter-enabled').value==='all'&&$('#filter-schedule').value==='all');body.innerHTML=a.map(j=>`<tr data-id="${j.id}" draggable="${canReorder}" class="${canReorder?'reorderable':''}"><td class="c-check"><span class="drag-handle" title="${canReorder?'ドラッグで並べ替え（ドロップ後は登録順表示へ戻ります）':'並べ替えは検索・絞り込み解除時に有効です'}">⋮⋮</span><input class="rowcheck" type="checkbox"></td><td><span class="state ${j.enabled?'on':'off'}">${j.enabled?'有効':'無効'}</span></td><td><div class="primarytext" title="${E(j.name)}">${E(j.name)}</div><div class="subtext">${E(j.table)} / ${E(j.sheet)}</div>${j.comment?`<div class="job-comment" title="${E(j.comment)}"><i class="jc-ic">用途</i><span>${E(j.comment)}</span></div>`:''}</td><td><div class="primarytext" title="${E(j.rne_path||j.rne)}">${E(j.rne)}</div><div class="subtext pathtext">${E(j.rne_path||'')}</div></td><td>${outputFileCell(j)}</td><td><a class="output-link" href="#" data-path="${E(j.output_folder||cfg.default_output_folder)}" title="出力先を開く">${E(j.output_folder||cfg.default_output_folder)}</a></td><td class="c-progress">${rowProgressCell(j)}</td><td><div class="rowactions"><button class="run-one" title="実行">実行</button><button class="edit secondary" title="詳細">詳細</button><button class="copy secondary" title="複製">複製</button><button class="delete danger" title="削除">削除</button></div></td></tr>`).join('');paintRowProgress();applyScheduleCells();updateSelCount();$('#empty').hidden=a.length>0;$('#summary').textContent=`表示 ${a.length}件 / 登録 ${cfg.jobs.length}件 / 有効 ${cfg.jobs.filter(j=>j.enabled).length}件 / 自動実行ルール ${cfg.jobs.flatMap(j=>j.schedules||[]).filter(r=>r.enabled).length}件`;body.querySelectorAll('tr').forEach(tr=>{let j=cfg.jobs.find(x=>x.id===tr.dataset.id);tr.onclick=e=>{if(!e.target.closest('button,a,input')){tr.classList.toggle('selected');let cb=tr.querySelector('.rowcheck');if(cb)cb.checked=tr.classList.contains('selected');updateSelCount()}};tr.querySelector('.rowcheck').onchange=e=>{tr.classList.toggle('selected',e.target.checked);updateSelCount()};tr.ondblclick=e=>{if(!e.target.closest('button,input,select,a'))openEditor(j)};tr.querySelector('.edit').onclick=()=>openEditor(j);tr.querySelector('.run-one').onclick=()=>runJobs([j.id]);tr.querySelector('.copy').onclick=()=>{let n=structuredClone(j);n.id=uid();n.name+=' コピー';n.schedules=(n.schedules||[]).map(r=>({...r,id:uid(),enabled:false}));cfg.jobs.splice(cfg.jobs.indexOf(j)+1,0,n);render();dirty()};tr.querySelector('.delete').onclick=()=>deleteJob(j);let l=tr.querySelector('.output-link');if(l)bindOutputLink(l,j);bindRowDnD(tr);tr.oncontextmenu=e=>{if(e.target.closest("a.output-link"))return;e.preventDefault();showJobContextMenu(e,j,tr)}})}
 /* v1.9.0: 一覧のドラッグ&ドロップ並べ替え（問い合わせ順に反映）と管理単位の削除 */
 let dragSrcId=null,dragGhost=null,dragTargetId=null,dragAfter=false,dragImage=null;
@@ -257,7 +363,7 @@ async function openFolderPath(path,label){
   toast(d.ok?`${label}を開きました`:(d.error||`${label}を開けませんでした`))}
  catch{toast(`${label}を開けませんでした`)}
 }
-function openEditor(job){editing=structuredClone(job||{id:uid(),name:'新しい対象',enabled:true,rne:'NEW.RNE',rne_path:cfg.rne_folder+'\\NEW.RNE',output_folder:cfg.default_output_folder,output_format:'sqlite3',output_file:'NEW.sqlite3',extra_formats:[],table:'仕掛',sheet:'Page1',type:'詳細データ',naming_mode:'fixed',output_pattern:'',comment:'',split_mode:'auto',split_shape:'auto',period:{enabled:false,control_point:'',unit:'month',from_offset:-1,to_offset:0},schedules:[]});$('#modal-title').textContent=job?'対象を編集':'対象を追加';$('#m-id').value=editing.id;$('#m-name').value=editing.name;$('#m-enabled').checked=editing.enabled;$('#m-rne-path').value=editing.rne_path||'';$('#m-output').value=editing.output_folder||cfg.default_output_folder;editing.output_format=normalizeFormat(editing.output_format);editing.extra_formats=(editing.extra_formats||[]).map(normalizeFormat);$('#m-format').value=editing.output_format;$('#m-output-file').value=editing.output_file;$('#m-table').value=editing.table;$('#m-sheet').value=editing.sheet;$('#m-type').value=editing.type;if($('#m-comment'))$('#m-comment').value=editing.comment||'';if($('#m-split-mode'))$('#m-split-mode').value=editing.split_mode||'auto';if($('#m-split-shape'))$('#m-split-shape').value=editing.split_shape||'auto';if($('#m-axis-mode'))$('#m-axis-mode').value=editing.row_axis_mode||'first';if($('#m-axis-index'))$('#m-axis-index').value=editing.row_axis_index||1;AXIS_PICK.forEach(g=>{if($(g.n))$(g.n).innerHTML=`<option value="${E(editing.row_axis_name||'')}">${E(editing.row_axis_name||'（先に「RNEを調査」）')}</option>`;if($(g.m))$(g.m).value=editing.row_axis_mode||'first';if($(g.i))$(g.i).value=editing.row_axis_index||1});syncAxisPick();syncOutputExtension();initNaming(editing);setPeriodUI(editing.period);renderRuntimeSplit(null);inspReset();loadMaster(false);splitTrialPoll();rulesRender();updatePeriodBadge();setEditorTab('basic');$('#editor').showModal()}
+function openEditor(job){editing=structuredClone(job||{id:uid(),name:'新しい対象',enabled:true,rne:'NEW.RNE',rne_path:cfg.rne_folder+'\\NEW.RNE',output_folder:cfg.default_output_folder,output_format:'sqlite3',output_file:'NEW.sqlite3',extra_formats:[],table:'仕掛',sheet:'Page1',type:'詳細データ',naming_mode:'fixed',output_pattern:'',comment:'',split_mode:'auto',split_shape:'auto',period:{enabled:false,control_point:'',unit:'month',from_offset:-1,to_offset:0},schedules:[]});$('#modal-title').textContent=job?'対象を編集':'対象を追加';$('#m-id').value=editing.id;$('#m-name').value=editing.name;$('#m-enabled').checked=editing.enabled;$('#m-rne-path').value=editing.rne_path||'';$('#m-output').value=editing.output_folder||cfg.default_output_folder;editing.output_format=normalizeFormat(editing.output_format);editing.extra_formats=(editing.extra_formats||[]).map(normalizeFormat);editing.index_columns=(editing.index_columns||[]).map(String);if($('#m-skip-unchanged'))$('#m-skip-unchanged').checked=!!editing.skip_if_unchanged;if($('#m-index-columns'))$('#m-index-columns').value=(editing.index_columns||[]).join(', ');$('#m-format').value=editing.output_format;$('#m-output-file').value=editing.output_file;$('#m-table').value=editing.table;$('#m-sheet').value=editing.sheet;$('#m-type').value=editing.type;if($('#m-comment'))$('#m-comment').value=editing.comment||'';if($('#m-split-mode'))$('#m-split-mode').value=editing.split_mode||'auto';if($('#m-split-shape'))$('#m-split-shape').value=editing.split_shape||'auto';if($('#m-axis-mode'))$('#m-axis-mode').value=editing.row_axis_mode||'first';if($('#m-axis-index'))$('#m-axis-index').value=editing.row_axis_index||1;AXIS_PICK.forEach(g=>{if($(g.n))$(g.n).innerHTML=`<option value="${E(editing.row_axis_name||'')}">${E(editing.row_axis_name||'（先に「RNEを調査」）')}</option>`;if($(g.m))$(g.m).value=editing.row_axis_mode||'first';if($(g.i))$(g.i).value=editing.row_axis_index||1});syncAxisPick();syncOutputExtension();initNaming(editing);setPeriodUI(editing.period);renderRuntimeSplit(null);inspReset();loadMaster(false);splitTrialPoll();rulesRender();updatePeriodBadge();loadJobTrend(editing.id);setEditorTab('basic');$('#editor').showModal()}
 $('#m-format').onchange=()=>{syncOutputExtension();if(currentNamingMode()==='template')refreshNamePreview()};$('#m-rne-check').onclick=async()=>{showWaiting('RNEファイル確認中','設定場所と周辺フォルダーを検索しています...');try{let temp={item:'rne',job_id:editing.id,label:editing.rne,configured:$('#m-rne-path').value,resolved:$('#m-rne-path').value,candidates:[],ok:false};let r=await fetch('/api/path-check',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({item:'rne',job_id:editing.id,value:$('#m-rne-path').value,expected_name:$('#m-rne-path').value.split(/[\\/]/).pop()})}),d=await r.json();if(r.ok)showPathResult(d);else toast(d.error)}finally{hideWaiting()}};$('#m-rne-pick').onclick=async()=>{let p=await browse('file',$('#m-rne-path').value,[['RNEファイル','*.RNE'],['すべて','*.*']]);if(p){let i=$('#m-rne-path'),wasRel=i.value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(i.value);i.value=p;if(wasRel)await convertPath(i,'relative');updatePathBadge(i);i._refreshPathControl?.()}};$('#m-output-pick').onclick=async()=>{let p=await browse('folder',$('#m-output').value);if(p){let i=$('#m-output'),wasRel=i.value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(i.value);i.value=p;if(wasRel)await convertPath(i,'relative');updatePathBadge(i)}};enhancePathInput($('#m-rne-path'),'file');enhancePathInput($('#m-output'),'folder');$('#m-rne-path').addEventListener('input',()=>renderInspTarget());$('#m-name').addEventListener('input',()=>renderInspTarget());$('#add-rule').onclick=()=>openRule({id:uid(),enabled:true,name:'実行ルール',type:'daily',time:'06:00'},true);/* 編集中の内容を、対象の設定として確定する。
    「本番で使う」からもここを通す。測って選んだのに保存を押し忘れて効かない、
    という切れ目を作らないため（close=false なら画面は開いたまま）。 */
@@ -267,6 +373,7 @@ function collectJob(){
  return {...editing,name:$('#m-name').value.trim(),enabled:$('#m-enabled').checked,
   rne_path:$('#m-rne-path').value.trim(),rne:$('#m-rne-path').value.trim().split(/[\\/]/).pop(),
   output_folder:$('#m-output').value.trim(),output_format:f,output_file:file,extra_formats:alsoFormats(),
+  skip_if_unchanged:!!$('#m-skip-unchanged')?.checked,index_columns:indexColumns(),
   table:$('#m-table').value.trim(),sheet:$('#m-sheet').value.trim(),type:$('#m-type').value,
   naming_mode:currentNamingMode(),output_pattern:$('#m-output-pattern').value.trim(),
   comment:($('#m-comment')?.value||'').trim(),
@@ -334,6 +441,8 @@ function bindVarTagBuilder(){
 bindVarTagBuilder();
 if($('#m-output-pattern'))$('#m-output-pattern').addEventListener('input',()=>{refreshNamePreview();dirty()});
 if($('#m-output-file'))$('#m-output-file').addEventListener('input',()=>{updateFixedNameNote();renderAlsoFormats();dirty()});
+if($('#m-skip-unchanged'))$('#m-skip-unchanged').addEventListener('change',()=>{editing.skip_if_unchanged=$('#m-skip-unchanged').checked});
+if($('#m-index-columns'))$('#m-index-columns').addEventListener('input',()=>{editing.index_columns=indexColumns()});
 /* v1.0.0: editor modal tabs (基本・入出力 / 自動実行) for a scroll-less layout */
 function setEditorTab(tab){$$('.editor-tab').forEach(b=>b.classList.toggle('on',b.dataset.etab===tab));$$('.editor-pane').forEach(p=>p.classList.toggle('on',p.dataset.etab===tab))}
 function currentEditorTab(){return document.querySelector('.editor-tab.on')?.dataset.etab||'basic'}
@@ -426,13 +535,13 @@ async function loadMachinePaths(){
  }catch{box.innerHTML='<p class="ri-note">確認できませんでした。</p>'}
 }
 if($('#mp-reload'))$('#mp-reload').onclick=loadMachinePaths;
-function updateHideProfileUI(){let p=$('#hide-profile').value,custom=p==='custom';$('#hide-interval-wrap').style.display=custom?'grid':'none';$('#hide-action-duration-wrap').style.display=custom?'grid':'none';let descriptions={action_only:'DDE操作直後だけ確認。常時監視なし',light:'3秒間隔。負荷を最優先',balanced:'2秒間隔。負荷と非表示性のバランス',standard:'1秒間隔。非表示性を優先',custom:'1秒以上で任意設定'};$('#hide-profile').title=descriptions[p]||''}async function init(){cfg=await fetch('/api/config').then(r=>r.json());cfg.jobs.forEach(j=>{j.id=j.id||uid();j.name=j.name||j.rne.replace(/\.RNE$/i,'');j.schedules=j.schedules||[]});$('#cred').textContent=cfg.credential_status;$('#pathform').innerHTML=Object.entries(paths).filter(([k])=>k!=='navigator_api_dll').map(([k,a])=>`<label>${a[0]}<div class="browse"><input id="${k}" value="${E(cfg[k]||'')}"><div class="path-actions">${['navigator_api_dll','symnavim_conf','symnavim_def','accdb_template'].includes(k)?`<button class="pathcheck verify-btn" data-k="${k}" type="button">確認</button>`:''}<button class="pathpick browse-btn" data-k="${k}" type="button">参照</button></div></div></label>`).join('');Object.entries(paths).filter(([k])=>k!=='navigator_api_dll').forEach(([k,a])=>{$('#'+k).onchange=e=>{cfg[k]=e.target.value;dirty()};document.querySelector(`[data-k="${k}"]`).onclick=async()=>{let p=await browse(a[1],cfg[k],a[2]);if(p){cfg[k]=p;$('#'+k).value=p;dirty()}}});$('#extract-engine').value=cfg.settings.extract_engine||'api';updateEngineUI();$('#dde').value=cfg.settings.dde_timeout_seconds;$('#wait').value=cfg.settings.output_wait_seconds;$('#gens').value=cfg.settings.backup_generations||3;if($('#backup-enabled'))$('#backup-enabled').checked=cfg.settings.backup_enabled!==false;if($('#backup-mode'))$('#backup-mode').value=cfg.settings.backup_mode||'generations';if($('#backup-retention-days'))$('#backup-retention-days').value=Number(cfg.settings.backup_retention_days||30);if($('#schedule-catchup'))$('#schedule-catchup').value=Number(cfg.settings.schedule_catchup_minutes??30);if($('#worker-stagger'))$('#worker-stagger').value=Number(cfg.settings.api_worker_stagger_ms??700);updateBackupOptions();if($('#api-lines')){$('#api-lines').value=Math.max(1,Math.min(24,Number(cfg.settings.api_parallel_lines||6)));$('#api-lines').title='既定は6ライン、設定可能範囲は1～24ラインです。変更した時点で保存されます。'}$('#zero').checked=cfg.settings.reject_zero_rows;if($('#retry-enabled')){$('#retry-enabled').checked=cfg.settings.retry_enabled!==false;$('#retry-delay').value=Number(cfg.settings.retry_delay_minutes??5);$('#retry-max').value=Number(cfg.settings.retry_max??1);updateRetryOptions()}$('#hide-profile').value=cfg.settings.symnavi_hide_profile||'balanced';$('#hide-interval').value=Math.max(1,Number(cfg.settings.symnavi_hide_interval_seconds||2));$('#hide-action-duration').value=Number(cfg.settings.symnavi_hide_action_duration_seconds||0.5);updateHideProfileUI();Object.keys(paths).filter(k=>k!=='navigator_api_dll').forEach(k=>enhancePathInput($('#'+k),paths[k][1]));let dllInput=$('#navigator-api-dll');if(dllInput){dllInput.value=cfg.navigator_api_dll||'';dllInput.oninput=()=>{cfg.navigator_api_dll=dllInput.value;dirty();
-   let v=$('#api-readiness');if(v)v.className='api-readiness is-stale';};}let dllPick=$('#api-dll-pick');if(dllPick)dllPick.onclick=async()=>{let q=await browse('file',dllInput.value,paths.navigator_api_dll[2]);if(q){dllInput.value=q;cfg.navigator_api_dll=q;dirty();await testNavigatorApi()}};let dllCheck=$('#api-dll-check');if(dllCheck)dllCheck.onclick=()=>testNavigatorApi();if(!Array.isArray(cfg.navigator_api_search_roots))cfg.navigator_api_search_roots=DLL_DEFAULT_ROOTS.slice();renderDllRoots();loadDllRequirement();fillSuggestions();render();loadMachinePaths();saveState('設定を読み込みました／変更はすべて自動で保存されます','');$$('.pathcheck').forEach(b=>b.onclick=()=>checkConfiguredPath(b.dataset.k))}
+function updateHideProfileUI(){let p=$('#hide-profile').value,custom=p==='custom';$('#hide-interval-wrap').style.display=custom?'grid':'none';$('#hide-action-duration-wrap').style.display=custom?'grid':'none';let descriptions={action_only:'DDE操作直後だけ確認。常時監視なし',light:'3秒間隔。負荷を最優先',balanced:'2秒間隔。負荷と非表示性のバランス',standard:'1秒間隔。非表示性を優先',custom:'1秒以上で任意設定'};$('#hide-profile').title=descriptions[p]||''}async function init(){cfg=await fetch('/api/config').then(r=>r.json());cfg.jobs.forEach(j=>{j.id=j.id||uid();j.name=j.name||j.rne.replace(/\.RNE$/i,'');j.schedules=j.schedules||[]});$('#cred').textContent=cfg.credential_status;$('#pathform').innerHTML=Object.entries(paths).filter(([k])=>k!=='navigator_api_dll').map(([k,a])=>`<label>${a[0]}<div class="browse"><input id="${k}" value="${E(cfg[k]||'')}"><div class="path-actions">${['navigator_api_dll','symnavim_conf','symnavim_def','accdb_template'].includes(k)?`<button class="pathcheck verify-btn" data-k="${k}" type="button">確認</button>`:''}<button class="pathpick browse-btn" data-k="${k}" type="button">参照</button></div></div></label>`).join('');Object.entries(paths).filter(([k])=>k!=='navigator_api_dll').forEach(([k,a])=>{$('#'+k).onchange=e=>{cfg[k]=e.target.value;dirty()};document.querySelector(`[data-k="${k}"]`).onclick=async()=>{let p=await browse(a[1],cfg[k],a[2]);if(p){cfg[k]=p;$('#'+k).value=p;dirty()}}});$('#extract-engine').value=cfg.settings.extract_engine||'api';updateEngineUI();$('#dde').value=cfg.settings.dde_timeout_seconds;$('#wait').value=cfg.settings.output_wait_seconds;$('#gens').value=cfg.settings.backup_generations||3;if($('#backup-enabled'))$('#backup-enabled').checked=cfg.settings.backup_enabled!==false;if($('#backup-mode'))$('#backup-mode').value=cfg.settings.backup_mode||'generations';if($('#backup-retention-days'))$('#backup-retention-days').value=Number(cfg.settings.backup_retention_days||30);if($('#schedule-catchup'))$('#schedule-catchup').value=Number(cfg.settings.schedule_catchup_minutes??30);if($('#worker-stagger'))$('#worker-stagger').value=Number(cfg.settings.api_worker_stagger_ms??700);updateBackupOptions();if($('#api-lines')){$('#api-lines').value=Math.max(1,Math.min(24,Number(cfg.settings.api_parallel_lines||6)));$('#api-lines').title='既定は6ライン、設定可能範囲は1～24ラインです。変更した時点で保存されます。'}$('#zero').checked=cfg.settings.reject_zero_rows;if($('#retry-enabled')){$('#retry-enabled').checked=cfg.settings.retry_enabled!==false;$('#retry-delay').value=Number(cfg.settings.retry_delay_minutes??5);$('#retry-max').value=Number(cfg.settings.retry_max??1);updateRetryOptions()}if($('#log-max-mb')){$('#log-max-mb').value=Number(cfg.settings.log_max_mb??10);$('#log-keep').value=Number(cfg.settings.log_keep??5)}$('#hide-profile').value=cfg.settings.symnavi_hide_profile||'balanced';$('#hide-interval').value=Math.max(1,Number(cfg.settings.symnavi_hide_interval_seconds||2));$('#hide-action-duration').value=Number(cfg.settings.symnavi_hide_action_duration_seconds||0.5);updateHideProfileUI();Object.keys(paths).filter(k=>k!=='navigator_api_dll').forEach(k=>enhancePathInput($('#'+k),paths[k][1]));let dllInput=$('#navigator-api-dll');if(dllInput){dllInput.value=cfg.navigator_api_dll||'';dllInput.oninput=()=>{cfg.navigator_api_dll=dllInput.value;dirty();
+   let v=$('#api-readiness');if(v)v.className='api-readiness is-stale';};}let dllPick=$('#api-dll-pick');if(dllPick)dllPick.onclick=async()=>{let q=await browse('file',dllInput.value,paths.navigator_api_dll[2]);if(q){dllInput.value=q;cfg.navigator_api_dll=q;dirty();await testNavigatorApi()}};let dllCheck=$('#api-dll-check');if(dllCheck)dllCheck.onclick=()=>testNavigatorApi();if(!Array.isArray(cfg.navigator_api_search_roots))cfg.navigator_api_search_roots=DLL_DEFAULT_ROOTS.slice();renderDllRoots();loadDllRequirement();fillSuggestions();render();loadMachinePaths();loadFreshness();saveState('設定を読み込みました／変更はすべて自動で保存されます','');$$('.pathcheck').forEach(b=>b.onclick=()=>checkConfiguredPath(b.dataset.k))}
 ['search','filter-enabled','filter-schedule','sort'].forEach(k=>$('#'+k).addEventListener(k==='search'?'input':'change',render));$$('.sortable').forEach(h=>h.onclick=()=>{$('#sort').value=h.dataset.sort;sortDir*=-1;render()});$('#add').onclick=()=>openEditor(null);$('#select-visible').onclick=()=>{$$('#jobs-body .rowcheck').forEach(x=>{x.checked=true;x.closest('tr').classList.add('selected')});updateSelCount()};$('#clear-selection').onclick=()=>{$$('#jobs-body .rowcheck').forEach(x=>{x.checked=false;x.closest('tr').classList.remove('selected')});updateSelCount()};function resetProgressView(){let q=$('#queue-summary');if(q){q.hidden=true;q.innerHTML=''}let pr=$('#p-results');if(pr){pr.hidden=true;pr.innerHTML=''}let b=$('#p-parallel-lines');if(b){b.hidden=true;b.innerHTML=''}document.querySelector('.current-box')?.classList.remove('parallel-hidden');$('#p-steps')?.classList.remove('parallel-hidden');$('#p-count').textContent='全体 0 / 0';$('#p-percent').textContent='0%';$('#p-bar').style.width='0%';$('#p-job').textContent='準備中';$('#p-output').textContent='';}async function runJobs(ids){resetProgressView();showWaiting(currentEngine()==='api'?'API処理を開始しています':'DDE処理を開始しています',currentEngine()==='api'?'APIセッションと実行対象を準備しています...':'SymfoNavi起動とDDE接続を準備しています...','engine');let r=await fetch('/api/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_ids:ids,parallel_lines:Math.max(1,Math.min(24,Number($('#api-lines')?.value||6)||6))})}),d=await r.json();hideWaiting();if(r.ok){toast(`実行キュー ${d.position}番へ追加しました`);await loadCommandQueue()}else toast(d.error)}$('#run-all').onclick=()=>runJobs(null);$('#run-selected').onclick=()=>{let ids=$$('#jobs-body .rowcheck:checked').map(x=>x.closest('tr').dataset.id);if(ids.length)runJobs(ids)};/* 保存ボタンの代わりに、値が変わったところで保存する。数値欄は打っている途中に
    何度も飛ばさないよう、まとめて少し待ってから送る（scheduleSave）。 */
 ['dde','wait','schedule-catchup','worker-stagger','hide-interval','hide-action-duration'].forEach(id=>{let e=$('#'+id);if(e){e.addEventListener('input',dirty);e.addEventListener('change',dirty)}});
 ['zero','extract-engine','hide-profile','backup-mode','backup-enabled'].forEach(id=>{let e=$('#'+id);if(e)e.addEventListener('change',dirty)});
-['retry-delay','retry-max'].forEach(id=>{let e=$('#'+id);if(e){e.addEventListener('input',dirty);e.addEventListener('change',dirty)}});
+['retry-delay','retry-max','log-max-mb','log-keep'].forEach(id=>{let e=$('#'+id);if(e){e.addEventListener('input',dirty);e.addEventListener('change',dirty)}});
 if($('#retry-enabled'))$('#retry-enabled').addEventListener('change',()=>{updateRetryOptions();dirty()});
 function updateRetryOptions(){let on=$('#retry-enabled')?.checked;let box=$('#retry-options');if(box)box.style.display=on?'':'none'}$('#validate').onclick=async()=>{showWaiting(currentEngine()==='api'?'API実行前診断中':'DDE実行前診断中','実際の設定値と配置を統合して確認しています...','engine');try{let r=await fetch('/api/validate',{method:'POST'}),d=await r.json();if(!r.ok)throw Error(d.error||'診断に失敗しました');renderDiagnostics(d);let dlg=$('#diagnostic-dialog');if(dlg&&!dlg.open)dlg.showModal()}catch(e){toast(e.message)}finally{hideWaiting()}};function renderDiagnostics(d){$('#check-scope').textContent=d.search_scope||'';let state=$('#diagnostic-state');state.textContent=d.summary||'';state.className='diag-state '+(d.ok?'is-ok':'is-ng');let c=d.counts||{};$('#diagnostic-counts').innerHTML=`<span class="dc-ok">正常 ${c.ok||0}</span><span class="dc-warn">注意 ${c.warning||0}</span><span class="dc-ng">要修正 ${c.error||0}</span>`;let groups={};(d.checks||[]).forEach((x,i)=>(groups[x.group]||(groups[x.group]=[])).push({...x,_i:i}));$('#checks').innerHTML=Object.entries(groups).map(([g,items])=>`<section class="diag-group"><h3>${E(g)}<small>${items.length}項目</small></h3>${items.map(x=>`<div class="diag-row ${E(x.level)}"><i>${x.level==='ok'?'OK':x.level==='warning'?'注意':'要修正'}</i><div><b>${E(x.label)}</b><span>${E(x.detail)}</span></div>${x.candidates?.length?`<button class="fix secondary" data-i="${x._i}">候補 ${x.candidates.length}件</button>`:''}</div>`).join('')}</section>`).join('');$$('#checks .fix').forEach(b=>b.onclick=()=>showPathResult(d.checks[Number(b.dataset.i)]))}if($('#diagnostic-close'))$('#diagnostic-close').onclick=()=>$('#diagnostic-dialog').close();if($('#diagnostic-close-foot'))$('#diagnostic-close-foot').onclick=()=>$('#diagnostic-dialog').close();let commandQueueOpen=false;async function loadCommandQueue(){try{let d=await fetch('/api/execution-queue',{cache:'no-store'}).then(r=>r.json()),list=$('#cq-list'),summary=$('#cq-summary');applyRowQueueProgress(d);if(!list||!summary)return;
  let st=latestStatus||{},running=!!st.running;
@@ -467,7 +576,26 @@ function updateRetryOptions(){let on=$('#retry-enabled')?.checked;let box=$('#re
   `<span class="cq-badge cq-manual">即実行 ${manualJobs}件</span>`;}
  list.innerHTML=d.items.length?d.items.map(x=>{
   let stateInfo=x.state==='running'?(running?`処理中 ${jobRun} / 完了 ${jobDone}${jobFail?' / 失敗 '+jobFail:''} / 待機 ${batchWait}`:'処理中'):`${x.position}番目に実行予定`;
-  return `<div class="cq-row ${x.state}"><span class="cq-pos">${x.state==='running'?'実行中':x.position+'番'}</span><div class="cq-main"><b>${E((x.job_names||[]).join(' / '))}</b><small>${x.state==='running'?E(stateInfo):('登録 '+E(x.enqueued_at||'')+' / '+(x.count||0)+'対象')}</small></div><span class="cq-mode">${x.engine==='dde'?'DDE 1件ずつ':x.parallel_lines>1?x.parallel_lines+'ライン':'API 1ライン'}</span><div class="cq-actions">${x.state==='waiting'?`<button class="secondary cq-up" data-id="${x.id}">上へ</button><button class="secondary cq-down" data-id="${x.id}">下へ</button><button class="danger cq-delete" data-id="${x.id}">解除</button>`:'<span>処理中は変更不可</span>'}</div></div>`}).join(''):'<div class="cq-empty">実行待ちのキューはありません</div>';list.hidden=!commandQueueOpen;$$('.cq-up,.cq-down').forEach(b=>b.onclick=async()=>{await fetch(`/api/execution-queue/${b.dataset.id}/move`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({direction:b.classList.contains('cq-up')?'up':'down'})});loadCommandQueue()});$$('.cq-delete').forEach(b=>b.onclick=async()=>{let r=await fetch(`/api/execution-queue/${b.dataset.id}`,{method:'DELETE'});if(r.ok)toast('実行キューから解除しました');loadCommandQueue()})}catch{}}{const cqToggle=$('#cq-toggle');if(cqToggle)cqToggle.onclick=()=>{commandQueueOpen=!commandQueueOpen;cqToggle.textContent=commandQueueOpen?'閉じる':'一覧';loadCommandQueue()};}function logLevel(line){return line.includes('[ERROR]')?'error':line.includes('[WARNING]')?'warning':'info'}function buildLogTree(text){let lines=(text||'').split(/\r?\n/).filter(Boolean),groups=[],current=null,job=null;for(let line of lines){if(line.includes('処理開始 trigger=')){current={title:line.slice(0,19)+'  実行指令',lines:[],jobs:[]};groups.push(current);job=null}else if(line.includes('設定保存 job=')){current={title:line.slice(0,19)+'  設定保存',lines:[line],jobs:[]};groups.push(current);job=null;continue}if(!current){current={title:'その他のログ',lines:[],jobs:[]};groups.push(current)}let m=line.match(/(?:PIPELINE|JOB_RESULT) job=([^ ]+)/);if(m){job=current.jobs.find(x=>x.name===m[1])||{name:m[1],lines:[]};if(!current.jobs.includes(job))current.jobs.push(job)}if(job)job.lines.push(line);else current.lines.push(line);if(line.includes('正常終了')||line.includes('異常終了'))job=null}return groups}function logLines(lines){return `<div class="log-lines">${lines.map(x=>`<div class="log-line ${logLevel(x)}">${E(x)}</div>`).join('')}</div>`}function renderLogTree(text){let groups=buildLogTree(text);renderedLogGroups=groups.slice().reverse();$('#log').innerHTML=renderedLogGroups.length?renderedLogGroups.map((g,gi)=>`<details class="log-action" ${gi===0?'open':''} data-gi="${gi}"><summary><span><b>実行指令 ${renderedLogGroups.length-gi}</b> ${E(g.title)}</span><small>${g.jobs.length}ファイル</small><span class="log-summary-actions"><button class="secondary log-copy-full" data-gi="${gi}">全文コピー</button><button class="secondary log-copy-summary" data-gi="${gi}">要約コピー</button><button class="secondary danger-lite log-delete-group" data-gi="${gi}">削除</button></span></summary>${g.lines.length?logLines(g.lines):''}${g.jobs.map(j=>`<details class="log-job"><summary>${E(j.name)} <small>${j.lines.length}行</small></summary>${logLines(j.lines)}</details>`).join('')}</details>`).join(''):'<div class="empty">ログなし</div>';$$('.log-copy-full').forEach(b=>b.onclick=e=>{e.preventDefault();e.stopPropagation();let g=renderedLogGroups[Number(b.dataset.gi)];textToClipboard(groupText(g,'full'),'選択した実行指令ログをコピーしました')});$$('.log-copy-summary').forEach(b=>b.onclick=e=>{e.preventDefault();e.stopPropagation();let g=renderedLogGroups[Number(b.dataset.gi)];textToClipboard(groupText(g,'summary'),'選択した実行指令の要約ログをコピーしました')});$$('.log-delete-group').forEach(b=>b.onclick=async e=>{e.preventDefault();e.stopPropagation();let g=renderedLogGroups[Number(b.dataset.gi)],txt=groupText(g,'full');if(!confirm('この実行指令ログを削除しますか？'))return;let r=await fetch('/api/log/delete-lines',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({lines:txt.split(/\n/)})});if(r.ok){toast('選択した実行指令ログを削除しました');await loadLog()}})}let latestLogText='',renderedLogGroups=[];async function loadLog(){let d=await fetch('/api/log').then(r=>r.json());latestLogText=d.text||'';renderLogTree(latestLogText)}/* コピーするログから「省略の印」を取り除く。
+  return `<div class="cq-row ${x.state}"><span class="cq-pos">${x.state==='running'?'実行中':x.position+'番'}</span><div class="cq-main"><b>${E((x.job_names||[]).join(' / '))}</b><small>${x.state==='running'?E(stateInfo):('登録 '+E(x.enqueued_at||'')+' / '+(x.count||0)+'対象')}</small></div><span class="cq-mode">${x.engine==='dde'?'DDE 1件ずつ':x.parallel_lines>1?x.parallel_lines+'ライン':'API 1ライン'}</span><div class="cq-actions">${x.state==='waiting'?`<button class="secondary cq-up" data-id="${x.id}">上へ</button><button class="secondary cq-down" data-id="${x.id}">下へ</button><button class="danger cq-delete" data-id="${x.id}">解除</button>`:'<span>処理中は変更不可</span>'}</div></div>`}).join(''):'<div class="cq-empty">実行待ちのキューはありません</div>';list.hidden=!commandQueueOpen;$$('.cq-up,.cq-down').forEach(b=>b.onclick=async()=>{await fetch(`/api/execution-queue/${b.dataset.id}/move`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({direction:b.classList.contains('cq-up')?'up':'down'})});loadCommandQueue()});$$('.cq-delete').forEach(b=>b.onclick=async()=>{let r=await fetch(`/api/execution-queue/${b.dataset.id}`,{method:'DELETE'});if(r.ok)toast('実行キューから解除しました');loadCommandQueue()})}catch{}}{const cqToggle=$('#cq-toggle');if(cqToggle)cqToggle.onclick=()=>{commandQueueOpen=!commandQueueOpen;cqToggle.textContent=commandQueueOpen?'閉じる':'一覧';loadCommandQueue()};}function logLevel(line){return line.includes('[ERROR]')?'error':line.includes('[WARNING]')?'warning':'info'}function buildLogTree(text){let lines=(text||'').split(/\r?\n/).filter(Boolean),groups=[],current=null,job=null;for(let line of lines){if(line.includes('処理開始 trigger=')){current={title:line.slice(0,19)+'  実行指令',lines:[],jobs:[]};groups.push(current);job=null}else if(line.includes('設定保存 job=')){current={title:line.slice(0,19)+'  設定保存',lines:[line],jobs:[]};groups.push(current);job=null;continue}if(!current){current={title:'その他のログ',lines:[],jobs:[]};groups.push(current)}let m=line.match(/(?:PIPELINE|JOB_RESULT) job=([^ ]+)/);if(m){job=current.jobs.find(x=>x.name===m[1])||{name:m[1],lines:[]};if(!current.jobs.includes(job))current.jobs.push(job)}if(job)job.lines.push(line);else current.lines.push(line);if(line.includes('正常終了')||line.includes('異常終了'))job=null}return groups}function logLines(lines){return `<div class="log-lines">${lines.map(x=>`<div class="log-line ${logLevel(x)}">${E(x)}</div>`).join('')}</div>`}function renderLogTree(text){let groups=buildLogTree(text);renderedLogGroups=groups.slice().reverse();$('#log').innerHTML=renderedLogGroups.length?renderedLogGroups.map((g,gi)=>`<details class="log-action" ${gi===0?'open':''} data-gi="${gi}"><summary><span><b>実行指令 ${renderedLogGroups.length-gi}</b> ${E(g.title)}</span><small>${g.jobs.length}ファイル</small><span class="log-summary-actions"><button class="secondary log-copy-full" data-gi="${gi}">全文コピー</button><button class="secondary log-copy-summary" data-gi="${gi}">要約コピー</button><button class="secondary danger-lite log-delete-group" data-gi="${gi}">削除</button></span></summary>${g.lines.length?logLines(g.lines):''}${g.jobs.map(j=>`<details class="log-job"><summary>${E(j.name)} <small>${j.lines.length}行</small></summary>${logLines(j.lines)}</details>`).join('')}</details>`).join(''):'<div class="empty">ログなし</div>';$$('.log-copy-full').forEach(b=>b.onclick=e=>{e.preventDefault();e.stopPropagation();let g=renderedLogGroups[Number(b.dataset.gi)];textToClipboard(groupText(g,'full'),'選択した実行指令ログをコピーしました')});$$('.log-copy-summary').forEach(b=>b.onclick=e=>{e.preventDefault();e.stopPropagation();let g=renderedLogGroups[Number(b.dataset.gi)];textToClipboard(groupText(g,'summary'),'選択した実行指令の要約ログをコピーしました')});$$('.log-delete-group').forEach(b=>b.onclick=async e=>{e.preventDefault();e.stopPropagation();let g=renderedLogGroups[Number(b.dataset.gi)],txt=groupText(g,'full');if(!confirm('この実行指令ログを削除しますか？'))return;let r=await fetch('/api/log/delete-lines',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({lines:txt.split(/\n/)})});if(r.ok){toast('選択した実行指令ログを削除しました');await loadLog()}})}let latestLogText='',renderedLogGroups=[];async function loadLog(){let d=await fetch('/api/log').then(r=>r.json());latestLogText=d.text||'';renderLogTree(latestLogText);renderLogSize(d)}
+/* ログの大きさと、いま読んでいる範囲を出す。全文を読まなくなったので、
+   「これで全部なのか」が分からないままにしない。 */
+function renderLogSize(d){
+ let el=$('#log-size');if(!el)return;
+ let older=(d.older||[]),n=older.length;
+ el.textContent=`${d.size_mb??0}MB`+(d.clipped?`（末尾${d.window_mb}MBを表示）`:'（全体を表示）')
+  +(n?` / 前のログ ${n}本`:'');
+ el.title=(d.clipped?`ログ全体は${d.size_mb}MBあり、画面には末尾${d.window_mb}MBぶんを読み込んでいます。`
+   :`ログ全体（${d.size_mb}MB）を読み込んでいます。`)
+  +(n?`\n前のログ: ${older.map(x=>x.name+' '+x.mb+'MB').join(' / ')}`:'');
+ el.className='log-size'+(d.clipped?' is-clipped':'');
+}
+if($('#rotate-log'))$('#rotate-log').onclick=async()=>{
+ if(!confirm('いまのログを区切り、新しいログを始めますか？\n（これまでのぶんは app.1.log として残ります）'))return;
+ let r=await fetch('/api/log/rotate',{method:'POST'}),d=await r.json().catch(()=>({}));
+ if(!r.ok)return toast(d.error||'区切れませんでした');
+ toast(d.rotated?`ログを区切りました（${d.size_mb}MB）`:'区切るほど溜まっていません');
+ await loadLog();
+};/* コピーするログから「省略の印」を取り除く。
    ログには「｜ LOG_DEDUP 同じ内容を14行省略（28.2秒間・これが最後の1行）」が付くことがある。
    これは画面で読むための注記で、貼り付け先では邪魔にしかならない。
    行そのものは残す（何が起きたかは消さない）。消すのは印だけ。 */
@@ -1289,6 +1417,7 @@ function renderMaster(m){
            none:'まだ調査していません',missing:'RNEファイルが見つかりません'}[m.state]||m.why;
  let c=m.columns||{},ax=m.axes||{},tm=m.timing||{},plans=m.plans||[];
  masterTiming=Number(tm.total||0)||0;
+ fillIndexSuggestions(c.list||[]);
  if(typeof allinRefreshPlan==='function')allinRefreshPlan();
  let cells=[
   ['列',c.have?`${c.count}本`:'—',c.have?`外せる ${c.removable} / 固定 ${c.fixed}`:'未取得'],
@@ -1442,6 +1571,73 @@ if($('#alert-clear'))$('#alert-clear').onclick=async()=>{
  await loadAlerts();renderAlerts();toast('確認済みにしました');
 };
 setInterval(loadAlerts,5000);loadAlerts();
+/* ==== データの鮮度 ==========================================================
+   読み手にとっていちばん大事なのは「このファイルはいつのデータか」。これまでは
+   対象一覧の実績欄に散っていて、まとめて見る場所が無かった。
+   すべて予定どおりなら何も出さない（問題が無いときに場所を取らない）。 */
+const FRESH_STATE={failed:['失敗','fb-ng'],stale:['遅れています','fb-warn'],never:['未実行','fb-warn'],ok:['','']};
+function ageText(m){
+ if(m==null)return '—';
+ if(m<60)return `${m}分前`;
+ if(m<1440)return `${Math.floor(m/60)}時間${m%60?`${m%60}分`:''}前`;
+ return `${Math.floor(m/1440)}日${Math.floor(m%1440/60)?`${Math.floor(m%1440/60)}時間`:''}前`;
+}
+async function loadFreshness(){
+ let box=$('#fresh-board');if(!box)return;
+ try{
+  let d=await fetch('/api/freshness',{cache:'no-store'}).then(r=>r.json());
+  let bad=(d.items||[]).filter(x=>x.state!=='ok');
+  box.hidden=!bad.length;
+  if(box.hidden)return;
+  box.innerHTML=`<div class="fb-head"><b>${E(d.summary)}</b><small>予定どおりに新しくなっていない対象です。押すとその対象を開きます</small></div>`
+   +`<div class="fb-rows">`+bad.map(x=>{
+    let [word,tone]=FRESH_STATE[x.state]||FRESH_STATE.ok;
+    return `<button type="button" class="fb-row ${E(tone)}" data-id="${E(x.id)}">`
+     +`<i>${E(word)}</i><b>${E(x.name)}</b>`
+     +`<span>${x.last_run?`最終 ${E(String(x.last_run).replace('T',' '))}（${E(ageText(x.age_minutes))}）`:'まだ一度も実行していません'}</span>`
+     +`<small>${x.next_run?`次の予定 ${E(String(x.next_run).replace('T',' '))}`:E(x.hint||'')}</small></button>`}).join('')
+   +`</div>`;
+  box.querySelectorAll('.fb-row').forEach(b=>b.onclick=()=>{
+   let j=cfg?.jobs?.find(x=>x.id===b.dataset.id);
+   if(j)openEditor(j);
+  });
+ }catch{}
+}
+setInterval(loadFreshness,60000);
+/* ==== 実績の推移 ============================================================
+   run_history に2000件ぶん溜まっているのに、これまではカレンダーの実施記録に
+   しか使っていなかった。「件数が急に減った」「だんだん遅くなっている」は、
+   並べてみないと気づけない。 */
+function sparkline(values,w=210,h=34){
+ let v=values.filter(x=>typeof x==='number');
+ if(v.length<2)return '';
+ let lo=Math.min(...v),hi=Math.max(...v),span=(hi-lo)||1;
+ let pts=v.map((x,i)=>`${(i/(v.length-1)*w).toFixed(1)},${(h-((x-lo)/span)*(h-4)-2).toFixed(1)}`);
+ return `<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true">`
+  +`<polyline points="${pts.join(' ')}"/><circle cx="${pts[pts.length-1].split(',')[0]}" cy="${pts[pts.length-1].split(',')[1]}" r="2.4"/></svg>`;
+}
+function trendLine(label,unit,vals,sp){
+ if(vals.filter(x=>typeof x==='number').length<2)return '';
+ let ch=sp?.change;
+ let tone=ch==null?'':Math.abs(ch)<10?'is-flat':ch>0?'is-up':'is-down';
+ return `<div class="tr-row"><div class="tr-cap"><b>${E(label)}</b>`
+  +`<span>${Number(sp.first).toLocaleString()}${E(unit)} → ${Number(sp.last).toLocaleString()}${E(unit)}</span>`
+  +(ch==null?'':`<em class="${tone}">${ch>0?'+':''}${ch}%</em>`)+`</div>${sparkline(vals)}</div>`;
+}
+async function loadJobTrend(id){
+ let box=$('#m-trend');if(!box||!id)return;
+ box.innerHTML='<p class="ri-note">読み込み中…</p>';
+ try{
+  let d=await fetch('/api/job-trend/'+encodeURIComponent(id),{cache:'no-store'}).then(r=>r.json());
+  let items=d.items||[];
+  if(items.length<2){box.innerHTML='<p class="ri-note">実績がまだ2回ぶんありません。何回か実行すると、件数と所要の推移が出ます。</p>';return}
+  box.innerHTML=`<div class="tr-head"><b>直近${items.length}回の推移</b>`
+   +(d.failed?`<span class="tr-ng">失敗 ${d.failed}回</span>`:'<span class="tr-ok">すべて成功</span>')+`</div>`
+   +trendLine('件数','件',items.map(x=>x.rows),d.rows_spread)
+   +trendLine('所要','秒',items.map(x=>x.seconds),d.seconds_spread)
+   +`<small class="tr-note">いちばん右が最新です。件数が急に減った・だんだん遅くなっている、はここで気づけます。</small>`;
+ }catch{box.innerHTML='<p class="ri-ng">実績を読めませんでした。</p>'}
+}
 function inspEmpty(name,hide){let e=document.querySelector(`.ip-empty[data-empty="${name}"]`);if(e)e.hidden=!!hide}
 /* 対象を開き直すたびに白紙へ戻す。前に開いていた対象の調査結果が残っていると、
    どのRNEを見ているのか分からなくなる（同じ内容がどのRNEでも出る、の原因）。 */

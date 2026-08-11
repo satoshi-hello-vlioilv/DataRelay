@@ -1942,3 +1942,74 @@ body>main{width:var(--app-shell);max-width:var(--app-shell);
 /* ログ本体は残りの高さに合わせる。画面が低いときは先にここが縮む。 */
 .log-tree{max-height:min(560px,46vh)}
 @media (min-height:1000px){.log-tree{max-height:min(720px,52vh)}}
+
+/* ログの大きさ。全文を読まなくなったので、いま何を見ているのかを常に出す。 */
+.log-size-group{margin-left:auto;display:flex;align-items:center;gap:7px}
+.log-size{font:10.5px/1.5 Consolas,monospace;color:#7f929a;white-space:nowrap}
+.log-size.is-clipped{color:#8a5f19}
+
+/* 出力のこまかい選択（更新しない条件・索引）。形式の話と混ざらないよう1段下げる。 */
+.outopt{margin:0 0 11px;padding:11px 12px;border:1px solid #dce7ec;border-radius:9px;background:#fbfdfd;display:grid;gap:9px}
+.outopt .naming-field{display:grid;gap:4px;font-size:12px;font-weight:800;color:#3f5661}
+.outopt .naming-field>span{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.outopt .hint{margin:0;font-size:10.5px;color:#7f929a;line-height:1.6}
+
+/* データの鮮度。すべて予定どおりなら何も出さない（問題が無いときに場所を取らない）。 */
+.fresh-board{margin:11px 0 0;padding:11px 12px;border:1px solid #e7d6b4;border-radius:9px;background:#fdfaf4;display:grid;gap:8px}
+.fresh-board[hidden]{display:none!important}
+.fb-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.fb-head b{font-size:12.5px;color:#7a5a18}
+.fb-head small{font-size:10.5px;color:#93a4ab}
+.fb-rows{display:grid;gap:5px}
+.fb-row{display:grid;grid-template-columns:88px minmax(120px,1fr) minmax(0,1.4fr) minmax(0,1fr);gap:10px;
+ align-items:center;text-align:left;padding:7px 10px;border:1px solid #e2eaee;border-radius:8px;
+ background:#fff;color:#3f5661;font-size:11.5px;font-weight:400;cursor:pointer}
+.fb-row:hover{border-color:#8fb6c2;background:#f6fbfc}
+.fb-row>i{font-style:normal;font-size:10px;font-weight:900;text-align:center;padding:4px 0;border-radius:999px}
+.fb-row.fb-ng>i{color:#a4463d;background:#fbe9e6}
+.fb-row.fb-warn>i{color:#8a5f19;background:#f7efe0}
+.fb-row b{font-size:12px;color:#22404d;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fb-row span,.fb-row small{color:#7f929a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fb-row small{font-size:10.5px}
+@media(max-width:900px){.fb-row{grid-template-columns:80px minmax(0,1fr)}.fb-row span,.fb-row small{grid-column:2}}
+/* 実績の推移。並べてみないと「急に減った」「だんだん遅い」に気づけない。 */
+.trendbox{margin-top:12px}
+.trend{display:grid;gap:9px;margin-top:7px}
+.tr-head{display:flex;align-items:baseline;gap:9px}
+.tr-head b{font-size:12px;color:#22404d}
+.tr-ok{font-size:10px;color:#0c6b4d;background:#e4f4ec;padding:2px 7px;border-radius:999px;font-weight:800}
+.tr-ng{font-size:10px;color:#a4463d;background:#fbe9e6;padding:2px 7px;border-radius:999px;font-weight:800}
+.tr-row{display:grid;grid-template-columns:minmax(0,1fr) 210px;gap:12px;align-items:center;
+ padding:8px 11px;border:1px solid #e2eaee;border-radius:8px;background:#fbfdfd}
+.tr-cap{display:grid;gap:1px;min-width:0}
+.tr-cap b{font-size:11.5px;color:#22404d}
+.tr-cap span{font:11px Consolas,monospace;color:#5d7681}
+.tr-cap em{font-style:normal;font-size:10px;font-weight:800;color:#7f929a}
+.tr-cap em.is-up{color:#0a6c86}
+.tr-cap em.is-down{color:#a4463d}
+.tr-cap em.is-flat{color:#93a4ab}
+.spark{width:210px;height:34px;overflow:visible}
+.spark polyline{fill:none;stroke:#118899;stroke-width:1.6;vector-effect:non-scaling-stroke}
+.spark circle{fill:#0a5b6b}
+.tr-note{font-size:10.5px;color:#93a4ab;line-height:1.6}
+@media(max-width:760px){.tr-row{grid-template-columns:minmax(0,1fr)}.spark{width:100%}}
+
+/* まとめて変更。触った項目だけを適用するので、何が変わるのかを先に見せる。 */
+.bulk-modal{width:min(720px,94vw)}
+.bulk-body{display:grid;gap:12px}
+.bulk-targets{display:flex;flex-wrap:wrap;gap:5px;max-height:96px;overflow-y:auto}
+.bt-chip{padding:3px 9px;border-radius:999px;background:#eef4f6;color:#3f5661;font-size:11px;font-weight:700}
+.bulk-fields{display:grid;gap:9px}
+.bulk-field{display:grid;grid-template-columns:minmax(200px,1fr) minmax(0,1.3fr);gap:12px;align-items:center;
+ padding:9px 11px;border:1px solid #e2eaee;border-radius:8px;background:#fbfdfd}
+.bulk-on{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:800;color:#3f5661;cursor:pointer}
+.bulk-on input{width:17px;height:17px;flex:none}
+.bulk-field select:disabled,.bulk-field input:disabled{background:#f3f6f7;color:#a8b6bc}
+.bulk-field .af-chips{gap:5px}
+.bulk-field .af-chip:disabled{opacity:.45;cursor:not-allowed}
+.bulk-preview{padding:11px 12px;border:1px solid #cfe4e8;border-radius:9px;background:#f2fbfc;font-size:11.5px;color:#3f5661}
+.bulk-preview b{display:block;font-size:12px;color:#0a5b6b;margin-bottom:5px}
+.bulk-preview ul{margin:0 0 6px;padding-left:18px;display:grid;gap:3px}
+.bulk-preview code{font:11px Consolas,monospace;color:#22404d}
+.bulk-preview small{color:#7f929a;line-height:1.6}
+@media(max-width:700px){.bulk-field{grid-template-columns:minmax(0,1fr)}}
