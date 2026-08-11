@@ -25,8 +25,8 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.58.0'; APP_VERSION_TITLE='PCごとに変わる場所を設定に固定しない／調べてから設定まで一続きに／APIの状態を1か所で'; APP_RELEASED_AT='2026-08-12'
-BUILD_VERSION=f'{APP_VERSION}-perpc'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.58.1'; APP_VERSION_TITLE='公開先が塞がり続けても更新保留ファイルが増え続けないようにした'; APP_RELEASED_AT='2026-08-12'
+BUILD_VERSION=f'{APP_VERSION}-pendingcap'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリに同梱する仕様書。ここに登録したものだけが画面から開ける。
 # 画面からはこのidしか受け取らないので、任意のパスを読ませることはできない。
 DOCS=[
@@ -43,7 +43,11 @@ def docs_dir():
 
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
-{'version':'1.58.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+{'version':'1.58.1','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'【公開先が塞がり続けると、更新保留ファイル（*.pending_*）が実行のたびに増えていました】公開先を他のアプリが読み取り中などで一定時間（3秒）ロックが外れないと、そのまま公開できなかった内容を「*.pending_日時.拡張子」として残します。次回の実行開始時に控えを見に行きますが、そこでも塞がっていれば古い保留はそのまま残り、今回ぶんの新しい保留がもう1つ増えていました。公開先が慢性的に使用中の環境では、実行のたびに1件ずつ積み上がっていました。',
+'保留ファイルは「次に公開できるようになるまでの最新の1枚」であれば足ります。新しい保留を作る直前に、同じ公開先に対する古い保留を消してから作るようにしました。公開先が塞がり続けても保留ファイルは常に1件のまま、いちばん新しいデータだけが残ります。',
+]},
+{'version':'1.58.0','date':'2026-08-12','title':'PCごとに変わる場所を設定に固定しない／調べてから設定まで一続きに／APIの状態を1か所で','notes':[
 '【別のPCで実行すると止まっていました】バックアップ先に、設定を作ったPCの利用者フォルダー（C:¥Users¥<誰か>¥AppData¥Local¥…）が絶対パスのまま入っていました。設定はBOXのマスターを通じて全PCへ配られるため、別のPCでは他人のフォルダーを指すことになり、作成すらできずに実行が失敗していました（WinError 5 アクセスが拒否されました）。',
 'PCごとに実体が変わる場所は <PC> という印で持ち、使うときにそのPCのローカル領域へ直すようにしました。設定にPC固有の値が残りません。すでに他人のフォルダーを指している設定は、読み込むときに <PC>¥backup へ読み替え、その旨をログに残します。',
 '控えが取れないことは、公開そのものを止める理由になりません。バックアップ先が使えないときは、このPCのローカルへ逃がして公開を続けます（切り替えた理由はログに残します）。',
@@ -3983,9 +3987,19 @@ def publish(src,dst,backup_root,generations,from_pending=False,backup_enabled=Tr
     if getattr(e,'winerror',None) in (5,32,33):last=e;time.sleep(.25)
     else:raise
   if from_pending:raise PermissionError(f'公開先が使用中です: {dst}') from last
+  # 保留ファイルは「次に公開できるようになるまでの1枚」であればよい。公開先が
+  # ずっと使用中のままだと、実行のたびに新しい保留ファイルが増えていき、古いものは
+  # このあと一度も読まれずに残り続けていた（apply_pendingは常に最新の1件しか見ない）。
+  # 新しい保留を作る前に、同じ公開先に対する古い保留を消してから作る。
+  old_pending=sorted(dst.parent.glob(_pending_pattern(dst)),key=lambda p:p.stat().st_mtime)
+  removed_old=0
+  for item in old_pending:
+   try:item.unlink();removed_old+=1
+   except OSError:pass
   pending=dst.parent/f'{dst.stem}.pending_{stamp}{dst.suffix}'
   os.replace(incoming,pending)
-  log.warning('公開先使用中。新しいファイルを更新保留として保存 %s',pending)
+  log.warning('公開先使用中。新しいファイルを更新保留として保存 %s%s',pending,
+              f'（古い保留 {removed_old}件を整理）' if removed_old else '')
   return {'published':False,'path':str(dst),'pending':str(pending),'reason':'他のPCまたはアプリが公開先ファイルを使用中'}
  finally:
   if incoming.exists() and incoming!=src:
