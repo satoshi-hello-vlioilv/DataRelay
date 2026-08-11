@@ -1,4 +1,4 @@
-const UI_BUILD='1.61.0-readonce';
+const UI_BUILD='1.62.0-alerts';
 let cfg,editing=null,editingRule=null,sortDir=1,scheduleInfo={},rowLive={},rowQueue={},statusFailCount=0,serverLostShown=false;const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)],E=s=>String(s??'').replace(/[&<>"']/g,x=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[x]));const uid=()=>crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random();function toast(t){$('#toast').textContent=t;$('#toast').style.display='block';setTimeout(()=>$('#toast').style.display='none',2500)}/* 設定は変えた瞬間に保存する。保存ボタンの押し忘れで、画面に見えている設定と
    実際に使われる設定が食い違うことがあったため、押す操作そのものを無くした。 */
 let saveTimer=null,saveSeq=0,saveRetry=0;
@@ -15,6 +15,9 @@ function collectSettings(){if(!cfg||!cfg.settings)return;let s=cfg.settings,v=id
  if(v('#worker-stagger'))s.api_worker_stagger_ms=Math.max(0,Math.min(5000,Number(v('#worker-stagger').value)||0));
  if(v('#api-lines'))s.api_parallel_lines=Math.max(1,Math.min(24,Number(v('#api-lines').value)||6));
  if(v('#zero'))s.reject_zero_rows=v('#zero').checked;
+ if(v('#retry-enabled'))s.retry_enabled=v('#retry-enabled').checked;
+ if(v('#retry-delay'))s.retry_delay_minutes=Math.max(1,Math.min(180,Number(v('#retry-delay').value)||5));
+ if(v('#retry-max'))s.retry_max=Math.max(0,Math.min(5,Number(v('#retry-max').value)||0));
  if(v('#hide-profile'))s.symnavi_hide_profile=v('#hide-profile').value;
  if(v('#hide-interval'))s.symnavi_hide_interval_seconds=Math.max(1,Number(v('#hide-interval').value)||2);
  if(v('#hide-action-duration'))s.symnavi_hide_action_duration_seconds=Math.max(.2,Number(v('#hide-action-duration').value)||.5);
@@ -423,12 +426,15 @@ async function loadMachinePaths(){
  }catch{box.innerHTML='<p class="ri-note">確認できませんでした。</p>'}
 }
 if($('#mp-reload'))$('#mp-reload').onclick=loadMachinePaths;
-function updateHideProfileUI(){let p=$('#hide-profile').value,custom=p==='custom';$('#hide-interval-wrap').style.display=custom?'grid':'none';$('#hide-action-duration-wrap').style.display=custom?'grid':'none';let descriptions={action_only:'DDE操作直後だけ確認。常時監視なし',light:'3秒間隔。負荷を最優先',balanced:'2秒間隔。負荷と非表示性のバランス',standard:'1秒間隔。非表示性を優先',custom:'1秒以上で任意設定'};$('#hide-profile').title=descriptions[p]||''}async function init(){cfg=await fetch('/api/config').then(r=>r.json());cfg.jobs.forEach(j=>{j.id=j.id||uid();j.name=j.name||j.rne.replace(/\.RNE$/i,'');j.schedules=j.schedules||[]});$('#cred').textContent=cfg.credential_status;$('#pathform').innerHTML=Object.entries(paths).filter(([k])=>k!=='navigator_api_dll').map(([k,a])=>`<label>${a[0]}<div class="browse"><input id="${k}" value="${E(cfg[k]||'')}"><div class="path-actions">${['navigator_api_dll','symnavim_conf','symnavim_def','accdb_template'].includes(k)?`<button class="pathcheck verify-btn" data-k="${k}" type="button">確認</button>`:''}<button class="pathpick browse-btn" data-k="${k}" type="button">参照</button></div></div></label>`).join('');Object.entries(paths).filter(([k])=>k!=='navigator_api_dll').forEach(([k,a])=>{$('#'+k).onchange=e=>{cfg[k]=e.target.value;dirty()};document.querySelector(`[data-k="${k}"]`).onclick=async()=>{let p=await browse(a[1],cfg[k],a[2]);if(p){cfg[k]=p;$('#'+k).value=p;dirty()}}});$('#extract-engine').value=cfg.settings.extract_engine||'api';updateEngineUI();$('#dde').value=cfg.settings.dde_timeout_seconds;$('#wait').value=cfg.settings.output_wait_seconds;$('#gens').value=cfg.settings.backup_generations||3;if($('#backup-enabled'))$('#backup-enabled').checked=cfg.settings.backup_enabled!==false;if($('#backup-mode'))$('#backup-mode').value=cfg.settings.backup_mode||'generations';if($('#backup-retention-days'))$('#backup-retention-days').value=Number(cfg.settings.backup_retention_days||30);if($('#schedule-catchup'))$('#schedule-catchup').value=Number(cfg.settings.schedule_catchup_minutes??30);if($('#worker-stagger'))$('#worker-stagger').value=Number(cfg.settings.api_worker_stagger_ms??700);updateBackupOptions();if($('#api-lines')){$('#api-lines').value=Math.max(1,Math.min(24,Number(cfg.settings.api_parallel_lines||6)));$('#api-lines').title='既定は6ライン、設定可能範囲は1～24ラインです。変更した時点で保存されます。'}$('#zero').checked=cfg.settings.reject_zero_rows;$('#hide-profile').value=cfg.settings.symnavi_hide_profile||'balanced';$('#hide-interval').value=Math.max(1,Number(cfg.settings.symnavi_hide_interval_seconds||2));$('#hide-action-duration').value=Number(cfg.settings.symnavi_hide_action_duration_seconds||0.5);updateHideProfileUI();Object.keys(paths).filter(k=>k!=='navigator_api_dll').forEach(k=>enhancePathInput($('#'+k),paths[k][1]));let dllInput=$('#navigator-api-dll');if(dllInput){dllInput.value=cfg.navigator_api_dll||'';dllInput.oninput=()=>{cfg.navigator_api_dll=dllInput.value;dirty();
+function updateHideProfileUI(){let p=$('#hide-profile').value,custom=p==='custom';$('#hide-interval-wrap').style.display=custom?'grid':'none';$('#hide-action-duration-wrap').style.display=custom?'grid':'none';let descriptions={action_only:'DDE操作直後だけ確認。常時監視なし',light:'3秒間隔。負荷を最優先',balanced:'2秒間隔。負荷と非表示性のバランス',standard:'1秒間隔。非表示性を優先',custom:'1秒以上で任意設定'};$('#hide-profile').title=descriptions[p]||''}async function init(){cfg=await fetch('/api/config').then(r=>r.json());cfg.jobs.forEach(j=>{j.id=j.id||uid();j.name=j.name||j.rne.replace(/\.RNE$/i,'');j.schedules=j.schedules||[]});$('#cred').textContent=cfg.credential_status;$('#pathform').innerHTML=Object.entries(paths).filter(([k])=>k!=='navigator_api_dll').map(([k,a])=>`<label>${a[0]}<div class="browse"><input id="${k}" value="${E(cfg[k]||'')}"><div class="path-actions">${['navigator_api_dll','symnavim_conf','symnavim_def','accdb_template'].includes(k)?`<button class="pathcheck verify-btn" data-k="${k}" type="button">確認</button>`:''}<button class="pathpick browse-btn" data-k="${k}" type="button">参照</button></div></div></label>`).join('');Object.entries(paths).filter(([k])=>k!=='navigator_api_dll').forEach(([k,a])=>{$('#'+k).onchange=e=>{cfg[k]=e.target.value;dirty()};document.querySelector(`[data-k="${k}"]`).onclick=async()=>{let p=await browse(a[1],cfg[k],a[2]);if(p){cfg[k]=p;$('#'+k).value=p;dirty()}}});$('#extract-engine').value=cfg.settings.extract_engine||'api';updateEngineUI();$('#dde').value=cfg.settings.dde_timeout_seconds;$('#wait').value=cfg.settings.output_wait_seconds;$('#gens').value=cfg.settings.backup_generations||3;if($('#backup-enabled'))$('#backup-enabled').checked=cfg.settings.backup_enabled!==false;if($('#backup-mode'))$('#backup-mode').value=cfg.settings.backup_mode||'generations';if($('#backup-retention-days'))$('#backup-retention-days').value=Number(cfg.settings.backup_retention_days||30);if($('#schedule-catchup'))$('#schedule-catchup').value=Number(cfg.settings.schedule_catchup_minutes??30);if($('#worker-stagger'))$('#worker-stagger').value=Number(cfg.settings.api_worker_stagger_ms??700);updateBackupOptions();if($('#api-lines')){$('#api-lines').value=Math.max(1,Math.min(24,Number(cfg.settings.api_parallel_lines||6)));$('#api-lines').title='既定は6ライン、設定可能範囲は1～24ラインです。変更した時点で保存されます。'}$('#zero').checked=cfg.settings.reject_zero_rows;if($('#retry-enabled')){$('#retry-enabled').checked=cfg.settings.retry_enabled!==false;$('#retry-delay').value=Number(cfg.settings.retry_delay_minutes??5);$('#retry-max').value=Number(cfg.settings.retry_max??1);updateRetryOptions()}$('#hide-profile').value=cfg.settings.symnavi_hide_profile||'balanced';$('#hide-interval').value=Math.max(1,Number(cfg.settings.symnavi_hide_interval_seconds||2));$('#hide-action-duration').value=Number(cfg.settings.symnavi_hide_action_duration_seconds||0.5);updateHideProfileUI();Object.keys(paths).filter(k=>k!=='navigator_api_dll').forEach(k=>enhancePathInput($('#'+k),paths[k][1]));let dllInput=$('#navigator-api-dll');if(dllInput){dllInput.value=cfg.navigator_api_dll||'';dllInput.oninput=()=>{cfg.navigator_api_dll=dllInput.value;dirty();
    let v=$('#api-readiness');if(v)v.className='api-readiness is-stale';};}let dllPick=$('#api-dll-pick');if(dllPick)dllPick.onclick=async()=>{let q=await browse('file',dllInput.value,paths.navigator_api_dll[2]);if(q){dllInput.value=q;cfg.navigator_api_dll=q;dirty();await testNavigatorApi()}};let dllCheck=$('#api-dll-check');if(dllCheck)dllCheck.onclick=()=>testNavigatorApi();if(!Array.isArray(cfg.navigator_api_search_roots))cfg.navigator_api_search_roots=DLL_DEFAULT_ROOTS.slice();renderDllRoots();loadDllRequirement();fillSuggestions();render();loadMachinePaths();saveState('設定を読み込みました／変更はすべて自動で保存されます','');$$('.pathcheck').forEach(b=>b.onclick=()=>checkConfiguredPath(b.dataset.k))}
 ['search','filter-enabled','filter-schedule','sort'].forEach(k=>$('#'+k).addEventListener(k==='search'?'input':'change',render));$$('.sortable').forEach(h=>h.onclick=()=>{$('#sort').value=h.dataset.sort;sortDir*=-1;render()});$('#add').onclick=()=>openEditor(null);$('#select-visible').onclick=()=>{$$('#jobs-body .rowcheck').forEach(x=>{x.checked=true;x.closest('tr').classList.add('selected')});updateSelCount()};$('#clear-selection').onclick=()=>{$$('#jobs-body .rowcheck').forEach(x=>{x.checked=false;x.closest('tr').classList.remove('selected')});updateSelCount()};function resetProgressView(){let q=$('#queue-summary');if(q){q.hidden=true;q.innerHTML=''}let pr=$('#p-results');if(pr){pr.hidden=true;pr.innerHTML=''}let b=$('#p-parallel-lines');if(b){b.hidden=true;b.innerHTML=''}document.querySelector('.current-box')?.classList.remove('parallel-hidden');$('#p-steps')?.classList.remove('parallel-hidden');$('#p-count').textContent='全体 0 / 0';$('#p-percent').textContent='0%';$('#p-bar').style.width='0%';$('#p-job').textContent='準備中';$('#p-output').textContent='';}async function runJobs(ids){resetProgressView();showWaiting(currentEngine()==='api'?'API処理を開始しています':'DDE処理を開始しています',currentEngine()==='api'?'APIセッションと実行対象を準備しています...':'SymfoNavi起動とDDE接続を準備しています...','engine');let r=await fetch('/api/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_ids:ids,parallel_lines:Math.max(1,Math.min(24,Number($('#api-lines')?.value||6)||6))})}),d=await r.json();hideWaiting();if(r.ok){toast(`実行キュー ${d.position}番へ追加しました`);await loadCommandQueue()}else toast(d.error)}$('#run-all').onclick=()=>runJobs(null);$('#run-selected').onclick=()=>{let ids=$$('#jobs-body .rowcheck:checked').map(x=>x.closest('tr').dataset.id);if(ids.length)runJobs(ids)};/* 保存ボタンの代わりに、値が変わったところで保存する。数値欄は打っている途中に
    何度も飛ばさないよう、まとめて少し待ってから送る（scheduleSave）。 */
 ['dde','wait','schedule-catchup','worker-stagger','hide-interval','hide-action-duration'].forEach(id=>{let e=$('#'+id);if(e){e.addEventListener('input',dirty);e.addEventListener('change',dirty)}});
-['zero','extract-engine','hide-profile','backup-mode','backup-enabled'].forEach(id=>{let e=$('#'+id);if(e)e.addEventListener('change',dirty)});$('#validate').onclick=async()=>{showWaiting(currentEngine()==='api'?'API実行前診断中':'DDE実行前診断中','実際の設定値と配置を統合して確認しています...','engine');try{let r=await fetch('/api/validate',{method:'POST'}),d=await r.json();if(!r.ok)throw Error(d.error||'診断に失敗しました');renderDiagnostics(d);let dlg=$('#diagnostic-dialog');if(dlg&&!dlg.open)dlg.showModal()}catch(e){toast(e.message)}finally{hideWaiting()}};function renderDiagnostics(d){$('#check-scope').textContent=d.search_scope||'';let state=$('#diagnostic-state');state.textContent=d.summary||'';state.className='diag-state '+(d.ok?'is-ok':'is-ng');let c=d.counts||{};$('#diagnostic-counts').innerHTML=`<span class="dc-ok">正常 ${c.ok||0}</span><span class="dc-warn">注意 ${c.warning||0}</span><span class="dc-ng">要修正 ${c.error||0}</span>`;let groups={};(d.checks||[]).forEach((x,i)=>(groups[x.group]||(groups[x.group]=[])).push({...x,_i:i}));$('#checks').innerHTML=Object.entries(groups).map(([g,items])=>`<section class="diag-group"><h3>${E(g)}<small>${items.length}項目</small></h3>${items.map(x=>`<div class="diag-row ${E(x.level)}"><i>${x.level==='ok'?'OK':x.level==='warning'?'注意':'要修正'}</i><div><b>${E(x.label)}</b><span>${E(x.detail)}</span></div>${x.candidates?.length?`<button class="fix secondary" data-i="${x._i}">候補 ${x.candidates.length}件</button>`:''}</div>`).join('')}</section>`).join('');$$('#checks .fix').forEach(b=>b.onclick=()=>showPathResult(d.checks[Number(b.dataset.i)]))}if($('#diagnostic-close'))$('#diagnostic-close').onclick=()=>$('#diagnostic-dialog').close();if($('#diagnostic-close-foot'))$('#diagnostic-close-foot').onclick=()=>$('#diagnostic-dialog').close();let commandQueueOpen=false;async function loadCommandQueue(){try{let d=await fetch('/api/execution-queue',{cache:'no-store'}).then(r=>r.json()),list=$('#cq-list'),summary=$('#cq-summary');applyRowQueueProgress(d);if(!list||!summary)return;
+['zero','extract-engine','hide-profile','backup-mode','backup-enabled'].forEach(id=>{let e=$('#'+id);if(e)e.addEventListener('change',dirty)});
+['retry-delay','retry-max'].forEach(id=>{let e=$('#'+id);if(e){e.addEventListener('input',dirty);e.addEventListener('change',dirty)}});
+if($('#retry-enabled'))$('#retry-enabled').addEventListener('change',()=>{updateRetryOptions();dirty()});
+function updateRetryOptions(){let on=$('#retry-enabled')?.checked;let box=$('#retry-options');if(box)box.style.display=on?'':'none'}$('#validate').onclick=async()=>{showWaiting(currentEngine()==='api'?'API実行前診断中':'DDE実行前診断中','実際の設定値と配置を統合して確認しています...','engine');try{let r=await fetch('/api/validate',{method:'POST'}),d=await r.json();if(!r.ok)throw Error(d.error||'診断に失敗しました');renderDiagnostics(d);let dlg=$('#diagnostic-dialog');if(dlg&&!dlg.open)dlg.showModal()}catch(e){toast(e.message)}finally{hideWaiting()}};function renderDiagnostics(d){$('#check-scope').textContent=d.search_scope||'';let state=$('#diagnostic-state');state.textContent=d.summary||'';state.className='diag-state '+(d.ok?'is-ok':'is-ng');let c=d.counts||{};$('#diagnostic-counts').innerHTML=`<span class="dc-ok">正常 ${c.ok||0}</span><span class="dc-warn">注意 ${c.warning||0}</span><span class="dc-ng">要修正 ${c.error||0}</span>`;let groups={};(d.checks||[]).forEach((x,i)=>(groups[x.group]||(groups[x.group]=[])).push({...x,_i:i}));$('#checks').innerHTML=Object.entries(groups).map(([g,items])=>`<section class="diag-group"><h3>${E(g)}<small>${items.length}項目</small></h3>${items.map(x=>`<div class="diag-row ${E(x.level)}"><i>${x.level==='ok'?'OK':x.level==='warning'?'注意':'要修正'}</i><div><b>${E(x.label)}</b><span>${E(x.detail)}</span></div>${x.candidates?.length?`<button class="fix secondary" data-i="${x._i}">候補 ${x.candidates.length}件</button>`:''}</div>`).join('')}</section>`).join('');$$('#checks .fix').forEach(b=>b.onclick=()=>showPathResult(d.checks[Number(b.dataset.i)]))}if($('#diagnostic-close'))$('#diagnostic-close').onclick=()=>$('#diagnostic-dialog').close();if($('#diagnostic-close-foot'))$('#diagnostic-close-foot').onclick=()=>$('#diagnostic-dialog').close();let commandQueueOpen=false;async function loadCommandQueue(){try{let d=await fetch('/api/execution-queue',{cache:'no-store'}).then(r=>r.json()),list=$('#cq-list'),summary=$('#cq-summary');applyRowQueueProgress(d);if(!list||!summary)return;
  let st=latestStatus||{},running=!!st.running;
  // 実行中バッチの対象(job)単位の実状態。バッジ件数を実進捗に連動させる。
  let jobDone=running?(st.queue_completed_ids||[]).length:0,jobFail=running?(st.queue_failed_ids||[]).length:0;
@@ -1384,6 +1390,58 @@ if($('#bg-task'))$('#bg-task').onclick=()=>{
  openEditor(j);setEditorTab('inspect');inspGo(t.type==='trial'?'trial':'read');
 };
 bgTimer=setInterval(loadBgTasks,2000);loadBgTasks();
+/* ==== 失敗の知らせ ==========================================================
+   自動実行は誰も見ていない時間に走る。これまでは失敗しても記録が残るだけで、
+   画面を開いて実績欄を見るまで気づけなかった。上の帯に常設の印を出し、
+   押せば何が起きたか・いつ取り直すかが分かるようにする。 */
+const ALERT_KIND={error:['要対応','ab-error'],warn:['注意','ab-warn'],info:['お知らせ','ab-info']};
+let alertState={alerts:[],retries:[]};
+async function loadAlerts(){
+ let box=$('#alert-badge');if(!box)return;
+ try{
+  let d=await fetch('/api/alerts',{cache:'no-store'}).then(r=>r.json());
+  alertState=d;
+  let n=d.count||0,waiting=(d.retries||[]).length;
+  box.hidden=!n&&!waiting;
+  if(box.hidden)return;
+  let [word,tone]=ALERT_KIND[d.worst]||ALERT_KIND.info;
+  box.className='ctl alert-badge '+tone;
+  $('#alert-title').textContent=n?`${word} ${n}件`:'取り直し待ち';
+  let last=(d.alerts||[])[d.alerts.length-1];
+  $('#alert-sub').textContent=waiting?`${waiting}件が取り直し待ち`:(last?.jobs||[]).join('・').slice(0,40)||(last?.title||'');
+  if($('#alert-dialog')?.open)renderAlerts();
+ }catch{}
+}
+function renderAlerts(){
+ let r=alertState.retries||[],rb=$('#alert-retry');
+ if(rb){
+  rb.hidden=!r.length;
+  rb.innerHTML=r.length?`<b>取り直しを待っています（${r.length}件）</b>`
+   +r.map(x=>`<div class="ar-line"><span>${E(x.jobs.join('・'))}</span><time>${E(String(x.due_at).replace('T',' '))} に実行</time><em>${x.attempt}回目</em></div>`).join('')
+   +`<button type="button" id="alert-cancel-retry" class="secondary">取り直しをやめる</button>`:'';
+  let btn=$('#alert-cancel-retry');
+  if(btn)btn.onclick=async()=>{await fetch('/api/retries/cancel',{method:'POST'});toast('取り直しの予約を取り消しました');loadAlerts()};
+ }
+ // 重いものが上、同じ重さなら新しいものが上。溜まったときに「何が壊れているか」を
+ // 探させない（このアプリの他の一覧と同じ並べ方）。
+ let rank={error:0,warn:1,info:2};
+ let list=$('#alert-list'),items=(alertState.alerts||[]).map((x,i)=>[rank[x.kind]??9,-i,x])
+   .sort((a,b)=>a[0]-b[0]||a[1]-b[1]).map(x=>x[2]);
+ if(!list)return;
+ list.innerHTML=items.length?items.map(x=>{
+  let [word,tone]=ALERT_KIND[x.kind]||ALERT_KIND.info;
+  return `<div class="al-row is-${E(tone.replace('ab-',''))}"><i>${E(word)}</i><div><b>${E(x.title)}</b>`
+   +`<small>${E(x.detail)}</small><time>${E(String(x.at).replace('T',' '))}</time></div></div>`}).join('')
+  :'<p class="ri-note">未確認の知らせはありません。</p>';
+}
+if($('#alert-badge'))$('#alert-badge').onclick=()=>{renderAlerts();$('#alert-dialog')?.showModal()};
+if($('#alert-close'))$('#alert-close').onclick=()=>$('#alert-dialog').close();
+if($('#alert-close-foot'))$('#alert-close-foot').onclick=()=>$('#alert-dialog').close();
+if($('#alert-clear'))$('#alert-clear').onclick=async()=>{
+ await fetch('/api/alerts/ack',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+ await loadAlerts();renderAlerts();toast('確認済みにしました');
+};
+setInterval(loadAlerts,5000);loadAlerts();
 function inspEmpty(name,hide){let e=document.querySelector(`.ip-empty[data-empty="${name}"]`);if(e)e.hidden=!!hide}
 /* 対象を開き直すたびに白紙へ戻す。前に開いていた対象の調査結果が残っていると、
    どのRNEを見ているのか分からなくなる（同じ内容がどのRNEでも出る、の原因）。 */

@@ -1694,6 +1694,44 @@ body:has(.autosave-state.is-saving) .autosave-mark{background:#0b8ea8;box-shadow
 .ri-fold>div{padding:2px 11px 11px}
 
 /* V1.56: 裏で走っているものを、どの画面からでも1か所で見せる。 */
+/* 失敗の知らせ。上の帯に常設し、押せば内容が読める。実行中の表示とは別枠にする
+   （実行の進み具合と、直っていない失敗は別のことなので、同じ場所で入れ替えない）。 */
+.alert-badge{display:flex;align-items:center;gap:9px;border:1px solid #ffffff3d;color:#fff}
+.alert-badge[hidden]{display:none!important}
+.alert-badge .ab-ic{font-style:normal;font-weight:900;font-size:12px;width:19px;height:19px;flex:none;
+ display:grid;place-items:center;border-radius:999px;background:#ffffff2e}
+.alert-badge .ab-text{display:grid;gap:1px;text-align:left;min-width:0}
+.alert-badge .ab-text b{font-size:11.5px;font-weight:800;white-space:nowrap}
+.alert-badge .ab-text span{font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px;opacity:.85}
+.alert-badge.ab-error{background:#c2503f;border-color:#e08776}
+.alert-badge.ab-error:hover{background:#d15c4a}
+.alert-badge.ab-warn{background:#a97a25;border-color:#d8ac60}
+.alert-badge.ab-warn:hover{background:#bb8829}
+.alert-badge.ab-info{background:#ffffff1c;border-color:#ffffff3d}
+.alert-badge.ab-info:hover{background:#ffffff2e}
+.alert-modal{width:min(760px,94vw)}
+/* 閉じている <dialog> はUAの display:none に任せる。.modal を dialog 自身へ付けると
+   display:flex がそれを上書きし、見えないまま前面に居座ってクリックを奪う。 */
+.alert-body{display:grid;gap:12px;max-height:min(560px,62vh)}
+.alert-retry{display:grid;gap:6px;padding:11px 12px;border:1px solid #e7d6b4;border-radius:9px;background:#fdf9f0}
+.alert-retry>b{font-size:12px;color:#7a5a18}
+.alert-retry .ar-line{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px;font-size:11.5px;color:#5d7681}
+.alert-retry .ar-line time{font:11px Consolas,monospace;color:#8a5f19}
+.alert-retry .ar-line em{font-style:normal;font-size:10px;color:#93a4ab}
+.alert-retry button{justify-self:start;padding:5px 11px;font-size:11px}
+.alert-list{display:grid;gap:6px}
+.al-row{display:grid;grid-template-columns:74px minmax(0,1fr);gap:10px;align-items:start;
+ padding:9px 11px;border:1px solid #e2eaee;border-radius:8px;background:#fbfdfd}
+.al-row>i{font-style:normal;font-size:10px;font-weight:900;text-align:center;padding:4px 0;
+ border-radius:999px;background:#eef3f5;color:#6c8089}
+.al-row>div{display:grid;gap:2px;min-width:0}
+.al-row b{font-size:12px;color:#22404d}
+.al-row small{font-size:10.5px;color:#5d7681;line-height:1.55;word-break:break-word}
+.al-row time{font:10px Consolas,monospace;color:#93a4ab}
+.al-row.is-error{border-color:#efcdc7;background:#fdf6f5}
+.al-row.is-error>i{color:#a4463d;background:#fbe9e6}
+.al-row.is-warn{border-color:#e7d6b4;background:#fdfaf4}
+.al-row.is-warn>i{color:#8a5f19;background:#f7efe0}
 .bg-task{display:flex;align-items:center;gap:9px;background:#ffffff1c;border:1px solid #ffffff3d;color:#eaf7fa}
 .bg-task[hidden]{display:none!important}
 .bg-task:hover{background:#ffffff2e}

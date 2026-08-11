@@ -25,8 +25,8 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.61.0'; APP_VERSION_TITLE='同時出力で中間データを読み直さない／中間データの読み方を軽くした'; APP_RELEASED_AT='2026-08-14'
-BUILD_VERSION=f'{APP_VERSION}-readonce'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.62.0'; APP_VERSION_TITLE='自動実行の失敗に気づける／失敗した対象だけを自動で取り直す'; APP_RELEASED_AT='2026-08-15'
+BUILD_VERSION=f'{APP_VERSION}-alerts'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリに同梱する仕様書。ここに登録したものだけが画面から開ける。
 # 画面からはこのidしか受け取らないので、任意のパスを読ませることはできない。
 DOCS=[
@@ -43,7 +43,19 @@ def docs_dir():
 
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
-{'version':'1.61.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+{'version':'1.62.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'【自動実行が失敗しても、画面を開くまで気づけませんでした】失敗は実績として記録していましたが、知らせる手立てがありませんでした。自動実行は誰も見ていない時間に走るため、翌朝データが古いままだと気づいて初めて分かる、という状態でした。',
+'上の帯に「知らせ」の印を出すようにしました。失敗があるときだけ出て、押すと何が起きたのか（対象名と原因）が読めます。常駐アイコン（通知領域）が使える環境では、そこへも通知します。',
+'読んだら「すべて確認済みにする」で消せます。消すまでは出続けます。',
+'',
+'【失敗しても取り直しませんでした】サーバーの混雑や回線の瞬断で落ちると、次の予定時刻までデータが古いままでした。',
+'自動実行が失敗したときだけ、失敗した対象だけを、少し待ってからもう一度実行するようにしました。既定は5分後・1回までです。設定「安全性とバックアップ」の【失敗したときの取り直し】で、入り切り・待ち時間（1〜180分）・上限回数（0〜5回）を変えられます。',
+'手動で実行したものは取り直しません（人が見ているため、勝手に走らせない）。',
+'成功した対象は取り直しません。失敗したものだけを流します。',
+'取り直しの予約は「知らせ」から確認でき、いつ実行するかが出ます。原因を自分で直してから流したいときは、その場で取り消せます。',
+'取り直しでも失敗したときは、あきらめたことを知らせます。取り直しで成功したときも、直ったことを知らせます。',
+]},
+{'version':'1.61.0','date':'2026-08-14','title':'同時出力で中間データを読み直さない／中間データの読み方を軽くした','notes':[
 '【同時出力が、同じ中間データを形式のぶんだけ読み直していました】前回（v1.60.0）入れた同時出力は、形式ごとに変換処理を呼ぶ作りで、その中で毎回、共通の中間データ（CSV）を最初から解析し直していました。抽出そのものは1回で済んでいましたが、解析だけは形式の数だけ繰り返していました。',
 '中間データの解析を1回だけ行い、その結果を全形式で使い回すようにしました。書き出し側は見出しと本体を読むだけで書き換えないため、共有しても影響はありません。3形式なら2回ぶんの解析が丸ごと無くなります。対象が大きいほど効きます。',
 '',
@@ -3134,7 +3146,7 @@ def load():
   _prev_profile=cfg['settings'].get('stability_profile')
   if _prev_profile in (None,'stable_api_serial'):
    cfg['settings']['api_parallel_lines']=6; cfg['settings']['stability_profile']='balanced_api_parallel'
-  cfg['settings'].setdefault('api_parallel_lines',6); cfg['settings'].setdefault('stability_profile','balanced_api_parallel'); cfg['settings'].setdefault('backup_enabled',True); _backup_mode_missing='backup_mode' not in cfg['settings']; cfg['settings'].setdefault('backup_mode','generations'); cfg['settings'].setdefault('backup_retention_days',30); cfg['settings'].setdefault('backup_generation_limit_enabled',True); cfg['settings'].setdefault('backup_generations',3); cfg['settings'].setdefault('schedule_catchup_minutes',30); cfg['settings'].setdefault('api_worker_stagger_ms',700); cfg['settings'].setdefault('split_trial_timeout_seconds',1800); cfg['settings'].setdefault('split_anchor_limit',3); cfg['settings'].setdefault('split_min_part_mb',2.0); cfg['settings'].setdefault('split_min_gain_seconds',5.0); cfg['settings'].setdefault('split_min_speedup',1.05); cfg['settings'].setdefault('split_run_enabled',True)
+  cfg['settings'].setdefault('api_parallel_lines',6); cfg['settings'].setdefault('stability_profile','balanced_api_parallel'); cfg['settings'].setdefault('backup_enabled',True); _backup_mode_missing='backup_mode' not in cfg['settings']; cfg['settings'].setdefault('backup_mode','generations'); cfg['settings'].setdefault('backup_retention_days',30); cfg['settings'].setdefault('backup_generation_limit_enabled',True); cfg['settings'].setdefault('backup_generations',3); cfg['settings'].setdefault('schedule_catchup_minutes',30); cfg['settings'].setdefault('api_worker_stagger_ms',700); cfg['settings'].setdefault('split_trial_timeout_seconds',1800); cfg['settings'].setdefault('split_anchor_limit',3); cfg['settings'].setdefault('split_min_part_mb',2.0); cfg['settings'].setdefault('split_min_gain_seconds',5.0); cfg['settings'].setdefault('split_min_speedup',1.05); cfg['settings'].setdefault('split_run_enabled',True); cfg['settings'].setdefault('retry_enabled',True); cfg['settings'].setdefault('retry_max',1); cfg['settings'].setdefault('retry_delay_minutes',5)
   if _backup_mode_missing:cfg['settings']['backup_generations']=3
   if int(cfg['settings'].get('api_parallel_lines',6) or 6)==2:cfg['settings']['api_parallel_lines']=6
   cfg.setdefault('navigator_api_dll',r'.\Config\NAVIAP\debugdllVC14x64\SymNaviA.dll'); cfg.setdefault('accdb_template','.\\assets\\empty.accdb');
@@ -5349,14 +5361,103 @@ def clamp_parallel_lines(value,cfg=None,default=1):
  except (TypeError,ValueError):n=default
  return max(1,min(parallel_lines_cap(cfg),n))
 
-def enqueue_command(job_ids,trigger,parallel_lines):
+# ==== 失敗に気づく／自動で取り直す =========================================
+# 自動実行は誰も見ていない時間に走る。これまでは失敗しても記録が残るだけで、
+# 画面を開くまで分からず、次の予定時刻までデータが古いままだった。
+#   ① 失敗したら、その場で知らせる（常駐アイコンの通知＋画面の常設バッジ）
+#   ② 自動実行の失敗だけ、少し待って取り直す（手動は人が見ているので取り直さない）
+alerts_lock=threading.Lock()
+alerts=[]           # 画面へ出す未確認の知らせ
+retry_lock=threading.Lock()
+retry_waiting=[]    # {'due_at':epoch,'job_ids':[...],'attempt':n,'lines':n,'names':[...]}
+
+def add_alert(kind,title,detail,job_names=None):
+ """知らせを1件積む。常駐アイコンが使えるなら、そこへも出す。"""
+ item={'id':uuid.uuid4().hex,'kind':kind,'title':title,'detail':str(detail or '')[:400],
+       'jobs':list(job_names or []),'at':datetime.now().isoformat(timespec='seconds')}
+ with alerts_lock:
+  alerts.append(item)
+  del alerts[:-50]   # 溜め込まない。読むのは直近だけ
+ log.info('ALERT kind=%s title=%s jobs=%s detail=%s',kind,title,item['jobs'],item['detail'][:120])
+ if tray and kind!='info':
+  try:tray.notify(title,item['detail'][:200] or title)
+  except Exception:log.warning('ALERT_NOTIFY_FAILED title=%s',title)
+ return item
+
+def failed_jobs_of_run():
+ """直前の実行で失敗した対象と、その理由。並列・直列のどちらも同じ場所に残る。"""
+ ids=[x for x in (status.get('queue_failed_ids') or []) if x]
+ errs=[x for x in (status.get('job_errors') or []) if isinstance(x,dict)]
+ names=[str(x.get('job') or '') for x in errs if x.get('job')]
+ # 対象ごとの理由がいちばん具体的。まとめのメッセージより先に使う。
+ why=' / '.join(f'{x.get("job")}: {str(x.get("error") or "")[:120]}' for x in errs if x.get('error'))
+ return ids,names,why
+
+def schedule_retry(job_ids,names,lines,attempt,cfg,reason=''):
+ """少し待ってから、失敗した対象だけを取り直す予約を入れる。
+
+ すぐ取り直しても、サーバー混雑や回線の瞬断は直っていないことが多い。
+ 実際に流すのはスケジューラーの巡回（15秒ごと）が拾う。"""
+ s=cfg['settings']
+ if not bool(s.get('retry_enabled',True)):return None
+ limit=max(0,min(5,int(s.get('retry_max',1) or 0)))
+ if attempt>limit:
+  add_alert('error','取り直しても失敗しました',
+            f'{len(job_ids)}件が{limit}回の取り直しでも成功しませんでした: '+'・'.join(names[:5]),names)
+  return None
+ wait=max(1,min(180,int(s.get('retry_delay_minutes',5) or 5)))
+ due=time.time()+wait*60
+ with retry_lock:
+  retry_waiting.append({'due_at':due,'job_ids':list(job_ids),'names':list(names),
+                        'lines':lines,'attempt':attempt})
+ log.info('RETRY_SCHEDULED jobs=%s attempt=%s/%s wait_minutes=%s reason=%s',names,attempt,limit,wait,reason)
+ add_alert('warn',f'{wait}分後に取り直します',
+           f'{len(job_ids)}件が失敗しました（{attempt}回目の取り直し / 最大{limit}回）: '+'・'.join(names[:5]),names)
+ return due
+
+def due_retries():
+ """時刻が来た取り直しを取り出す。"""
+ now=time.time();out=[]
+ with retry_lock:
+  keep=[]
+  for r in retry_waiting:
+   (out if r['due_at']<=now else keep).append(r)
+  retry_waiting[:]=keep
+ return out
+
+def retry_view():
+ with retry_lock:
+  return [{'jobs':r['names'],'attempt':r['attempt'],
+           'due_at':datetime.fromtimestamp(r['due_at']).isoformat(timespec='seconds')} for r in retry_waiting]
+
+def after_command(item,error=''):
+ """1つの実行が終わったところ。失敗を知らせ、必要なら取り直しを予約する。"""
+ try:
+  ids,names,why=failed_jobs_of_run()
+  if not ids and not error:
+   # 前の失敗が解消したことも伝える。取り直しで直ったのか分からないと落ち着かない。
+   if int(item.get('attempt') or 0)>0:
+    add_alert('info','取り直しで成功しました','・'.join(item.get('job_names') or [])[:200],item.get('job_names'))
+   return
+  cfg=load()
+  if not names:names=list(item.get('job_names') or [])
+  if not ids:ids=list(item.get('job_ids') or [])
+  detail=str(why or error or status.get('error_detail') or status.get('last_result') or '')
+  add_alert('error',f'{len(ids)}件の実行が失敗しました','・'.join(names[:5])+(f' / {detail}' if detail else ''),names)
+  # 取り直すのは自動実行だけ。手動は人が見ているので、勝手に走らせない。
+  if str(item.get('trigger') or '').startswith('schedule'):
+   schedule_retry(ids,names,item.get('parallel_lines') or 1,int(item.get('attempt') or 0)+1,cfg,reason=detail[:80])
+ except Exception:
+  log.exception('AFTER_COMMAND_FAILED')
+
+def enqueue_command(job_ids,trigger,parallel_lines,attempt=0):
  cfg=load(); selected=[j for j in cfg['jobs'] if j.get('enabled') and (not job_ids or j['id'] in job_ids)]
  if not selected:raise ValueError('実行対象がありません')
  # DDEはSymfoNavi画面を1つ操作する方式なので、並列ライン数の指定は効かない。
  # そのまま持たせると実行キューに「6ライン」と出て、実際の動き（1件ずつ）と食い違う。
  engine=str(cfg.get('settings',{}).get('extract_engine') or 'api').lower()
  lines=1 if engine=='dde' else clamp_parallel_lines(parallel_lines,cfg)
- item={'id':uuid.uuid4().hex,'job_ids':[j['id'] for j in selected],'job_names':[j['name'] for j in selected],'trigger':trigger,'parallel_lines':lines,'engine':engine,'enqueued_at':datetime.now().isoformat(timespec='seconds'),'count':len(selected)}
+ item={'id':uuid.uuid4().hex,'job_ids':[j['id'] for j in selected],'job_names':[j['name'] for j in selected],'trigger':trigger,'parallel_lines':lines,'engine':engine,'attempt':int(attempt or 0),'enqueued_at':datetime.now().isoformat(timespec='seconds'),'count':len(selected)}
  with command_queue_lock:
   command_queue.append(item);position=len(command_queue)+(1 if active_command else 0)
  command_queue_event.set();log.info('COMMAND_QUEUE_ENQUEUE id=%s position=%s jobs=%s lines=%s trigger=%s',item['id'],position,item['job_names'],item['parallel_lines'],trigger)
@@ -5373,9 +5474,11 @@ def command_dispatcher():
     command_queue_event.clear();continue
    active_command=command_queue.pop(0);item=dict(active_command)
   log.info('COMMAND_QUEUE_START id=%s remaining=%s jobs=%s lines=%s',item['id'],len(command_queue),item['job_names'],item['parallel_lines'])
+  err=''
   try:process(item['job_ids'],item['trigger'],item['parallel_lines'],item['id'])
-  except Exception as e:log.error('COMMAND_QUEUE_FAILED id=%s error=%s',item['id'],e)
+  except Exception as e:err=str(e);log.error('COMMAND_QUEUE_FAILED id=%s error=%s',item['id'],e)
   finally:
+   after_command(item,err)
    with command_queue_lock:active_command=None
    log.info('COMMAND_QUEUE_END id=%s remaining=%s',item['id'],len(command_queue))
    command_queue_event.set()
@@ -5632,6 +5735,12 @@ def scheduler():
   try:
    if status['running']:continue
    cfg=load(); now=datetime.now(); st=load_scheduler_state()
+   # 取り直しは予定より先に流す。待たせるほどデータが古いままになる。
+   for r in due_retries():
+    try:
+     enqueue_command(r['job_ids'],f'schedule-retry:{r["attempt"]}',r['lines'],attempt=r['attempt'])
+     log.info('RETRY_ENQUEUED jobs=%s attempt=%s',r['names'],r['attempt'])
+    except Exception as re:log.warning('RETRY_ENQUEUE_FAILED jobs=%s error=%s',r['names'],re)
    catchup=int(cfg['settings'].get('schedule_catchup_minutes',30) or 0)
    due_ids=[]; due_rules=[]
    for j in cfg['jobs']:
@@ -7790,6 +7899,35 @@ def machine_path_view():
 @app.get('/api/machine-paths')
 def machine_paths():
  return jsonify(**machine_path_view())
+
+@app.get('/api/alerts')
+def get_alerts():
+ """未確認の知らせと、待機中の取り直し。画面の常設バッジがこれを見る。"""
+ with alerts_lock:items=list(alerts)
+ worst=('error' if any(x['kind']=='error' for x in items) else
+        'warn' if any(x['kind']=='warn' for x in items) else
+        'info' if items else '')
+ return jsonify(ok=True,alerts=items,count=len(items),worst=worst,retries=retry_view())
+
+@app.post('/api/alerts/ack')
+def ack_alerts():
+ """読んだ知らせを消す。idを指定しなければ全部。"""
+ data=request.get_json(silent=True) or {}
+ ids=set(data.get('ids') or [])
+ with alerts_lock:
+  before=len(alerts)
+  if ids:alerts[:]=[x for x in alerts if x['id'] not in ids]
+  else:alerts.clear()
+  removed=before-len(alerts)
+ return jsonify(ok=True,removed=removed,count=len(alerts))
+
+@app.post('/api/retries/cancel')
+def cancel_retries():
+ """待機中の取り直しを取り消す（原因を直してから自分で流したいとき）。"""
+ with retry_lock:
+  n=len(retry_waiting);retry_waiting.clear()
+ log.info('RETRY_CANCELLED count=%s',n)
+ return jsonify(ok=True,cancelled=n)
 
 @app.post('/api/path-check')
 def path_check():
