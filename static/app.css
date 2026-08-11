@@ -1831,3 +1831,39 @@ body:has(.autosave-state.is-saving) .autosave-mark{background:#0b8ea8;box-shadow
 .insp-next.is-ok b{color:#0c6b4d}
 .insp-next.is-ng{border-left-color:#b93b32;background:#fdf6f5}
 .insp-next.is-ng b{color:#a4463d}
+
+
+/* ============================================================
+   V1.59: 画面の器（シェル）を1か所で決める。
+   これまでは appbar / main / footer がそれぞれ 1580px・1620px と別々に
+   最大幅を持ち、横に広いディスプレイでは中身が伸びずに左右の余白だけが
+   際限なく広がっていた（実測 2560px幅で片側470px）。
+   考え方は次の3つだけ。
+     ・余白は最小22px。狭い画面では余白を削って中身を優先する
+     ・余白は最大120pxまで。ここを超えたら中身のほうを広げる
+     ・中身は2200pxで頭打ち。1行が長くなりすぎると逆に読みにくいため
+   ============================================================ */
+:root{
+ --gutter-min:22px;      /* いちばん詰めたときの左右の余白 */
+ --gutter-max:120px;     /* 余白はここまで。これ以上は中身を広げる */
+ --shell-base:1620px;    /* この幅までは余白を増やして中身を保つ */
+ --shell-max:2200px;     /* 中身の上限。読みやすさのため無制限にはしない */
+ --app-gutter:clamp(var(--gutter-min),calc((100vw - var(--shell-base)) / 2),var(--gutter-max));
+ --app-shell:min(calc(100vw - var(--app-gutter) * 2),var(--shell-max));
+ /* 帯（appbar・footer）の内側余白。中身の左右端を main とそろえる */
+ --app-pad:max(var(--app-gutter),calc((100vw - var(--shell-max)) / 2));
+}
+.appbar,footer{padding-left:var(--app-pad);padding-right:var(--app-pad)}
+body>main{width:var(--app-shell);max-width:var(--app-shell);
+ padding-left:0;padding-right:0;margin-left:auto;margin-right:auto}
+
+/* V1.59: ログの画面が下の帯へもぐり込んで読めなくなるのを止める。
+   セクションは main のグリッド行に収まる高さで、はみ出すぶんは自分で
+   スクロールさせる。これまでは overflow:hidden のまま中身が行の高さを
+   超えており、帯の下に入った部分へは一切たどり着けなかった
+   （実測 1440x900 でセクション下端 1097px / 帯の上端 844px）。 */
+#logs.on,#calendar.on{height:100%;min-height:0;overflow-y:auto;overflow-x:hidden;
+ overscroll-behavior:contain;padding-bottom:6px}
+/* ログ本体は残りの高さに合わせる。画面が低いときは先にここが縮む。 */
+.log-tree{max-height:min(560px,46vh)}
+@media (min-height:1000px){.log-tree{max-height:min(720px,52vh)}}

@@ -25,8 +25,8 @@ else:
 # ここまでに『インタプリタ初期化＋app.pyのBOX読込＋コンパイル＋flask等の取り込み』が完了している。
 _APP_IMPORT_DONE_AT=time.time()
 
-APP_VERSION='1.58.1'; APP_VERSION_TITLE='公開先が塞がり続けても更新保留ファイルが増え続けないようにした'; APP_RELEASED_AT='2026-08-12'
-BUILD_VERSION=f'{APP_VERSION}-pendingcap'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+APP_VERSION='1.59.0'; APP_VERSION_TITLE='下の帯に中身がもぐらない／横の余白に上限を決めて広い画面でも釣り合う'; APP_RELEASED_AT='2026-08-12'
+BUILD_VERSION=f'{APP_VERSION}-shell'; BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 # アプリに同梱する仕様書。ここに登録したものだけが画面から開ける。
 # 画面からはこのidしか受け取らないので、任意のパスを読ませることはできない。
 DOCS=[
@@ -43,7 +43,15 @@ def docs_dir():
 
 # アプリ内バージョン履歴。新しいリリースを配布する際は先頭へ1件追加する。
 CHANGELOG=[
-{'version':'1.58.1','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+{'version':'1.59.0','date':APP_RELEASED_AT,'title':APP_VERSION_TITLE,'notes':[
+'【ログを見ていると、中身が下の帯の下へもぐって読めなくなっていました】画面はヘッダー・中身・下の帯の3段で組んでありますが、中身の入れ物が「はみ出したら隠す」設定のまま、帯の高さを差し引かない高さで伸びていました。帯の下に入った部分はスクロールしてもたどり着けませんでした（実測 1440x900 でセクション下端1097px・帯の上端844px、253pxが到達不能）。',
+'中身の入れ物を、帯を除いた高さにきちんと収め、入り切らないぶんはその中でスクロールするようにしました。ログ・カレンダーのどちらも、いちばん下まで読めます。ログ本体の高さも画面の高さに追従させ、背の低い画面では先にそこが縮むようにしました。',
+'',
+'【横に広いディスプレイで、左右の余白ばかりが広がっていました】ヘッダー・中身・下の帯がそれぞれ別々に最大幅（1580px・1620px）を持っていたため、画面を広げても中身は伸びず、余白だけが際限なく広がっていました（実測 2560px幅で片側470px）。',
+'画面の器の決め方を1か所にまとめ、規格を3つだけにしました。余白は最小22px（狭い画面では余白を削って中身を優先）、余白は最大120px（これを超えるぶんは中身を広げる）、中身は最大2200px（1行が長くなりすぎると逆に読みにくいため頭打ち）。',
+'結果として、1920pxでは中身1620→1680px・余白150→120px、2560pxでは中身1620→2200px・余白470→180pxになりました。ヘッダー・中身・下の帯の左右端も同じ位置でそろいます。',
+]},
+{'version':'1.58.1','date':'2026-08-12','title':'公開先が塞がり続けても更新保留ファイルが増え続けないようにした','notes':[
 '【公開先が塞がり続けると、更新保留ファイル（*.pending_*）が実行のたびに増えていました】公開先を他のアプリが読み取り中などで一定時間（3秒）ロックが外れないと、そのまま公開できなかった内容を「*.pending_日時.拡張子」として残します。次回の実行開始時に控えを見に行きますが、そこでも塞がっていれば古い保留はそのまま残り、今回ぶんの新しい保留がもう1つ増えていました。公開先が慢性的に使用中の環境では、実行のたびに1件ずつ積み上がっていました。',
 '保留ファイルは「次に公開できるようになるまでの最新の1枚」であれば足ります。新しい保留を作る直前に、同じ公開先に対する古い保留を消してから作るようにしました。公開先が塞がり続けても保留ファイルは常に1件のまま、いちばん新しいデータだけが残ります。',
 ]},
