@@ -3731,6 +3731,75 @@ def run_race_extraction(j,cfg,user,pw,server,work,chosen,dest_csv,line='',stats=
           line,j['name'],total_elapsed,run_elapsed,total_elapsed-run_elapsed,rows,cols)
  return rows,cols,'split',{'elapsed':round(total_elapsed,2),'results':results}
 
+def finish_one_job(j,cfg,*,intermediate,db,target,backup,out_dir,local_export,stamp,
+                   expected_rows,expected_cols,fmt,extras,api_direct_output,job_started,
+                   line='',report=None,on_published=None):
+ """1つの対象を仕上げる後半。中間データを受け取り、変換 → 公開 → 同時出力 までを行う。
+
+ ここは以前、直列（process）と並列（process_api_parallel_job）に同じ手順が二重に
+ 書かれていた。片方だけ直った不具合が繰り返し出ていたのが、分けておく理由より重かった。
+   ・「前回と同じなら更新しない」がAPI経路にしか無く、DDE互換方式では黙って無視されていた（v1.65.1）
+   ・ACCDBのAccess起動待ちの先読みが直列にしか無く、並列ワーカーで抜けていた（v1.66.0）
+   ・公開できたか（published／pending）を、v1.68.0では2か所へ別々に足す必要があった
+ 方式によって違うのは「進み具合の見せ方」だけなので、そこは report() に預ける。
+
+ report(段階, **詳細) で呼ぶ段階:
+   convert_start … 変換に入る直前（並列はここでラインの状態を更新する）
+   unchanged     … 前回と同じ内容だったので、変換も公開もしなかった
+   convert       … 変換の直前（直列はここで進捗を出す）
+   publish       … 公開の直前
+   extras        … 同時出力の直前
+ on_published() は公開の直後に呼ぶ（並列はここでACCDBの温めスレッドを待ち合わせる）。
+
+ 返すもの:
+   unchanged … 前回と同じ内容で、何も書き換えなかった
+   rows/cols … 実際に書き出した件数・列数
+   published … 共有先を差し替えられたか
+   pending   … 差し替えられなかったときの控えの場所
+   extra_results／total／digest
+ """
+ def say(stage,**kw):
+  if report:report(stage,**kw)
+ def plog(*a,**kw):
+  # ログの見え方を方式で変えない。並列だけが line= を持つのは従来どおり。
+  if line:kw['line']=line
+  return phase_log(*a,**kw)
+ say('convert_start')
+ # 前回と中身が同じなら、変換も公開もしない。公開先（多くはネットワーク共有）への
+ # 書き込みが消え、ロック衝突の窓そのものが無くなり、控えの世代が同じ中身で埋まらない。
+ # ただし出力の「作成日時」は進まなくなるので、対象ごとに選んでもらう（既定は従来どおり）。
+ digest=intermediate_fingerprint(intermediate) if j.get('skip_if_unchanged') else ''
+ if digest and not extras and unchanged_since_last(target,digest):
+  total=time.perf_counter()-job_started
+  if line:log.info('PUBLISH_SKIPPED_UNCHANGED line=%s job=%s target=%s digest=%s elapsed=%.2fs',line,j['name'],target,digest[:12],total)
+  else:log.info('PUBLISH_SKIPPED_UNCHANGED job=%s target=%s digest=%s elapsed=%.2fs',j['name'],target,digest[:12],total)
+  say('unchanged',total=total)
+  return {'unchanged':True,'rows':int(expected_rows or 0),'cols':int(expected_cols or 0),
+          'published':True,'pending':'','extra_results':[],'total':total,'digest':digest}
+ # 同時出力があるときは、中間データの解析をここで1回だけ行い、全形式で使い回す。
+ shared=None
+ if extras and not api_direct_output:
+  parse_started=plog('intermediate_parse',job=j['name'],source=intermediate,shared_by=len(extras)+1)
+  shared=read_extract(intermediate,j,bool(cfg['settings']['reject_zero_rows']),expected_rows,expected_cols)
+  plog('intermediate_parse',parse_started,job=j['name'],rows=len(shared[1]),columns=len(shared[0]),shared_by=len(extras)+1)
+ say('convert',direct=api_direct_output)
+ if api_direct_output:
+  t=plog('format_conversion',job=j['name'],format=fmt,mode='api_direct_xlsx');nr,nc=int(expected_rows),int(expected_cols);plog('format_conversion',t,job=j['name'],format=fmt,mode='api_direct_xlsx',rows=nr,columns=nc)
+ else:
+  t=plog('format_conversion',job=j['name'],format=fmt);nr,nc=export_data(intermediate,db,j,bool(cfg['settings']['reject_zero_rows']),expected_rows,expected_cols,data=shared);plog('format_conversion',t,job=j['name'],format=fmt,rows=nr,columns=nc)
+ say('publish')
+ t=plog('publish',job=j['name']);pub=publish(db,target,backup,int(cfg['settings']['backup_generations']),backup_enabled=bool(cfg['settings'].get('backup_enabled',True)),retention_days=int(cfg['settings'].get('backup_retention_days',30)),generation_limit_enabled=bool(cfg['settings'].get('backup_generation_limit_enabled',True)),backup_mode=str(cfg['settings'].get('backup_mode','generations')));plog('publish',t,job=j['name'],published=pub['published'])
+ if digest:remember_published(target,digest,nr,nc)
+ if on_published:on_published()
+ extra_results=[]
+ if extras:
+  say('extras')
+  extra_results=publish_extra_formats(j,cfg,intermediate,out_dir,local_export,backup,stamp,line,data=shared)
+ shared=None   # 大きい対象では中間データだけで数百MBになる。次の対象へ持ち越さない。
+ return {'unchanged':False,'rows':nr,'cols':nc,
+         'published':bool(pub['published']),'pending':str(pub.get('pending') or ''),
+         'extra_results':extra_results,'total':time.perf_counter()-job_started,'digest':digest}
+
 def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,backup):
  from navigator_api import NavigatorApi
  line_name=os.environ.get('NAVI_WORKER_LINE') or threading.current_thread().name
@@ -3856,45 +3925,32 @@ def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,
     if not api_csv.is_file() or api_csv.stat().st_size<=0:raise RuntimeError(f'API中間CSVが作成されませんでした: {api_csv}')
     intermediate=api_csv
    t=phase_log('api_close_catalog',job=j['name'],line=line_name);api_client.close_catalog();phase_log('api_close_catalog',t,job=j['name'],line=line_name)
-  update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='変換・検証',percent=line_percent('convert',0),detail=f'{fmt.upper()}へ変換中 · {int(expected_rows or 0):,}件',phase='convert')
-  # 前回と中身が同じなら、変換も公開もしない。公開先（多くはネットワーク共有）への
-  # 書き込みが消え、ロック衝突の窓そのものが無くなり、控えの世代が同じ中身で埋まらない。
-  # ただし出力の「作成日時」は進まなくなるので、対象ごとに選んでもらう（既定は従来どおり）。
-  digest=intermediate_fingerprint(intermediate) if j.get('skip_if_unchanged') else ''
-  if digest and not extras and unchanged_since_last(target,digest):
-   total=time.perf_counter()-job_started
-   update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='変更なし',percent=100,detail='前回と同じ内容のため更新しませんでした',elapsed=round(total,1))
-   log.info('PUBLISH_SKIPPED_UNCHANGED line=%s job=%s target=%s digest=%s elapsed=%.2fs',line_name,j['name'],target,digest[:12],total)
+  # 仕上げ（変換 → 公開 → 同時出力）は直列と同じ関数で行う。見せ方だけをここで足す。
+  def _report(stage,**kw):
+   if stage=='convert_start':update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='変換・検証',percent=line_percent('convert',0),detail=f'{fmt.upper()}へ変換中 · {int(expected_rows or 0):,}件',phase='convert')
+   elif stage=='unchanged':update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='変更なし',percent=100,detail='前回と同じ内容のため更新しませんでした',elapsed=round(kw['total'],1))
+   elif stage=='publish':update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='公開',percent=line_percent('publish',0),detail=f'{Path(target).name} へ公開中',phase='publish')
+   elif stage=='extras':update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='同時出力',percent=line_percent('publish',0.6),detail=f'あと{len(extras)}形式を同じデータから作成中',phase='publish')
+  def _joined():
+   if accdb_prewarm is not None:
+    join_started=time.perf_counter();alive=accdb_prewarm.is_alive();accdb_prewarm.join(timeout=2.0)
+    log.info('ACCDB_PREWARM_JOIN line=%s alive_before=%s alive_after=%s elapsed=%.2fs',line_name,alive,accdb_prewarm.is_alive(),time.perf_counter()-join_started)
+  fin=finish_one_job(j,cfg,intermediate=intermediate,db=db,target=target,backup=backup,out_dir=out_dir,
+                     local_export=local_export,stamp=stamp,expected_rows=expected_rows,expected_cols=expected_cols,
+                     fmt=fmt,extras=extras,api_direct_output=api_direct_output,job_started=job_started,
+                     line=line_name,report=_report,on_published=_joined)
+  if fin['unchanged']:
+   total=fin['total']
    _tm2=load_rne_timing(rp) or {}
-   return {'ok':True,'job':j['name'],'format':fmt,'rows':int(expected_rows or 0),'columns':int(expected_cols or 0),
+   return {'ok':True,'job':j['name'],'format':fmt,'rows':fin['rows'],'columns':fin['cols'],
            'elapsed':total,'target':str(target),'unchanged':True,
            'result':f'{j["name"]}: 前回と同じ内容のため更新しませんでした / {total:.1f}秒',
            'column_names':[],'rne_path':str(rp),'extra_formats':[],
            'split_parts':0,'split_shape':'','split_how':'','row_axis':'','axis_seconds':None,
            'split_reason':'','race_winner':'','execute_seconds':0,'save_seconds':0,
            'total_seconds':round(total,2),'transfer_bytes':0,'merge_seconds':0,'transfer_kbs':None}
-  # 同時出力があるときは、中間データの解析をここで1回だけ行い、全形式で使い回す。
-  shared=None
-  if extras and not api_direct_output:
-   parse_started=phase_log('intermediate_parse',job=j['name'],line=line_name,source=intermediate,shared_by=len(extras)+1)
-   shared=read_extract(intermediate,j,bool(cfg['settings']['reject_zero_rows']),expected_rows,expected_cols)
-   phase_log('intermediate_parse',parse_started,job=j['name'],line=line_name,rows=len(shared[1]),columns=len(shared[0]),shared_by=len(extras)+1)
-  if api_direct_output:
-   t=phase_log('format_conversion',job=j['name'],line=line_name,format=fmt,mode='api_direct_xlsx');phase_log('format_conversion',t,job=j['name'],line=line_name,format=fmt,mode='api_direct_xlsx',rows=nr,columns=nc)
-  else:
-   t=phase_log('format_conversion',job=j['name'],line=line_name,format=fmt);nr,nc=export_data(intermediate,db,j,bool(cfg['settings']['reject_zero_rows']),expected_rows,expected_cols,data=shared);phase_log('format_conversion',t,job=j['name'],line=line_name,format=fmt,rows=nr,columns=nc)
-  update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='公開',percent=line_percent('publish',0),detail=f'{Path(target).name} へ公開中',phase='publish');t=phase_log('publish',job=j['name'],line=line_name);pub=publish(db,target,backup,int(cfg['settings']['backup_generations']),backup_enabled=bool(cfg['settings'].get('backup_enabled',True)),retention_days=int(cfg['settings'].get('backup_retention_days',30)),generation_limit_enabled=bool(cfg['settings'].get('backup_generation_limit_enabled',True)),backup_mode=str(cfg['settings'].get('backup_mode','generations')));phase_log('publish',t,job=j['name'],line=line_name,published=pub['published'])
-  if digest:remember_published(target,digest,nr,nc)
-  if accdb_prewarm is not None:
-   join_started=time.perf_counter();alive=accdb_prewarm.is_alive();accdb_prewarm.join(timeout=2.0)
-   log.info('ACCDB_PREWARM_JOIN line=%s alive_before=%s alive_after=%s elapsed=%.2fs',line_name,alive,accdb_prewarm.is_alive(),time.perf_counter()-join_started)
-  extra_results=[]
-  if extras:
-   update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='同時出力',percent=line_percent('publish',0.6),detail=f'あと{len(extras)}形式を同じデータから作成中',phase='publish')
-   extra_results=publish_extra_formats(j,cfg,intermediate,out_dir,local_export,backup,stamp,line_name,data=shared)
-  # 大きい対象では中間データだけで数百MBになる。次の対象へ持ち越さない。
-  shared=None
-  total=time.perf_counter()-job_started
+  nr,nc=fin['rows'],fin['cols'];pub={'published':fin['published'],'pending':fin['pending']}
+  extra_results=fin['extra_results'];total=fin['total']
   update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='完了',percent=100,detail=f'{nr}件/{nc}列',elapsed=round(total,1));log.info('PARALLEL_JOB_RESULT line=%s job=%s format=%s rows=%s columns=%s elapsed=%.2fs target=%s published=%s',line_name,j['name'],fmt,nr,nc,total,target,pub['published'])
   log.info('JOB_PROFILE line=%s job=%s rows=%s columns=%s %s',line_name,j['name'],nr,nc,phase_profile_summary())
   # 何分割で取れたのかは、結果の1行から分かるようにする。形（列/行/行×列）も添える。
@@ -4232,18 +4288,25 @@ def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=No
     t=phase_log('rne_close',job=j['name']); dde_exec(conv,'Close','[Close()]'); phase_log('rne_close',t,job=j['name'])
    if fmt=='accdb' and access_prewarm_thread is not None:
     join_started=time.perf_counter();alive_before=access_prewarm_thread.is_alive();access_prewarm_thread.join(timeout=2.0);log.info('ACCDB_PREWARM_JOIN alive_before=%s alive_after=%s elapsed=%.2fs',alive_before,access_prewarm_thread.is_alive(),time.perf_counter()-join_started)
-   # 前回と中身が同じなら、変換も公開もしない（API並列と同じ扱い。設定した対象だけ）。
-   # ここを入れ忘れると、DDE互換方式のときだけ設定が黙って効かないことになる。
-   digest=intermediate_fingerprint(intermediate) if j.get('skip_if_unchanged') else ''
-   if digest and not extras and unchanged_since_last(target,digest):
-    total=time.perf_counter()-job_started
+   # 仕上げ（変換 → 公開 → 同時出力）は並列と同じ関数で行う。見せ方だけをここで足す。
+   _direct=bool(allow_direct_xlsx and locals().get('api_direct_output'))
+   def _report(stage,**kw):
+    if stage=='unchanged':progress('publish',f'{j["name"]}: 前回と同じ内容のため更新しませんでした',95,activity_detail='変更なし',activity_value=str(target))
+    elif stage=='convert':
+     if kw.get('direct'):progress('export',f'{j["name"]}: API直接XLSXを検証しています',70,activity_detail='形式別変換工程',activity_value='CSV変換なし / API直接出力')
+     else:progress('export',f'{j["name"]}: {fmt.upper()}へ変換しています',70,activity_detail='形式別変換工程',activity_value=f'{intermediate.suffix.upper()} -> {fmt.upper()}')
+    elif stage=='publish':progress('publish',f'{j["name"]}: 検査済みファイルを公開しています',90,activity_detail='公開工程',activity_value=str(target))
+    elif stage=='extras':progress('publish',f'{j["name"]}: 同じデータからあと{len(extras)}形式を作成しています',95,activity_detail='同時出力',activity_value='・'.join(OUTPUT_FORMAT_LABEL.get(x,x) for x in extras))
+   fin=finish_one_job(j,cfg,intermediate=intermediate,db=db,target=target,backup=backup,out_dir=out_dir,
+                      local_export=local_export,stamp=stamp,expected_rows=expected_rows,expected_cols=expected_cols,
+                      fmt=fmt,extras=extras,api_direct_output=_direct,job_started=job_started,report=_report)
+   if fin['unchanged']:
+    total=fin['total']
     detail=f'前回と同じ内容のため更新しませんでした / {total:.1f}秒'
-    log.info('PUBLISH_SKIPPED_UNCHANGED job=%s target=%s digest=%s elapsed=%.2fs',j['name'],target,digest[:12],total)
-    progress('publish',f'{j["name"]}: 前回と同じ内容のため更新しませんでした',95,activity_detail='変更なし',activity_value=str(target))
     results.append(f'{j["name"]}: '+detail); completed_ids.append(j['id'])
-    record_job_run(j['id'],j['name'],'ok',trigger,detail=detail,rows=int(expected_rows or 0),cols=int(expected_cols or 0),output_file=j['output_file'],metrics={})
+    record_job_run(j['id'],j['name'],'ok',trigger,detail=detail,rows=fin['rows'],cols=fin['cols'],output_file=j['output_file'],metrics={})
     job_results.append({'job':j['name'],'job_id':j['id'],'status':'ok','detail':detail,
-                        'rows':int(expected_rows or 0),'cols':int(expected_cols or 0),
+                        'rows':fin['rows'],'cols':fin['cols'],
                         'elapsed':round(total,1),'target':str(target),'published':True,'unchanged':True})
     set_status(completed_jobs=job_index,queue_completed_ids=list(completed_ids),queue_running_ids=[],job_results=list(job_results))
     for p in (xls,locals().get('api_csv'),db):
@@ -4251,26 +4314,8 @@ def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=No
       if p:p.unlink()
      except:pass
     continue
-   shared=None
-   if extras and not (allow_direct_xlsx and locals().get('api_direct_output')):
-    parse_started=phase_log('intermediate_parse',job=j['name'],source=intermediate,shared_by=len(extras)+1)
-    shared=read_extract(intermediate,j,bool(cfg['settings']['reject_zero_rows']),expected_rows,expected_cols)
-    phase_log('intermediate_parse',parse_started,job=j['name'],rows=len(shared[1]),columns=len(shared[0]),shared_by=len(extras)+1)
-   if allow_direct_xlsx and locals().get('api_direct_output'):
-    progress('export',f'{j["name"]}: API直接XLSXを検証しています',70,activity_detail='形式別変換工程',activity_value='CSV変換なし / API直接出力')
-    t=phase_log('format_conversion',job=j['name'],format=fmt,mode='api_direct_xlsx');nr,nc=int(expected_rows),int(expected_cols);phase_log('format_conversion',t,job=j['name'],format=fmt,mode='api_direct_xlsx',rows=nr,columns=nc)
-   else:
-    progress('export',f'{j["name"]}: {fmt.upper()}へ変換しています',70,activity_detail='形式別変換工程',activity_value=f'{intermediate.suffix.upper()} -> {fmt.upper()}')
-    t=phase_log('format_conversion',job=j['name'],format=fmt); nr,nc=export_data(intermediate,db,j,bool(cfg['settings']['reject_zero_rows']),expected_rows,expected_cols,data=shared); phase_log('format_conversion',t,job=j['name'],format=fmt,rows=nr,columns=nc)
-   progress('publish',f'{j["name"]}: 検査済みファイルを公開しています',90,activity_detail='公開工程',activity_value=str(target))
-   t=phase_log('publish',job=j['name']); pub=publish(db,target,backup,int(cfg['settings']['backup_generations']),backup_enabled=bool(cfg['settings'].get('backup_enabled',True)),retention_days=int(cfg['settings'].get('backup_retention_days',30)),generation_limit_enabled=bool(cfg['settings'].get('backup_generation_limit_enabled',True)),backup_mode=str(cfg['settings'].get('backup_mode','generations'))); phase_log('publish',t,job=j['name'],published=pub['published'])
-   if digest:remember_published(target,digest,nr,nc)
-   extra_results=[]
-   if extras:
-    progress('publish',f'{j["name"]}: 同じデータからあと{len(extras)}形式を作成しています',95,activity_detail='同時出力',activity_value='・'.join(OUTPUT_FORMAT_LABEL.get(x,x) for x in extras))
-    extra_results=publish_extra_formats(j,cfg,intermediate,out_dir,local_export,backup,stamp,data=shared)
-   shared=None   # 次の対象へ中間データを持ち越さない
-   total=time.perf_counter()-job_started
+   nr,nc=fin['rows'],fin['cols'];pub={'published':fin['published'],'pending':fin['pending']}
+   extra_results=fin['extra_results'];total=fin['total']
    detail=f'{nr}件/{nc}列 / {total:.1f}秒'+('' if pub['published'] else f' / 更新保留: {pub["pending"]}')+extra_format_note(extra_results)
    results.append(f'{j["name"]}: '+detail); completed_ids.append(j['id'])
    # 直列（DDE / アプリ内API）でも並列と同じ実績を残す。ここを空にすると一覧の実績欄が
