@@ -1939,9 +1939,20 @@ body>main{width:var(--app-shell);max-width:var(--app-shell);
    （実測 1440x900 でセクション下端 1097px / 帯の上端 844px）。 */
 #logs.on,#calendar.on{height:100%;min-height:0;overflow-y:auto;overflow-x:hidden;
  overscroll-behavior:contain;padding-bottom:6px}
-/* ログ本体は残りの高さに合わせる。画面が低いときは先にここが縮む。 */
-.log-tree{max-height:min(560px,46vh)}
-@media (min-height:1000px){.log-tree{max-height:min(720px,52vh)}}
+/* ログ本体の高さは「上のパネルが使った残り」で決める。
+   以前は画面の高さの割合（52vh など）で決めていた。上に何が載っているかと無関係なので、
+   監視パネル＋診断パネル＋道具の帯を足すと入り切らず、末尾が下の帯の下へ潜っていた。
+     実測 1920x1200: ログ枠の下端 1223px / 帯の上端 1144px（末尾の行は 63px 潜る）
+     実測 1440x900 : 402px 潜る。しかも入れ子で2つスクロール枠ができていた
+   セクションを縦に積む器にして、ログの枠だけが残りを取るようにする。
+   画面が低いときは 180px で下げ止まり、そこから先はセクション自身がスクロールする
+   （＝どんな高さでも必ず最後までたどり着ける）。 */
+#logs.on{display:flex;flex-direction:column}
+#logs.on>.log-panel{flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
+#logs.on>.log-panel>.log-tree{flex:1 1 auto;min-height:180px;max-height:none}
+/* 縮むのはログの枠だけ。見出しと道具の帯まで縮むと、中身がはみ出して隠れる
+   （.log-workspace は overflow:hidden なので、潰れたぶんが黙って消える）。 */
+#logs.on>.log-panel>.panelhead,#logs.on>.log-panel>.log-workspace{flex:0 0 auto}
 
 /* ログの大きさ。全文を読まなくなったので、いま何を見ているのかを常に出す。 */
 .log-size-group{margin-left:auto;display:flex;align-items:center;gap:7px}
