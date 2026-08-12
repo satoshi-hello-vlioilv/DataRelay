@@ -257,29 +257,6 @@ def _sibling_count(path):
     try:return sum(1 for x in path.parent.iterdir() if x.is_file() and x.suffix.lower()=='.dll')-1
     except OSError:return 0
 
-def sync_naviap_runtime(base_dir,source_root=None):
-    """Copy the four product-side NAVIAP runtime folders into Config/NAVIAP.
-
-    All files are copied, not only SymNaviA.dll, so dependent DLLs remain beside it.
-    Existing identical files are retained; newer/different files are refreshed.
-    """
-    src=Path(source_root or r'C:\NAVIAP')
-    dst=Path(base_dir)/'Config'/'NAVIAP'
-    report={'source':str(src),'target':str(dst),'copied':[],'missing':[],'errors':[]}
-    if not src.is_dir():
-        report['errors'].append('製品側NAVIAPフォルダーがありません: '+str(src));return report
-    for name in NAVIAP_DEPLOY_FOLDERS:
-        sf=src/name;df=dst/name
-        if not sf.is_dir():report['missing'].append(str(sf));continue
-        try:
-            df.mkdir(parents=True,exist_ok=True)
-            for item in sf.rglob('*'):
-                if not item.is_file():continue
-                rel=item.relative_to(sf);target=df/rel;target.parent.mkdir(parents=True,exist_ok=True)
-                refresh=not target.exists() or item.stat().st_size!=target.stat().st_size or item.stat().st_mtime_ns>target.stat().st_mtime_ns
-                if refresh:shutil.copy2(item,target);report['copied'].append(str(target))
-        except Exception as e:report['errors'].append(f'{sf}: {e}')
-    return report
 
 def candidate_dlls(symnavi_exe=None,configured_path=None,extra_roots=None,local_only=False,local_root=None,search_roots=None):
     """C:\\NAVIAPを最優先し、利用可能なローカルDLLがなければ共有側を返す。

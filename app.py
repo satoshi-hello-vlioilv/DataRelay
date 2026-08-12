@@ -1240,15 +1240,6 @@ def split_period_range(start,end,parts):
  except Exception:
   return None
 
-def plan_row_split(cand,parts):
- """行分割の割り当て。候補（範囲の区切り）から、パートごとの条件を作る。"""
- calls=(row_condition_calls(cand) or {}).get('calls') or []
- if len(calls)!=parts:return None
- # 全体の行数も持たせる。条件が効かず全件が返ったことを、実行側で見破るために使う。
- total=int(cand.get('rows') or 0)
- for c in calls:c['total_rows']=total
- return [{'index':i+1,'row':c,'expect_rows':c['rows']} for i,c in enumerate(calls)]
-
 def plan_grid_split(cand,row_parts,column_plan):
  """行×列の組み合わせ。行の各組について、列の各パートを作る。
 
@@ -1264,6 +1255,16 @@ def plan_grid_split(cand,row_parts,column_plan):
    out.append({'index':len(out)+1,'row_group':r['index'],'col_group':c['index'],
                'row':r['row'],'drop':list(c.get('drop') or []),'keep':list(c.get('keep') or [])})
  return out
+
+def plan_row_split(cand,parts):
+ """行分割の割り当て。候補（範囲の区切り）から、パートごとの条件を作る。"""
+ calls=(row_condition_calls(cand) or {}).get('calls') or []
+ if len(calls)!=parts:return None
+ # 全体の行数も持たせる。条件が効かず全件が返ったことを、実行側で見破るために使う。
+ total=int(cand.get('rows') or 0)
+ for c in calls:c['total_rows']=total
+ return [{'index':i+1,'row':c,'expect_rows':c['rows']} for i,c in enumerate(calls)]
+
 
 def duplicate_columns(columns):
  """同じ名前が2回以上現れる列を返す。
@@ -1557,10 +1558,6 @@ def pick_anchor_columns(removable,weights,limit=3):
  covered=1.0-(sum(uncovered)/rows if rows else 0)
  return ([],covered) if covered<0.999 else (chosen,1.0)
 
-def pick_anchor_column(removable,weights):
- """従来どおり1本だけ返す入口（既存の呼び出し互換）。"""
- cols,_=pick_anchor_columns(removable,weights,limit=1)
- return cols[0] if cols else ''
 
 def plan_column_split(columns,removable,parts,weights=None,anchors=None):
  """出力列を parts 個の担当に分ける。列の並び順は元のまま保つ。
@@ -1919,11 +1916,6 @@ def split_useful_parts(link):
  # 逆に1.3倍なら2本目は3割しか効かず、各パートが運ぶ量を上回れないので1本のままにする。
  return max(1,int(round(float(h))))
 
-def split_throughput_profile(rne_path=None):
- """従来の呼び出し口。傾きの代わりに、回線の空きから見た伸びを返す。"""
- lp=split_link_profile(rne_path)
- h=lp.get('headroom')
- return {'samples':lp['samples'],'slope':round(h-1,3) if h else None,'points':lp['points'],'link':lp}
 
 def split_breakeven_share(slope):
  """分割が転送で得になる「固定列の割合」の上限。
@@ -2347,9 +2339,6 @@ import navi_paths
 navi_paths.setup(BASE,LOCAL_ROOT)
 from navi_paths import PC_TOKEN,pc_path,is_pc_path,foreign_profile_path,resolve_path,_split_any,_profile_root,_looks_generated_backup
 
-def display_path(value):
- try:return str(resolve_path(value))
- except:return str(value)
 
 def resolve_rne_path(job,cfg):
  """Canonical RNE resolution shared by diagnosis and execution."""
@@ -2465,13 +2454,24 @@ def hide_symnavi_windows(proc,wait_seconds=0.8):
   log.warning('SymfoNaviウィンドウ非表示失敗: %s',e); return 0,[]
 
 def symnavi_hide_options(settings):
+ """DDE接続の直後に、SymfoNaviの画面をどれだけ念入りに隠すか。
+
+ 以前は「定期監視」――抽出中も数秒おきに窓を探して隠す――も持っていたが、
+ WMIと窓の列挙が並行して走るとDDEとExcel生成が目立って遅くなるため、
+ 接続直後に隠しきる方式へ変えて定期監視は止めた。それにもかかわらず設定画面には
+ 「軽量監視（3秒）」「バランス（2秒）」「標準監視（1秒）」と、動いていない監視の
+ 間隔が並んだままだった。実際に効くのは下の2つだけなので、それだけを持つ。
+   action_duration … 接続直後、隠す試行を続ける時間
+   action_interval … その中で隠しなおす間隔
+ """
  profile=str(settings.get('symnavi_hide_profile','balanced'))
  presets={
-  'action_only':{'watch':False,'watch_interval':0.0,'action_duration':0.35,'action_interval':0.35},
-  'light':{'watch':True,'watch_interval':3.0,'action_duration':0.35,'action_interval':0.35},
-  'balanced':{'watch':True,'watch_interval':2.0,'action_duration':0.5,'action_interval':0.5},
-  'standard':{'watch':True,'watch_interval':1.0,'action_duration':0.6,'action_interval':0.5},
-  'custom':{'watch':bool(settings.get('symnavi_hide_watch_enabled',True)),'watch_interval':max(1.0,float(settings.get('symnavi_hide_interval_seconds',2.0))),'action_duration':max(0.2,float(settings.get('symnavi_hide_action_duration_seconds',0.5))),'action_interval':max(0.2,float(settings.get('symnavi_hide_action_interval_seconds',0.5)))}
+  # light は action_only と同じ。古い設定がそのまま動くように残してある。
+  'action_only':{'action_duration':0.35,'action_interval':0.35},
+  'light':{'action_duration':0.35,'action_interval':0.35},
+  'balanced':{'action_duration':0.5,'action_interval':0.5},
+  'standard':{'action_duration':0.6,'action_interval':0.5},
+  'custom':{'action_duration':max(0.2,float(settings.get('symnavi_hide_action_duration_seconds',0.5))),'action_interval':max(0.2,float(settings.get('symnavi_hide_action_interval_seconds',0.5)))}
  }
  return profile,presets.get(profile,presets['balanced'])
 
@@ -2487,49 +2487,13 @@ def hide_after_action(proc,action,settings,settle_seconds=None):
  set_status(symnavi_window=state,activity_detail=f'{action}後の画面状態を確認',heartbeat_at=datetime.now().isoformat(timespec='seconds'))
  log.info('SymfoNavi非表示 action=%s profile=%s hidden=%s remaining=%s',action,profile,total,len(visible))
 
-def hide_after_action_async(proc,action,settings):
- # Periodic profiles already watch new windows. Running another WMI/window scan in parallel severely slows DDE and ACE.
- profile,opt=symnavi_hide_options(settings)
- if opt['watch']:
-  log.info('SymfoNavi操作直後監視を省略 action=%s profile=%s reason=定期監視有効',action,profile); return
- def worker():
-  try:hide_after_action(proc,action,settings)
-  except Exception as e:log.warning('SymfoNavi非表示失敗 action=%s error=%s',action,e)
- threading.Thread(target=worker,daemon=True,name='hide-'+action.replace(' ','_')).start()
-
 def start_hidden_symnavi(proc,settings):
  hide_after_action(proc,'DDE接続',settings)
  return None
 
-def hide_window_watcher(proc,stop_flag,settings):
- try:
-  import win32con,win32gui,win32process
-  profile,opt=symnavi_hide_options(settings)
-  interval=max(1.0,opt['watch_interval'])
-  pids=symnavi_process_ids(proc.pid); refreshed=0.0; hidden=set()
-  log.info('SymfoNavi定期監視開始 profile=%s interval=%.1fs',profile,interval)
-  while not stop_flag.wait(interval):
-   now=time.time()
-   if now-refreshed>max(30.0,interval*10):pids=symnavi_process_ids(proc.pid);refreshed=now
-   visible=[]
-   def each(hwnd,_):
-    try:
-     _,pid=win32process.GetWindowThreadProcessId(hwnd); title=win32gui.GetWindowText(hwnd).lower(); cls=win32gui.GetClassName(hwnd).lower()
-     if win32gui.IsWindowVisible(hwnd) and (pid in pids or 'symnavi' in title or 'navigator' in title or 'symnavi' in cls):visible.append(hwnd)
-    except:pass
-   win32gui.EnumWindows(each,None)
-   for hwnd in visible:
-    try:win32gui.ShowWindow(hwnd,win32con.SW_HIDE);hidden.add(hwnd)
-    except:pass
-   if visible:set_status(symnavi_window=f'非表示監視 / {interval:g}秒間隔 / {len(visible)}件処理',heartbeat_at=datetime.now().isoformat(timespec='seconds'))
-  log.info('SymfoNavi定期監視終了 hidden_handles=%s',len(hidden))
- except Exception as e:log.warning('SymfoNavi定期監視失敗: %s',e)
-
-def start_window_watcher(proc,settings):
- profile,opt=symnavi_hide_options(settings)
- if not opt['watch']:
-  log.info('SymfoNavi定期監視なし profile=%s',profile); return None,None
- flag=threading.Event(); thread=threading.Thread(target=hide_window_watcher,args=(proc,flag,settings),daemon=True); thread.start(); return flag,thread
+# 定期監視（抽出中も数秒おきに窓を探して隠す）は持たない。WMIと窓の列挙が並行して
+# 走るとDDEとExcel生成が目立って遅くなるため、接続直後に隠しきる方式に一本化した。
+# 設定画面の選択肢からも、動いていない監視間隔の表記を外してある。
 
 # 1対象ぶんの工程内訳。STEP_START/ENDは並列実行だと他プロセスの行と混ざって追いにくいので、
 # 完了時に「どの工程が何秒・何%だったか」を1行へまとめ、対象ごとの傾向を後から比較できるようにする。
@@ -3959,6 +3923,9 @@ def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,
    try:tbytes=Path(intermediate).stat().st_size if intermediate and Path(intermediate).is_file() else 0
    except Exception:tbytes=0
   return {'ok':True,'job':j['name'],'format':fmt,'rows':nr,'columns':nc,'elapsed':total,'target':str(target),'result':result,
+          # 公開できたかどうかは実績の文字列にしか残っていなかった。共有先が使用中で
+          # 差し替えられなかったことに気づけるよう、値としても持ち帰る。
+          'published':bool(pub['published']),'pending':str(pub.get('pending') or ''),
           'column_names':column_names,'rne_path':str(rp),'extra_formats':extra_results,
           'split_parts':(int(run_stats.get('parts') or 0) or (len(split_used['plan']) if split_used else 0)) if split_used else 0,
           'split_shape':(split_used['mode'] if split_used else ''),'split_how':split_shape_text if split_used else '',
@@ -4084,10 +4051,13 @@ def run_api_process_batch(jobs,cfg,user,pw,server,dde_work,backup,max_lines,trig
    log.info('WORKER_END batch_id=%s line=%s pid=%s job=%s returncode=%s ok=%s elapsed=%.2fs',batch_id,item['line'],item['proc'].pid,item['job']['name'],rc,result.get('ok'),result.get('elapsed',0))
    batch_results.append({'job':item['job']['name'],'job_id':item['job']['id'],'status':'ok' if result.get('ok') else 'failed',
                          'detail':str(result.get('result') or result.get('error') or ''),'rows':result.get('rows'),'cols':result.get('columns'),
-                         'elapsed':round(float(result.get('elapsed') or 0),1),'target':str(result.get('target') or '')})
+                         'elapsed':round(float(result.get('elapsed') or 0),1),'target':str(result.get('target') or ''),
+                         'published':bool(result.get('published',True)),'pending':str(result.get('pending') or '')})
    set_status(job_results=list(batch_results))
    record_job_run(item['job']['id'],item['job']['name'],'ok' if result.get('ok') else 'failed',trigger,detail=(result.get('result') or result.get('error') or ''),rows=result.get('rows'),cols=result.get('columns'),output_file=Path(result.get('target') or '').name,
-                  metrics={k:result.get(k) for k in ('elapsed','execute_seconds','save_seconds','merge_seconds','transfer_bytes','transfer_kbs','split_parts','split_shape','split_how','row_axis','axis_seconds','race_winner','format') if result.get(k) is not None})
+                  metrics={**{k:result.get(k) for k in ('elapsed','execute_seconds','save_seconds','merge_seconds','transfer_bytes','transfer_kbs','split_parts','split_shape','split_how','row_axis','axis_seconds','race_winner','format') if result.get(k) is not None},
+                           # 公開できたか。鮮度の判定がこれを見る（実行できても差し替わっていない場合がある）
+                           'published':bool(result.get('published',True)),'pending':str(result.get('pending') or '')})
    # RNE単位の実績。時間帯・端末・分け方まで残し、あとから条件別に見比べられるようにする。
    if result.get('rne_path'):
     record_rne_run(result['rne_path'],item['job'],'ok' if result.get('ok') else 'failed',trigger,
@@ -4123,7 +4093,7 @@ def run_api_process_batch(jobs,cfg,user,pw,server,dde_work,backup,max_lines,trig
 def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=None):
  if not run_lock.acquire(False):raise RuntimeError('別の処理が実行中です')
  cancel_requested.clear()
- proc=srv=api_client=None; hide_done=None; window_watch_stop=None; window_watch_thread=None; access_prewarm_thread=None
+ proc=srv=api_client=None; access_prewarm_thread=None
  try:
   startup_started=time.perf_counter();cfg_started=time.perf_counter();cfg=load();log.info('STARTUP_PHASE phase=config_load elapsed=%.2fs',time.perf_counter()-cfg_started);jobs=[j for j in cfg['jobs'] if j.get('enabled') and (not job_ids or j['id'] in job_ids)]
   if not jobs:raise ValueError('実行対象がありません')
@@ -4182,7 +4152,7 @@ def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=No
   elif engine=='dde':
    # f-string内で同じ引用符をネストするとPython 3.12以降でしか解釈できず、3.11以下では
    # app.py全体がコンパイル不能になる。文字列連結で組み立て、旧バージョンでも起動できるようにする。
-   progress('launch','SymfoNaviを起動しています',8); _symnavi_cmd='"'+str(resolve_path(cfg['symnavi_exe']))+'" -d -u"'+user+'","'+pw+'","'+server+'"'; proc=subprocess.Popen(_symnavi_cmd); set_status(symnavi_window='起動済み'); progress('dde','SymfoNaviへのDDE接続を待っています',15); srv,conv=dde_connect(int(cfg['settings']['dde_timeout_seconds'])); hide_done=start_hidden_symnavi(proc,cfg['settings']); log.info('SymfoNavi定期監視を抽出中は停止 mode=pipeline-priority')
+   progress('launch','SymfoNaviを起動しています',8); _symnavi_cmd='"'+str(resolve_path(cfg['symnavi_exe']))+'" -d -u"'+user+'","'+pw+'","'+server+'"'; proc=subprocess.Popen(_symnavi_cmd); set_status(symnavi_window='起動済み'); progress('dde','SymfoNaviへのDDE接続を待っています',15); srv,conv=dde_connect(int(cfg['settings']['dde_timeout_seconds'])); start_hidden_symnavi(proc,cfg['settings'])
   else:raise ValueError('抽出エンジンが不正です: '+engine)
   progress('ready','処理の準備が完了しました',20); results=[]; completed_ids=[]; job_results=[]
   set_status(job_results=[])
@@ -4306,9 +4276,11 @@ def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=No
    # 直列（DDE / アプリ内API）でも並列と同じ実績を残す。ここを空にすると一覧の実績欄が
    # 「件数だけ」になり、所要も転送量も後から追えなくなる。
    metrics=serial_run_metrics(engine,fmt,total,nr,nc,locals().get('intermediate'),locals().get('dde_save_seconds'))
+   # 並列と同じ形で、公開できたかどうかも残す（鮮度の判定がこれを見る）
+   metrics.update(published=bool(pub['published']),pending=str(pub.get('pending') or ''))
    record_job_run(j['id'],j['name'],'ok',trigger,detail=detail,rows=nr,cols=nc,output_file=j['output_file'],metrics=metrics)
    record_rne_run(rp,j,'ok',trigger,metrics,engine=engine,fmt=fmt)
-   job_results.append({'job':j['name'],'job_id':j['id'],'status':'ok','detail':detail,'rows':nr,'cols':nc,'elapsed':round(total,1),'target':str(target),'published':bool(pub['published'])})
+   job_results.append({'job':j['name'],'job_id':j['id'],'status':'ok','detail':detail,'rows':nr,'cols':nc,'elapsed':round(total,1),'target':str(target),'published':bool(pub['published']),'pending':str(pub.get('pending') or '')})
    set_status(completed_jobs=job_index,queue_completed_ids=list(completed_ids),queue_running_ids=[],job_results=list(job_results))
    log.info('JOB_RESULT job=%s format=%s rows=%s columns=%s elapsed=%.2fs target=%s',j['name'],fmt,nr,nc,total,target); log.info('JOB_PROFILE job=%s rows=%s columns=%s %s',j['name'],nr,nc,phase_profile_summary())
    try:
@@ -4339,9 +4311,6 @@ def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=No
  finally:
   cancel_requested.clear()
   set_status(running=False,current='',current_job_id='',symnavi_window='終了済み')
-  if window_watch_stop:window_watch_stop.set()
-  if window_watch_thread:window_watch_thread.join(timeout=1.0)
-  if hide_done:hide_done.set()
   if api_client:
    try:api_client.close()
    except Exception as e:log.warning('Navigator API終了処理失敗: %s',e)
@@ -4402,6 +4371,21 @@ def add_alert(kind,title,detail,job_names=None):
   except Exception:log.warning('ALERT_NOTIFY_FAILED title=%s',title)
  return item
 
+def pending_jobs_of_run():
+ """直前の実行で「取れたのに、共有先へ差し替えられなかった」対象。
+
+ 公開先を誰かが開いていると、新しいファイルは *.pending_* として横に置かれ、
+ 共有先のファイルは古いままになる。それでも実行そのものは成功なので、状態は ok、
+ 鮮度も「最新」と出ていた。読み手は古いデータを最新だと思って使い続けてしまう。
+ 次の実行で自動的に適用されるが、それまで誰も気づけないのが問題だった。
+ """
+ out=[]
+ for x in (status.get('job_results') or []):
+  if not isinstance(x,dict) or x.get('status')!='ok':continue
+  if x.get('published') is False:out.append({'job':str(x.get('job') or ''),'job_id':str(x.get('job_id') or ''),
+                                             'target':str(x.get('target') or ''),'pending':str(x.get('pending') or '')})
+ return out
+
 def failed_jobs_of_run():
  """直前の実行で失敗した対象と、その理由。並列・直列のどちらも同じ場所に残る。"""
  ids=[x for x in (status.get('queue_failed_ids') or []) if x]
@@ -4449,8 +4433,17 @@ def retry_view():
            'due_at':datetime.fromtimestamp(r['due_at']).isoformat(timespec='seconds')} for r in retry_waiting]
 
 def after_command(item,error=''):
- """1つの実行が終わったところ。失敗を知らせ、必要なら取り直しを予約する。"""
+ """1つの実行が終わったところ。失敗と「更新保留」を知らせ、必要なら取り直しを予約する。"""
  try:
+  # 保留は失敗ではないので、成功した実行でも必ず見る。ここを失敗と同じ枝に置くと、
+  # すべて成功した実行（＝いちばん起きやすい形）で知らせが出ない。
+  held=pending_jobs_of_run()
+  if held:
+   add_alert('warn',f'{len(held)}件が共有先へ反映できていません',
+             '・'.join(x['job'] for x in held[:5])
+             +'（公開先が使用中でした。新しいデータは横に控えてあり、次の実行で自動的に反映します）',
+             [x['job'] for x in held])
+   for x in held:log.warning('PUBLISH_HELD job=%s target=%s pending=%s',x['job'],x['target'],x['pending'])
   ids,names,why=failed_jobs_of_run()
   if not ids and not error:
    # 前の失敗が解消したことも伝える。取り直しで直ったのか分からないと落ち着かない。
@@ -4801,18 +4794,29 @@ def freshness_view():
   # 予定を持っている対象は、その間隔を「これくらいで新しくなるはず」の目安に使う。
   gap=schedule_gap_minutes(j)
   overdue=bool(gap and age is not None and age>gap*2)
+  # 実行できたことと、共有先が新しくなったことは別。公開先が使用中だと、成功したのに
+  # 共有先は古いままになる。ここで「最新」と出すと、読み手はそれを信じてしまう。
+  held=(run.get('metrics') or {}).get('published') is False
   if info.get('last_status')=='failed':state='failed'
   elif not last:state='never'
+  elif held:state='held'
   elif overdue:state='stale'
   else:state='ok'
   items.append({'id':j['id'],'name':j['name'],'state':state,'last_run':last,'age_minutes':age,
                 'next_run':nxt,'hint':prev.get('hint',''),'expect_minutes':gap,
                 'status':info.get('last_status',''),'rows':(run.get('rows') if run else None),
-                'output':info.get('last_output','')})
+                'output':info.get('last_output',''),'held':bool(held),
+                'pending':str((run.get('metrics') or {}).get('pending') or '')})
  bad=[x for x in items if x['state']!='ok']
- items.sort(key=lambda x:({'failed':0,'stale':1,'never':2,'ok':3}[x['state']],-(x['age_minutes'] or 0)))
- return {'ok':not bad,'items':items,'attention':len(bad),
-         'summary':(f'{len(bad)}件が確認待ちです' if bad else f'{len(items)}件すべて予定どおり新しくなっています')}
+ held_n=len([x for x in items if x['state']=='held'])
+ # 「取れているのに共有先が古い」は、失敗の次に急ぐ。読み手がいま騙されている状態なので、
+ # 予定より遅れているだけのものより上へ出す。
+ order={'failed':0,'held':1,'stale':2,'never':3,'ok':4}
+ items.sort(key=lambda x:(order.get(x['state'],4),-(x['age_minutes'] or 0)))
+ if held_n:summary=f'{held_n}件が共有先へ反映できていません'+(f'／ほか{len(bad)-held_n}件が確認待ち' if len(bad)>held_n else '')
+ elif bad:summary=f'{len(bad)}件が確認待ちです'
+ else:summary=f'{len(items)}件すべて予定どおり新しくなっています'
+ return {'ok':not bad,'items':items,'attention':len(bad),'held':held_n,'summary':summary}
 
 def schedule_gap_minutes(job):
  """この対象が新しくなる間隔の目安（分）。予定が無ければ None。"""
@@ -4846,6 +4850,10 @@ def open_api_catalog(c,rne_path):
   finally:os.chdir(prev)
  return api,handle
 
+
+def _spawn_split_parts(job,cfg,user,pw,server,work,jobs_spec,timeout=1800):
+ """パートを同時に走らせ、全部そろうのを待つ。戻り値は投入順の結果一覧。"""
+ return _spawn_racers(job,cfg,user,pw,server,work,jobs_spec,timeout)
 
 def _spawn_racers(job,cfg,user,pw,server,work,jobs_spec,timeout=1800,stop_when=None,on_tick=None):
  """指定した取り方を独立プロセスで同時に起こし、終わった順に結果を集める。
@@ -4911,9 +4919,6 @@ def _kill_proc(proc):
   try:proc.kill()
   except Exception:pass
 
-def _spawn_split_parts(job,cfg,user,pw,server,work,jobs_spec,timeout=1800):
- """パートを同時に走らせ、全部そろうのを待つ。戻り値は投入順の結果一覧。"""
- return _spawn_racers(job,cfg,user,pw,server,work,jobs_spec,timeout)
 
 def _split_trial_run(data,c,job):
  """列分割を影実行して、分割なしの結果とバイト比較する。公開はしない。
@@ -5732,15 +5737,42 @@ def _dll_signature(path):
  try:
   p=Path(path);st=p.stat();return {'path':str(p),'size':st.st_size,'mtime_ns':st.st_mtime_ns}
  except OSError:return None
-def _read_api_diag_cache():
+FAILED_DIAG_TTL_SECONDS=30
+def _api_diag_search_key(c):
+ """「どう探すか」を1つの値にまとめたもの。探し方を変えたら前の結果は使わない。"""
+ if c is None:return ''
+ try:return json.dumps({'roots':[str(x) for x in dll_search_roots(c)],
+                        'manual':str(c.get('navigator_api_dll') or ''),
+                        'exe':str(c.get('symnavi_exe') or '')},ensure_ascii=False,sort_keys=True)
+ except Exception:return ''
+def _read_api_diag_cache(c=None):
+ """前回の診断結果を使い回せるか。
+
+ 成功は、そのDLLの署名（場所・大きさ・更新時刻）が変わらないかぎり有効。
+ 失敗も短い間だけ覚えておく。見つからなかったことを表す署名は無いので、
+ これまでは毎回そのまま探し直していた ―― 探索は候補24件ぶんのフォルダー走査で、
+ しかも対象にはネットワーク上の場所が入る。DLLが無いPCほど、画面を触るたびに
+ いちばん重い処理が走っていた（実測: 1プロセスで同じ探索が79回）。
+ 探し方を変えたときと、%d秒たったときは、ちゃんと探し直す。
+ """%FAILED_DIAG_TTL_SECONDS
+ bits=struct.calcsize('P')*8
  try:
-  d=json.loads(_api_diag_cache_path().read_text(encoding='utf-8'));sig=_dll_signature(d.get('dll',''))
-  if d.get('ok') and sig and d.get('signature')==sig and d.get('python_bits')==struct.calcsize('P')*8:return d
+  d=json.loads(_api_diag_cache_path().read_text(encoding='utf-8'))
+  if d.get('python_bits')!=bits:return None
+  if d.get('ok'):
+   sig=_dll_signature(d.get('dll',''))
+   if sig and d.get('signature')==sig:return d
+   return None
+  if c is None or d.get('search_key')!=_api_diag_search_key(c):return None
+  age=(datetime.now()-datetime.fromisoformat(str(d.get('cached_at')))).total_seconds()
+  if 0<=age<FAILED_DIAG_TTL_SECONDS:
+   d=dict(d);d['cache_age_seconds']=round(age,1);return d
  except Exception:pass
  return None
-def _write_api_diag_cache(info):
+def _write_api_diag_cache(info,c=None):
  try:
   payload=dict(info);payload['signature']=_dll_signature(info.get('dll',''));payload['cached_at']=datetime.now().isoformat(timespec='seconds')
+  payload['search_key']=_api_diag_search_key(c)
   tmp=_api_diag_cache_path().with_suffix('.tmp');tmp.write_text(json.dumps(payload,ensure_ascii=False),encoding='utf-8');os.replace(tmp,_api_diag_cache_path())
  except Exception:log.exception('API診断キャッシュ保存失敗')
 

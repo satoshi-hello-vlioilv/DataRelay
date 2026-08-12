@@ -882,13 +882,13 @@ def get_status():
 def navigator_api_status():
  c=load();force=request.args.get('full')=='1'
  if not force:
-  cached=_read_api_diag_cache()
+  cached=_read_api_diag_cache(c)
   if cached:
-   log.info('API_DIAG cache_hit=1 dll=%s dll_bits=%s',cached.get('dll'),cached.get('dll_bits'));_log_api_exports(cached.get('dll'),cached.get('exports'),cached.get('exports_bound'))
+   log.info('API_DIAG cache_hit=1 ok=%s age=%ss dll=%s dll_bits=%s',cached.get('ok'),cached.get('cache_age_seconds','-'),cached.get('dll'),cached.get('dll_bits'));_log_api_exports(cached.get('dll'),cached.get('exports'),cached.get('exports_bound'))
    cached=dict(cached);cached['cached']=True;cached['requirement']=_dll_requirement(c);cached['search_roots']=[str(x) for x in dll_search_roots(c)];cached['issues']=dll_diagnostic_issues(cached.get('attempts') or [],cached.get('python_bits'),cached.get('exports'),cached.get('exports_bound'),cached['requirement']);cached['readiness']=api_readiness(cached);return jsonify(cached)
  try:
   from navigator_api import NavigatorApi
-  started=time.perf_counter();api=NavigatorApi(resolve_path(c.get('symnavi_exe','')),log,resolve_path(c.get('navigator_api_dll')) if c.get('navigator_api_dll') else None,base_dir=BASE,search_roots=dll_search_roots(c));info=api.info();api.close();info['elapsed']=round(time.perf_counter()-started,3);info['cached']=False;info['issues']=dll_diagnostic_issues(info.get('attempts') or [],info.get('python_bits'),info.get('exports'),info.get('exports_bound'),info.get('requirement'));info['readiness']=api_readiness(info);log.info('API_DIAG cache_hit=0 elapsed=%.3fs dll=%s dll_bits=%s attempts=%s selection=%s',info.get('elapsed'),info.get('dll'),info.get('dll_bits'),len(info.get('attempts') or []),info.get('selection_reason'));_log_api_exports(info.get('dll'),info.get('exports'),info.get('exports_bound'));_write_api_diag_cache(info);return jsonify(info)
+  started=time.perf_counter();api=NavigatorApi(resolve_path(c.get('symnavi_exe','')),log,resolve_path(c.get('navigator_api_dll')) if c.get('navigator_api_dll') else None,base_dir=BASE,search_roots=dll_search_roots(c));info=api.info();api.close();info['elapsed']=round(time.perf_counter()-started,3);info['cached']=False;info['issues']=dll_diagnostic_issues(info.get('attempts') or [],info.get('python_bits'),info.get('exports'),info.get('exports_bound'),info.get('requirement'));info['readiness']=api_readiness(info);log.info('API_DIAG cache_hit=0 elapsed=%.3fs dll=%s dll_bits=%s attempts=%s selection=%s',info.get('elapsed'),info.get('dll'),info.get('dll_bits'),len(info.get('attempts') or []),info.get('selection_reason'));_log_api_exports(info.get('dll'),info.get('exports'),info.get('exports_bound'));_write_api_diag_cache(info,c);return jsonify(info)
  except Exception as e:
   exports=[];exports_dll=''
   try:
@@ -910,6 +910,9 @@ def navigator_api_status():
            'search_roots':req.get('search_roots') or [],
            'issues':dll_diagnostic_issues(attempts,pybits,exports,[],req)}
   payload['readiness']=api_readiness(payload)
+  # 失敗も短い間だけ覚えておく。探し方を変えれば無効になるので、直したのに
+  # 古い結果が出続けることはない。
+  _write_api_diag_cache(payload,c)
   return jsonify(payload),200
 
 @app.get('/api/navigator-api/requirement')
