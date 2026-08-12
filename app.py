@@ -4248,6 +4248,25 @@ def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=No
     t=phase_log('rne_close',job=j['name']); dde_exec(conv,'Close','[Close()]'); phase_log('rne_close',t,job=j['name'])
    if fmt=='accdb' and access_prewarm_thread is not None:
     join_started=time.perf_counter();alive_before=access_prewarm_thread.is_alive();access_prewarm_thread.join(timeout=2.0);log.info('ACCDB_PREWARM_JOIN alive_before=%s alive_after=%s elapsed=%.2fs',alive_before,access_prewarm_thread.is_alive(),time.perf_counter()-join_started)
+   # 前回と中身が同じなら、変換も公開もしない（API並列と同じ扱い。設定した対象だけ）。
+   # ここを入れ忘れると、DDE互換方式のときだけ設定が黙って効かないことになる。
+   digest=intermediate_fingerprint(intermediate) if j.get('skip_if_unchanged') else ''
+   if digest and not extras and unchanged_since_last(target,digest):
+    total=time.perf_counter()-job_started
+    detail=f'前回と同じ内容のため更新しませんでした / {total:.1f}秒'
+    log.info('PUBLISH_SKIPPED_UNCHANGED job=%s target=%s digest=%s elapsed=%.2fs',j['name'],target,digest[:12],total)
+    progress('publish',f'{j["name"]}: 前回と同じ内容のため更新しませんでした',95,activity_detail='変更なし',activity_value=str(target))
+    results.append(f'{j["name"]}: '+detail); completed_ids.append(j['id'])
+    record_job_run(j['id'],j['name'],'ok',trigger,detail=detail,rows=int(expected_rows or 0),cols=int(expected_cols or 0),output_file=j['output_file'],metrics={})
+    job_results.append({'job':j['name'],'job_id':j['id'],'status':'ok','detail':detail,
+                        'rows':int(expected_rows or 0),'cols':int(expected_cols or 0),
+                        'elapsed':round(total,1),'target':str(target),'published':True,'unchanged':True})
+    set_status(completed_jobs=job_index,queue_completed_ids=list(completed_ids),queue_running_ids=[],job_results=list(job_results))
+    for p in (xls,locals().get('api_csv'),db):
+     try:
+      if p:p.unlink()
+     except:pass
+    continue
    shared=None
    if extras and not (allow_direct_xlsx and locals().get('api_direct_output')):
     parse_started=phase_log('intermediate_parse',job=j['name'],source=intermediate,shared_by=len(extras)+1)
@@ -4261,6 +4280,7 @@ def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=No
     t=phase_log('format_conversion',job=j['name'],format=fmt); nr,nc=export_data(intermediate,db,j,bool(cfg['settings']['reject_zero_rows']),expected_rows,expected_cols,data=shared); phase_log('format_conversion',t,job=j['name'],format=fmt,rows=nr,columns=nc)
    progress('publish',f'{j["name"]}: 検査済みファイルを公開しています',90,activity_detail='公開工程',activity_value=str(target))
    t=phase_log('publish',job=j['name']); pub=publish(db,target,backup,int(cfg['settings']['backup_generations']),backup_enabled=bool(cfg['settings'].get('backup_enabled',True)),retention_days=int(cfg['settings'].get('backup_retention_days',30)),generation_limit_enabled=bool(cfg['settings'].get('backup_generation_limit_enabled',True)),backup_mode=str(cfg['settings'].get('backup_mode','generations'))); phase_log('publish',t,job=j['name'],published=pub['published'])
+   if digest:remember_published(target,digest,nr,nc)
    extra_results=[]
    if extras:
     progress('publish',f'{j["name"]}: 同じデータからあと{len(extras)}形式を作成しています',95,activity_detail='同時出力',activity_value='・'.join(OUTPUT_FORMAT_LABEL.get(x,x) for x in extras))
