@@ -1203,7 +1203,7 @@ body > main{max-width:1620px;padding-left:12px;padding-right:12px}
 
 /* 5: RNEを調べる —— 左に手順のレール、右にその手順の中身。
    機能を足すたびにボタンと説明が並んで散らかっていたので、
-   ①中身を読む ②分け方を探す ③速さを試す ④本番の動作 の順に畳み直した。
+   ①中身を読む ②分け方を探す ③速さを測る ④本番の動作 の順に畳み直した。
    画面に同時に出る操作は1手順ぶんだけになる。 */
 .insp{display:grid;grid-template-columns:238px minmax(0,1fr);gap:16px;align-items:start}
 .insp-rail{display:grid;gap:6px;align-content:start}
@@ -1430,9 +1430,6 @@ body > main{max-width:1620px;padding-left:12px;padding-right:12px}
 .ilog-act.has-warn>summary{background:#2b2415;border-radius:6px}
 .ilog-act.has-error>summary{background:#2a1719;color:#ffd9d4}
 .ilog-act .log-line{padding-left:9px}
-/* 影実行の欄に置いた軸の決め方 */
-#trial-axis-pick{margin:0 0 10px}
-#trial-axis-pick[hidden]{display:none!important}
 
 /* ==== DDEの実績表示 ======================================================== */
 /* DDEは分割も競争もしないので「通常」では区別がつかない。方式そのものを出す。 */
@@ -1755,23 +1752,61 @@ body:has(.autosave-state.is-saving) .autosave-mark{background:#0b8ea8;box-shadow
 @media(max-width:1100px){.rc-hint{display:none}}
 
 
-/* V1.57: まとめて測る（ALL-IN）。押すのは1つ、読むのは順位の表だけ。 */
+/* V1.73: 速さを測る。選ぶ場所を1枚にまとめてある。
+   以前は「まとめて測る」「1つずつ測る」「軸を比べる」が別々の枠で、同じ設定が
+   あちこちにあった。ここでは1行＝1つの測るもの、という並びにしてある。 */
 .allin{border:1px solid #cfe2e7;border-radius:11px;background:#f7fcfd;padding:13px 14px;margin:11px 0}
-.allin-head{display:grid;gap:3px;margin-bottom:9px}
-.allin-head b{font-size:14px;color:#123f4d}
-.allin-head small{font-size:11px;color:#5d7681;line-height:1.6}
-.allin-kind{margin-bottom:9px}
-.allin-picks{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;margin-bottom:9px}
-.allin-pick{display:flex;align-items:center;gap:9px;padding:9px 11px;border:1px solid #dbe6ea;border-radius:9px;
- background:#fff;cursor:pointer}
-.allin-pick input{width:16px;height:16px;flex:none;margin:0}
-.allin-pick span{display:grid;gap:1px;min-width:0}
-.allin-pick b{font-size:12.5px;color:#22404d}
-.allin-pick small{font-size:10.5px;color:#7f929a}
-.allin-pick:has(input:checked){border-color:#8ecdd9;background:#f0fafc;box-shadow:inset 3px 0 0 #16a0a4}
-.allin-opts{margin-bottom:9px}
-.allin-go{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-.allin-go #allin-plan{font-size:11px;color:#5d7681}
+.tm-ready{display:grid;gap:2px;padding:8px 11px;margin-bottom:9px;border-radius:8px;
+ border:1px solid #dbe6ea;background:#fff}
+.tm-ready b{font-size:11.5px;color:#22404d}
+.tm-ready span{font-size:10.5px;color:#7f929a;line-height:1.6}
+.tm-ready.is-todo{border-color:#eddfc4;background:#fdfaf3}
+.tm-ready.is-todo b{color:#8a5f19}
+.tm-ready.is-todo span{color:#8a5f19}
+.tm-list{display:grid;gap:7px}
+.tm-list.is-busy{opacity:.6;pointer-events:none}
+.tm-item{display:flex;align-items:center;gap:9px;padding:9px 11px;border:1px solid #dbe6ea;
+ border-radius:9px;background:#fff}
+.tm-item>label{display:flex;align-items:center;gap:9px;min-width:0;flex:1 1 auto;cursor:pointer}
+.tm-item input[type=checkbox]{width:16px;height:16px;flex:none;margin:0}
+.tm-name{display:grid;gap:1px;min-width:0}
+.tm-name b{font-size:12.5px;color:#22404d}
+.tm-name small{font-size:10.5px;color:#7f929a;line-height:1.5}
+.tm-item:has(.tm-shape:checked){border-color:#8ecdd9;background:#f0fafc;box-shadow:inset 3px 0 0 #16a0a4}
+.tm-item.is-base{border-color:#cfe0d9;background:#f6fbf8;box-shadow:inset 3px 0 0 #16805d}
+.tm-item.is-base>label{cursor:default}
+.tm-mark{margin-left:auto;font-size:9.5px;font-weight:900;color:#0c6b4d;background:#dff1e9;
+ border-radius:999px;padding:3px 9px;white-space:nowrap}
+.tm-item.is-off{opacity:.62;background:#fafbfb;border-style:dashed}
+.tm-item.is-off>label{cursor:not-allowed}
+.tm-item.is-off .tm-name small{color:#a4463d}
+.tm-opt{margin-left:auto;flex:none}
+.tm-opt label{display:flex;align-items:center;gap:6px;font-size:10.5px;color:#5d7681}
+.tm-opt select{font-size:11px;padding:3px 6px}
+.tm-item.is-off .tm-opt{display:none}
+.tm-axes{border:1px dashed #cfe2e7;border-radius:9px;background:#fbfeff;padding:9px 11px;margin:-2px 0 0 22px}
+.tm-axes-head{display:grid;gap:2px;margin:0 0 7px;font-size:11.5px;font-weight:800;color:#22404d}
+.tm-axes-head small{font-size:10.5px;color:#7f929a;font-weight:400;line-height:1.5}
+.tm-axis-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:5px}
+.tm-axis-row{display:flex;align-items:center;gap:7px;padding:5px 8px;border:1px solid #e6eef0;
+ border-radius:7px;background:#fff;cursor:pointer;min-width:0}
+.tm-axis-row b{font-size:11.5px;color:#22404d;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tm-axis-row span{font-size:10px;color:#8b9ca3;margin-left:auto;white-space:nowrap}
+.tm-axis-row em{font-style:normal;font-size:10px;color:#a4463d;margin-left:auto;
+ overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tm-axis-row:has(input:checked){border-color:#8ecdd9;background:#f0fafc}
+.tm-axis-row.is-off{opacity:.6;background:#fafbfb;border-style:dashed;cursor:not-allowed}
+.tm-axis-none{margin:0;font-size:10.5px;color:#8b9ca3}
+.tm-axes-more{display:flex;gap:7px;margin:7px 0 0}
+.tm-axes-more button{padding:4px 9px;font-size:10.5px}
+.tm-foot{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:10px}
+.tm-reuse{display:flex;align-items:flex-start;gap:8px;cursor:pointer;min-width:0;flex:1 1 240px}
+.tm-reuse input{width:16px;height:16px;flex:none;margin:2px 0 0}
+.tm-reuse>span{display:grid;gap:1px;font-size:11.5px;color:#22404d}
+.tm-reuse small{font-size:10.5px;color:#7f929a;line-height:1.5}
+.tm-reuse:has(input:disabled){opacity:.6;cursor:not-allowed}
+.tm-go{display:flex;gap:8px;margin-left:auto}
+.tm-plan{margin:8px 0 0;font-size:11px;color:#5d7681;line-height:1.6}
 .allin-state{margin-top:11px;border:1px solid #dfe8eb;border-radius:9px;background:#fff;overflow:hidden}
 .ai-head{display:flex;align-items:baseline;gap:9px;padding:8px 11px;border-bottom:1px solid #eef3f5;background:#f4f9fa}
 .ai-head b{font-size:12px;color:#22404d}
@@ -1788,6 +1823,11 @@ body:has(.autosave-state.is-saving) .autosave-mark{background:#0b8ea8;box-shadow
 .ai-item.is-ok>i{color:#0c6b4d;background:#e4f4ec}
 .ai-item.is-ng>i{color:#a4463d;background:#fbe9e6}
 .ai-item.is-off{opacity:.55}
+/* 見かけの秒数と実力の倍率を横に並べると、暗算が合わない数字が並んで見える。
+   対にならない数字は行を分け、なぜ違うのかを添える。 */
+.ai-real{grid-column:2/-1;font-size:10px;color:#8a5f19;background:#fdfaf3;border:1px solid #f1e6cf;
+ border-radius:6px;padding:4px 8px;line-height:1.5;margin-top:2px}
+.ai-real b{font-weight:900;color:#8a5f19}
 .allin-result{margin-top:11px;display:grid;gap:8px}
 .ai-rank{display:grid;gap:6px}
 .ai-row{display:grid;grid-template-columns:30px minmax(0,1fr) 76px 62px 96px auto;gap:9px;align-items:center;
@@ -1807,8 +1847,8 @@ body:has(.autosave-state.is-saving) .autosave-mark{background:#0b8ea8;box-shadow
 .ai-bad>div{display:grid;grid-template-columns:minmax(0,150px) minmax(0,1fr);gap:9px}
 .ai-bad b{font-size:11px;color:#22404d}
 .ai-bad span{font-size:10.5px;color:#a4463d}
-.allin-single>summary{margin-top:4px}
-@media(max-width:820px){.ai-row{grid-template-columns:30px minmax(0,1fr) auto}.ai-save,.ai-up{display:none}}
+@media(max-width:820px){.ai-row{grid-template-columns:30px minmax(0,1fr) auto}.ai-save,.ai-up{display:none}
+ .tm-axis-list{grid-template-columns:1fr}.tm-go{margin-left:0;width:100%}}
 
 
 /* V1.67: 設定の入力欄と「このPCでの状態」を1つにまとめる。同じ設定が2か所に出ていて、

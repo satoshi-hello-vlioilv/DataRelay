@@ -4548,7 +4548,7 @@ def row_split_breakdown(timing,deferred):
 
 
 
-# ==== まとめて測る（ALL-IN） =============================================
+# ==== 速さを測る（同じ基準の上に、選ばれたものを並べて測る） =============
 # 1本ずつ測らせると、どれとどれを比べたのか、基準はいつのものか、を利用者が
 # 覚えることになる。同じ基準の上で続けて測り、速い順に並べたものを返す。
 #
@@ -4564,7 +4564,12 @@ def split_batch_blank(**over):
 split_batch_state=split_batch_blank()
 
 def split_batch_items(kind,data,job):
- """何を何回測るかを、始める前に確定させる。画面にもそのまま出す。"""
+ """何を何回測るかを、始める前に確定させる。画面にもそのまま出す。
+
+ 頼まれたものは、多すぎても黙って切り落とさずそのまま返す。上限を超えているか
+ どうかは受け口が見て、理由を言って断る。ここで切ると「9本測ります」と出したのに
+ 8本しか走らない、という食い違いになる（出てこなかった条件を探すことになる）。
+ """
  items=[]
  parts=max(0,min(8,int(data.get('parts') or 0)))
  row_parts=max(2,min(8,int(data.get('row_parts') or 2)))
@@ -4572,7 +4577,7 @@ def split_batch_items(kind,data,job):
   items.append({'key':'normal','label':'分割なし（基準）','shape':'normal','axis':'',
                 'why':'ほかの分け方は、この時間と比べます'})
  if kind=='axes':
-  for name in [str(x).strip() for x in (data.get('axes') or []) if str(x).strip()][:SPLIT_BATCH_MAX]:
+  for name in [str(x).strip() for x in (data.get('axes') or []) if str(x).strip()]:
    items.append({'key':f'row:{name}','label':f'行{row_parts}分割（{name}）','shape':'row','axis':name,
                  'why':'この軸で行を絞ったときの速さ'})
  else:
@@ -4580,12 +4585,22 @@ def split_batch_items(kind,data,job):
   # （既定へ勝手に戻すと、外したはずの分け方が測られる）。
   raw=data.get('shapes')
   want=[x for x in (SPLIT_BATCH_SHAPES if raw is None else raw) if x in SPLIT_BATCH_SHAPES]
+  axes=[str(x).strip() for x in (data.get('axes') or []) if str(x).strip()]
   for shape in want:
+   # 行分割で軸を選んであれば、その軸ぶんだけ1本ずつ測る。「分け方を比べる」と
+   # 「軸を比べる」を別の機能にしておくと、基準が別々に取られて突き合わせられない。
+   # 同じ1回の基準の上に、列も行（軸ごと）も行×列も並べる。
+   if shape=='row' and axes:
+    for name in axes:
+     items.append({'key':f'row:{name}','label':f'行{row_parts}分割（{name}）','shape':'row','axis':name,
+                   'why':'この軸で行を絞ったときの速さ'})
+    continue
    items.append({'key':shape,'label':split_how_label(shape,parts or 2,row_parts),'shape':shape,'axis':'',
                  'why':{'column':'列を分けて横につなぐ','row':'行を絞って縦に積む',
                         'grid':'行と列の両方で分ける'}[shape]})
- for x in items:x.update(state='待機',elapsed=None,speedup=None,run_speedup=None,axis_seconds=None,identical=None,rows=None,error='',detail='')
- return items[:SPLIT_BATCH_MAX+1]
+ for x in items:x.update(state='待機',elapsed=None,speedup=None,run_speedup=None,axis_seconds=None,
+                          identical=None,rows=None,error='',detail='',axis_used='')
+ return items
 
 def split_batch_run_data(item,data):
  """1件ぶんの影実行に渡す指定。基準は1回だけ測り、以降はそれと比べる。"""
@@ -4602,15 +4617,31 @@ def split_batch_run_data(item,data):
  return d
 
 def split_batch_summary(items):
- """速い順に並べる。結果が一致しなかったものは順位を付けない（使えないため）。"""
+ """速い順に並べる。結果が一致しなかったものは順位を付けない（使えないため）。
+
+ 並べる基準は「本番で毎回かかる時間」。行を使う形は、実行のたびに軸の値を読み直す
+ （実測 2026-08-12 SIKALOT.RNE: 45.1秒）。この分を足さずに並べると、影実行でだけ
+ 速い形が1位になり、本番では基準より遅い、ということが起きる。
+ 画面には、測った秒数（見かけ）と読み直しを足した秒数（実力）の両方を出す。
+ 倍率は必ず対になる秒数から出す。2倍＝半分の時間、で読めるようにするため。
+ """
  done=[x for x in items if x['state']=='完了' and x.get('elapsed')]
  base=next((x['elapsed'] for x in done if x['shape']=='normal'),None)
- rank=sorted([x for x in done if x['shape']!='normal' and x.get('identical')],key=lambda x:x['elapsed'])
+ def real(x):return round(float(x['elapsed'])+float(x.get('axis_seconds') or 0),1)
+ rank=sorted([x for x in done if x['shape']!='normal' and x.get('identical')],key=real)
  out=[]
  for i,x in enumerate(rank,1):
-  out.append({'rank':i,'key':x['key'],'label':x['label'],'shape':x['shape'],'axis':x.get('axis',''),
+  r=real(x)
+  # 軸を名指ししないで測った行分割は、サーバーが選んだ軸を順位へ持ち上げる。
+  # ここが空だと「本番で使う」を押しても軸が決まらず、別の軸で走りうる。
+  ax=x.get('axis') or x.get('axis_used') or ''
+  label=x['label']
+  if ax and ax not in label and x['shape'] in ('row','grid'):label=f'{label}（{ax}）'
+  out.append({'rank':i,'key':x['key'],'label':label,'shape':x['shape'],'axis':ax,
               'elapsed':x['elapsed'],'speedup':x.get('speedup'),
-              'saved':round(base-x['elapsed'],1) if base else None})
+              'real_elapsed':r,'axis_seconds':x.get('axis_seconds'),
+              'run_speedup':round(base/r,2) if (base and r) else None,
+              'saved':round(base-r,1) if base else None})
  return {'baseline':base,'ranked':out,
          'best':out[0] if out else None,
          'rejected':[{'label':x['label'],'why':x.get('error') or ('結果が一致しませんでした' if x.get('identical') is False else '測れませんでした')}
@@ -4909,7 +4940,7 @@ sys.modules.setdefault('app',sys.modules[__name__])
 # 分割の試し打ちと設計。本番の抽出はここを通らないが、保存された割り当ての
 # 読み書きと画面の受け口が使うので、名前は本体へ戻しておく。
 import navi_split
-from navi_split import (_split_trial_run, column_weights, compare_csv_content,
+from navi_split import (_split_trial_run, column_weights, compare_csv_content, split_trial_options,
                         load_axis_survey, load_split_baseline, load_split_trials, normalize_measure,
                         pick_anchor_columns, plan_column_split, predict_split_gain,
                         read_axis_survey_raw, recommend_split_parts, record_split_trial,

@@ -391,7 +391,10 @@ async function applyJob(close=true,quiet=false){
   let r=await fetch('/api/config',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),d=await r.json();
   if(!r.ok)throw Error(d.error||'設定保存失敗');
   if(close){$('#editor').close();await init();toast(`保存完了: ${formatName(updated.output_format)} / ${updated.output_file}`)}
-  else{render();saveState('対象の設定を保存しました','is-ok')}
+  else{render();saveState('対象の設定を保存しました','is-ok');
+   // 保存して初めて「保存済みの対象」になる。測れるものを聞き直さないと、
+   // 「先に『設定を反映』で対象を保存してください」のままになる。
+   if(typeof tmLoadOptions==='function')tmLoadOptions(true)}
   return true;
  }catch(x){toast(x.message);return false}
  finally{if(!quiet)hideWaiting()}
@@ -1330,10 +1333,13 @@ if($('#m-period-detect'))$('#m-period-detect').onclick=async()=>{
 };
 
 /* ============================================================
-   RNEを調べる：4つの手順（①中身を読む ②分け方を探す ③速さを試す ④本番の動作）。
+   RNEを調べる：4つの手順（①中身を読む ②分け方を探す ③速さを測る ④本番の動作）。
    機能を足すたびにボタンと説明が横並びに増えて散らかっていたので、左のレールで順番を示し、
    結果は必ず右の同じ場所へ出す形に畳み直した。同時に見える操作は1手順ぶんだけ。
    ============================================================ */
+/* 手順1で調べた結果の要旨（列・行それぞれ ok か ng か）。レールの表示に使う。
+   測るものを選べるかどうかは、これではなく /api/split-trial/options が決める
+   （画面側の推測で選択肢を開けると、走らせてから断られる形に戻るため）。 */
 let inspPlan={column:null,row:null};
 function inspGo(step){
  $$('.insp-step').forEach(b=>{let on=b.dataset.istep===step;b.classList.toggle('on',on);b.setAttribute('aria-selected',on)});
@@ -1357,9 +1363,6 @@ function inspFind(kind,text,tone){
   f.classList.toggle('is-ng',tone==='ng');f.classList.toggle('is-ok',tone==='ok');
   // 駄目だったものは畳まない。畳むと、何が引っかかったのかを開くまで気づけない。
   if(tone==='ng')f.open=true}
- // レールの手順1には控えの状態（調査済み／要再調査／未調査）を出す。何度も調べ直す
- // 必要があるかどうかが、そこでの唯一の判断材料だから。個々の結果は折りたたみに出す。
- syncTrialControls();
 }
 /* 調べものは20秒前後サーバーを待つ。これまでは待機モーダルで画面を塞いでいたが、
    影実行と同じように裏で走らせる。進み具合はその手順の結果欄に出し、閉じても続く
@@ -1443,7 +1446,7 @@ function renderMaster(m){
  let c=m.columns||{},ax=m.axes||{},tm=m.timing||{},plans=m.plans||[];
  masterTiming=Number(tm.total||0)||0;
  fillIndexSuggestions(c.list||[]);
- if(typeof allinRefreshPlan==='function')allinRefreshPlan();
+ if(typeof tmRefreshPlan==='function')tmRefreshPlan();
  let cells=[
   ['列',c.have?`${c.count}本`:'—',c.have?`外せる ${c.removable} / 固定 ${c.fixed}`:'未取得'],
   ['行の軸',ax.have?`${ax.count}本`:'—',ax.have?`分割に使える ${ax.usable}本`:'未取得'],
@@ -1689,9 +1692,9 @@ function inspReset(){
  inspState('read','未実行');inspState('trial','未実行');
  if(allinTimer){clearInterval(allinTimer);allinTimer=null}
  ['#allin-state','#allin-result'].forEach(id=>{let e=$(id);if(e){e.hidden=true;e.innerHTML=''}});
- allinFillAxes([]);allinSetKind('methods');allinRefreshPlan();allinResume();
+ tmReset();allinResume();
  renderInspTarget();
- inspGo('read');syncTrialControls();
+ inspGo('read');
 }
 /* いまどのRNEを調べているのかを、手順1の先頭に必ず出す。ここが空だと、
    どの対象の画面なのかが結果からしか分からない。 */
@@ -1706,50 +1709,16 @@ function renderInspTarget(){
   +`<code title="${E(path)}">${E(path||'RNEのパスが未設定です')}</code>`
   +(saved?'':'<em class="it-draft">未保存 ― 先に「設定を反映」を押してください</em>');
 }
-// 方式に関係のない選択肢は出さない。列分割のときに「行」の数を選べても意味がないため。
-function syncTrialControls(){
- let m=$('#m-split-mode-trial')?.value||'column';
- let meas=$('#m-split-measure')?.value||'split';
- // 測るものが「分割なしだけ」なら、方式も分割数も競争も意味がない。出さない。
- $$('.insp-panel[data-istep="trial"] [data-when]').forEach(l=>{
-  l.hidden=(l.dataset.when==='split'&&meas==='normal')||(l.dataset.when==='both'&&meas!=='both')});
- $$('.trial-parts[data-need]').forEach(l=>{
-  if(meas==='normal'){l.hidden=true;return}
-  l.hidden=!(l.dataset.need===m||m==='grid')});
- // 軸の決め方は、行が絡む方式のときだけ出す（列分割には関係がない）。
- let ap=$('#trial-axis-pick');
- if(ap)ap.hidden=(meas==='normal')||!(m==='row'||m==='grid');
- let btn=$('#m-split-trial');
- if(btn)btn.textContent=({normal:'分割なしを測る',split:'分割を測る',both:'両方つづけて測る'})[meas]||'影実行を開始';
- let n=$('#trial-need');if(!n)return;
- if(meas==='normal'){
-  n.innerHTML='分割なしで1本だけ実行し、<b>基準として保存</b>します。'
-   +'この値は「分割だけ」を測ったときの比較相手になります。<b>出力ファイルは更新しません</b>。';
-  return;
- }
- if(meas==='both'){
-  n.innerHTML='分割なしと分割ありを<b>続けて</b>実行し、その場で比べます。1回で2回ぶんの時間がかかります。'
-   +'<b>出力ファイルは更新しません</b>。';
-  return;
- }
- // 下調べが済んでいるかを見て、案内を「まだ足りない」から「準備できた」へ切り替える。
- let done=m==='grid'?(inspPlan.column?.tone==='ok'&&inspPlan.row?.tone==='ok'):inspPlan[m]?.tone==='ok';
- let ready=({column:'列の割り当てができています。',row:'行の区切りができています。',
-  grid:'列と行の両方がそろっています。片の数は 行×列 になります。'})[m];
- let todo=({column:'先に手順1の「RNEを調査」を実行してください。',
-  row:'先に手順1の「RNEを調査」を実行してください。',
-  grid:'先に手順1の「RNEを調査」を実行してください。片の数は 行×列 になります。'})[m];
- n.innerHTML=(done?ready:todo)+'<b>出力ファイルは更新しません</b>（比較するだけで、結果は公開しません）。';
-}
+/* 「どの分け方を、どの片数で、どの軸で測るか」を選ぶ場所は、手順3の測定パネル
+   ただ1か所にした（tm-*）。以前はここに「方式」「測るもの」「分割数」を持つ
+   別の一式があり、まとめて測るのと設定が二重にあったため、片方だけ直して
+   走らせると結果が食い違っていた。 */
 $$('.insp-step').forEach(b=>b.onclick=()=>{
  let k=b.dataset.istep;inspGo(k);
  if(k==='run')loadRuntimeSplit();
  if(k==='read')loadMaster(false);
  if(k==='stats')loadRneStats();
 });
-if($('#m-split-mode-trial'))$('#m-split-mode-trial').onchange=syncTrialControls;
-if($('#m-split-measure'))$('#m-split-measure').onchange=syncTrialControls;
-syncTrialControls();
 
 /* RNEの中身を調べる：管理ポイント（行の軸）とデータ項目（出力される列）をまとめて見せる。
    時間管理ポイントの検出は「抽出期間」タブ側の目的に絞ってあるので、RNE全体の把握はこちらで行う。 */
@@ -1773,14 +1742,9 @@ function renderInspectAll(d){
  if(d.read?.ok)try{renderRneInspect(d.read)}catch{}
  if(d.column?.ok)try{renderColumnPlan(d.column)}catch{}
  if(d.row?.ok)try{renderRowPlan(d.row)}catch{}
- // 調べた結果を手順2の既定にする。片方しか使えないなら、そちらを選んでおく。
- let tm=$('#m-split-mode-trial');
- if(tm&&tm.value!=='grid'){
-  let col=inspPlan.column?.tone,row=inspPlan.row?.tone;
-  if(col==='ok'&&row!=='ok')tm.value='column';
-  else if(row==='ok'&&col!=='ok')tm.value='row';
-  syncTrialControls();
- }
+ // 調べ終わったら、測定パネルの「選べる／選べない」をサーバーに引き直させる。
+ // 画面側で推測して選択肢を開けると、走らせてから断られる形に戻ってしまう。
+ tmLoadOptions(true);
  loadRuntimeSplit();
 }
 function renderRneInspect(d){
@@ -1889,7 +1853,7 @@ function ilogLineHtml(x){
    操作の始まりになる印を決めておき、次の印までを1かたまりとして畳む。 */
 const LOG_ACTIONS=[
  [/処理開始 trigger=/,       '実行'],
- [/SPLIT_TRIAL_START /,      '影実行（速さを試す）'],
+ [/SPLIT_TRIAL_START /,      '影実行（速さを測る）'],
  [/INSPECT_TASK_START /,     '調べもの'],
  // ROW_AXES / COLUMN_WEIGHTS などは操作の途中で出る。ここで切ると1つの操作が分かれてしまう。
  // 区切りにするのは「利用者が押した瞬間」に出る印だけ。
@@ -2052,12 +2016,11 @@ if($('#m-split-mode'))$('#m-split-mode').onchange=loadRuntimeSplit;
 
 /* 軸の決め方。調べずに決め打ちする道（表側#1・番号指定）と、調べてから選ぶ道（名前指定・
    偏りが少ないものを自動）の4通り。対象ごとに保存し、画面の無い本番の実行でも同じ軸を使う。 */
-/* 同じ「軸の決め方」を、手順2（分け方を探す）と手順3（速さを試す）の両方に置く。
-   影実行だけで完結させたいので、どちらで変えても両方に反映する。 */
+/* 「軸の決め方」は手順4（本番の動作）の1か所だけに置く。手順3で軸を選ぶのは
+   「どの軸が速いかを測る」ためで、測った結果から「本番で使う」を押すと、ここへ
+   名前で書き戻される。同じ設定を2か所に置いて同期させるのはやめた。 */
 const AXIS_PICK=[{m:'#m-axis-mode',i:'#m-axis-index',n:'#m-axis-name',
-                  iw:'#m-axis-index-wrap',nw:'#m-axis-name-wrap',h:'#m-axis-hint'},
-                 {m:'#m-axis-mode-t',i:'#m-axis-index-t',n:'#m-axis-name-t',
-                  iw:'#m-axis-index-wrap-t',nw:'#m-axis-name-wrap-t',h:'#m-axis-hint-t'}];
+                  iw:'#m-axis-index-wrap',nw:'#m-axis-name-wrap',h:'#m-axis-hint'}];
 const AXIS_HINT={
  first:'表側の1番目を使います。明細のRNEなら必ず1本はあるので、調べずに分けられます。',
  index:'表側の指定番号を使います。調べずに分けられます。使えなければ1番目に戻ります。',
@@ -2087,13 +2050,13 @@ AXIS_PICK.forEach(g=>[g.m,g.i,g.n].forEach(id=>{
  let e=$(id);if(e)e.addEventListener('change',()=>{syncAxisPick(g.m);dirty()});
 }));
 // 調べた結果から、名前で選べる候補を作る（使える軸だけ・散らばりも見せる）
-/* 控えの軸を、手順3の「軸の決め方」と、まとめて測るの候補へ同時に入れる。
+/* 控えの軸を、手順4の「軸の決め方」と、手順3の測る候補へ同時に入れる。
    置き場所が2つあると、片方だけ空という食い違いが必ず起きる。 */
 function fillAxesFromMaster(list){
  list=(list||[]).filter(x=>x&&x.name&&x.usable!==false);
  if(!list.length)return;
  fillAxisNames({axes:list.map(x=>({...x,usable:true,enough:true})),axis:null});
- allinFillAxes(list);
+ tmFillAxes(list);
 }
 /* 調べ終わったら次に何をするのかを、その場に出す。手順の行き来を利用者に
    覚えさせない（測って終わり、では設定に結び付かない）。 */
@@ -2133,7 +2096,7 @@ function renderRowPlan(d){
   if(!d.ok){if(rb)rb.innerHTML=`<p class="ri-ng">調べられませんでした。</p><p class="ri-note">${E(d.error||'')}</p>`;inspEmpty('row',true);inspFind('row','行 調べられません','ng');return}
   if(rb)rb.innerHTML=rowSplitRender(d);
   fillAxisNames(d);
-  allinFillAxes(d.axes);
+  tmFillAxes(d.axes);
   inspEmpty('row',true);
   let ax=d.axis;
   inspFind('row',ax?`行 ${d.parts}分割可（${ax.name}）`:'行 使える軸なし',ax?'ok':'ng');
@@ -2426,78 +2389,153 @@ async function splitTrialPoll(){
   else ilogFollow(true);
  }catch{}
 }
-if($('#m-split-trial'))$('#m-split-trial').onclick=async()=>{
- let rb=$('#m-split-trial-result');
- if(!editing?.id||!cfg.jobs.some(j=>j.id===editing.id)){if(rb){rb.hidden=false;rb.innerHTML=`<p class="ri-ng">先に「設定を反映」で対象を保存してください。</p>`}return}
- let parts=Number($('#m-split-parts')?.value||0);
- let race=!!$('#m-split-race')?.checked;
- let mode=$('#m-split-mode-trial')?.value||'column',rowParts=Number($('#m-row-trial-parts')?.value||2);
- let measure=$('#m-split-measure')?.value||'split';
- if(race)measure='both';
- try{
-  let r=await fetch('/api/column-split-trial',{method:'POST',headers:{'Content-Type':'application/json'},
-       body:JSON.stringify({job_id:editing.id,parts,race,mode,row_parts:rowParts,measure,...axisChoice()})}),d=await r.json();
-  if(!d.ok){if(rb){rb.hidden=false;rb.innerHTML=`<p class="ri-ng">開始できませんでした。</p><p class="ri-note">${E(d.error||'')}</p>`}inspEmpty('trial',true);inspState('trial','開始できません','ng');return}
-  toast(`${({normal:'分割なし（基準）',split:({column:'列分割',row:'行分割',grid:'行×列'})[mode],
-             both:`分割なしと${({column:'列分割',row:'行分割',grid:'行×列'})[mode]}`})[measure]}の測定を開始しました。実行中も他の機能を使えます`);
-  inspGo('trial');inspEmpty('trial',true);inspState('trial','開始しました','run');
-  splitTrialRender({running:true,job:d.job,stage:'準備中',elapsed:0});
-  if(splitTrialTimer)clearInterval(splitTrialTimer);
-  splitTrialTimer=setInterval(splitTrialPoll,2000);splitTrialPoll();ilogFollow(true);
- }catch(x){if(rb){rb.hidden=false;rb.innerHTML=`<p class="ri-ng">開始時にエラーが発生しました。</p>`}}
-};
+/* ==== 速さを測る（統合パネル / tm-*） =========================================
+   以前は「まとめて測る」「1つずつ測る」「行の軸を比べる」の3つが別々にあり、
+   それぞれが自分の基準を取っていた。どの数字がどの基準と比べたものか分からず、
+   片方の設定だけ直して走らせると結果が食い違った。
 
-/* ==== まとめて測る（ALL-IN） =================================================
-   1本ずつ測らせると「どれとどれを、どの基準で比べたのか」を利用者が覚えることに
-   なる。同じ基準の上で続けて測り、速い順に並べたものを1枚で返す。
-   押すのは1つ、読むのは順位の表だけ、という形にしてある。 */
-let allinTimer=null,allinKind='methods',allinAxes=[],masterTiming=0;
-function allinShapes(){return $$('.allin-shape:checked').map(x=>x.value)}
-function allinRowParts(){return Number($('#allin-row-parts')?.value||2)||2}
-function allinParts(){return Number($('#allin-parts')?.value||0)||0}
-function allinAxisPick(){return [$('#allin-axis-a')?.value||'',$('#allin-axis-b')?.value||''].filter(Boolean)}
-/* 始める前に「何を何回測るか」を出す。押してから知るのでは遅い。 */
-function allinPlanList(){
- let list=[],reuse=!!$('#allin-reuse')?.checked;
- if(!reuse)list.push('分割なし（基準）');
- if(allinKind==='axes')allinAxisPick().forEach(a=>list.push(`行${allinRowParts()}分割（${a}）`));
- else allinShapes().forEach(sh=>list.push(split_shape_label_js(sh)));
- return list;
-}
-function split_shape_label_js(shape){
- let c=allinParts()||2,r=allinRowParts();
+   ここでは選ぶ場所を1枚にまとめてある:
+     ・基準（分割なし）は必ず1本目。外せない（保存済みを使い回すときだけ省く）
+     ・列分割 / 行分割 / 行×列 は、選んだものだけを同じ基準の上に並べる
+     ・行分割で軸を選ぶと、その軸ごとに1本ずつ測る（軸の比較もここに入る）
+     ・1つだけ選べば1件だけ測る。これが「1つずつ測る」の置き換え
+   選べるかどうかは推測しない。/api/split-trial/options が返す ok と why を
+   そのまま出す。走らせてから断られる形にはしない。 */
+let allinTimer=null,tmOpt=null,tmOptErr='',tmOptFor='',tmWasRunning=false,masterTiming=0;
+const TM_SHAPES=['column','row','grid'];
+function tmShapes(){return $$('.tm-shape:checked').map(x=>x.value)}
+function tmRowParts(){return Number($('#tm-row-parts')?.value||2)||2}
+function tmColParts(){return Number($('#tm-col-parts')?.value||0)||0}
+function tmAxisPick(){return $$('#tm-axis-list input.tm-axis:checked').map(x=>x.value)}
+function tmReuse(){let e=$('#tm-reuse');return !!(e&&!e.disabled&&e.checked)}
+function tmShapeLabel(shape){
+ let c=tmColParts()||2,r=tmRowParts();
  return shape==='row'?`行${r}分割`:shape==='grid'?`行${r}×列${c}（${r*c}片）`:`列${c}分割`;
 }
-function allinRefreshPlan(){
- let p=$('#allin-plan');if(!p)return;
- let list=allinPlanList(),n=list.length;
+/* この対象で何が測れるのかを、サーバーに1回で決めさせる。 */
+async function tmLoadOptions(force){
+ let id=editing?.id||'';
+ if(!id||!cfg?.jobs?.some(j=>j.id===id)){tmOpt=null;tmOptErr='';tmOptFor='';tmApplyOptions();return}
+ if(!force&&tmOptFor===id)return;
+ tmOptFor=id;
+ try{
+  let d=await fetch('/api/split-trial/options?job_id='+encodeURIComponent(id),{cache:'no-store'}).then(r=>r.json());
+  // 待っている間に対象が切り替わっていたら捨てる（別のRNEの判定を出さない）
+  if((editing?.id||'')!==id)return;
+  tmOpt=d.ok?d:null;tmOptErr=d.ok?'':(d.error||'測れるものを取得できませんでした');
+ }catch{tmOpt=null;tmOptErr='測れるものを取得できませんでした（通信に失敗しました）'}
+ tmApplyOptions();
+}
+/* 測れないものは選ばせない。塞ぐときは必ず理由を添える（塞がれた側から見ると、
+   理由が無いのは故障と区別がつかない）。 */
+function tmApplyOptions(){
+ let o=tmOpt;
+ $$('.tm-item[data-shape]').forEach(row=>{
+  let sh=row.dataset.shape,box=row.querySelector('.tm-shape'),why=row.querySelector('.tm-why');
+  let info=o?(o[sh]||{}):null;
+  let ok=info?!!info.ok:false;
+  row.classList.toggle('is-off',!ok);
+  if(box){box.disabled=!ok;if(!ok)box.checked=false}
+  // 聞けなかったときに「対象を保存してください」と出すと、保存済みなのに直せない
+  // 指示になる。取れなかったのか、まだ保存していないのかを分けて言う。
+  if(why)why.textContent=info?(info.why||''):(tmOptErr||'対象を保存すると、測れるものが出ます');
+ });
+ tmRenderAxes(o?((o.row||{}).axes||[]):[]);
+ // 保存済みの基準。古ければ使い回さない（データが動いていて「一致しません」になる）
+ let re=$('#tm-reuse'),rw=$('#tm-reuse-why'),b=o?o.baseline:null;
+ if(re){
+  re.disabled=!b;
+  if(!b){re.checked=false}
+  else if(b.stale){re.checked=false}
+ }
+ if(rw)rw.textContent=!o?(tmOptErr||'対象を保存すると使えます')
+  :!b?'保存済みの基準がありません。1回ぶん多く測ります'
+  :b.stale?`前回の基準は${b.age_minutes}分前です。古い基準と比べると、分け方が正しくても「一致しません」になります`
+  :`前回の基準 ${b.age_minutes}分前（${Number(b.rows||0).toLocaleString()}行 / ${fmtSeconds(b.elapsed||0)}）。1回ぶん短くなります`;
+ let rd=$('#tm-ready');
+ if(rd){
+  if(!o&&tmOptErr){rd.hidden=false;rd.className='tm-ready is-todo';
+   rd.innerHTML=`<b>まだ測れません</b><span>${E(tmOptErr)}</span>`}
+  else if(!o){rd.hidden=true;rd.innerHTML=''}
+  else if(!o.ready){rd.hidden=false;rd.className='tm-ready is-todo';
+   rd.innerHTML=`<b>まだ測れません</b><span>${E((o.column||{}).why||o.error||'先に手順1の「RNEを調査」を実行してください')}</span>`}
+  else{rd.hidden=false;rd.className='tm-ready';
+   let ng=TM_SHAPES.filter(s=>!(o[s]||{}).ok);
+   rd.innerHTML=`<b>この対象で測れるもの</b><span>列 ${o.columns}本（うち外せる ${o.removable}本）`
+    +` / 行の軸 ${(((o.row||{}).axes)||[]).filter(x=>x.usable).length}本`
+    +(ng.length?` ― ${ng.map(s=>({column:'列分割',row:'行分割',grid:'行×列'})[s]).join('・')}は選べません`:'')+`</span>`}
+ }
+ tmRefreshPlan();
+}
+/* 行分割で使う軸。使えない軸も理由つきで残す（消すと「なぜ出ないのか」が分からない）。 */
+function tmRenderAxes(axes){
+ let box=$('#tm-axis-list');if(!box)return;
+ let keep=new Set(tmAxisPick());
+ axes=(axes||[]).filter(x=>x&&x.name);
+ if(!axes.length){box.innerHTML='<p class="tm-axis-none">まだ軸を読んでいません。手順1の「RNEを調査」を実行すると、ここに出ます。</p>';return}
+ box.innerHTML=axes.map(a=>{
+  let n=Number(a.values||0);
+  return `<label class="tm-axis-row${a.usable?'':' is-off'}" title="${E(a.why||'')}">`
+   +`<input type="checkbox" class="tm-axis" value="${E(a.name)}"${a.usable?'':' disabled'}`
+   +`${a.usable&&keep.has(a.name)?' checked':''}>`
+   +`<b>${E(a.name)}</b><span>${E(a.location||'')}${a.index!=null?'#'+(Number(a.index)+1):''}`
+   +`${n?` / ${n.toLocaleString()}種`:''}</span>`
+   +(a.usable?'':`<em>${E(a.why||'使えません')}</em>`)+`</label>`;
+ }).join('');
+ $$('#tm-axis-list input.tm-axis').forEach(x=>x.addEventListener('change',tmRefreshPlan));
+}
+/* 始める前に「何を何回測るか」を出す。押してから知るのでは遅い。 */
+function tmPlanList(){
+ let list=[];
+ if(!tmReuse())list.push('分割なし（基準）');
+ let ax=tmAxisPick();
+ tmShapes().forEach(sh=>{
+  if(sh==='row'&&ax.length)ax.forEach(a=>list.push(`行${tmRowParts()}分割（${a}）`));
+  else list.push(tmShapeLabel(sh));
+ });
+ return list;
+}
+// 一度に測れる上限（基準を除く）。サーバーの SPLIT_BATCH_MAX と同じ数。
+// 断るのはサーバーだが、押してから断られるのでは選び直しが手戻りになる。
+// 同じ数を画面でも持ち、超えた時点で押せなくして理由を出す。
+const TM_MAX=8;
+function tmRefreshPlan(){
+ let shapes=tmShapes();
+ let ax=$('#tm-axes');if(ax)ax.hidden=!shapes.includes('row');
+ // 基準の行は、いま測るのか使い回すのかをその場に出す。「必ず測る」と出したまま
+ // 測らないと、順位の相手がどの時点のものか分からなくなる。
+ let reuse=tmReuse(),nm=$('#tm-normal-mark'),nw=$('#tm-normal-why');
+ if(nm)nm.textContent=reuse?'保存済みを使う':'必ず測る';
+ if(nw)nw.textContent=reuse?'前に測った時間と比べます':'ほかはすべてこの時間と比べます';
+ let p=$('#tm-plan'),go=$('#tm-start');
+ let list=tmPlanList(),n=list.length;
+ let measured=n-(tmReuse()?0:1);
  let one=Number(masterTiming||0);
  let est=one?`／見込み 約${fmtSeconds(one*n)}`:'';
- let go=$('#allin-start');
- let measured=allinKind==='axes'?allinAxisPick().length:allinShapes().length;
- if(go)go.disabled=!measured;
- p.textContent=measured?`${n}本を続けて測ります: ${list.join(' → ')}${est}`
-   :(allinKind==='axes'?'比べる軸を選んでください':'比べる分け方を1つ以上選んでください');
+ let over=measured>TM_MAX;
+ if(go)go.disabled=!shapes.length||over;
+ let base=tmReuse()?'基準は保存済みを使います。':'基準（分割なし）から測ります。';
+ if(p)p.textContent=over?`一度に測れるのは${TM_MAX}本までです（いま${measured}本）。軸か分け方を減らしてください`
+  :shapes.length?`${base}${n}本を続けて測ります: ${list.join(' → ')}${est}`
+   :(tmOpt&&!TM_SHAPES.some(s=>(tmOpt[s]||{}).ok)
+     ?'いまこの対象で測れる分け方がありません。上の理由を直してから、もう一度お試しください'
+     :'測るものを1つ以上選んでください');
 }
-function allinSetKind(k){
- allinKind=k;
- $$('.allin-kind button').forEach(b=>b.classList.toggle('on',b.dataset.akind===k));
- $$('.allin-body').forEach(x=>x.hidden=x.dataset.akind!==k);
- allinRefreshPlan();
+/* 調査結果が届いた直後は、サーバーへ聞き直す前でも軸を出しておく（待ち時間に
+   空の一覧を見せない）。判断そのものは、続けて届く options の内容で上書きする。 */
+function tmFillAxes(list){
+ tmRenderAxes((list||[]).filter(x=>x&&x.name).map(x=>({
+  name:x.name,location:x.location,index:x.index,values:x.category_count,
+  usable:x.usable!==false&&x.enough!==false,why:x.reason||''})));
+ tmRefreshPlan();
+ tmLoadOptions(true);
 }
-/* 調べた軸を、そのまま比較の候補にする。使えない軸は出さない（測っても失敗するため）。 */
-function allinFillAxes(axes){
- allinAxes=(axes||[]).filter(x=>x&&x.usable!==false&&x.name);
- [['#allin-axis-a',0],['#allin-axis-b',1]].forEach(([id,i])=>{
-  let sel=$(id);if(!sel)return;
-  let keep=sel.value;
-  sel.innerHTML=allinAxes.length?allinAxes.map(a=>`<option value="${E(a.name)}">${E(a.name)}`
-    +`（${E(a.location||'')}${a.category_count?' '+Number(a.category_count).toLocaleString()+'種':''}）</option>`).join('')
-   :'<option value="">（先に「RNEを調査」）</option>';
-  if(keep&&allinAxes.some(a=>a.name===keep))sel.value=keep;
-  else if(allinAxes[i])sel.value=allinAxes[i].name;
- });
- allinRefreshPlan();
+function tmReset(){
+ tmOpt=null;tmOptErr='';tmOptFor='';
+ $$('.tm-shape').forEach(x=>{x.checked=false});
+ let re=$('#tm-reuse');if(re)re.checked=false;
+ let ax=$('#tm-axes');if(ax)ax.hidden=true;
+ tmApplyOptions();tmLoadOptions(true);
 }
 /* 秒数と倍率は、必ず割り算の合う組で出す。以前は「見かけの秒数」と「軸の読み直しを
    含めた実力の倍率」を並べていたため、55.3秒と0.76倍が並び、76.6÷55.3=1.39 と
@@ -2507,9 +2545,13 @@ function allinItemRow(x){
           x.state==='実行中'?'is-run':x.state==='中止'?'is-off':'';
  let real=(x.run_speedup&&x.axis_seconds)?
    `<small class="ai-real">本番では軸の読み直し ${fmtSeconds(x.axis_seconds)} が毎回かかるので、実力は <b>${x.run_speedup}倍</b></small>`:'';
+ // 軸を名指ししないで測ったときは、実際に選ばれた軸をここに出す。出さないと
+ // 「自動で測ったが、何の軸だったか分からない」ままになる（利用者からの指摘）。
+ let ax=(x.axis_used&&!String(x.label||'').includes(x.axis_used))
+   ?`<small class="ai-real">使った軸は <b>${E(x.axis_used)}</b>（自動で選びました）</small>`:'';
  return `<div class="ai-item ${tone}"><i>${E(x.state)}</i><b>${E(x.label)}</b>`
   +`<span>${x.elapsed?fmtSeconds(x.elapsed):E(x.error||x.why||'')}</span>`
-  +`${x.speedup?`<em>${x.speedup}倍</em>`:'<em></em>'}${real}</div>`;
+  +`${x.speedup?`<em>${x.speedup}倍</em>`:'<em></em>'}${ax}${real}</div>`;
 }
 function allinRender(d){
  let box=$('#allin-state'),res=$('#allin-result');
@@ -2522,9 +2564,14 @@ function allinRender(d){
    +`<span>${E(d.rne||'')}${d.elapsed?` / 経過 ${fmtSeconds(d.elapsed)}`:''}</span></div>`
    +items.map(allinItemRow).join(''):'';
  }
- let stop=$('#allin-stop'),go=$('#allin-start');
+ let stop=$('#tm-stop'),go=$('#tm-start');
  if(stop)stop.hidden=!d.running;
- if(go)go.disabled=!!d.running;
+ if(go){go.disabled=!!d.running||!tmShapes().length;go.textContent=d.running?'測定中…':'測る'}
+ // 測っている間は選び直せなくする。走っている内容と画面の選択がずれると、
+ // 出てきた結果がどの条件のものか分からなくなる。
+ let panel=$('#tm-list');if(panel)panel.classList.toggle('is-busy',!!d.running);
+ if(tmWasRunning&&!d.running)tmLoadOptions(true);   // 終わったら基準の新しさを取り直す
+ tmWasRunning=!!d.running;
  // 手順2のレールにも結果を出す。開かなくても、何がいちばん速かったかが分かる。
  if(items.length)inspState('trial',d.running?`測定中 ${d.index}/${d.total}`
    :(sum.best?`最速 ${sum.best.label}`:'使える分け方なし'),
@@ -2533,15 +2580,21 @@ function allinRender(d){
  let rank=sum.ranked||[];
  if(!rank.length&&!(sum.rejected||[]).length){res.hidden=true;res.innerHTML='';return}
  res.hidden=false;
- res.innerHTML=(sum.baseline?`<p class="ri-note">基準（分割なし）は <b>${fmtSeconds(sum.baseline)}</b>。下の順位はこの時間と比べたものです。`
-   +`行を使う形は、本番で毎回かかる<b>軸の読み直し</b>も含めた実力値です。</p>`:'')
-  +(rank.length?`<div class="ai-rank">${rank.map(x=>`<div class="ai-row${x.rank===1?' is-best':''}">`
+ // 順位は「本番で毎回かかる時間」で付く。行を使う形は軸の読み直しが毎回いるので、
+ // 影実行の秒数だけで並べると、本番では基準より遅い形が1位になってしまう。
+ res.innerHTML=(sum.baseline?`<p class="ri-note">基準（分割なし）は <b>${fmtSeconds(sum.baseline)}</b>。`
+   +`順位は<b>本番で毎回かかる時間</b>（行を使う形は<b>軸の読み直し</b>を足したもの）で付けています。`
+   +`倍率は隣の秒数との割り算です（2倍＝半分の時間）。</p>`:'')
+  +(rank.length?`<div class="ai-rank">${rank.map(x=>{
+    let extra=x.axis_seconds?`<small class="ai-real">実行そのものは ${fmtSeconds(x.elapsed)}`
+      +`（${x.speedup?x.speedup+'倍':'—'}）。本番はここへ軸の読み直し ${fmtSeconds(x.axis_seconds)} が毎回加わります</small>`:'';
+    return `<div class="ai-row${x.rank===1?' is-best':''}">`
     +`<i class="ai-no">${x.rank}</i><b>${E(x.label)}</b>`
-    +`<span class="ai-time">${fmtSeconds(x.elapsed)}</span>`
-    +`<span class="ai-up">${x.speedup?x.speedup+'倍':'—'}</span>`
+    +`<span class="ai-time">${fmtSeconds(x.real_elapsed??x.elapsed)}</span>`
+    +`<span class="ai-up">${(x.run_speedup??x.speedup)?(x.run_speedup??x.speedup)+'倍':'—'}</span>`
     +`<span class="ai-save">${x.saved>0?`${fmtSeconds(x.saved)}短縮`:'短縮なし'}</span>`
     +`<button type="button" class="secondary ai-use" data-shape="${E(x.shape)}" data-axis="${E(x.axis||'')}">本番で使う</button>`
-    +`</div>`).join('')}</div>`
+    +extra+`</div>`}).join('')}</div>`
    :'<p class="ri-ng">使える分け方がありませんでした。</p>')
   +((sum.rejected||[]).length?`<details class="ri-list"><summary>使えなかったもの（${sum.rejected.length}件）</summary>`
     +`<div class="ai-bad">${sum.rejected.map(x=>`<div><b>${E(x.label)}</b><span>${E(x.why)}</span></div>`).join('')}</div></details>`:'');
@@ -2587,32 +2640,43 @@ async function allinPoll(){
   else if(allinTimer){clearInterval(allinTimer);allinTimer=null;loadRuntimeSplit();ilogFollow(false)}
  }catch{}
 }
-if($('#allin-start'))$('#allin-start').onclick=async()=>{
+if($('#tm-start'))$('#tm-start').onclick=async()=>{
  let res=$('#allin-result');
  if(!editing?.id||!cfg.jobs.some(j=>j.id===editing.id))
   return toast('先に「設定を反映」で対象を保存してください');
- let payload={job_id:editing.id,kind:allinKind,parts:allinParts(),row_parts:allinRowParts(),
-              reuse_baseline:!!$('#allin-reuse')?.checked,
-              shapes:allinShapes(),axes:allinAxisPick(),...axisChoice()};
+ let shapes=tmShapes();
+ if(!shapes.length)return toast('測るものを1つ以上選んでください');
+ // 選べないものが混ざったまま投げない（走らせてから断られるのを無くすため）。
+ let ng=shapes.filter(s=>!((tmOpt||{})[s]||{}).ok);
+ if(ng.length)return toast(((tmOpt||{})[ng[0]]||{}).why||'いまその分け方は測れません');
+ // 基準は必ず1本目に置く。走らせる中身は kind='methods' に統一し、行分割で軸を
+ // 選んでいれば、サーバー側で軸ごとの1本へ展開される。
+ let payload={job_id:editing.id,kind:'methods',parts:tmColParts(),row_parts:tmRowParts(),
+              reuse_baseline:tmReuse(),shapes,axes:tmAxisPick(),...axisChoice()};
  try{
   let d=await fetch('/api/split-trial-batch',{method:'POST',headers:{'Content-Type':'application/json'},
        body:JSON.stringify(payload)}).then(r=>r.json());
   if(!d.ok)return toast(d.error||'開始できませんでした');
   if(res){res.hidden=true;res.innerHTML=''}
-  inspEmpty('trial',true);inspState('trial',`まとめて測定中 0/${d.total}`,'run');
+  inspEmpty('trial',true);inspState('trial',`測定中 0/${d.total}`,'run');
   toast(`${d.total}本の測定を開始しました。実行中も他の機能を使えます`);
   if(allinTimer)clearInterval(allinTimer);
   allinTimer=setInterval(allinPoll,1500);allinPoll();ilogFollow(true);
  }catch{toast('開始時にエラーが発生しました')}
 };
-if($('#allin-stop'))$('#allin-stop').onclick=async()=>{
+if($('#tm-stop'))$('#tm-stop').onclick=async()=>{
  let d=await fetch('/api/split-trial-batch/stop',{method:'POST'}).then(r=>r.json()).catch(()=>({}));
  toast(d.ok?'いま測っている1本を終えたら止めます':(d.error||'止められませんでした'));
 };
-$$('.allin-kind button').forEach(b=>b.onclick=()=>allinSetKind(b.dataset.akind));
-['#allin-parts','#allin-row-parts','#allin-reuse','#allin-axis-a','#allin-axis-b']
- .forEach(id=>{let e=$(id);if(e)e.addEventListener('change',allinRefreshPlan)});
-$$('.allin-shape').forEach(x=>x.addEventListener('change',allinRefreshPlan));
+['#tm-col-parts','#tm-row-parts','#tm-reuse'].forEach(id=>{
+ let e=$(id);if(e)e.addEventListener('change',tmRefreshPlan)});
+$$('.tm-shape').forEach(x=>x.addEventListener('change',tmRefreshPlan));
+if($('#tm-axis-all'))$('#tm-axis-all').onclick=()=>{
+ $$('#tm-axis-list input.tm-axis').forEach(x=>{if(!x.disabled)x.checked=true});tmRefreshPlan()};
+if($('#tm-axis-none'))$('#tm-axis-none').onclick=()=>{
+ $$('#tm-axis-list input.tm-axis').forEach(x=>{x.checked=false});tmRefreshPlan()};
+// 対象を開く前でも、空欄ではなく「次に何をすれば選べるようになるか」を出しておく。
+tmApplyOptions();
 
 /* ============================================================
    v1.18.0 データビュワー：データ一覧 / 集計表 / グラフ の3タブ構成。

@@ -585,6 +585,83 @@ def save_split_plan(rne_path,columns,parts,plan,keys,anchors,speedup=None,rows=N
           (row or {}).get('axis_name') or '-',f'{speedup:.2f}' if speedup else '-')
  return True
 
+def split_trial_options(job,cfg):
+ """この対象で、いま何が測れるのか。測る前に1か所で決める。
+
+ これまでは選択肢を全部出しておいて、走らせてから「分割して取得できる列がありません」と
+ 断っていた。しかも基準まで一緒に落ちるので、ほかの分け方が何と比べた数字なのかも
+ 分からなくなっていた（実測 2026-08-12 SIKALOT.RNE / removable=0）。
+ 選べるものと選べないものを、理由つきで先に返す。
+
+ 返すもの（それぞれ ok と why を持つ）:
+   column … 列分割。外せる列が1本も無ければ選べない
+   row    … 行分割。使える軸が1本も無ければ選べない。axes に軸の一覧
+   grid   … 行×列。両方が成り立つときだけ
+   baseline … 保存済みの基準（あれば、いつ測ったものか）
+ """
+ rp=resolve_rne_path(job,cfg)
+ out={'rne':str(rp),'job':job.get('name',''),'ready':False,
+      'column':{'ok':False,'why':''},'row':{'ok':False,'why':'','axes':[]},
+      'grid':{'ok':False,'why':''},'baseline':None,'columns':0,'removable':0}
+ if not Path(rp).is_file():
+  # 理由を空で返すと、画面には「選べない」だけが出て手がかりが無くなる。
+  why=f'RNEが見つかりません: {rp}'
+  out['error']=why
+  for k in ('column','row','grid'):out[k]['why']=why
+  return out
+ cached=load_column_cache(rp)
+ if not cached or cached.get('stale') or not cached.get('columns'):
+  why=('RNEが更新されています。もう一度「列を調べる」を実行してください' if (cached and cached.get('stale'))
+       else '先に「列を調べる」を実行してください')
+  out['column']['why']=why;out['row']['why']=why;out['grid']['why']=why
+  out['need_columns']=True;return out
+ out['ready']=True
+ columns=cached['columns'];removable=[x['name'] for x in (cached.get('classify') or []) if x.get('removable')]
+ out['columns']=len(columns);out['removable']=len(removable)
+ # 列分割は「外せる列」があって初めて成り立つ。1本も無ければ、何回試しても同じ。
+ if removable:
+  out['column']={'ok':True,'why':f'{len(columns)}本のうち{len(removable)}本を分けて運べます'}
+ else:
+  out['column']={'ok':False,'why':f'外せる列が1本もありません（{len(columns)}本すべてが結合キーか必須です）'}
+ # 行分割は軸しだい。下調べがあれば、使える軸をそのまま出す。
+ sv=load_axis_survey(rp)
+ axes=[]
+ if sv:
+  # 過去にサーバーが拒否した軸（条件式が長すぎた等）は、選べる側へ出さない。
+  blocks=set(blocked_row_axes(rp))
+  for a in (sv.get('axes') or []):
+   usable=bool(a.get('usable') and a.get('enough')) and a.get('name') not in blocks
+   axes.append({'name':a.get('name',''),'location':a.get('location',''),'index':a.get('index',0),
+                'type_name':a.get('type_name',''),'values':a.get('category_count'),
+                'usable':usable,'why':(a.get('reason') or '') if not usable else f"{a.get('category_count')}種の値を組に分けます",
+                'blocked':a.get('name') in blocks})
+  axes.sort(key=lambda x:(not x['usable'],x['index']))
+ out['row']['axes']=axes
+ good=[x for x in axes if x['usable']]
+ if good:
+  out['row']={'ok':True,'why':f'{len(good)}本の管理ポイントで行を絞れます','axes':axes}
+ elif sv:
+  out['row']={'ok':False,'why':'行を絞れる管理ポイントがありません（値が2種以上あるものが要ります）','axes':axes}
+ else:
+  out['row']={'ok':False,'why':'先に「RNEを調べる」で管理ポイントを読み込んでください','axes':axes,'need_survey':True}
+ # 行×列は両方が成り立つときだけ
+ if out['column']['ok'] and out['row']['ok']:
+  out['grid']={'ok':True,'why':'行と列の両方で分けます'}
+ else:
+  ng=[x for x,k in ((out['column']['why'],'column'),(out['row']['why'],'row')) if not out[k]['ok']]
+  out['grid']={'ok':False,'why':'／'.join(ng) or '成り立ちません'}
+ b=load_split_baseline(rp)
+ if b:
+  age=None
+  try:age=round((datetime.now()-datetime.fromisoformat(str(b.get('taken_at')))).total_seconds()/60.0,1)
+  except Exception:age=None
+  out['baseline']={'taken_at':b.get('taken_at'),'age_minutes':age,'rows':b.get('rows'),
+                   'elapsed':b.get('elapsed'),
+                   # 本番のデータは動く。古い基準と比べると、分け方は正しいのに
+                   # 「一致しません」になる（実測: 10分で41行が入れ替わった）。
+                   'stale':bool(age is not None and age>10)}
+ return out
+
 def _split_trial_run(data,c,job):
  """列分割を影実行して、分割なしの結果とバイト比較する。公開はしない。
 

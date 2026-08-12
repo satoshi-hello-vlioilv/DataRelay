@@ -29,7 +29,8 @@ from app import (
     APP_ID, APP_RELEASED_AT, APP_VERSION, APP_VERSION_TITLE, BASE, BUILD_VERSION, CHANGELOG,
     CLOSE_GRACE_SECONDS, DEFAULT_DLL_SEARCH_ROOTS, DOCS, INSPECT_ALL_ORDER, INSPECT_ALL_SPEC,
     INSPECT_TASK_SPECS, INSTANCE_ID, LOCAL_RUNTIME, LOG_FILTERS, LOG_PATH, LOG_READ_BYTES,
-    PORT, Path, ROW_AXIS_MODE_LABEL, _api_diag_cache_path, _dll_requirement, _log_api_exports,
+    PORT, Path, ROW_AXIS_MODE_LABEL, SPLIT_BATCH_MAX, _api_diag_cache_path, _dll_requirement,
+    _log_api_exports,
     _read_api_diag_cache, _run_inspect_endpoint, _split_stage_logged, _split_trial_run,
     _viewer_output_path, _write_api_diag_cache, active_workers, active_workers_lock, alerts,
     alerts_lock, api_readiness, axis_balance_scores, blocked_row_axes, calendar,
@@ -42,6 +43,7 @@ from app import (
     job_extra_formats, job_output_plan, job_schedule_preview, jsonify, last_run_info, load,
     load_column_cache, load_job_runs, load_rne_timing, load_split_trials, log, log_files,
     machine_path_view, normalize_output_format, normalize_split_mode, normalize_split_shape,
+    split_trial_options,
     path_setting_roles,
     os, output_extension, pick_anchor_columns, pick_row_axis_by_mode, plan_run_split,
     queue_snapshot, re, read_header_names, read_log_lines, read_preview_data,
@@ -558,36 +560,12 @@ def row_split_plan():
                 timing=timing,deferred=deferred,probe_error=probe_error,breakdown=breakdown,
                 link=split_link_profile(rp),elapsed=round(time.perf_counter()-started,2))
 
-@app.post('/api/column-split-trial')
-def column_split_trial_start():
- """影実行を開始する。すぐ戻り、進み具合は /api/column-split-trial/status で見る。"""
- data=request.get_json(force=True) or {};c=load()
- job=next((x for x in c['jobs'] if x['id']==data.get('job_id')),None) if data.get('job_id') else None
- if not job:return jsonify(ok=False,error='保存済みの対象を選んでください'),200
- if str(c['settings'].get('extract_engine') or 'api').lower()!='api':
-  return jsonify(ok=False,error='列分割はNavigator API方式のときに使用できます'),200
- with split_batch_lock:
-  if split_batch_state.get('running'):
-   return jsonify(ok=False,error=f'まとめて測るが進行中です（{split_batch_state.get("job")}）。終わるまでお待ちください',busy=True),200
- with split_trial_lock:
-  if split_trial_state.get('running'):
-   return jsonify(ok=False,error=f'影実行が進行中です（{split_trial_state.get("job")}）。終わるまでお待ちください',busy=True),200
-  # 前回の残りを持ち越さない。バーも片の一覧も、始めた時点では空でなければならない。
-  split_trial_state.clear()
-  split_trial_state.update(split_trial_blank(running=True,stage='準備中',job=job['name'],
-                          job_id=str(job.get('id') or ''),rne=str(job.get('rne') or ''),started=time.time()))
-  _split_stage_logged.update(text='',at=0.0)
- def worker():
-  try:
-   res=_split_trial_run(data,c,job)
-  except Exception as e:
-   log.exception('SPLIT_TRIAL_FAILED job=%s',job.get('name'));res={'ok':False,'error':str(e)}
-  with split_trial_lock:
-   split_trial_state.update(running=False,stage='完了',result=res,
-                            elapsed=round(time.time()-(split_trial_state.get('started') or time.time()),1))
- threading.Thread(target=worker,daemon=True,name='split-trial').start()
- return jsonify(ok=True,started=True,job=job['name'])
-
+# 影実行を1本だけ始める受け口（POST /api/column-split-trial）は v1.73.0 で無くした。
+# 測るものを選ぶ場所を1枚にまとめたので、1本だけ測るのは「1つだけ選んで
+# /api/split-trial-batch」と同じことになる。入口が2つあると、片方で走らせた結果が
+# 順位表に載らない・基準が別々に取られる、という食い違いが起きる。
+# 進み具合を見る status は残す。測定の「いま走っている1本」の中身は、
+# これまでどおりここから読む。
 @app.get('/api/column-split-trial/status')
 def column_split_trial_status():
  with split_trial_lock:
@@ -595,22 +573,36 @@ def column_split_trial_status():
  if st.get('running'):st['elapsed']=round(time.time()-(st.get('started') or time.time()),1)
  return jsonify(ok=True,**st)
 
+@app.get('/api/split-trial/options')
+def split_trial_options_api():
+ """この対象で、いま何が測れるのか。画面はこれを見て、選べないものを理由つきで塞ぐ。"""
+ c=load();job=next((x for x in c['jobs'] if x['id']==request.args.get('job_id')),None) if request.args.get('job_id') else None
+ if not job:return jsonify(ok=False,error='保存済みの対象を選んでください'),200
+ try:return jsonify(ok=True,**split_trial_options(job,c))
+ except Exception as e:
+  log.exception('SPLIT_TRIAL_OPTIONS_FAILED job=%s',job.get('name'));return jsonify(ok=False,error=str(e)),200
+
 @app.post('/api/split-trial-batch')
 def split_trial_batch_start():
  data=request.get_json(force=True) or {};c=load()
  job=next((x for x in c['jobs'] if x['id']==data.get('job_id')),None) if data.get('job_id') else None
  if not job:return jsonify(ok=False,error='保存済みの対象を選んでください'),200
  if str(c['settings'].get('extract_engine') or 'api').lower()!='api':
-  return jsonify(ok=False,error='まとめて測るのはNavigator API方式のときに使用できます'),200
+  return jsonify(ok=False,error='速さを測るのはNavigator API方式のときに使用できます'),200
  kind='axes' if str(data.get('kind') or 'methods')=='axes' else 'methods'
  try:items=split_batch_items(kind,data,job)
  except Exception as e:return jsonify(ok=False,error=str(e)),200
  measured=[x for x in items if x['shape']!='normal']
  if not measured:
   return jsonify(ok=False,error='測る対象がありません。分け方か軸を1つ以上選んでください'),200
+ # 上限を超えたら黙って切り落とさない。画面が「9本測ります」と言ったのに8本しか
+ # 走らないと、出てこなかった条件を利用者が探すことになる。
+ if len(measured)>SPLIT_BATCH_MAX:
+  return jsonify(ok=False,error=f'一度に測れるのは{SPLIT_BATCH_MAX}本までです'
+                              f'（{len(measured)}本を指定されました）。軸か分け方を減らしてください'),200
  with split_batch_lock,split_trial_lock:
   if split_batch_state.get('running'):
-   return jsonify(ok=False,error=f'まとめて測るが進行中です（{split_batch_state.get("job")}）。終わるまでお待ちください',busy=True),200
+   return jsonify(ok=False,error=f'速さの測定が進行中です（{split_batch_state.get("job")}）。終わるまでお待ちください',busy=True),200
   if split_trial_state.get('running'):
    return jsonify(ok=False,error=f'影実行が進行中です（{split_trial_state.get("job")}）。終わるまでお待ちください',busy=True),200
   split_batch_state.clear()
@@ -650,6 +642,10 @@ def split_trial_batch_start():
        run_speedup=res.get('run_speedup'),axis_seconds=res.get('axis_seconds'),
        identical=True if item['shape']=='normal' else bool(res.get('identical')),
        rows=res.get('rows'),detail=res.get('how') or '',
+       # 軸を名指ししないで測ったときは、サーバーが選んだ軸をここで持ち帰る。
+       # 持ち帰らないと「自動で測ったが、何の軸だったか分からない」ままになり、
+       # 「本番で使う」を押しても別の軸が選ばれうる（利用者からの指摘）。
+       axis_used=res.get('row_column') or '',
        stale_baseline=bool(res.get('stale_baseline')),
        # 「一致しません」は分け方のせいだと読める。基準が古いだけのときはそう言う。
        error=('' if (item['shape']=='normal' or res.get('identical'))
@@ -686,7 +682,7 @@ def split_trial_batch_stop():
  """走っている1件は最後まで測る。途中で切ると、その1件が測れていないのか
  遅いのかが分からなくなるため。次の1件へ進む前に止める。"""
  with split_batch_lock:
-  if not split_batch_state.get('running'):return jsonify(ok=False,error='まとめて測るは動いていません'),200
+  if not split_batch_state.get('running'):return jsonify(ok=False,error='速さの測定は動いていません'),200
   split_batch_state['stop']=True
  log.info('SPLIT_BATCH_STOP_REQUEST job=%s',split_batch_state.get('job'))
  return jsonify(ok=True,stopping=True)
@@ -816,7 +812,7 @@ def background_tasks():
   bt=dict(split_batch_state)
  if bt.get('running'):
   cur=next((x for x in (bt.get('items') or []) if x.get('state')=='実行中'),{})
-  out.append({'type':'batch','kind':'batch','title':'まとめて測る',
+  out.append({'type':'batch','kind':'batch','title':'速さを測る',
               'stage':f"{bt.get('index')}/{bt.get('total')} {cur.get('label') or '準備中'}",
               'job':bt.get('job') or '','job_id':bt.get('job_id') or '','rne':bt.get('rne') or '',
               'percent':round(max(0,(int(bt.get('index') or 1)-1))/max(1,int(bt.get('total') or 1))*100,1),
@@ -824,7 +820,7 @@ def background_tasks():
  with split_trial_lock:
   st=dict(split_trial_state)
  if st.get('running') and not bt.get('running'):
-  out.append({'type':'trial','kind':'trial','title':'速さを試す（影実行）',
+  out.append({'type':'trial','kind':'trial','title':'速さを測る（影実行）',
               'stage':st.get('stage') or '','job':st.get('job') or '','job_id':st.get('job_id') or '',
               'rne':st.get('rne') or '','percent':float(st.get('percent') or 0),
               'elapsed':round(time.time()-(st.get('started') or time.time()),1)})

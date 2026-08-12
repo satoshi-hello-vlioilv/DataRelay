@@ -4,5 +4,5 @@
 navi_changelog.py にある ―― 800行の読みものなので、それを必要としない経路
 （抽出ワーカー）が読み込まずに済むように分けてある。
 """
-APP_VERSION='1.72.0'; APP_VERSION_TITLE='基準がこける／速度表示が合わない／軸の読み直しに45秒、を直した'; APP_RELEASED_AT='2026-08-19'
+APP_VERSION='1.73.0'; APP_VERSION_TITLE='速さを測る画面を1枚にまとめた'; APP_RELEASED_AT='2026-08-19'
 BUILD_VERSION=f'{APP_VERSION}-web'
