@@ -904,10 +904,26 @@ def resolve_axis_now(job,cfg,rne_path,parts,prefer='',hint=None,line='',choice=N
  choice に軸の決め方（mode/index/name）を渡すと、その方針で選ぶ。
  """
  out={'axis':None,'ranked':[],'error':'','parts':0,'drift':None,'why':''}
+ ch=dict(choice or {})
+ if prefer:ch={'mode':'name','name':prefer}      # 名前を直接渡されたらそれが最優先
+ mode=normalize_row_axis_mode(ch.get('mode'))
+ # 使う軸が名前で決まっているなら、全部の管理ポイントを読み直す必要はない。
+ # どこにあるか（表側の何番目か）は下調べに載っていて、その下調べはRNEの署名で
+ # 確かめてある。値のほうは、このあとどのみち読み直す。
+ #   実測 2026-08-12 SIKALOT.RNE: 64本の読み直しに33.8秒。そのあと使う1本の値を
+ #   読むのに8.2秒。「品質ｺｰﾄﾞ」と名前で決まっているのに、どれを使うか選ぶためだけに
+ #   33.8秒を払っていた。行分割の見かけ1.39倍が、この分で0.76倍まで落ちていた。
+ want=str(ch.get('name') or '').strip() if mode=='name' else ''
+ pinned=dict(hint) if (want and hint and str(hint.get('name') or '').strip()==want) else None
  try:
   user,pw,server,_=creds(resolve_path(cfg['symnavim_conf']))
-  ins=run_inspect_worker(dict(job,_read_names=True),cfg,user,pw,server,['axes'],
-                         timeout=int(cfg['settings'].get('split_trial_timeout_seconds',1800) or 1800))
+  if pinned is None:
+   ins=run_inspect_worker(dict(job,_read_names=True),cfg,user,pw,server,['axes'],
+                          timeout=int(cfg['settings'].get('split_trial_timeout_seconds',1800) or 1800))
+  else:
+   ins={'ok':True,'axes':[pinned]}
+   log.info('AXIS_NOW_PINNED rne=%s 軸=%s（%s%s番目）名前で決まっているので、ほかの管理ポイントは読み直しません',
+            rne_path,pinned.get('name'),pinned.get('location'),int(pinned.get('index') or 0)+1)
  except Exception as e:
   out['error']=str(e);log.exception('AXIS_NOW_FAILED rne=%s',rne_path);return out
  if not ins.get('ok'):
@@ -915,9 +931,6 @@ def resolve_axis_now(job,cfg,rne_path,parts,prefer='',hint=None,line='',choice=N
  # 「2つに割れるか」で選び、頼まれた数に届くかは選んだあとに落として合わせる（axis_usable_parts）。
  # ここで parts を要求すると、4分割に届かないだけの良い軸を捨てて悪い軸へ流れてしまう。
  got=ins.get('axes') or []
- ch=dict(choice or {})
- if prefer:ch={'mode':'name','name':prefer}      # 名前を直接渡されたらそれが最優先
- mode=normalize_row_axis_mode(ch.get('mode'))
  # 散らばりは常に測る。どの決め方でも「値が空の行がある軸」を避けたいので必ず要る。
  # 直近の出力を1回読むだけなので、費用は無視できる。
  scores=axis_balance_scores(job,cfg,[a.get('name') for a in got])
@@ -925,6 +938,21 @@ def resolve_axis_now(job,cfg,rne_path,parts,prefer='',hint=None,line='',choice=N
  # 一度分かったものは覚えておく（KVR52020 検索条件式が長すぎる）。
  blocked=blocked_row_axes(rne_path)
  axis,ranked,why=pick_row_axis_by_mode(got,max(2,int(parts or 2)),mode,ch.get('index') or 1,ch.get('name') or '',scores,blocked)
+ if pinned is not None and not axis:
+  # 名指しした軸が、いまは使えない（値が1種になった・サーバーに拒否された等）。
+  # 速さのために間違った軸で分けるより、読み直して選び直す。
+  log.info('AXIS_NOW_PINNED_FALLBACK rne=%s 軸=%s が使えないため、全部の管理ポイントを読み直します（%s）',
+           rne_path,pinned.get('name'),why)
+  try:
+   ins=run_inspect_worker(dict(job,_read_names=True),cfg,user,pw,server,['axes'],
+                          timeout=int(cfg['settings'].get('split_trial_timeout_seconds',1800) or 1800))
+  except Exception as e:
+   out['error']=str(e);log.exception('AXIS_NOW_FAILED rne=%s',rne_path);return out
+  if not ins.get('ok'):
+   out['error']=ins.get('error') or '管理ポイントを読み取れませんでした';return out
+  got=ins.get('axes') or []
+  scores=axis_balance_scores(job,cfg,[a.get('name') for a in got])
+  axis,ranked,why=pick_row_axis_by_mode(got,max(2,int(parts or 2)),mode,ch.get('index') or 1,ch.get('name') or '',scores,blocked)
  if blocked:log.info('ROW_AXIS_BLOCKS rne=%s 使わない軸=%s',rne_path,'、'.join(blocked))
  out['ranked']=ranked;out['why']=why
  if scores:
@@ -3037,7 +3065,10 @@ def _prepare_row_parts(j,cfg,rp,chosen,line=''):
  update_parallel_line(line,job=j['name'],job_id=j['id'],state='行の軸を読み直し',percent=line_percent('execute',0),
                       detail=f"「{rowspec.get('axis_name','')}」のいまの値を読みます",phase='execute')
  started=time.perf_counter()
- now=resolve_axis_now(j,cfg,rp,parts,'',hint=hint,choice=choice,line=line)
+ # 裏付けの取れた割り当てが軸を名指ししているなら、それをそのまま使う。速さを測ったのは
+ # その軸なので選び直す理由がなく、全部の管理ポイントを読み直す時間（実測33.8秒）も要らない。
+ # その軸がいま使えなければ、resolve_axis_now が読み直して選び直す。
+ now=resolve_axis_now(j,cfg,rp,parts,str(rowspec.get('axis_name') or ''),hint=hint,choice=choice,line=line)
  elapsed=time.perf_counter()-started
  if not now.get('axis'):
   raise RuntimeError(f"行の軸を読み直せませんでした: {now.get('error')}")
@@ -4553,14 +4584,16 @@ def split_batch_items(kind,data,job):
    items.append({'key':shape,'label':split_how_label(shape,parts or 2,row_parts),'shape':shape,'axis':'',
                  'why':{'column':'列を分けて横につなぐ','row':'行を絞って縦に積む',
                         'grid':'行と列の両方で分ける'}[shape]})
- for x in items:x.update(state='待機',elapsed=None,speedup=None,identical=None,rows=None,error='',detail='')
+ for x in items:x.update(state='待機',elapsed=None,speedup=None,run_speedup=None,axis_seconds=None,identical=None,rows=None,error='',detail='')
  return items[:SPLIT_BATCH_MAX+1]
 
 def split_batch_run_data(item,data):
  """1件ぶんの影実行に渡す指定。基準は1回だけ測り、以降はそれと比べる。"""
  d={'job_id':data.get('job_id'),'parts':int(data.get('parts') or 0),
     'row_parts':max(2,min(8,int(data.get('row_parts') or 2))),'race':False}
- if item['shape']=='normal':return dict(d,mode='column',measure='normal')
+ # 基準は「分割しないで1回測る」だけ。列分割として投げると、外せる列が無いRNEで
+ # 列の条件に引っかかって基準そのものが測れない。分け方は指定しない。
+ if item['shape']=='normal':return dict(d,mode='normal',measure='normal')
  d.update(mode=item['shape'],measure='split')
  if item.get('axis'):d.update(row_axis_mode='name',row_axis_name=item['axis'],row_axis_index=1)
  else:

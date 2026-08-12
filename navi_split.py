@@ -603,7 +603,12 @@ def _split_trial_run(data,c,job):
  mode=str(data.get('mode') or 'column').lower()
  if mode not in ('column','row','grid'):mode='column'
  measure=normalize_measure(data.get('measure'),bool(data.get('race')))
- uses_columns=mode!='row'          # 行分割は列を1本も外さない。列まわりの条件は課さない。
+ # 列の条件を課すのは「実際に列を外すとき」だけ。基準（分割なしを1回測るだけ）と行分割は
+ # 列を1本も外さないので、外せる列が無くても走れる。
+ #   実測 2026-08-12: removable=0 のRNEで基準が mode=column として投げられ、
+ #   「分割して取得できる列がありません」で基準そのものが失敗していた。基準が無いと、
+ #   ほかの分け方が何と比べた数字なのか分からなくなる（利用者からの指摘そのもの）。
+ uses_columns=(mode!='row' and measure!='normal')
  # 走り出す前に断るときは、必ず理由をログへ残す。以前は黙って戻っていたため、
  # 画面には短い文が出るだけで、なぜ止まったのかがログから追えなかった。
  def stop(reason,**kw):
@@ -698,8 +703,10 @@ def _split_trial_run(data,c,job):
             row_axis.get('category_count'),row_axis.get('period'))
  work=LOCAL_RUNTIME/('split_trial_'+datetime.now().strftime('%Y%m%d_%H%M%S'));work.mkdir(parents=True,exist_ok=True)
  user,pw,server,_=creds(resolve_path(c['symnavim_conf']))
+ # 基準は分け方を持たない。mode= に column と出ると「列分割を試して失敗した」と読めてしまう。
  log.info('SPLIT_TRIAL_START rne=%s job=%s mode=%s 列%s分割 行%s分割 columns=%s removable=%s keys=%s transfer_ratio=%.2f',
-          rp,job['name'],mode,len(plan) if mode!='row' else 1,row_parts if mode!='column' else 1,
+          rp,job['name'],('normal（分割なしの基準）' if measure=='normal' else mode),
+          len(plan) if mode!='row' else 1,row_parts if mode!='column' else 1,
           len(columns),len(removable),len(keys),split_transfer_ratio(columns,removable,len(plan) if mode!='row' else 1))
  try:
   # 1) 分割なし。比較の基準であり、所要時間の基準でもある。
@@ -947,6 +954,20 @@ def _split_trial_run(data,c,job):
            cmp.get('diff_rows'),cmp.get('diff_cells'),cmp.get('only_in_a'),cmp.get('only_in_b'),cmp.get('reason'))
   for sm in (cmp.get('samples') or [])[:3]:
    log.info('SPLIT_TRIAL_DIFF key=%s %s',sm['key'],'; '.join(f"{c['name']}: 分割なし={c['a']!r} 結合={c['b']!r}" for c in sm['columns']))
+  # 保存済みの基準を使い回すと、時間がたつほど本番のデータが動く。過不足が両方向とも
+  # 同数でセルの差が0なら、それは分け方の問題ではなく「基準が古い」だけ。
+  #   実測 2026-08-12: 基準 22:35:52 に対し行分割 22:46〜22:49。only_normal=41 /
+  #   only_merged=41 / diff_cells=0 で、良い結果（1.39倍）が捨てられていた。
+  baseline_age=None
+  if baseline and baseline.get('taken_at'):
+   try:baseline_age=max(0.0,(datetime.now()-datetime.fromisoformat(str(baseline['taken_at']))).total_seconds())
+   except Exception:baseline_age=None
+  stale_baseline=bool(baseline and not identical
+                      and int(cmp.get('only_normal') or 0)==int(cmp.get('only_merged') or 0)
+                      and int(cmp.get('only_normal') or 0)>0
+                      and not int(cmp.get('diff_cells') or 0)
+                      and not (cmp.get('missing_axis') or {}).get('concentrated')
+                      and not (cmp.get('missing_axis') or {}).get('all_blank'))
   mx=cmp.get('missing_axis')
   if mx:
    # 欠けた行が1つの値に集中していれば絞り方の取りこぼし、ばらけていれば実行中にデータが動いただけ。
@@ -1008,6 +1029,11 @@ def _split_trial_run(data,c,job):
   else:
    log.info('SPLIT_PLAN_NOT_SAVED rne=%s %s identical=%s speedup=%s 結果が一致しないため保存しません（理由: %s）',
             rp,split_how_label(mode,col_parts,row_parts),identical,f'{speedup:.2f}' if speedup else '-',cmp.get('reason'))
+   if stale_baseline:
+    log.warning('SPLIT_TRIAL_STALE_BASELINE rne=%s 基準を取ってから%.0f分たっています。'
+                '過不足が両方向とも同数（%s行）でセルの差は0なので、分け方ではなく'
+                '本番のデータが動いたと考えられます。基準を測り直してください',
+                rp,(baseline_age or 0)/60.0,cmp.get('only_normal'))
   lp=split_link_profile(rp)
   log.info('SPLIT_LINK rne=%s 回線の上限=%s KB/s 直近の単一速度=%s KB/s 伸びしろ=%s倍 有効な分割数=%s 実測=%s',
            rp,lp.get('capacity_kbs'),lp.get('base_kbs'),lp.get('headroom'),split_useful_parts(lp),
@@ -1019,6 +1045,7 @@ def _split_trial_run(data,c,job):
                  baseline=(baseline if base.get('stored') else None),
                  rne=str(rp),job=job['name'],parts=pieces,identical=identical,mode=mode,
                  axis_seconds=axis_seconds or None,run_speedup=round(run_speedup,2) if run_speedup else None,
+                 stale_baseline=stale_baseline,baseline_age_seconds=round(baseline_age,1) if baseline_age else None,
                  shape_label=split_shape_label(mode,col_parts,row_parts),
                  row_parts=row_parts if mode!='column' else 0,column_parts=col_parts,how=split_how_label(mode,col_parts,row_parts),
                  row_column=(row_axis or {}).get('name',''),row_axis=(dict(row_axis,categories=(row_axis.get('categories') or [])[:12]) if row_axis else None),

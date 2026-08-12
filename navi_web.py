@@ -639,12 +639,22 @@ def split_trial_batch_start():
       elapsed=round(time.time()-(split_trial_state.get('started') or time.time()),1))
    with split_batch_lock:
     if res.get('ok'):
+     # 経過時間と倍率は、必ず対応する組で持たせる。
+     #   speedup   … 分割なし ÷ この経過時間（画面の秒数と割り算が合う）
+     #   run_speedup … 本番で毎回かかる「軸の読み直し」も足した実力。自動はこちらで決める
+     # 以前は「見かけの秒数」と「実力の倍率」を並べていたため、55.3秒と0.76倍が並び、
+     # 76.6÷55.3=1.39 と暗算しても画面の数字にならなかった（利用者からの指摘）。
      item.update(state='完了',
        elapsed=res.get('normal_elapsed') if item['shape']=='normal' else res.get('split_elapsed'),
-       speedup=res.get('run_speedup') or res.get('speedup'),
+       speedup=res.get('speedup'),
+       run_speedup=res.get('run_speedup'),axis_seconds=res.get('axis_seconds'),
        identical=True if item['shape']=='normal' else bool(res.get('identical')),
        rows=res.get('rows'),detail=res.get('how') or '',
-       error='' if (item['shape']=='normal' or res.get('identical')) else '結果が一致しませんでした')
+       stale_baseline=bool(res.get('stale_baseline')),
+       # 「一致しません」は分け方のせいだと読める。基準が古いだけのときはそう言う。
+       error=('' if (item['shape']=='normal' or res.get('identical'))
+              else ('基準が古いため比べられません（基準を測り直してください）' if res.get('stale_baseline')
+                    else '結果が一致しませんでした')))
     else:
      item.update(state='失敗',error=str(res.get('error') or '失敗しました'))
     split_batch_state.update(items=items)

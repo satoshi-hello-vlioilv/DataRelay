@@ -1,4 +1,4 @@
-const UI_BUILD='1.71.0-web';
+const UI_BUILD='1.72.0-web';
 let cfg,editing=null,editingRule=null,sortDir=1,scheduleInfo={},rowLive={},rowQueue={},statusFailCount=0,serverLostShown=false;const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)],E=s=>String(s??'').replace(/[&<>"']/g,x=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[x]));const uid=()=>crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random();function toast(t){$('#toast').textContent=t;$('#toast').style.display='block';setTimeout(()=>$('#toast').style.display='none',2500)}/* 設定は変えた瞬間に保存する。保存ボタンの押し忘れで、画面に見えている設定と
    実際に使われる設定が食い違うことがあったため、押す操作そのものを無くした。 */
 let saveTimer=null,saveSeq=0,saveRetry=0;
@@ -2499,12 +2499,17 @@ function allinFillAxes(axes){
  });
  allinRefreshPlan();
 }
+/* 秒数と倍率は、必ず割り算の合う組で出す。以前は「見かけの秒数」と「軸の読み直しを
+   含めた実力の倍率」を並べていたため、55.3秒と0.76倍が並び、76.6÷55.3=1.39 と
+   暗算しても画面の数字にならなかった。実力は別の行として、理由ごと添える。 */
 function allinItemRow(x){
  let tone=x.state==='完了'?(x.identical===false?'is-ng':'is-ok'):x.state==='失敗'?'is-ng':
           x.state==='実行中'?'is-run':x.state==='中止'?'is-off':'';
+ let real=(x.run_speedup&&x.axis_seconds)?
+   `<small class="ai-real">本番では軸の読み直し ${fmtSeconds(x.axis_seconds)} が毎回かかるので、実力は <b>${x.run_speedup}倍</b></small>`:'';
  return `<div class="ai-item ${tone}"><i>${E(x.state)}</i><b>${E(x.label)}</b>`
   +`<span>${x.elapsed?fmtSeconds(x.elapsed):E(x.error||x.why||'')}</span>`
-  +`${x.speedup?`<em>${x.speedup}倍</em>`:'<em></em>'}</div>`;
+  +`${x.speedup?`<em>${x.speedup}倍</em>`:'<em></em>'}${real}</div>`;
 }
 function allinRender(d){
  let box=$('#allin-state'),res=$('#allin-result');
