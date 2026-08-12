@@ -4,3 +4,10 @@ __pycache__/
 # Linuxでの検証時だけできる複製。Windowsでは config/ と同じ場所なので、
 # 追跡済みの config/app_settings.sqlite3 には影響しない。
 /Config/app_settings.sqlite3
+
+# 接続先と認証情報（SymNaviUSERID／SymNaviPASSWD／SymNaviServer）が入る。
+# 中身はPC・環境ごとに違うので、リポジトリでは持たない。
+# symnavim.conf.sample を複製して、各環境で実際の値を書く。
+# Windowsでは config/ と Config/ が同じ場所を指すため、両方の綴りを書く。
+config/symnavim.conf
+Config/symnavim.conf

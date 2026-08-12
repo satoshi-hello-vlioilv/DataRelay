@@ -2288,6 +2288,9 @@ enabled=yes
 注意:
 - 使用していない接続セクションは追加しないでください。
 - パスワードは既存のsymnavim.confと同じ管理・アクセス権で保護してください。
+- symnavim.confはリポジトリで管理しません（.gitignoreで除外）。認証情報が入るためです。
+  新しい環境では config/symnavim.conf.sample を symnavim.conf という名前で複製し、
+  実際の値を書いてください。
 - エラー時はログのserver_message_rcとserver_messageを確認してください。
 
 
