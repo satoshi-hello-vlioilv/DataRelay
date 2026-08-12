@@ -3775,7 +3775,9 @@ def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,
  # ワーカー1本ぶんの起動代。app.pyはBOX上にあるため、環境によってはここだけで数秒かかる。
  try:_worker_spawn_at=float(os.environ.get('NAVI_WORKER_SPAWN_AT') or 0)
  except Exception:_worker_spawn_at=0
- if _worker_spawn_at:log.info('WORKER_READY line=%s job=%s spawn_to_import=%.2fs import_to_job=%.2fs note=interpreter_init+module_import(BOX)',line_name,j.get('name'),_APP_IMPORT_DONE_AT-_worker_spawn_at,time.time()-_APP_IMPORT_DONE_AT)
+ # 版も出す。BOX上のapp.pyを差し替えた直後は、親と子で違う版が動き得る
+ # （親は差し替え前に読み込み済み、子はこれから読む）。後から突き合わせられるようにする。
+ if _worker_spawn_at:log.info('WORKER_READY line=%s job=%s version=%s spawn_to_import=%.2fs import_to_job=%.2fs note=interpreter_init+module_import(BOX)',line_name,j.get('name'),BUILD_VERSION,_APP_IMPORT_DONE_AT-_worker_spawn_at,time.time()-_APP_IMPORT_DONE_AT)
  try:
   _preflight_started=time.perf_counter()
   j['output_file']=resolve_output_filename(j,cfg); log.info('OUTPUT_NAME line=%s job=%s mode=%s pattern=%s resolved_file=%s',line_name,j.get('name'),j.get('naming_mode','fixed'),j.get('output_pattern',''),j['output_file'])
@@ -3793,6 +3795,10 @@ def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,
   # 同時に出す形式があるなら、共通の中間データ(CSV)を必ず通す。XLSXの直接受信は速いが、
   # 受け取ったXLSXからは他の形式へ作り直せないので、1回の抽出で複数形式を出せなくなる。
   extras=job_extra_formats(j)
+  # ACCDBはAccessを起動して書き込む。その起動だけで数秒かかる（実測 2026-08-12: 2.21s）。
+  # 抽出（十数秒）と同時に温めておけば、変換に入るころには終わっている。
+  # 直列の経路では以前からやっていたが、並列ワーカーでは抜けていた。
+  accdb_prewarm=prewarm_access_async('parallel_worker_accdb') if (fmt=='accdb' or 'accdb' in extras) else None
   allow_direct_xlsx=(fmt=='xlsx' and not extras)
   common_intermediate='API_DIRECT_XLSX' if allow_direct_xlsx else 'CSV'
   planned=db if allow_direct_xlsx else dde_work/f'navi_{job_index}_{stamp}.csv'
@@ -3915,6 +3921,9 @@ def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,
    t=phase_log('format_conversion',job=j['name'],line=line_name,format=fmt);nr,nc=export_data(intermediate,db,j,bool(cfg['settings']['reject_zero_rows']),expected_rows,expected_cols,data=shared);phase_log('format_conversion',t,job=j['name'],line=line_name,format=fmt,rows=nr,columns=nc)
   update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='公開',percent=line_percent('publish',0),detail=f'{Path(target).name} へ公開中',phase='publish');t=phase_log('publish',job=j['name'],line=line_name);pub=publish(db,target,backup,int(cfg['settings']['backup_generations']),backup_enabled=bool(cfg['settings'].get('backup_enabled',True)),retention_days=int(cfg['settings'].get('backup_retention_days',30)),generation_limit_enabled=bool(cfg['settings'].get('backup_generation_limit_enabled',True)),backup_mode=str(cfg['settings'].get('backup_mode','generations')));phase_log('publish',t,job=j['name'],line=line_name,published=pub['published'])
   if digest:remember_published(target,digest,nr,nc)
+  if accdb_prewarm is not None:
+   join_started=time.perf_counter();alive=accdb_prewarm.is_alive();accdb_prewarm.join(timeout=2.0)
+   log.info('ACCDB_PREWARM_JOIN line=%s alive_before=%s alive_after=%s elapsed=%.2fs',line_name,alive,accdb_prewarm.is_alive(),time.perf_counter()-join_started)
   extra_results=[]
   if extras:
    update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='同時出力',percent=line_percent('publish',0.6),detail=f'あと{len(extras)}形式を同じデータから作成中',phase='publish')
@@ -6140,7 +6149,8 @@ if __name__=='__main__':
  try:_spawn_at=float(os.environ.get('NAVI_APP_SPAWN_AT') or 0)
  except Exception:_spawn_at=0
  if _spawn_at:log.info('APP_IMPORT_ELAPSED spawn_to_import=%.2fs note=interpreter_init+module_import+source_compile(BOX)',_APP_IMPORT_DONE_AT-_spawn_at)
- startup_clock=time.perf_counter();log.info('APP_START source=%s local_root=%s pycache=%s',BASE,LOCAL_ROOT,os.environ.get('PYTHONPYCACHEPREFIX',''))
+ # どの版が動いているのかは、後からログだけを見て分かる必要がある。起動のいちばん最初に出す。
+ startup_clock=time.perf_counter();log.info('APP_START version=%s build=%s released=%s source=%s local_root=%s pycache=%s',APP_VERSION,BUILD_VERSION,APP_RELEASED_AT,BASE,LOCAL_ROOT,os.environ.get('PYTHONPYCACHEPREFIX',''))
  _t=time.perf_counter(); shutil.rmtree(LOCAL_ROOT/'work',ignore_errors=True); (LOCAL_ROOT/'work').mkdir(parents=True,exist_ok=True); log.info('APP_START_WORKCLEAN elapsed=%.2fs',time.perf_counter()-_t)
  # 起動待ちモーダル(loading.html)は file:// から開くので、サーバーが立つまで版が分からない。
  # ここに置いておけば、ランチャーが次回の起動時に画面へ差し込める。
