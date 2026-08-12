@@ -4128,8 +4128,13 @@ def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=No
   startup_started=time.perf_counter();cfg_started=time.perf_counter();cfg=load();log.info('STARTUP_PHASE phase=config_load elapsed=%.2fs',time.perf_counter()-cfg_started);jobs=[j for j in cfg['jobs'] if j.get('enabled') and (not job_ids or j['id'] in job_ids)]
   if not jobs:raise ValueError('実行対象がありません')
   selection_elapsed=time.perf_counter()-cfg_started;first_job=jobs[0]; first_fmt=normalize_output_format(first_job.get('output_format'),first_job.get('output_file')); first_target=resolve_path(first_job.get('output_folder') or cfg['default_output_folder'])/canonical_output_file(first_job.get('output_file'),first_fmt); progress.started=time.time(); requested_lines=max(1,min(int(parallel_lines_override or 1),len(jobs))); execution_mode='parallel' if str(cfg['settings'].get('extract_engine') or 'api').lower()=='api' else 'serial'; set_status(run_id=run_id or uuid.uuid4().hex,execution_mode=execution_mode,requested_lines=requested_lines,parallel_mode=(execution_mode=='parallel'),parallel_lines=[],queue_total=0,queue_waiting=0,queue_active=0,queue_completed=0,queue_completed_ids=[],queue_failed_ids=[],queue_running_ids=[],queue_waiting_ids=[j['id'] for j in jobs],job_results=[],parallel_max_lines=(requested_lines if execution_mode=='parallel' else 0),parallel_speedup=0,batch_job_ids=[j['id'] for j in jobs]); set_status(running=True,current='準備中',current_job_id=first_job['id'],current_job_name=first_job['name'],current_index=1,total_jobs=len(jobs),completed_jobs=0,failed_jobs=0,output_format=first_fmt,output_file=canonical_output_file(first_job.get('output_file'),first_fmt),output_target=str(first_target),started_at=datetime.now().isoformat(timespec='seconds'),elapsed_seconds=0,symnavi_window='起動待ち',step='prepare',step_label='設定を確認しています',step_percent=3,last_result='実行中',error_detail='',job_errors=[]); log.info('BUILD_VERSION=%s',BUILD_VERSION); log.info('処理開始 trigger=%s jobs=%s',trigger,[j['rne'] for j in jobs]);log.info('STARTUP_PHASE phase=config_and_job_selection elapsed=%.2fs',selection_elapsed)
+  # 何が要るかの判断は path_setting_roles に1本化する。画面が「いまは不要」と出している
+  # ものを実行時にだけ必須にすると、直しようのない停止になる（v1.60.0〜v1.66.1は
+  # symnavim.def が無いだけでAPI方式でも止まっていた）。
+  _roles=path_setting_roles(cfg)
   for k in ('symnavi_exe','symnavim_conf','symnavim_def'):
-   if not resolve_path(cfg[k]).is_file():raise FileNotFoundError(f'{k}がありません: {cfg[k]}')
+   if _roles.get(k,('required',''))[0]!='required':continue
+   if not resolve_path(cfg[k]).is_file():raise FileNotFoundError(f'{PATH_SETTING_LABEL.get(k,k)}がありません: {cfg[k]}')
   cred_started=time.perf_counter();user,pw,server,_=creds(resolve_path(cfg['symnavim_conf']));log.info('STARTUP_PHASE phase=credential_load elapsed=%.2fs',time.perf_counter()-cred_started);path_started=time.perf_counter();rne_root=resolve_path(cfg['rne_folder']);backup=resolve_path(cfg['backup_folder']);dde_work=dde_staging_folder();log.info('STARTUP_PHASE phase=path_prepare elapsed=%.2fs total=%.2fs',time.perf_counter()-path_started,time.perf_counter()-startup_started);log.info('共通一時保存先: %s',dde_work)
   # rne_folder設定は使われていない場合がある（対象ごとのrne_pathが優先）。実際にRNEがある場所を測る。
   try:probe_rne_dir=resolve_rne_path(jobs[0],cfg).parent
@@ -5934,8 +5939,18 @@ def path_setting_roles(c):
    ('fallback',nobody('個別のパスで解決できるため、この設定は使っていません'))
  roles['default_output_folder']=('required',f'{len(out_users)}件の対象がこの場所へ出力します') if out_users else \
    ('fallback',nobody('出力先を個別に持っています'))
- dde=('required','DDE互換方式で使います') if engine=='dde' else ('unused','いまの抽出方式（Navigator API）では使いません')
- for k in ('symnavi_exe','symnavim_conf','symnavim_def'):roles[k]=dde
+ # 接続に関わる3つは、まとめて「DDEのもの」にはできない。使われ方がそれぞれ違う。
+ # v1.60.0では3つ一括でDDE専用にしてしまい、API方式のときに symnavim.conf まで
+ # 「いまは不要」と出ていた。実際にはこれが唯一の認証情報の出どころで、無ければ
+ # APIセッションを開けない（起動ログの credential_load はこの読み取り）。
+ roles['symnavim_conf']=('required','接続先と認証情報（利用者ID・パスワード・サーバー）をここから読みます。API・DDEのどちらでも要ります')
+ # SymNavi.exe：DDEでは起動する本体そのもの。APIでは起動しないが、SymNaviA.dllが
+ # 検索範囲で見つからなかったときに限り、この隣を最後に探す（candidate_dllsの終端）。
+ roles['symnavi_exe']=('required','SymfoNaviを起動してDDEでつなぎます') if engine=='dde' else \
+   ('fallback','APIでは起動しません。SymNaviA.dllが見つからないときだけ、この隣を探す手がかりに使います')
+ # symnavim.def：このアプリは一度も読んでいない。DDEではSymfoNavi側が使う。
+ roles['symnavim_def']=('required','DDE互換方式でSymfoNavi側が使います') if engine=='dde' else \
+   ('unused','いまの抽出方式（Navigator API）では使いません')
  roles['navigator_api_dll']=(('fallback','手動で指定したときだけ使います。空なら探す範囲から自動で選びます')
    if engine=='api' else ('unused','いまの抽出方式（DDE互換）では使いません'))
  roles['accdb_template']=(('required',f'{len(accdb)}件の対象がACCDBで出力します') if accdb
@@ -5972,6 +5987,11 @@ def machine_path_view():
    state='ok'
    if is_pc_path(raw):note='このPCのローカル領域（PCごとに実体が変わります）'
    if writable is False:state='warn';note='書き込めません（権限を確認してください）'
+   elif key=='symnavim_conf':
+    # 認証ファイルは「在る」だけでは足りない。読めて、必要な3項目が揃っていて初めて接続できる。
+    # 値そのものは出さない ―― どのセクションを使うかだけを言う。
+    try:*_,sec=creds(real);note=f'読み取れます（[{sec}] の利用者ID・パスワード・サーバーを使います）'
+    except Exception as e:state='ng';note=f'ファイルはありますが、読み取れません: {e}'
   elif role=='required':
    state='ng';note=('フォルダーがありません。'+why if kind=='folder' else 'ファイルがありません。'+why)
   elif role=='unused':

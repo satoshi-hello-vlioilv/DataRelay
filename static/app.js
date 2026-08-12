@@ -1,4 +1,4 @@
-const UI_BUILD='1.66.1-web';
+const UI_BUILD='1.67.0-web';
 let cfg,editing=null,editingRule=null,sortDir=1,scheduleInfo={},rowLive={},rowQueue={},statusFailCount=0,serverLostShown=false;const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)],E=s=>String(s??'').replace(/[&<>"']/g,x=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[x]));const uid=()=>crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random();function toast(t){$('#toast').textContent=t;$('#toast').style.display='block';setTimeout(()=>$('#toast').style.display='none',2500)}/* 設定は変えた瞬間に保存する。保存ボタンの押し忘れで、画面に見えている設定と
    実際に使われる設定が食い違うことがあったため、押す操作そのものを無くした。 */
 let saveTimer=null,saveSeq=0,saveRetry=0;
@@ -488,7 +488,7 @@ $$('#r-time-wrap .time-chip').forEach(b=>b.onclick=()=>{if($('#r-time'))$('#r-ti
 if($('#rule-editor')){$('#rule-editor').addEventListener('input',onRuleFormChange);$('#rule-editor').addEventListener('change',onRuleFormChange)}
 $('#rule-apply').onclick=e=>{e.preventDefault();editingRule.name=$('#r-name').value.trim();editingRule.enabled=$('#r-enabled').checked;editingRule.type=$('#r-type').value;editingRule.time=$('#r-time').value;if(editingRule.type==='weekdays')editingRule.weekdays=$$('#r-detail input:checked').map(x=>Number(x.value));if(editingRule.type==='monthly')editingRule.month_days=$('#r-monthdays').value.split(',').map(Number).filter(Number.isFinite);if(editingRule.type==='interval')editingRule.interval_minutes=Number($('#r-interval').value);if(editingRule.type==='specific_dates')editingRule.dates=$('#r-dates').value.split(',').map(x=>x.trim()).filter(Boolean);delete editingRule._new;let i=editing.schedules.findIndex(r=>r.id===editingRule.id);if(i<0)editing.schedules.push(editingRule);else editing.schedules[i]=editingRule;$('#rule-editor').close();rulesRender()};
 function updateEngineUI(){let engine=$('#extract-engine')?.value||'api',api=engine==='api',badge=$('#engine-scope-badge');$$('.engine-card').forEach(c=>{let on=c.dataset.engine===engine;c.classList.toggle('on',on);c.setAttribute('aria-selected',on?'true':'false')});$$('.engine-api-only').forEach(el=>el.style.display=api?'':'none');$$('.engine-dde-only').forEach(el=>el.style.display=api?'none':'');if(badge){badge.textContent=api?'選択中: Navigator API（並列処理を使用）':'選択中: DDE互換（画面制御を使用）';badge.classList.remove('pill-muted');badge.classList.add('pill-active')}}
-function setExtractEngine(v){let s=$('#extract-engine');if(s)s.value=v;updateEngineUI();dirty()}/* ==== このPCでの実際の場所 ==================================================
+function setExtractEngine(v){let s=$('#extract-engine');if(s)s.value=v;updateEngineUI();dirty();refreshMachinePaths()}/* ==== このPCでの実際の場所 ==================================================
    設定はBOXのマスターを通じて全PCへ配られる。絶対パスで特定の利用者の
    フォルダーを書くと、別のPCでは他人のフォルダーを指して実行できない。
    実際に走らせるまで気づけなかったので、設定の画面でそのまま見せる。 */
@@ -501,27 +501,40 @@ function mpWord(x){
  let r=MP_ROLE[x.role]||MP_ROLE.required;
  return r[0]?[r[0],r[1]]:MP_STATE.ok;
 }
+/* 設定の入力欄と「このPCでの状態」は、以前は別々の一覧だった。同じ symnavim.conf が
+   画面に2回出て、しかも役割の説明は片方にしか付いていない。1つの設定は1か所にまとめ、
+   入力欄そのものに役割・実体・状態を添える。 */
+let mpTimer=null;
 async function loadMachinePaths(){
- let box=$('#mp-rows');if(!box)return;
+ let box=$('#pathform');if(!box)return;
  try{
   let d=await fetch('/api/machine-paths',{cache:'no-store'}).then(r=>r.json());
   let who=$('#mp-who');
-  if(who)who.textContent=`${d.host||''}${d.user?' / '+d.user:''}${d.profile?'（'+d.profile+'）':''}`;
+  if(who)who.textContent=`このPC: ${d.host||''}${d.user?' / '+d.user:''}${d.profile?'（'+d.profile+'）':''}`;
   let st=$('#mp-state');
   if(st){st.textContent=d.summary||'';st.className='pill '+(d.ok?'pill-ok':'pill-ng')}
   // 直すべきものが上、いま使わないものが下。読む順がそのまま優先順になる。
   let order=x=>(x.state==='ng'?-2:x.state==='warn'?-1:(MP_ROLE[x.role]||MP_ROLE.required)[2]);
   let sorted=(d.rows||[]).map((x,i)=>[order(x),i,x]).sort((a,b)=>a[0]-b[0]||a[1]-b[1]).map(x=>x[2]);
-  let mark=null;
-  box.innerHTML=sorted.map(x=>{
-   let [word,tone]=mpWord(x),head='';
-   if(x.state==='ok'&&x.role==='unused'&&mark!=='un'){mark='un';head='<p class="mp-divider">いまの構成では使わない設定</p>'}
-   return head+`<div class="mp-row is-${E(tone)}"><i>${E(word)}</i><div class="mp-main"><b>${E(x.label)}</b>`
-    +`<code class="mp-set" title="${E(x.configured)}">設定: ${E(x.configured||'（未設定）')}</code>`
-    +`<code class="mp-real" title="${E(x.resolved)}">実体: ${E(x.resolved)}</code>`
-    +(x.note?`<small>${E(x.note)}</small>`:'')+`</div>`
-    +(x.foreign?`<button type="button" class="secondary mp-fix" data-k="${E(x.key)}">このPCの場所へ直す</button>`:'')
-    +`</div>`}).join('');
+  let shown=0,firstUnused=null;
+  sorted.forEach(x=>{
+   let row=$('#pf-'+x.key);if(!row)return;
+   let [word,tone]=mpWord(x);
+   row.style.order=(++shown)*2;
+   row.className='pf-row is-'+tone+(x.role==='unused'?' is-off':'');
+   if(x.role==='unused'&&firstUnused===null)firstUnused=shown;
+   let b=row.querySelector('.pf-badge');if(b){b.textContent=word;b.title=x.why||''}
+   let n=row.querySelector('.pf-note');
+   if(n)n.innerHTML=`<code class="pf-real" title="${E(x.resolved)}">実体: ${E(x.resolved)}</code>`
+    +(x.note?`<small>${E(x.note)}</small>`:(x.why?`<small>${E(x.why)}</small>`:''))
+    +(x.foreign?`<button type="button" class="secondary mp-fix" data-k="${E(x.key)}">このPCの場所へ直す</button>`:'');
+  });
+  // 区切りは1本だけ。ここから下は、いまの抽出方式では読まれない。
+  let div=$('#pf-divider');
+  if(div){
+   if(firstUnused===null)div.hidden=true;
+   else{div.hidden=false;div.style.order=firstUnused*2-1}
+  }
   let fb=$('#mp-fixed');
   if(fb)fb.innerHTML=(d.fixed||[]).map(x=>`<div class="mp-row is-fix"><i>固定</i><div class="mp-main">`
     +`<b>${E(x.label)}</b><code class="mp-real" title="${E(x.path)}">${E(x.path)}</code>`
@@ -530,17 +543,28 @@ async function loadMachinePaths(){
    let k=b.dataset.k,inp=$('#'+k);
    let v=k==='backup_folder'?'<PC>\\backup':'<PC>\\'+k;
    cfg[k]=v;if(inp){inp.value=v;inp._refreshPathControl?.()}
-   dirty();toast(`${k} をこのPCの場所（${v}）へ直しました`);setTimeout(loadMachinePaths,900);
+   dirty();toast(`${k} をこのPCの場所（${v}）へ直しました`);refreshMachinePaths(900);
   });
- }catch{box.innerHTML='<p class="ri-note">確認できませんでした。</p>'}
+ }catch{let st=$('#mp-state');if(st){st.textContent='確認できませんでした';st.className='pill pill-ng'}}
 }
-if($('#mp-reload'))$('#mp-reload').onclick=loadMachinePaths;
-function updateHideProfileUI(){let p=$('#hide-profile').value,custom=p==='custom';$('#hide-interval-wrap').style.display=custom?'grid':'none';$('#hide-action-duration-wrap').style.display=custom?'grid':'none';let descriptions={action_only:'DDE操作直後だけ確認。常時監視なし',light:'3秒間隔。負荷を最優先',balanced:'2秒間隔。負荷と非表示性のバランス',standard:'1秒間隔。非表示性を優先',custom:'1秒以上で任意設定'};$('#hide-profile').title=descriptions[p]||''}async function init(){cfg=await fetch('/api/config').then(r=>r.json());cfg.jobs.forEach(j=>{j.id=j.id||uid();j.name=j.name||j.rne.replace(/\.RNE$/i,'');j.schedules=j.schedules||[]});$('#cred').textContent=cfg.credential_status;$('#pathform').innerHTML=Object.entries(paths).filter(([k])=>k!=='navigator_api_dll').map(([k,a])=>`<label>${a[0]}<div class="browse"><input id="${k}" value="${E(cfg[k]||'')}"><div class="path-actions">${['navigator_api_dll','symnavim_conf','symnavim_def','accdb_template'].includes(k)?`<button class="pathcheck verify-btn" data-k="${k}" type="button">確認</button>`:''}<button class="pathpick browse-btn" data-k="${k}" type="button">参照</button></div></div></label>`).join('');Object.entries(paths).filter(([k])=>k!=='navigator_api_dll').forEach(([k,a])=>{$('#'+k).onchange=e=>{cfg[k]=e.target.value;dirty()};document.querySelector(`[data-k="${k}"]`).onclick=async()=>{let p=await browse(a[1],cfg[k],a[2]);if(p){cfg[k]=p;$('#'+k).value=p;dirty()}}});$('#extract-engine').value=cfg.settings.extract_engine||'api';updateEngineUI();$('#dde').value=cfg.settings.dde_timeout_seconds;$('#wait').value=cfg.settings.output_wait_seconds;$('#gens').value=cfg.settings.backup_generations||3;if($('#backup-enabled'))$('#backup-enabled').checked=cfg.settings.backup_enabled!==false;if($('#backup-mode'))$('#backup-mode').value=cfg.settings.backup_mode||'generations';if($('#backup-retention-days'))$('#backup-retention-days').value=Number(cfg.settings.backup_retention_days||30);if($('#schedule-catchup'))$('#schedule-catchup').value=Number(cfg.settings.schedule_catchup_minutes??30);if($('#worker-stagger'))$('#worker-stagger').value=Number(cfg.settings.api_worker_stagger_ms??700);updateBackupOptions();if($('#api-lines')){$('#api-lines').value=Math.max(1,Math.min(24,Number(cfg.settings.api_parallel_lines||6)));$('#api-lines').title='既定は6ライン、設定可能範囲は1～24ラインです。変更した時点で保存されます。'}$('#zero').checked=cfg.settings.reject_zero_rows;if($('#retry-enabled')){$('#retry-enabled').checked=cfg.settings.retry_enabled!==false;$('#retry-delay').value=Number(cfg.settings.retry_delay_minutes??5);$('#retry-max').value=Number(cfg.settings.retry_max??1);updateRetryOptions()}if($('#log-max-mb')){$('#log-max-mb').value=Number(cfg.settings.log_max_mb??10);$('#log-keep').value=Number(cfg.settings.log_keep??5)}$('#hide-profile').value=cfg.settings.symnavi_hide_profile||'balanced';$('#hide-interval').value=Math.max(1,Number(cfg.settings.symnavi_hide_interval_seconds||2));$('#hide-action-duration').value=Number(cfg.settings.symnavi_hide_action_duration_seconds||0.5);updateHideProfileUI();Object.keys(paths).filter(k=>k!=='navigator_api_dll').forEach(k=>enhancePathInput($('#'+k),paths[k][1]));let dllInput=$('#navigator-api-dll');if(dllInput){dllInput.value=cfg.navigator_api_dll||'';dllInput.oninput=()=>{cfg.navigator_api_dll=dllInput.value;dirty();
+/* 「もう一度調べる」を押さないと現状が分からない、という状態を無くす。設定を触った直後・
+   抽出方式を変えた直後・保存した直後に、まとめて1回だけ調べ直す。 */
+function refreshMachinePaths(delay){clearTimeout(mpTimer);mpTimer=setTimeout(loadMachinePaths,delay||400)}
+if($('#mp-reload'))$('#mp-reload').onclick=()=>{clearTimeout(mpTimer);loadMachinePaths()};
+function updateHideProfileUI(){let p=$('#hide-profile').value,custom=p==='custom';$('#hide-interval-wrap').style.display=custom?'grid':'none';$('#hide-action-duration-wrap').style.display=custom?'grid':'none';let descriptions={action_only:'DDE操作直後だけ確認。常時監視なし',light:'3秒間隔。負荷を最優先',balanced:'2秒間隔。負荷と非表示性のバランス',standard:'1秒間隔。非表示性を優先',custom:'1秒以上で任意設定'};$('#hide-profile').title=descriptions[p]||''}async function init(){cfg=await fetch('/api/config').then(r=>r.json());cfg.jobs.forEach(j=>{j.id=j.id||uid();j.name=j.name||j.rne.replace(/\.RNE$/i,'');j.schedules=j.schedules||[]});$('#pathform').innerHTML=Object.entries(paths).map(([k,a])=>k==='navigator_api_dll'
+  ?`<div class="pf-row pf-ro" id="pf-${k}"><div class="pf-top"><b>${a[0]}</b><i class="pf-badge">確認中</i></div><p class="pf-ro-note">この設定は「抽出方式」の中で指定します<button type="button" class="ghost pf-goto" data-cat="engine">抽出方式を開く</button></p><div class="pf-note"></div></div>`
+  :`<label class="pf-row" id="pf-${k}"><div class="pf-top"><b>${a[0]}</b><i class="pf-badge">確認中</i></div><div class="browse"><input id="${k}" value="${E(cfg[k]||'')}"><div class="path-actions">${['symnavim_conf','symnavim_def','accdb_template'].includes(k)?`<button class="pathcheck verify-btn" data-k="${k}" type="button">確認</button>`:''}<button class="pathpick browse-btn" data-k="${k}" type="button">参照</button></div></div><div class="pf-note"></div></label>`).join('')
+ +'<p class="pf-divider" id="pf-divider" hidden>いまの抽出方式では使わない設定</p>';
+// 参照ボタンは .pathpick で名指しする。data-k だけで拾うと、確認ボタンが先に居る4件で
+// 参照の代わりに確認へ結びついてしまい、参照が何も起きなくなる。
+Object.entries(paths).filter(([k])=>k!=='navigator_api_dll').forEach(([k,a])=>{$('#'+k).onchange=e=>{cfg[k]=e.target.value;dirty();refreshMachinePaths()};document.querySelector(`.pathpick[data-k="${k}"]`).onclick=async()=>{let p=await browse(a[1],cfg[k],a[2]);if(p){cfg[k]=p;$('#'+k).value=p;$('#'+k)._refreshPathControl?.();dirty();refreshMachinePaths()}}});
+$$('.pf-goto').forEach(b=>b.onclick=()=>document.querySelector(`#settings-nav .settings-navbtn[data-cat="${b.dataset.cat}"]`)?.click());$('#extract-engine').value=cfg.settings.extract_engine||'api';updateEngineUI();$('#dde').value=cfg.settings.dde_timeout_seconds;$('#wait').value=cfg.settings.output_wait_seconds;$('#gens').value=cfg.settings.backup_generations||3;if($('#backup-enabled'))$('#backup-enabled').checked=cfg.settings.backup_enabled!==false;if($('#backup-mode'))$('#backup-mode').value=cfg.settings.backup_mode||'generations';if($('#backup-retention-days'))$('#backup-retention-days').value=Number(cfg.settings.backup_retention_days||30);if($('#schedule-catchup'))$('#schedule-catchup').value=Number(cfg.settings.schedule_catchup_minutes??30);if($('#worker-stagger'))$('#worker-stagger').value=Number(cfg.settings.api_worker_stagger_ms??700);updateBackupOptions();if($('#api-lines')){$('#api-lines').value=Math.max(1,Math.min(24,Number(cfg.settings.api_parallel_lines||6)));$('#api-lines').title='既定は6ライン、設定可能範囲は1～24ラインです。変更した時点で保存されます。'}$('#zero').checked=cfg.settings.reject_zero_rows;if($('#retry-enabled')){$('#retry-enabled').checked=cfg.settings.retry_enabled!==false;$('#retry-delay').value=Number(cfg.settings.retry_delay_minutes??5);$('#retry-max').value=Number(cfg.settings.retry_max??1);updateRetryOptions()}if($('#log-max-mb')){$('#log-max-mb').value=Number(cfg.settings.log_max_mb??10);$('#log-keep').value=Number(cfg.settings.log_keep??5)}$('#hide-profile').value=cfg.settings.symnavi_hide_profile||'balanced';$('#hide-interval').value=Math.max(1,Number(cfg.settings.symnavi_hide_interval_seconds||2));$('#hide-action-duration').value=Number(cfg.settings.symnavi_hide_action_duration_seconds||0.5);updateHideProfileUI();Object.keys(paths).filter(k=>k!=='navigator_api_dll').forEach(k=>enhancePathInput($('#'+k),paths[k][1]));let dllInput=$('#navigator-api-dll');if(dllInput){dllInput.value=cfg.navigator_api_dll||'';dllInput.oninput=()=>{cfg.navigator_api_dll=dllInput.value;dirty();
    let v=$('#api-readiness');if(v)v.className='api-readiness is-stale';};}let dllPick=$('#api-dll-pick');if(dllPick)dllPick.onclick=async()=>{let q=await browse('file',dllInput.value,paths.navigator_api_dll[2]);if(q){dllInput.value=q;cfg.navigator_api_dll=q;dirty();await testNavigatorApi()}};let dllCheck=$('#api-dll-check');if(dllCheck)dllCheck.onclick=()=>testNavigatorApi();if(!Array.isArray(cfg.navigator_api_search_roots))cfg.navigator_api_search_roots=DLL_DEFAULT_ROOTS.slice();renderDllRoots();loadDllRequirement();fillSuggestions();render();loadMachinePaths();loadFreshness();saveState('設定を読み込みました／変更はすべて自動で保存されます','');$$('.pathcheck').forEach(b=>b.onclick=()=>checkConfiguredPath(b.dataset.k))}
 ['search','filter-enabled','filter-schedule','sort'].forEach(k=>$('#'+k).addEventListener(k==='search'?'input':'change',render));$$('.sortable').forEach(h=>h.onclick=()=>{$('#sort').value=h.dataset.sort;sortDir*=-1;render()});$('#add').onclick=()=>openEditor(null);$('#select-visible').onclick=()=>{$$('#jobs-body .rowcheck').forEach(x=>{x.checked=true;x.closest('tr').classList.add('selected')});updateSelCount()};$('#clear-selection').onclick=()=>{$$('#jobs-body .rowcheck').forEach(x=>{x.checked=false;x.closest('tr').classList.remove('selected')});updateSelCount()};function resetProgressView(){let q=$('#queue-summary');if(q){q.hidden=true;q.innerHTML=''}let pr=$('#p-results');if(pr){pr.hidden=true;pr.innerHTML=''}let b=$('#p-parallel-lines');if(b){b.hidden=true;b.innerHTML=''}document.querySelector('.current-box')?.classList.remove('parallel-hidden');$('#p-steps')?.classList.remove('parallel-hidden');$('#p-count').textContent='全体 0 / 0';$('#p-percent').textContent='0%';$('#p-bar').style.width='0%';$('#p-job').textContent='準備中';$('#p-output').textContent='';}async function runJobs(ids){resetProgressView();showWaiting(currentEngine()==='api'?'API処理を開始しています':'DDE処理を開始しています',currentEngine()==='api'?'APIセッションと実行対象を準備しています...':'SymfoNavi起動とDDE接続を準備しています...','engine');let r=await fetch('/api/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_ids:ids,parallel_lines:Math.max(1,Math.min(24,Number($('#api-lines')?.value||6)||6))})}),d=await r.json();hideWaiting();if(r.ok){toast(`実行キュー ${d.position}番へ追加しました`);await loadCommandQueue()}else toast(d.error)}$('#run-all').onclick=()=>runJobs(null);$('#run-selected').onclick=()=>{let ids=$$('#jobs-body .rowcheck:checked').map(x=>x.closest('tr').dataset.id);if(ids.length)runJobs(ids)};/* 保存ボタンの代わりに、値が変わったところで保存する。数値欄は打っている途中に
    何度も飛ばさないよう、まとめて少し待ってから送る（scheduleSave）。 */
 ['dde','wait','schedule-catchup','worker-stagger','hide-interval','hide-action-duration'].forEach(id=>{let e=$('#'+id);if(e){e.addEventListener('input',dirty);e.addEventListener('change',dirty)}});
 ['zero','extract-engine','hide-profile','backup-mode','backup-enabled'].forEach(id=>{let e=$('#'+id);if(e)e.addEventListener('change',dirty)});
+if($('#backup-enabled'))$('#backup-enabled').addEventListener('change',()=>refreshMachinePaths());
 ['retry-delay','retry-max','log-max-mb','log-keep'].forEach(id=>{let e=$('#'+id);if(e){e.addEventListener('input',dirty);e.addEventListener('change',dirty)}});
 if($('#retry-enabled'))$('#retry-enabled').addEventListener('change',()=>{updateRetryOptions();dirty()});
 function updateRetryOptions(){let on=$('#retry-enabled')?.checked;let box=$('#retry-options');if(box)box.style.display=on?'':'none'}$('#validate').onclick=async()=>{showWaiting(currentEngine()==='api'?'API実行前診断中':'DDE実行前診断中','実際の設定値と配置を統合して確認しています...','engine');try{let r=await fetch('/api/validate',{method:'POST'}),d=await r.json();if(!r.ok)throw Error(d.error||'診断に失敗しました');renderDiagnostics(d);let dlg=$('#diagnostic-dialog');if(dlg&&!dlg.open)dlg.showModal()}catch(e){toast(e.message)}finally{hideWaiting()}};function renderDiagnostics(d){$('#check-scope').textContent=d.search_scope||'';let state=$('#diagnostic-state');state.textContent=d.summary||'';state.className='diag-state '+(d.ok?'is-ok':'is-ng');let c=d.counts||{};$('#diagnostic-counts').innerHTML=`<span class="dc-ok">正常 ${c.ok||0}</span><span class="dc-warn">注意 ${c.warning||0}</span><span class="dc-ng">要修正 ${c.error||0}</span>`;let groups={};(d.checks||[]).forEach((x,i)=>(groups[x.group]||(groups[x.group]=[])).push({...x,_i:i}));$('#checks').innerHTML=Object.entries(groups).map(([g,items])=>`<section class="diag-group"><h3>${E(g)}<small>${items.length}項目</small></h3>${items.map(x=>`<div class="diag-row ${E(x.level)}"><i>${x.level==='ok'?'OK':x.level==='warning'?'注意':'要修正'}</i><div><b>${E(x.label)}</b><span>${E(x.detail)}</span></div>${x.candidates?.length?`<button class="fix secondary" data-i="${x._i}">候補 ${x.candidates.length}件</button>`:''}</div>`).join('')}</section>`).join('');$$('#checks .fix').forEach(b=>b.onclick=()=>showPathResult(d.checks[Number(b.dataset.i)]))}if($('#diagnostic-close'))$('#diagnostic-close').onclick=()=>$('#diagnostic-dialog').close();if($('#diagnostic-close-foot'))$('#diagnostic-close-foot').onclick=()=>$('#diagnostic-dialog').close();let commandQueueOpen=false;async function loadCommandQueue(){try{let d=await fetch('/api/execution-queue',{cache:'no-store'}).then(r=>r.json()),list=$('#cq-list'),summary=$('#cq-summary');applyRowQueueProgress(d);if(!list||!summary)return;
@@ -748,7 +772,7 @@ async function testNavigatorApi(){
   }
  }finally{hideWaiting();if(b)b.disabled=false}
 }
-$('#api-test').onclick=testNavigatorApi;$('#extract-engine').onchange=()=>{updateEngineUI();dirty()};$$('.engine-card').forEach(c=>c.onclick=()=>setExtractEngine(c.dataset.engine));setInterval(poll,1000);init().then(async()=>{poll();loadCommandQueue();try{
+$('#api-test').onclick=testNavigatorApi;$('#extract-engine').onchange=()=>{updateEngineUI();dirty();refreshMachinePaths()};$$('.engine-card').forEach(c=>c.onclick=()=>setExtractEngine(c.dataset.engine));setInterval(poll,1000);init().then(async()=>{poll();loadCommandQueue();try{
  let d=await fetch('/api/navigator-api-status',{cache:'no-store'}).then(r=>r.json());
  renderDllRequirement(d.requirement);
  renderApiReadiness(d.readiness,d.cached?'前回の確認結果です。「いま確認する」で取り直せます。':'');
@@ -781,7 +805,7 @@ function bindV29LogWorkspace(){['log-filter-text','log-filter-kind','log-filter-
 bindV29LogWorkspace();
 
 /* V30: categorized settings navigation and in-app version management */
-function bindSettingsNav(){$$('#settings-nav .settings-navbtn').forEach(b=>b.onclick=()=>{$$('#settings-nav .settings-navbtn').forEach(x=>x.classList.remove('on'));b.classList.add('on');$$('.settings-pane').forEach(x=>x.classList.remove('on'));document.querySelector(`.settings-pane[data-cat="${b.dataset.cat}"]`)?.classList.add('on');if(b.dataset.cat==='docs')loadDocs()})}
+function bindSettingsNav(){$$('#settings-nav .settings-navbtn').forEach(b=>b.onclick=()=>{$$('#settings-nav .settings-navbtn').forEach(x=>x.classList.remove('on'));b.classList.add('on');$$('.settings-pane').forEach(x=>x.classList.remove('on'));document.querySelector(`.settings-pane[data-cat="${b.dataset.cat}"]`)?.classList.add('on');if(b.dataset.cat==='docs')loadDocs();if(b.dataset.cat==='conn')refreshMachinePaths(0)})}
 /* ============================================================
    仕様書ビュー。同梱のMarkdownをアプリの中で読む。
    外部ライブラリは使えないので、この文書に実際に出てくる記法だけを自前で描く

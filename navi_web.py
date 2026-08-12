@@ -42,6 +42,7 @@ from app import (
     job_extra_formats, job_output_plan, job_schedule_preview, jsonify, last_run_info, load,
     load_column_cache, load_job_runs, load_rne_timing, load_split_trials, log, log_files,
     machine_path_view, normalize_output_format, normalize_split_mode, normalize_split_shape,
+    path_setting_roles,
     os, output_extension, pick_anchor_columns, pick_row_axis_by_mode, plan_run_split,
     queue_snapshot, re, read_header_names, read_log_lines, read_preview_data,
     recommend_split_parts, render_filename_segments, render_template, request,
@@ -1258,11 +1259,14 @@ def validate():
    add('実行環境','pywin32のDDE機能',True,'win32ui / dde を読み込めます')
   except Exception as e:
    add('実行環境','pywin32のDDE機能',False,f'読み込めません: {e}（pip install pywin32 が必要です）',item='pywin32')
- # 共通接続ファイル。設定されているものだけを検査し、未設定の任意項目は警告にする。
+ # 共通接続ファイル。いま要るかどうかは path_setting_roles に合わせる（画面の役割表示と食い違わせない）。
+ conn_roles=path_setting_roles(c)
  for label,key in [('symnavim.conf','symnavim_conf'),('symnavim.def','symnavim_def')]:
+  role,why=conn_roles.get(key,('required',''))
   raw=str(c.get(key) or '').strip();p=resolve_path(raw) if raw else None
-  if raw:add('接続設定',label,bool(p and p.is_file()),p,configured=raw,item=key,candidates=find_nearby_file(label) if p and not p.is_file() else [],needs_reselect=bool(p and not p.is_file()))
-  else:add('接続設定',label,True,'未設定（現在の処理方式で必須の場合のみ設定してください）',level='warning')
+  if role=='unused':add('接続設定',label,True,why,level='ok',configured=raw,item=key)
+  elif raw:add('接続設定',label,bool(p and p.is_file()),p if (p and p.is_file()) else f'{p}（{why}）',configured=raw,item=key,candidates=find_nearby_file(label) if p and not p.is_file() else [],needs_reselect=bool(p and not p.is_file()))
+  else:add('接続設定',label,role!='required',f'未設定です。{why}',level='error' if role=='required' else 'warning',item=key,needs_reselect=role=='required')
  # RNE基本フォルダーは補助設定。各ジョブの実ファイルが解決できればフォルダー不足をNGにしない。
  configured_root=resolve_path(c.get('rne_folder','.\\rne'))
  standard_roots=[configured_root,BASE/'Config'/'rne',BASE/'config'/'rne',BASE/'rne']
