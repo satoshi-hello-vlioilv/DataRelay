@@ -184,8 +184,10 @@ h1{font-size:22px;margin:4px 0 2px}
     document.getElementById('stage-title').textContent='準備ができました。アプリへ移動します…';
     document.getElementById('stage-detail').textContent='起動したバージョン: '+verEl.textContent;
     document.getElementById('spinner').style.animationDuration='.4s';
-    // 差し替えたバージョンを一目で確認できるだけの間を置いてから移る。
-    setTimeout(function(){ location.replace(APP); }, 900);
+    // サーバーはもう答えている。ここで待つ時間は、そのぶんそのまま起動時間になる。
+    // 版はアプリの右上にも出ているので、ここで見せるために待つ必要はない。
+    // 画面が切り替わったことが分かるだけの一瞬（0.2秒）だけ置いて移る。
+    setTimeout(function(){ location.replace(APP); }, 200);
   }
 
   function showError(){
@@ -196,6 +198,16 @@ h1{font-size:22px;margin:4px 0 2px}
     document.getElementById('stage-detail').textContent='バックグラウンドでは起動継続中の場合があります。「再確認する」で確認できます。';
   }
 
+  // 聞き直す間隔。0.5秒の等間隔だと、サーバーが立ってから気づくまで平均0.25秒
+  // 待つことになる ―― 起動時間としては、そのまま利用者の待ち時間になる。
+  // 立ち上がりそうな最初のうちは細かく、外れが続いたら間隔を広げる。
+  // 相手は同じPCの中なので、細かく聞いても費用はほとんど無い。
+  function pollDelay(){
+    var sec=(Date.now()-start)/1000;
+    if(sec<4) return 100;
+    if(sec<12) return 250;
+    return 500;
+  }
   function poll(){
     if(done) return;
     fetch(INSTANCE+'?_='+Date.now(),{cache:'no-store'})
@@ -205,9 +217,9 @@ h1{font-size:22px;margin:4px 0 2px}
           showVersion(d.version||d.build_version,'起動したサーバーが返したバージョン');
           ready();
         }
-        else { setTimeout(poll, 500); }
+        else { setTimeout(poll, pollDelay()); }
       })
-      .catch(function(){ setTimeout(poll, 500); });  // まだ起動していない
+      .catch(function(){ setTimeout(poll, pollDelay()); });  // まだ起動していない
   }
 
   document.getElementById('retry').addEventListener('click',function(){

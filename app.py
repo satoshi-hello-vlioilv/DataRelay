@@ -2022,7 +2022,7 @@ def update_parallel_line(line,**v):
 # PCごとに実体が変わる場所（<PC> の読み替え・他人のプロファイル検出）は navi_paths.py。
 import navi_paths
 navi_paths.setup(BASE,LOCAL_ROOT)
-from navi_paths import PC_TOKEN,pc_path,is_pc_path,foreign_profile_path,resolve_path,_split_any,_profile_root,_looks_generated_backup
+from navi_paths import PC_TOKEN,pc_path,is_pc_path,foreign_profile_path,resolve_path,clean_work_folder,_split_any,_profile_root,_looks_generated_backup
 
 
 def resolve_rne_path(job,cfg):
@@ -4353,6 +4353,10 @@ residency_state={'active':False,'reason':'','since':0.0}
 residency_hold={'on':False,'at':0.0}
 RESIDENCY_HOLD_REASON='画面から「タスクバーに入れる」を選択'
 tray=None
+# 通知領域のアイコンは裏で用意する。「まだ分からない」と「出せない」は別なので、
+# 用意が済んだかどうかを別に持つ（済む前に「出せません」と答えると嘘になる）。
+tray_ready=threading.Event()
+
 def pending_queue_count():
  with command_queue_lock:return len(command_queue)+(1 if active_command else 0)
 def residency_reason():
@@ -4394,16 +4398,21 @@ def request_shutdown_from_tray():
  os._exit(0)
 def start_tray():
  global tray
- if WORKER_MODE or os.name!='nt':return None
+ # 出来上がっても、作れないと分かっても、「答えが出た」ことは必ず知らせる。
+ # 知らせないと、待つ側（常駐してよいかの判断）が待ち続ける。
  try:
-  from tray_icon import TrayIcon
-  icon=BASE/'static'/'favicon.ico'
-  tray=TrayIcon('SymfoNavi Data Hub',f'http://{HOST}:{PORT}',str(icon) if icon.is_file() else None,
-                on_open=open_app_window,on_exit=request_shutdown_from_tray,status_text=tray_status_text,logger=log)
-  return tray if tray.start() else None
- except Exception:
-  # 常駐アイコンを作れなくてもアプリ本体は動かし続ける（自動実行を止めない）。
-  log.exception('TRAY_INIT_FAILED');return None
+  if WORKER_MODE or os.name!='nt':return None
+  try:
+   from tray_icon import TrayIcon
+   icon=BASE/'static'/'favicon.ico'
+   tray=TrayIcon('SymfoNavi Data Hub',f'http://{HOST}:{PORT}',str(icon) if icon.is_file() else None,
+                 on_open=open_app_window,on_exit=request_shutdown_from_tray,status_text=tray_status_text,logger=log)
+   return tray if tray.start() else None
+  except Exception:
+   # 常駐アイコンを作れなくてもアプリ本体は動かし続ける（自動実行を止めない）。
+   log.exception('TRAY_INIT_FAILED');return None
+ finally:
+  tray_ready.set()
 def enter_residency(reason,client_ids=''):
  if residency_state['active']:
   if reason!=residency_state['reason']:
@@ -5046,7 +5055,7 @@ def heartbeat_status():
  now=time.time()
  with heartbeat_lock:
   age=max(0,now-last_heartbeat_at);clients=[{'client_id':k,'age_seconds':round(now-v['last_seen'],1),'closing':bool(v.get('closing_at'))} for k,v in heartbeat_clients.items()]
- return jsonify(ok=True,app_id=APP_ID,instance_id=INSTANCE_ID,state='healthy' if age<30 else ('delayed' if age<HEARTBEAT_TIMEOUT_SECONDS else 'disconnected'),last_received=datetime.fromtimestamp(last_heartbeat_at).isoformat(timespec='seconds'),age_seconds=round(age,1),timeout_seconds=HEARTBEAT_TIMEOUT_SECONDS,active_clients=sum(1 for x in clients if not x['closing']),recent_clients=sum(1 for x in clients if not x['closing'] and x['age_seconds']<30),closing_clients=sum(1 for x in clients if x['closing']),clients=clients,total=heartbeat_total,server_time=datetime.now().isoformat(timespec='seconds'),auto_shutdown_on_disconnect=False,exit_when_app_tabs_empty=True,close_grace_seconds=CLOSE_GRACE_SECONDS,resident=bool(residency_state['active']),resident_reason=residency_state['reason'],residency_pending_reason=residency_reason(),tray_available=bool(tray),resident_hold=bool(residency_hold['on']),queued_commands=pending_queue_count())
+ return jsonify(ok=True,app_id=APP_ID,instance_id=INSTANCE_ID,state='healthy' if age<30 else ('delayed' if age<HEARTBEAT_TIMEOUT_SECONDS else 'disconnected'),last_received=datetime.fromtimestamp(last_heartbeat_at).isoformat(timespec='seconds'),age_seconds=round(age,1),timeout_seconds=HEARTBEAT_TIMEOUT_SECONDS,active_clients=sum(1 for x in clients if not x['closing']),recent_clients=sum(1 for x in clients if not x['closing'] and x['age_seconds']<30),closing_clients=sum(1 for x in clients if x['closing']),clients=clients,total=heartbeat_total,server_time=datetime.now().isoformat(timespec='seconds'),auto_shutdown_on_disconnect=False,exit_when_app_tabs_empty=True,close_grace_seconds=CLOSE_GRACE_SECONDS,resident=bool(residency_state['active']),resident_reason=residency_state['reason'],residency_pending_reason=residency_reason(),tray_available=(bool(tray) if tray_ready.is_set() else None),resident_hold=bool(residency_hold['on']),queued_commands=pending_queue_count())
 
 @app.post('/api/stay-resident')
 def stay_resident():
@@ -5055,6 +5064,9 @@ def stay_resident():
  通知領域にアイコンを出せない環境では引き受けない。アイコンが無いまま常駐すると、
  動いていることが見えず、止める手段も無くなる（そのために常駐アイコンを付けた）。
  """
+ # 起動直後はまだアイコンを用意している最中のことがある。ここは「残していいか」を
+ # 決める場面なので、分かるまで少しだけ待つ（待たずに断ると、起動直後だけ断られる）。
+ tray_ready.wait(3)
  if not tray:
   log.info('APP_RESIDENT_HOLD_REFUSED reason=tray_unavailable')
   return jsonify(ok=False,tray_available=False,
@@ -5140,7 +5152,7 @@ if __name__=='__main__':
  if _spawn_at:log.info('APP_IMPORT_ELAPSED spawn_to_import=%.2fs note=interpreter_init+module_import+source_compile(BOX)',_APP_IMPORT_DONE_AT-_spawn_at)
  # どの版が動いているのかは、後からログだけを見て分かる必要がある。起動のいちばん最初に出す。
  startup_clock=time.perf_counter();log.info('APP_START version=%s build=%s released=%s source=%s local_root=%s pycache=%s',APP_VERSION,BUILD_VERSION,APP_RELEASED_AT,BASE,LOCAL_ROOT,os.environ.get('PYTHONPYCACHEPREFIX',''))
- _t=time.perf_counter(); shutil.rmtree(LOCAL_ROOT/'work',ignore_errors=True); (LOCAL_ROOT/'work').mkdir(parents=True,exist_ok=True); log.info('APP_START_WORKCLEAN elapsed=%.2fs',time.perf_counter()-_t)
+ log.info('APP_START_WORKCLEAN elapsed=%.2fs mode=%s',*clean_work_folder())
  # 起動待ちモーダル(loading.html)は file:// から開くので、サーバーが立つまで版が分からない。
  # ここに置いておけば、ランチャーが次回の起動時に画面へ差し込める。
  # 中身はASCIIだけにする。ランチャー(VBScript)は既定でANSIとして読むので、
@@ -5149,7 +5161,14 @@ if __name__=='__main__':
  except Exception:log.exception('VERSION_STAMP_FAILED')
  _t=time.perf_counter(); migrate_legacy_settings(); log.info('APP_START_MIGRATION elapsed=%.2fs',time.perf_counter()-_t)
  _t=time.perf_counter(); threading.Thread(target=scheduler,daemon=True,name='scheduler').start(); threading.Thread(target=command_dispatcher,daemon=True,name='command-dispatcher').start(); threading.Thread(target=heartbeat_watchdog,daemon=True,name='heartbeat-watchdog').start(); log.info('APP_START_THREADS elapsed=%.2fs',time.perf_counter()-_t)
- _t=time.perf_counter(); log.info('APP_START_TRAY available=%s elapsed=%.2fs',bool(start_tray()),time.perf_counter()-_t)
+ # 通知領域のアイコンは、出来上がるまで待たされる（Explorerが混んでいると最大5秒）。
+ # その待ちを画面が立つ前に払う理由は無い。裏で用意して、サーバーは先に立てる。
+ # 出来上がったかどうかを待ちたい側は tray_ready を見る。
+ _t=time.perf_counter()
+ def _tray_boot():
+  ok=bool(start_tray());tray_ready.set()
+  log.info('APP_START_TRAY available=%s elapsed=%.2fs（サーバーの起動とは別に用意しました）',ok,time.perf_counter()-_t)
+ threading.Thread(target=_tray_boot,daemon=True,name='tray-boot').start()
  log.info('APP_START_TOTAL boot_to_run=%.2fs total_since_spawn=%.2fs',time.perf_counter()-startup_clock,(time.time()-_spawn_at) if _spawn_at else -1)
  # ポートが空いているかを先に確かめる。Flask(werkzeug)は束縛失敗を自前で処理して
  # 標準出力にだけ出して終了するため、そのままではログに何も残らず、

@@ -7,7 +7,6 @@ import subprocess
 import sys
 import time
 import urllib.request
-import webbrowser
 from pathlib import Path
 
 BASE = Path(__file__).resolve().parent
@@ -41,6 +40,9 @@ def probe(timeout: float = 0.8) -> bool:
 
 def open_browser_best_effort() -> bool:
     """既定ブラウザーを複数方式で呼び出す。Falseを成功扱いしない。"""
+    # 起動待ちモーダルが開いている通常の経路では、ここは一度も通らない。
+    # 取り込みもそのときまで遅らせる（起動のたびに払う理由が無い）。
+    import webbrowser
     methods = [('webbrowser', lambda: webbrowser.open(URL, new=1, autoraise=True))]
     if os.name == 'nt':
         methods.extend([
@@ -126,7 +128,9 @@ def main() -> int:
         write_info(os.getpid(), proc.pid)
         log(f'アプリサーバープロセス起動 python_pid={proc.pid}')
         spawn_started = time.perf_counter()
-        for _ in range(160):
+        # 0.25秒の等間隔で聞き直していたので、立ち上がってから気づくまで平均0.12秒
+        # 待っていた。相手は同じPCの中なので、立ち上がりそうな最初のうちは細かく聞く。
+        while time.perf_counter() - spawn_started < 40:
             if probe():
                 server_ready = True
                 # サーバー起動完了までの実測秒。初回・アップデート時・BOX影響の切り分けに使用する。
@@ -138,7 +142,7 @@ def main() -> int:
             if proc.poll() is not None:
                 log(f'アプリサーバーが起動前に終了 returncode={proc.returncode}')
                 break
-            time.sleep(0.25)
+            time.sleep(0.05 if time.perf_counter() - spawn_started < 4 else 0.25)
         print('アプリサーバーの起動を確認できませんでした。%LOCALAPPDATA%\\SymfoNaviDataHub\\logs\\launcher.log と app.log を確認してください。')
         return 2
     finally:
