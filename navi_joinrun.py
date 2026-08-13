@@ -104,7 +104,7 @@ def resolve_join_path(value,cfg):
  p=Path(raw)
  if p.is_absolute() or raw.startswith('\\\\'):return p
  if raw.startswith(('.\\','..\\','./','../')):return resolve_path(raw,app.BASE)
- return resolve_path(raw,resolve_path(str((cfg or {}).get('text_folder') or '.\\text')))
+ return resolve_path(raw,resolve_path(str((cfg or {}).get('text_folder') or app.TEXT_FOLDER_DEFAULT)))
 
 def join_reader(cfg):
  """navi_join へ渡す読み手。これまでの出力形式は、データビュワーと同じ経路で読む。"""

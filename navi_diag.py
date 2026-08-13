@@ -268,11 +268,12 @@ def check_path_item(value,kind='file',expected_name=''):
  if not ok and kind=='file':candidates=find_nearby_file(expected_name or p.name)
  return {'ok':ok,'configured':str(value),'resolved':str(p),'candidates':candidates,'needs_reselect':not ok and not candidates}
 
-PATH_SETTING_LABEL={'rne_folder':'RNE基本フォルダー','default_output_folder':'既定の出力先',
+PATH_SETTING_LABEL={'rne_folder':'RNE基本フォルダー','text_folder':'固定長テキストの基本フォルダー',
+ 'default_output_folder':'既定の出力先',
  'backup_folder':'バックアップ先','symnavi_exe':'SymNavi.exe','symnavim_conf':'symnavim.conf',
  'symnavim_def':'symnavim.def','accdb_template':'ACCDB空テンプレート','navigator_api_dll':'Navigator API DLL'}
 
-PATH_SETTING_KIND={'rne_folder':'folder','default_output_folder':'folder','backup_folder':'folder',
+PATH_SETTING_KIND={'rne_folder':'folder','text_folder':'folder','default_output_folder':'folder','backup_folder':'folder',
  'symnavi_exe':'file','symnavim_conf':'file','symnavim_def':'file','accdb_template':'file',
  'navigator_api_dll':'file'}
 
@@ -324,6 +325,23 @@ def path_setting_roles(c):
    ('fallback',nobody('個別のパスで解決できるため、この設定は使っていません'))
  roles['default_output_folder']=('required',f'{len(out_users)}件の対象がこの場所へ出力します') if out_users else \
    ('fallback',nobody('出力先を個別に持っています'))
+ # 固定長テキストの基本フォルダー。名前だけを書いた対象と、結合で読むファイルがここを基準にする。
+ # RNE基本フォルダーと同じ考え方で、個別のパスを持つものはこの設定を一切見ない。
+ def leans_on_text_root(raw):
+  raw=str(raw or '').strip()
+  if not raw:return False
+  expanded=os.path.expandvars(os.path.expanduser(raw))
+  if Path(expanded).is_absolute() or expanded.startswith('\\\\'):return False
+  return not raw.startswith(('.\\','..\\','./','../'))
+ text_users=[j for j in jobs if str(j.get('source') or '')=='text' and leans_on_text_root(j.get('text_path'))]
+ join_users=[x for r in (c.get('join_recipes') or []) for x in (r.get('sources') or [])
+             if leans_on_text_root(x.get('path'))]
+ if text_users or join_users:
+  roles['text_folder']=('required',
+    '、'.join([f'{len(text_users)}件の対象' for _ in [1] if text_users]
+             +[f'結合マスタの{len(join_users)}ファイル' for _ in [1] if join_users])+'がこの場所を基準にします')
+ else:
+  roles['text_folder']=('fallback','ファイル名だけで登録したときの基準です。いまはすべて個別のパスで解決できています')
  # 接続に関わる3つは、まとめて「DDEのもの」にはできない。使われ方がそれぞれ違う。
  # v1.60.0では3つ一括でDDE専用にしてしまい、API方式のときに symnavim.conf まで
  # 「いまは不要」と出ていた。実際にはこれが唯一の認証情報の出どころで、無ければ

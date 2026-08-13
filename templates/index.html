@@ -155,8 +155,8 @@
 <div class="fieldgrid"><label>読込シート<input id="m-sheet" list="suggest-sheet"></label><label>読込形式<select id="m-type"><option>詳細データ</option><option>集計表</option></select></label></div>
 </div>
 <div class="src-pane" data-src="text">
-<div class="path-help compact-help"><span>相対パスの基準はアプリフォルダーです。例: <code>.\text\JUCHU.txt</code>。Navigatorへは接続しません。</span></div>
-<div class="fieldgrid one"><label>テキストファイル<div class="browse"><input id="m-text-path" placeholder=".\text\JUCHU.txt"><div class="path-actions"><button id="m-text-check" type="button" class="verify-btn">確認</button><button id="m-text-pick" type="button" class="browse-btn">参照</button></div></div></label></div>
+<div class="path-help compact-help"><span>ファイル名だけを書くと、共通設定の<b>「固定長テキストの基本フォルダー」</b>（既定 <code>\\nlmfanago02d\QPMS</code>）から探します。<code>.\</code> で始めるとアプリフォルダー基準、<code>\\</code> や <code>C:\</code> はそのままの場所です。Navigatorへは接続しません。</span></div>
+<div class="fieldgrid one"><label>テキストファイル<div class="browse"><input id="m-text-path" placeholder="例: JUCHU.txt"><div class="path-actions"><button id="m-text-check" type="button" class="verify-btn">確認</button><button id="m-text-pick" type="button" class="browse-btn">参照</button></div></div></label></div>
 <div class="fieldgrid one"><label>読取マスタ（切り方）<div class="browse"><select id="m-layout"><option value="">選択してください</option></select><button id="m-layout-open" type="button" class="secondary">マスタを開く</button></div></label></div>
 <p id="m-layout-note" class="hint">どの位置で切るかは「読取マスタ」で決めます。同じ形式のファイルが複数あっても、マスタは1つで足ります。</p>
 </div>

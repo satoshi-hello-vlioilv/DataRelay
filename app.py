@@ -1962,12 +1962,26 @@ def last_run_info(run):
 # ==== 読取マスタ（固定長テキストの切り方）=================================
 # RNEはサーバーが表の形を知っている。テキストにはそれが無いので、切り方をこちらで持つ。
 # 同じ形式のファイルが複数あってもマスタは1つで足りるよう、対象とは別に管理する。
+# 固定長テキストの既定。置き場もテーブル名も、ここ1か所で決める
+# （画面・実行・診断が別々の既定を持つと、どれが本当なのか追えなくなる）。
+TEXT_FOLDER_DEFAULT='\\\\nlmfanago02d\\QPMS'
+TEXT_TABLE_DEFAULT='DATA'
 JOB_SOURCES=('rne','text','join')
 JOB_SOURCE_LABEL={'rne':'RNE（Navigatorへ問い合わせ）','text':'固定長テキスト（手元のファイル）',
                   'join':'複数ファイルの結合（クエリで繋ぐ）'}
 def normalize_job_source(v):
  v=str(v or '').strip().lower()
  return v if v in JOB_SOURCES else 'rne'
+
+def job_table_name(job):
+ """出力の表の名前。空なら入力の種類ごとの既定を使う。
+
+ RNEは「仕掛」など業務の呼び名がそのまま入る。固定長テキストにはその手がかりが
+ 無いので、決め打ちの DATA を既定にする（利用者の指定）。
+ """
+ name=str((job or {}).get('table') or '').strip()
+ if name:return name
+ return TEXT_TABLE_DEFAULT if normalize_job_source((job or {}).get('source'))=='text' else '仕掛'
 
 def resolve_text_path(job,cfg):
  """読むテキストファイルの場所。書き方の決まりはRNEと同じにする。
@@ -1976,7 +1990,7 @@ def resolve_text_path(job,cfg):
  共通設定の読取フォルダーから探す ―― RNEで慣れた書き方をそのまま使えるようにする。
  """
  value=str(job.get('text_path') or '').strip()
- root=resolve_path(str(cfg.get('text_folder') or '.\\text'))
+ root=resolve_path(str(cfg.get('text_folder') or TEXT_FOLDER_DEFAULT))
  if not value:return root
  raw=os.path.expandvars(os.path.expanduser(value))
  p=Path(raw)
@@ -2008,6 +2022,8 @@ def load():
   if _backup_mode_missing:cfg['settings']['backup_generations']=3
   if int(cfg['settings'].get('api_parallel_lines',6) or 6)==2:cfg['settings']['api_parallel_lines']=6
   cfg.setdefault('navigator_api_dll',r'.\Config\NAVIAP\debugdllVC14x64\SymNaviA.dll'); cfg.setdefault('accdb_template','.\\assets\\empty.accdb');
+  # 固定長テキストと結合の基本フォルダー。ファイル名だけで登録したときの基準。
+  cfg.setdefault('text_folder',TEXT_FOLDER_DEFAULT)
   # DLLを探す範囲。別のPCへ移すとNAVIAPの置き場所が変わることがあるため、範囲そのものを設定にする。
   if not isinstance(cfg.get('navigator_api_search_roots'),list) or not cfg.get('navigator_api_search_roots'):
    cfg['navigator_api_search_roots']=list(DEFAULT_DLL_SEARCH_ROOTS)
@@ -2035,7 +2051,7 @@ def _save_local(v):
   keep=[]
   for order,j in enumerate(jobs):
    jid=j.get('id') or str(uuid.uuid4()); keep.append(jid)
-   fmt=normalize_output_format(j.get('output_format'),j.get('output_file')); output_file=canonical_output_file(j.get('output_file'),fmt); log.info('設定保存 job=%s requested_format=%s saved_format=%s requested_file=%s saved_file=%s',j.get('name'),j.get('output_format'),fmt,j.get('output_file'),output_file); c.execute('INSERT OR REPLACE INTO jobs (id,display_order,enabled,name,rne,rne_path,output_folder,output_format,output_file,table_name,sheet_name,read_type,naming_mode,output_pattern,comment,split_mode,split_shape,row_axis_mode,row_axis_index,row_axis_name,extra_formats,index_columns,skip_if_unchanged,period_json,source,text_path,layout_id,recipe_id,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',(jid,order,int(bool(j.get('enabled',True))),j.get('name',''),j.get('rne',''),j.get('rne_path',''),j.get('output_folder',''),fmt,output_file,j.get('table','仕掛'),j.get('sheet','Page1'),j.get('type','詳細データ'),str(j.get('naming_mode') or 'fixed'),str(j.get('output_pattern') or ''),str(j.get('comment') or ''),normalize_split_mode(j.get('split_mode')),normalize_split_shape(j.get('split_shape')),normalize_row_axis_mode(j.get('row_axis_mode')),max(1,min(200,int(j.get('row_axis_index') or 1))),str(j.get('row_axis_name') or ''),json.dumps(job_extra_formats({**j,'output_format':fmt}),ensure_ascii=False),json.dumps([str(x).strip() for x in (j.get('index_columns') or []) if str(x).strip()][:4],ensure_ascii=False),int(bool(j.get('skip_if_unchanged'))),json.dumps(_decode_period(json.dumps(j.get('period') or {},ensure_ascii=False)),ensure_ascii=False),normalize_job_source(j.get('source')),str(j.get('text_path') or ''),str(j.get('layout_id') or ''),str(j.get('recipe_id') or ''),now))
+   fmt=normalize_output_format(j.get('output_format'),j.get('output_file')); output_file=canonical_output_file(j.get('output_file'),fmt); log.info('設定保存 job=%s requested_format=%s saved_format=%s requested_file=%s saved_file=%s',j.get('name'),j.get('output_format'),fmt,j.get('output_file'),output_file); c.execute('INSERT OR REPLACE INTO jobs (id,display_order,enabled,name,rne,rne_path,output_folder,output_format,output_file,table_name,sheet_name,read_type,naming_mode,output_pattern,comment,split_mode,split_shape,row_axis_mode,row_axis_index,row_axis_name,extra_formats,index_columns,skip_if_unchanged,period_json,source,text_path,layout_id,recipe_id,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',(jid,order,int(bool(j.get('enabled',True))),j.get('name',''),j.get('rne',''),j.get('rne_path',''),j.get('output_folder',''),fmt,output_file,job_table_name(j),j.get('sheet','Page1'),j.get('type','詳細データ'),str(j.get('naming_mode') or 'fixed'),str(j.get('output_pattern') or ''),str(j.get('comment') or ''),normalize_split_mode(j.get('split_mode')),normalize_split_shape(j.get('split_shape')),normalize_row_axis_mode(j.get('row_axis_mode')),max(1,min(200,int(j.get('row_axis_index') or 1))),str(j.get('row_axis_name') or ''),json.dumps(job_extra_formats({**j,'output_format':fmt}),ensure_ascii=False),json.dumps([str(x).strip() for x in (j.get('index_columns') or []) if str(x).strip()][:4],ensure_ascii=False),int(bool(j.get('skip_if_unchanged'))),json.dumps(_decode_period(json.dumps(j.get('period') or {},ensure_ascii=False)),ensure_ascii=False),normalize_job_source(j.get('source')),str(j.get('text_path') or ''),str(j.get('layout_id') or ''),str(j.get('recipe_id') or ''),now))
    c.execute('DELETE FROM schedules WHERE job_id=?',(jid,))
    for ro,q in enumerate(j.get('schedules',[])):
     c.execute('INSERT INTO schedules VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',(q.get('id') or str(uuid.uuid4()),jid,ro,int(bool(q.get('enabled',True))),q.get('name','実行ルール'),q.get('type','daily'),q.get('time','06:00'),q.get('interval_minutes'),json.dumps(q.get('weekdays'),ensure_ascii=False) if 'weekdays' in q else None,json.dumps(q.get('month_days'),ensure_ascii=False) if 'month_days' in q else None,json.dumps(q.get('dates'),ensure_ascii=False) if 'dates' in q else None,now))
