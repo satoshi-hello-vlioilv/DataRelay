@@ -1,7 +1,9 @@
 const UI_BUILD='1.72.0-web';
 let cfg,editing=null,editingRule=null,sortDir=1,scheduleInfo={},rowLive={},rowQueue={},statusFailCount=0,serverLostShown=false;
 // 読取マスタは一覧の描画（sourceCell）からも読むので、ここで先に用意する。
-let layoutCache=[],layoutMeta={encodings:[],units:[],trims:[]},layEditing=null,laySearch='';const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)],E=s=>String(s??'').replace(/[&<>"']/g,x=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[x]));const uid=()=>crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random();function toast(t){$('#toast').textContent=t;$('#toast').style.display='block';setTimeout(()=>$('#toast').style.display='none',2500)}/* 設定は変えた瞬間に保存する。保存ボタンの押し忘れで、画面に見えている設定と
+let layoutCache=[],layoutMeta={encodings:[],units:[],trims:[]},layEditing=null,laySearch='';
+let joinCache=[],joinMeta={types:[],formats:[],layouts:[],max_sources:8},jnEditing=null,jnSearch='',
+    jnProbe={},jnPreviewTimer=null,jnColMode='auto';const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)],E=s=>String(s??'').replace(/[&<>"']/g,x=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[x]));const uid=()=>crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random();function toast(t){$('#toast').textContent=t;$('#toast').style.display='block';setTimeout(()=>$('#toast').style.display='none',2500)}/* 設定は変えた瞬間に保存する。保存ボタンの押し忘れで、画面に見えている設定と
    実際に使われる設定が食い違うことがあったため、押す操作そのものを無くした。 */
 let saveTimer=null,saveSeq=0,saveRetry=0;
 function saveState(text,kind){let e=$('#dirty');if(e){e.textContent=text;e.className='autosave-state '+(kind||'')}}
@@ -59,9 +61,9 @@ async function setJobsEnabled(ids,on){
 }
 function setJobEnabled(id,on){return setJobsEnabled([id],on)}
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden'&&saveTimer)saveSettingsNow()});
-window.addEventListener('beforeunload',()=>{if(!saveTimer||!cfg)return;clearTimeout(saveTimer);saveTimer=null;try{fetch('/api/config',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(settingsPayload()),keepalive:true})}catch{}});$$('nav button').forEach(b=>b.onclick=()=>{$$('nav button,section').forEach(x=>x.classList.remove('on'));b.classList.add('on');$('#'+b.dataset.p).classList.add('on');if(b.dataset.p==='logs')loadLog();if(b.dataset.p==='calendar')openCalendar();if(b.dataset.p==='viewer')loadViewerJobs();if(b.dataset.p==='layouts')openLayouts()});
+window.addEventListener('beforeunload',()=>{if(!saveTimer||!cfg)return;clearTimeout(saveTimer);saveTimer=null;try{fetch('/api/config',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(settingsPayload()),keepalive:true})}catch{}});$$('nav button').forEach(b=>b.onclick=()=>{$$('nav button,section').forEach(x=>x.classList.remove('on'));b.classList.add('on');$('#'+b.dataset.p).classList.add('on');if(b.dataset.p==='logs')loadLog();if(b.dataset.p==='calendar')openCalendar();if(b.dataset.p==='viewer')loadViewerJobs();if(b.dataset.p==='layouts')openLayouts();if(b.dataset.p==='joins')openJoins()});
 // 一覧の「入力」欄が読取マスタの名前を出すので、最初に一度だけ読んでおく。
-loadLayouts().then(()=>{if(typeof cfg!=='undefined'&&cfg)render()});
+Promise.all([loadLayouts(),loadJoins()]).then(()=>{if(typeof cfg!=='undefined'&&cfg)render()});
 const paths={navigator_api_dll:['Navigator API DLL','file',[['DLLファイル','*.dll'],['すべて','*.*']]],symnavi_exe:['SymNavi.exe','file',[['実行ファイル','*.exe'],['すべて','*.*']]],symnavim_conf:['symnavim.conf','file',[['CONFファイル','*.conf'],['すべて','*.*']]],symnavim_def:['symnavim.def','file',[['DEFファイル','*.def'],['すべて','*.*']]],accdb_template:['ACCDB空テンプレート','file',[['Access Database','*.accdb'],['すべて','*.*']]],rne_folder:['RNE基本フォルダー','folder'],default_output_folder:['既定の出力先','folder'],backup_folder:['バックアップ先','folder']};
 let waitingTimer=null,waitingStarted=0;function currentEngine(){return $('#extract-engine')?.value||cfg?.settings?.extract_engine||'api'}function waitingEngineLabel(context='common'){if(context==='api'||(context==='engine'&&currentEngine()==='api'))return 'NAVIGATOR API';if(context==='dde'||(context==='engine'&&currentEngine()==='dde'))return 'DDE COMPATIBILITY';return 'COMMON OPERATION'}function showWaiting(title='確認中',detail='処理を続行しています...',context='common'){let d=$('#waiting-dialog');$('#waiting-engine').textContent=waitingEngineLabel(context);$('#waiting-title').textContent=title;$('#waiting-detail').textContent=detail;waitingStarted=Date.now();clearInterval(waitingTimer);let tick=()=>{let sec=Math.floor((Date.now()-waitingStarted)/1000);$('#waiting-elapsed').textContent=`経過 ${String(Math.floor(sec/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`};tick();waitingTimer=setInterval(tick,1000);if(!d.open)d.showModal()}function updateWaiting(title,detail,context){if(title)$('#waiting-title').textContent=title;if(detail)$('#waiting-detail').textContent=detail;if(context)$('#waiting-engine').textContent=waitingEngineLabel(context)}function hideWaiting(){clearInterval(waitingTimer);waitingTimer=null;let d=$('#waiting-dialog');if(d?.open)d.close()}async function convertPath(input,mode){showWaiting('パス変換中',mode==='relative'?'アプリフォルダー基準へ変換しています...':'実際の絶対パスを解決しています...');try{let r=await fetch('/api/path-convert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({value:input.value,mode})}),d=await r.json();if(!r.ok)return toast(d.error);input.value=d.value;updatePathBadge(input);dirty()}finally{hideWaiting()}}function updatePathBadge(input){let badge=input.closest('label')?.querySelector('.path-badge');if(!badge)return;let relative=input.value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(input.value);badge.textContent=relative?'相対パス / 基準: アプリフォルダー':'絶対パス';badge.className='path-badge '+(relative?'path-kind-relative':'path-kind-absolute')}function isRelativePath(value){return !!value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(value)}function enhancePathInput(input,kind='folder'){if(!input||input.dataset.pathEnhanced)return;input.dataset.pathEnhanced='1';let tools=document.createElement('div');tools.className='path-tools compact-path-tools';tools.innerHTML='<button type="button" class="pathmode path-toggle" title="絶対パスと相対パスを切り替えます"></button><small class="path-badge"></small>';input.closest('label')?.appendChild(tools);let toggle=tools.querySelector('.path-toggle');function refresh(){let relative=isRelativePath(input.value);toggle.textContent=relative?'相対 → 絶対':'絶対 → 相対';toggle.dataset.mode=relative?'absolute':'relative';updatePathBadge(input)}toggle.onclick=async()=>{await convertPath(input,toggle.dataset.mode);refresh()};input.addEventListener('input',refresh);input._refreshPathControl=refresh;refresh()}async function browse(kind,initial,types){showWaiting('参照画面を準備中','設定中のパスを解決して、その場所から開きます...');try{let url=kind==='folder'?'/api/pick-folder':'/api/pick-file',r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({initial,types})}),d=await r.json();if(!r.ok)toast(d.error);return d.path||''}finally{hideWaiting()}}
 async function checkConfiguredPath(item,jobId){showWaiting('ファイル存在確認中','設定場所と周辺フォルダーを検索しています...');try{let r=await fetch('/api/path-check',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({item,job_id:jobId})}),d=await r.json();if(!r.ok)return toast(d.error);showPathResult(d)}finally{hideWaiting()}}function showPathResult(d){let box=$('#suggest-content');if(d.ok){box.innerHTML=`<p class="path-ok">存在を確認しました。</p><code>${E(d.resolved)}</code>`}else if(d.candidates?.length){box.innerHTML=`<p class="path-ng">設定先には存在しません。</p><p>設定値: <code>${E(d.configured)}</code></p><p>実在する修正候補:</p><div class="candidate-list">${d.candidates.map(x=>`<div class="candidate"><code>${E(x)}</code><button class="apply-suggestion" data-path="${E(x)}">このパスへ修正</button></div>`).join('')}</div>`;box.querySelectorAll('.apply-suggestion').forEach(b=>b.onclick=async()=>{let r=await fetch('/api/apply-path-suggestion',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({item:d.item,job_id:d.job_id,candidate:b.dataset.path})}),x=await r.json();if(r.ok){$('#path-suggestion').close();toast('設定を修正しました');await init()}else toast(x.error)})}else{box.innerHTML=`<p class="path-ng">ファイルが見つかりません。</p><p>確認先: <code>${E(d.resolved)}</code></p><p class="reselect">上2階層・下1階層の検索範囲にも候補がありません。参照ボタンから再指定してください。</p>`}if(!$('#path-suggestion').open)$('#path-suggestion').showModal()}
@@ -393,7 +395,7 @@ async function openFolderPath(path,label){
   toast(d.ok?`${label}を開きました`:(d.error||`${label}を開けませんでした`))}
  catch{toast(`${label}を開けませんでした`)}
 }
-function openEditor(job){editing=structuredClone(job||{id:uid(),name:'新しい対象',enabled:true,rne:'NEW.RNE',rne_path:cfg.rne_folder+'\\NEW.RNE',output_folder:cfg.default_output_folder,output_format:'sqlite3',output_file:'NEW.sqlite3',extra_formats:[],table:'仕掛',sheet:'Page1',type:'詳細データ',naming_mode:'fixed',output_pattern:'',comment:'',split_mode:'auto',split_shape:'auto',source:'rne',text_path:'',layout_id:'',period:{enabled:false,control_point:'',unit:'month',from_offset:-1,to_offset:0},schedules:[]});$('#modal-title').textContent=job?'対象を編集':'対象を追加';$('#m-id').value=editing.id;$('#m-name').value=editing.name;$('#m-enabled').checked=editing.enabled;$('#m-rne-path').value=editing.rne_path||'';$('#m-output').value=editing.output_folder||cfg.default_output_folder;editing.output_format=normalizeFormat(editing.output_format);editing.extra_formats=(editing.extra_formats||[]).map(normalizeFormat);editing.index_columns=(editing.index_columns||[]).map(String);if($('#m-skip-unchanged'))$('#m-skip-unchanged').checked=!!editing.skip_if_unchanged;if($('#m-index-columns'))$('#m-index-columns').value=(editing.index_columns||[]).join(', ');$('#m-format').value=editing.output_format;$('#m-output-file').value=editing.output_file;$('#m-table').value=editing.table;$('#m-sheet').value=editing.sheet;$('#m-type').value=editing.type;if($('#m-comment'))$('#m-comment').value=editing.comment||'';if($('#m-split-mode'))$('#m-split-mode').value=editing.split_mode||'auto';if($('#m-split-shape'))$('#m-split-shape').value=editing.split_shape||'auto';if($('#m-axis-mode'))$('#m-axis-mode').value=editing.row_axis_mode||'first';if($('#m-axis-index'))$('#m-axis-index').value=editing.row_axis_index||1;AXIS_PICK.forEach(g=>{if($(g.n))$(g.n).innerHTML=`<option value="${E(editing.row_axis_name||'')}">${E(editing.row_axis_name||'（先に「RNEを調査」）')}</option>`;if($(g.m))$(g.m).value=editing.row_axis_mode||'first';if($(g.i))$(g.i).value=editing.row_axis_index||1});syncAxisPick();setSource(editing.source||'rne');if($('#m-text-path'))$('#m-text-path').value=editing.text_path||'';fillLayoutPicker(editing.layout_id||'');syncOutputExtension();initNaming(editing);setPeriodUI(editing.period);renderRuntimeSplit(null);inspReset();loadMaster(false);splitTrialPoll();rulesRender();updatePeriodBadge();loadJobTrend(editing.id);setEditorTab('basic');$('#editor').showModal()}
+function openEditor(job){editing=structuredClone(job||{id:uid(),name:'新しい対象',enabled:true,rne:'NEW.RNE',rne_path:cfg.rne_folder+'\\NEW.RNE',output_folder:cfg.default_output_folder,output_format:'sqlite3',output_file:'NEW.sqlite3',extra_formats:[],table:'仕掛',sheet:'Page1',type:'詳細データ',naming_mode:'fixed',output_pattern:'',comment:'',split_mode:'auto',split_shape:'auto',source:'rne',text_path:'',layout_id:'',recipe_id:'',period:{enabled:false,control_point:'',unit:'month',from_offset:-1,to_offset:0},schedules:[]});$('#modal-title').textContent=job?'対象を編集':'対象を追加';$('#m-id').value=editing.id;$('#m-name').value=editing.name;$('#m-enabled').checked=editing.enabled;$('#m-rne-path').value=editing.rne_path||'';$('#m-output').value=editing.output_folder||cfg.default_output_folder;editing.output_format=normalizeFormat(editing.output_format);editing.extra_formats=(editing.extra_formats||[]).map(normalizeFormat);editing.index_columns=(editing.index_columns||[]).map(String);if($('#m-skip-unchanged'))$('#m-skip-unchanged').checked=!!editing.skip_if_unchanged;if($('#m-index-columns'))$('#m-index-columns').value=(editing.index_columns||[]).join(', ');$('#m-format').value=editing.output_format;$('#m-output-file').value=editing.output_file;$('#m-table').value=editing.table;$('#m-sheet').value=editing.sheet;$('#m-type').value=editing.type;if($('#m-comment'))$('#m-comment').value=editing.comment||'';if($('#m-split-mode'))$('#m-split-mode').value=editing.split_mode||'auto';if($('#m-split-shape'))$('#m-split-shape').value=editing.split_shape||'auto';if($('#m-axis-mode'))$('#m-axis-mode').value=editing.row_axis_mode||'first';if($('#m-axis-index'))$('#m-axis-index').value=editing.row_axis_index||1;AXIS_PICK.forEach(g=>{if($(g.n))$(g.n).innerHTML=`<option value="${E(editing.row_axis_name||'')}">${E(editing.row_axis_name||'（先に「RNEを調査」）')}</option>`;if($(g.m))$(g.m).value=editing.row_axis_mode||'first';if($(g.i))$(g.i).value=editing.row_axis_index||1});syncAxisPick();setSource(editing.source||'rne');if($('#m-text-path'))$('#m-text-path').value=editing.text_path||'';fillLayoutPicker(editing.layout_id||'');fillRecipePicker(editing.recipe_id||'');syncOutputExtension();initNaming(editing);setPeriodUI(editing.period);renderRuntimeSplit(null);inspReset();loadMaster(false);splitTrialPoll();rulesRender();updatePeriodBadge();loadJobTrend(editing.id);setEditorTab('basic');$('#editor').showModal()}
 $('#m-format').onchange=()=>{syncOutputExtension();if(currentNamingMode()==='template')refreshNamePreview()};$('#m-rne-check').onclick=async()=>{showWaiting('RNEファイル確認中','設定場所と周辺フォルダーを検索しています...');try{let temp={item:'rne',job_id:editing.id,label:editing.rne,configured:$('#m-rne-path').value,resolved:$('#m-rne-path').value,candidates:[],ok:false};let r=await fetch('/api/path-check',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({item:'rne',job_id:editing.id,value:$('#m-rne-path').value,expected_name:$('#m-rne-path').value.split(/[\\/]/).pop()})}),d=await r.json();if(r.ok)showPathResult(d);else toast(d.error)}finally{hideWaiting()}};$('#m-rne-pick').onclick=async()=>{let p=await browse('file',$('#m-rne-path').value,[['RNEファイル','*.RNE'],['すべて','*.*']]);if(p){let i=$('#m-rne-path'),wasRel=i.value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(i.value);i.value=p;if(wasRel)await convertPath(i,'relative');updatePathBadge(i);i._refreshPathControl?.()}};$('#m-output-pick').onclick=async()=>{let p=await browse('folder',$('#m-output').value);if(p){let i=$('#m-output'),wasRel=i.value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(i.value);i.value=p;if(wasRel)await convertPath(i,'relative');updatePathBadge(i)}};enhancePathInput($('#m-rne-path'),'file');enhancePathInput($('#m-output'),'folder');$('#m-rne-path').addEventListener('input',()=>renderInspTarget());$('#m-name').addEventListener('input',()=>renderInspTarget());
 /* 有効・無効は押した瞬間に効かせる。「設定を反映」を押し忘れて閉じると
    黙って元へ戻る、という切れ目を作らない。まだ保存していない新規の対象だけは
@@ -419,7 +421,7 @@ function collectJob(){
   row_axis_mode:($('#m-axis-mode')?.value||'first'),row_axis_index:Number($('#m-axis-index')?.value||1)||1,
   row_axis_name:($('#m-axis-name')?.value||''),period:currentPeriod(),
   source:currentSource(),text_path:($('#m-text-path')?.value||'').trim(),
-  layout_id:($('#m-layout')?.value||'')};
+  layout_id:($('#m-layout')?.value||''),recipe_id:($('#m-recipe')?.value||'')};
 }
 async function applyJob(close=true,quiet=false){
  const updated=collectJob();
@@ -2999,15 +3001,15 @@ async function exportPivot(){
    「どのファイルを」「どのマスタで切るか」の2つだけを選ぶ。 */
 function currentSource(){return $('.src-btn.on')?.dataset.src||'rne'}
 function setSource(src){
- src=(src==='text')?'text':'rne';
+ src=(src==='text'||src==='join')?src:'rne';
  $$('.src-btn').forEach(b=>{let on=b.dataset.src===src;b.classList.toggle('on',on);b.setAttribute('aria-selected',String(on))});
  $$('.src-pane').forEach(x=>x.classList.toggle('on',x.dataset.src===src));
  // RNEを調べる道具は、RNEのときだけ意味がある。出したままにすると、押しても
  // 何も起きないボタンが並ぶ（押せるのに効かない、がいちばん分かりにくい）。
  let tool=$('.editor-tab[data-etab="inspect"]');
- if(tool){tool.hidden=(src==='text');if(src==='text'&&tool.classList.contains('on'))setEditorTab('basic')}
+ if(tool){tool.hidden=(src!=='rne');if(src!=='rne'&&tool.classList.contains('on'))setEditorTab('basic')}
  let period=$('.editor-tab[data-etab="period"]');
- if(period)period.hidden=(src==='text');
+ if(period)period.hidden=(src!=='rne');
  // 番号は「上から何番目か」を表す。隠したぶんを飛ばすと 1・2・4 と並び、
  // 3が押せないのかと探すことになる。見えているものへ振り直す。
  let n=0;
@@ -3200,6 +3202,11 @@ if($('#lay-file'))$('#lay-file').onchange=async e=>{
 /* 一覧の「入力」欄。RNEはRNE名、固定長テキストはファイル名と読取マスタを出す。
    ここを1つの書き方で済ませると、テキストの行にだけ空欄が並ぶ。 */
 function sourceCell(j){
+ if((j.source||'rne')==='join'){
+  let r=joinCache.find(x=>x.id===j.recipe_id);
+  return `<div class="primarytext"><i class="src-tag">結合</i>${E(r?r.name:'結合マスタ未選択')}</div>`
+   +`<div class="subtext pathtext">${E(r?(r.sources||[]).map(s=>jnBase(s.path)).join(' → '):'')}</div>`;
+ }
  if((j.source||'rne')!=='text')
   return `<div class="primarytext" title="${E(j.rne_path||j.rne)}">${E(j.rne)}</div>`
    +`<div class="subtext pathtext">${E(j.rne_path||'')}</div>`;
@@ -3208,3 +3215,292 @@ function sourceCell(j){
  return `<div class="primarytext" title="${E(j.text_path||'')}"><i class="src-tag">テキスト</i>${E(file)}</div>`
   +`<div class="subtext pathtext">${E(lay?lay.name+'（'+lay.columns.length+'列）':'読取マスタ未選択')}</div>`;
 }
+
+/* ==== ファイル結合（複数ファイルをキーで繋ぐ）=============================
+   繋がっているものは、繋がって見えるように置く。カードを左から右へ並べ、
+   その「あいだ」につなぎ方そのもの（キーと結合の種類と一致の内訳）を置く。
+   設定欄と線が離れていると、頭の中で結び直す作業が要る ―― それを無くす。
+
+   いちばん効くのは「一致の内訳」。結合の失敗は静かで、キーを1つ間違えただけで
+   0件になったり何倍にも膨らんだりする。しかもファイルは出来上がってしまうので、
+   走らせる前に必ず数字で見せる。 */
+const JN_ALIAS='ABCDEFGH';
+function jnBase(p){return String(p||'').split(/[\\/]/).pop()}
+async function loadJoins(force){
+ if(joinCache.length&&!force&&joinMeta.types.length)return joinCache;
+ try{
+  let d=await fetch('/api/join-recipes',{cache:'no-store'}).then(r=>r.json());
+  joinCache=d.items||[];
+  joinMeta={types:d.types||[],formats:d.formats||[],layouts:d.layouts||[],max_sources:d.max_sources||8};
+ }catch{joinCache=[]}
+ return joinCache;
+}
+function jnBlank(){return {id:'',name:'',description:'',
+ sources:[{alias:'A',path:'',format:'csv',table:'',sheet:'',layout_id:''},
+          {alias:'B',path:'',format:'csv',table:'',sheet:'',layout_id:''}],
+ joins:[{type:'inner',keys:[{left:'',right:''}]}],columns:[]}}
+function jnColsOf(i){return (jnProbe[i]&&jnProbe[i].columns)||[]}
+function jnKeyCols(i){
+ // その表がキーとして使われている列名。カードの列チップに印を付ける。
+ let out=new Set();
+ (jnEditing.joins||[]).forEach((j,n)=>{
+  (j.keys||[]).forEach(k=>{if(n>=i&&k.left)out.add(k.left);if(n===i-1&&k.right)out.add(k.right)});
+ });
+ return out;
+}
+function jnRenderList(){
+ let box=$('#jn-list');if(!box)return;
+ let q=jnSearch.trim().toLowerCase();
+ let items=joinCache.filter(x=>!q||[x.name,x.description,...(x.sources||[]).map(s=>s.path)].join(' ').toLowerCase().includes(q));
+ if(!items.length){box.innerHTML='<p class="lay-empty-note">'+(q?'見つかりませんでした':'まだ登録がありません。「新規作成」から作れます。')+'</p>';return}
+ box.innerHTML=items.map(x=>`<button type="button" class="lay-item${jnEditing&&jnEditing.id===x.id?' on':''}" data-id="${E(x.id)}">`
+  +`<b>${E(x.name)}</b><small>${(x.sources||[]).length}ファイル / つなぎ目 ${(x.joins||[]).length}</small>`
+  +`<small>${E((x.sources||[]).map(s=>jnBase(s.path)).join(' → '))}</small>`
+  +(x.used_by&&x.used_by.length?`<em>${x.used_by.length}件の対象が使用中</em>`:'')+'</button>').join('');
+ $$('#jn-list .lay-item').forEach(b=>b.onclick=()=>jnOpen(joinCache.find(x=>x.id===b.dataset.id)));
+}
+/* ---- 1枚＝1ファイル ---- */
+function jnCardHtml(s,i){
+ let p=jnProbe[i]||{};
+ let keys=jnKeyCols(i);
+ let extra='';
+ if(s.format==='sqlite3')
+  extra=`<select class="jn-table">${(p.tables||[]).map(t=>`<option${t===s.table?' selected':''}>${E(t)}</option>`).join('')||'<option value="">（テーブル）</option>'}</select>`;
+ else if(s.format==='xlsx')
+  extra=`<select class="jn-sheet">${(p.sheets||[]).map(t=>`<option${t===s.sheet?' selected':''}>${E(t)}</option>`).join('')||'<option value="">（シート）</option>'}</select>`;
+ else if(s.format==='fixed')
+  extra=`<select class="jn-layout"><option value="">読取マスタを選ぶ</option>`
+   +joinMeta.layouts.map(l=>`<option value="${E(l.id)}"${l.id===s.layout_id?' selected':''}>${E(l.name)}</option>`).join('')+`</select>`;
+ let stat=p.error?`<span class="is-ng">${E(p.error)}</span>`
+  :p.columns?`<span><b>${p.rows==null?'—':Number(p.rows).toLocaleString()}</b>行</span><span><b>${p.columns.length}</b>列</span>`
+  :'<span>ファイルを選ぶと列が出ます</span>';
+ return `<div class="jn-card" data-i="${i}">`
+  +`<div class="jn-card-head"><i class="jn-alias">${E(s.alias)}</i><b title="${E(s.path)}">${E(jnBase(s.path)||'ファイル'+(i+1))}</b>`
+  +(jnEditing.sources.length>2?'<button type="button" class="jn-card-del" title="このファイルを外す">×</button>':'')+`</div>`
+  +`<input class="jn-path" value="${E(s.path)}" placeholder="例: .\\output\\juchu.csv">`
+  +`<div class="jn-card-extra"><select class="jn-format">`
+  +joinMeta.formats.map(f=>`<option value="${E(f.value)}"${f.value===s.format?' selected':''}>${E(f.label)}</option>`).join('')
+  +`</select>${extra}</div>`
+  +`<div class="jn-card-stat${p.error?' is-ng':''}">${stat}</div>`
+  +`<div class="jn-cols">${(p.columns||[]).map(c=>`<span class="${keys.has(c)?'is-key':''}">${E(c)}</span>`).join('')}</div>`
+  +`</div>`;
+}
+/* ---- カードとカードの「あいだ」＝つなぎ方 ---- */
+function jnLinkHtml(j,i){
+ let left=jnColsOf(i),right=jnColsOf(i+1);
+ let opt=(cols,v)=>`<option value="">（列を選ぶ）</option>`+cols.map(c=>`<option value="${E(c)}"${c===v?' selected':''}>${E(c)}</option>`).join('');
+ let m=(jnEditing._match||[])[i];
+ let bar='';
+ if(m&&m.both!=null){
+  let tot=Math.max(1,(m.left_only||0)+(m.both||0)+(m.right_only||0));
+  let pct=n=>((n||0)/tot*100).toFixed(1)+'%';
+  bar=`<div class="jn-match${m.both?'':' is-ng'}"><div class="jn-bar">`
+   +`<i class="b-left" style="width:${pct(m.left_only)}"></i><i class="b-both" style="width:${pct(m.both)}"></i><i class="b-right" style="width:${pct(m.right_only)}"></i>`
+   +`</div><small>両方に有る <b>${Number(m.both||0).toLocaleString()}</b> / 左だけ ${Number(m.left_only||0).toLocaleString()} / 右だけ ${Number(m.right_only||0).toLocaleString()}</small>`
+   +(m.why?`<small>${E(m.why)}</small>`:'')+`</div>`;
+ }
+ return `<div class="jn-link" data-i="${i}">`
+  +`<div class="jn-link-head">${E(jnEditing.sources[i].alias)} と ${E(jnEditing.sources[i+1].alias)} を繋ぐ</div>`
+  +`<div class="jn-types">`+joinMeta.types.map(t=>`<button type="button" class="${t.value===j.type?'on':''}" data-type="${E(t.value)}" title="${E(t.note)}">${E(t.label)}</button>`).join('')+`</div>`
+  +(j.keys||[]).map((k,n)=>`<div class="jn-key" data-n="${n}"><select class="jn-key-l">${opt(left,k.left)}</select>`
+    +`<i>&#8660;</i><select class="jn-key-r">${opt(right,k.right)}</select>`
+    +((j.keys||[]).length>1?'<button type="button" title="このキーを外す">×</button>':'<span></span>')+`</div>`).join('')
+  +`<button type="button" class="jn-key-add">＋ キーを追加</button>`
+  +bar+`</div>`;
+}
+function jnRenderFlow(){
+ let box=$('#jn-flow');if(!box||!jnEditing)return;
+ let html='';
+ jnEditing.sources.forEach((s,i)=>{
+  html+=jnCardHtml(s,i);
+  if(i<jnEditing.sources.length-1)html+=jnLinkHtml(jnEditing.joins[i]||{type:'inner',keys:[{left:'',right:''}]},i);
+ });
+ box.innerHTML=html;
+ let note=$('#jn-flow-note');
+ if(note)note.textContent=`${jnEditing.sources.length}ファイル / つなぎ目 ${jnEditing.joins.length}`
+  +((jnEditing._rows!=null)?` / できあがり ${Number(jnEditing._rows).toLocaleString()}行`:'');
+ // カードの操作
+ $$('#jn-flow .jn-card').forEach(card=>{
+  let i=Number(card.dataset.i),s=jnEditing.sources[i];
+  card.querySelector('.jn-path').onchange=e=>{s.path=e.target.value.trim();jnProbeSource(i)};
+  card.querySelector('.jn-format').onchange=e=>{s.format=e.target.value;jnProbeSource(i)};
+  let t=card.querySelector('.jn-table');if(t)t.onchange=e=>{s.table=e.target.value;jnProbeSource(i)};
+  let sh=card.querySelector('.jn-sheet');if(sh)sh.onchange=e=>{s.sheet=e.target.value;jnProbeSource(i)};
+  let l=card.querySelector('.jn-layout');if(l)l.onchange=e=>{s.layout_id=e.target.value;jnProbeSource(i)};
+  let d=card.querySelector('.jn-card-del');
+  if(d)d.onclick=()=>{
+   jnEditing.sources.splice(i,1);jnEditing.joins.splice(Math.max(0,i-1),1);
+   jnEditing.sources.forEach((x,n)=>x.alias=JN_ALIAS[n]||('S'+(n+1)));
+   jnProbe={};jnEditing.columns=[];jnRenderFlow();jnRenderColumns();jnEditing.sources.forEach((_,n)=>jnProbeSource(n));
+  };
+ });
+ // つなぎ目の操作
+ $$('#jn-flow .jn-link').forEach(link=>{
+  let i=Number(link.dataset.i),j=jnEditing.joins[i];
+  link.querySelectorAll('.jn-types button').forEach(b=>b.onclick=()=>{j.type=b.dataset.type;jnRenderFlow();jnRefresh()});
+  link.querySelectorAll('.jn-key').forEach(row=>{
+   let n=Number(row.dataset.n);
+   row.querySelector('.jn-key-l').onchange=e=>{
+    j.keys[n].left=e.target.value;
+    // 同じ名前の列が右にもあれば、そのまま埋める。ほとんどの結合は同名どうしなので、
+    // ここで1回ぶんの操作と「どれだったか」を思い出す手間が消える。
+    if(!j.keys[n].right&&jnColsOf(i+1).includes(e.target.value))j.keys[n].right=e.target.value;
+    jnRenderFlow();jnRefresh();
+   };
+   row.querySelector('.jn-key-r').onchange=e=>{j.keys[n].right=e.target.value;jnRenderFlow();jnRefresh()};
+   let del=row.querySelector('button');
+   if(del)del.onclick=()=>{j.keys.splice(n,1);jnRenderFlow();jnRefresh()};
+  });
+  link.querySelector('.jn-key-add').onclick=()=>{j.keys.push({left:'',right:''});jnRenderFlow()};
+ });
+}
+function jnRenderColumns(){
+ let box=$('#jn-columns');if(!box||!jnEditing)return;
+ box.classList.toggle('is-auto',jnColMode==='auto');
+ let picked=new Set((jnEditing.columns||[]).map(c=>c.source+' '+c.name));
+ // 「自動」のときは、同じ名前の列は先に出たほうだけを出す（キーの列が2度出ない）。
+ // 全部を光らせると、実際には出ない列まで出るように見えてしまう。
+ let auto=new Set(),used=new Set();
+ jnEditing.sources.forEach((s,i)=>jnColsOf(i).forEach(c=>{
+  if(used.has(c))return;used.add(c);auto.add(s.alias+' '+c);
+ }));
+ box.innerHTML=jnEditing.sources.map((s,i)=>{
+  let cols=jnColsOf(i);
+  if(!cols.length)return '';
+  return `<div class="jn-colgroup" data-i="${i}"><i>${E(s.alias)}</i>`
+   +cols.map(c=>`<button type="button" class="${(jnColMode==='auto'?auto.has(s.alias+' '+c):picked.has(s.alias+' '+c))?'on':''}" data-col="${E(c)}">${E(c)}</button>`).join('')
+   +`</div>`;
+ }).join('')||'<p class="hint">ファイルを選ぶと、出せる列がここに並びます。</p>';
+ $$('#jn-columns .jn-colgroup').forEach(g=>{
+  let i=Number(g.dataset.i),s=jnEditing.sources[i];
+  g.querySelectorAll('button').forEach(b=>b.onclick=()=>{
+   let key=s.alias+' '+b.dataset.col;
+   let cur=(jnEditing.columns||[]).filter(c=>c.source+' '+c.name!==key);
+   if(cur.length===(jnEditing.columns||[]).length)cur.push({source:s.alias,name:b.dataset.col,as:''});
+   jnEditing.columns=cur;jnRenderColumns();jnRefresh();
+  });
+ });
+}
+async function jnProbeSource(i){
+ let s=jnEditing.sources[i];
+ if(!s.path){jnProbe[i]=null;jnRenderFlow();jnRenderColumns();return}
+ try{
+  let d=await fetch('/api/join-source',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(s)}).then(r=>r.json());
+  jnProbe[i]=d.ok?d:{error:d.error||'読み取れませんでした'};
+  if(d.ok){
+   if(d.format&&d.format!==s.format&&d.format!=='fixed')s.format=d.format;
+   if(d.tables&&d.tables.length&&!s.table)s.table=d.tables[0];
+   if(d.sheets&&d.sheets.length&&!s.sheet)s.sheet=d.sheets[0];
+  }
+ }catch{jnProbe[i]={error:'読み取れませんでした（通信に失敗しました）'}}
+ jnRenderFlow();jnRenderColumns();jnRefresh();
+}
+function jnCollect(){
+ return {...jnEditing,name:$('#jn-name').value.trim(),description:$('#jn-desc').value.trim(),
+  columns:(jnColMode==='auto'?[]:(jnEditing.columns||[]))};
+}
+function jnRefresh(){
+ clearTimeout(jnPreviewTimer);
+ jnPreviewTimer=setTimeout(jnPreview,350);
+}
+async function jnPreview(){
+ let box=$('#jn-preview');if(!box||!jnEditing)return;
+ let ready=jnEditing.sources.every(s=>s.path)&&jnEditing.joins.every(j=>(j.keys||[]).some(k=>k.left&&k.right));
+ if(!ready){box.innerHTML='<p class="hint">ファイルとキーがそろうと、できあがりの先頭12行がここに出ます。</p>';return}
+ box.innerHTML='<p class="hint">繋いでいます…</p>';
+ let d=await fetch('/api/join-preview',{method:'POST',headers:{'Content-Type':'application/json'},
+   body:JSON.stringify({recipe:jnCollect(),lines:12})}).then(r=>r.json()).catch(()=>null);
+ if(!d)return box.innerHTML='<p class="lay-note is-ng">できあがりを取得できませんでした（通信に失敗しました）</p>';
+ if(!d.ok){
+  jnEditing._match=[];jnEditing._rows=null;jnRenderFlow();
+  return box.innerHTML=`<p class="lay-note is-ng">${E(d.error||'繋げませんでした')}</p>`;
+ }
+ jnEditing._match=(d.stats.joins||[]);jnEditing._rows=d.stats.rows;
+ jnRenderFlow();
+ let head='<tr>'+d.headers.map(h=>`<th>${E(h)}</th>`).join('')+'</tr>';
+ let rows=d.rows.map(r=>'<tr>'+r.map(v=>`<td>${E(v)}</td>`).join('')+'</tr>').join('');
+ box.innerHTML=`<div class="lay-scroll"><table>${head}${rows}</table></div>`
+  +`<p class="hint">${Number(d.stats.rows).toLocaleString()}行 × ${d.headers.length}列（先頭${d.rows.length}行を表示）</p>`
+  +(d.notes||[]).map(n=>`<p class="lay-note">${E(n)}</p>`).join('');
+ let sql=$('#jn-sql');if(sql)sql.textContent=d.stats.sql||'';
+}
+function jnOpen(r){
+ jnEditing=structuredClone(r||jnBlank());
+ jnEditing.columns=jnEditing.columns||[];
+ jnColMode=(jnEditing.columns.length?'pick':'auto');
+ $$('#jn-col-mode button').forEach(b=>b.classList.toggle('on',b.dataset.colmode===jnColMode));
+ jnProbe={};
+ $('#jn-empty').hidden=true;$('#jn-edit').hidden=false;
+ $('#jn-name').value=jnEditing.name||'';$('#jn-desc').value=jnEditing.description||'';
+ $('#jn-delete').hidden=!jnEditing.id;
+ $('#jn-state').textContent=(r&&r.used_by&&r.used_by.length)?`${r.used_by.length}件の対象が使用中: ${r.used_by.slice(0,3).join('・')}`:'';
+ $('#jn-preview').innerHTML='';
+ jnRenderFlow();jnRenderColumns();jnRenderList();
+ jnEditing.sources.forEach((_,i)=>jnProbeSource(i));
+}
+async function jnSave(){
+ let d=await fetch('/api/join-recipes',{method:'POST',headers:{'Content-Type':'application/json'},
+   body:JSON.stringify(jnCollect())}).then(r=>r.json()).catch(()=>null);
+ if(!d||!d.ok)return toast(d?.error||'保存できませんでした');
+ toast('結合マスタを保存しました');
+ await loadJoins(true);jnRenderList();
+ jnOpen(joinCache.find(x=>x.id===d.recipe.id)||d.recipe);
+}
+async function jnDelete(){
+ if(!jnEditing?.id)return;
+ if(!confirm(`結合マスタ「${jnEditing.name}」を削除しますか？`))return;
+ let d=await fetch('/api/join-recipes/'+encodeURIComponent(jnEditing.id),{method:'DELETE'}).then(r=>r.json()).catch(()=>null);
+ if(!d||!d.ok)return toast(d?.error||'削除できませんでした');
+ toast('削除しました');jnEditing=null;
+ await loadJoins(true);jnRenderList();
+ $('#jn-edit').hidden=true;$('#jn-empty').hidden=false;
+}
+async function openJoins(){
+ await loadJoins(true);jnRenderList();
+ if(jnEditing){let cur=joinCache.find(x=>x.id===jnEditing.id);if(cur)jnOpen(cur)}
+}
+if($('#jn-add'))$('#jn-add').onclick=()=>jnOpen(null);
+if($('#jn-save'))$('#jn-save').onclick=jnSave;
+if($('#jn-delete'))$('#jn-delete').onclick=jnDelete;
+if($('#jn-search'))$('#jn-search').oninput=e=>{jnSearch=e.target.value;jnRenderList()};
+if($('#jn-add-source'))$('#jn-add-source').onclick=()=>{
+ if(jnEditing.sources.length>=joinMeta.max_sources)return toast(`ファイルは${joinMeta.max_sources}つまでです`);
+ let n=jnEditing.sources.length;
+ jnEditing.sources.push({alias:JN_ALIAS[n]||('S'+(n+1)),path:'',format:'csv',table:'',sheet:'',layout_id:''});
+ jnEditing.joins.push({type:'inner',keys:[{left:'',right:''}]});
+ jnRenderFlow();jnRenderColumns();
+};
+$$('#jn-col-mode button').forEach(b=>b.onclick=()=>{
+ jnColMode=b.dataset.colmode;
+ $$('#jn-col-mode button').forEach(x=>x.classList.toggle('on',x===b));
+ jnRenderColumns();jnRefresh();
+});
+if($('#jn-export'))$('#jn-export').onclick=()=>{location.href='/api/join-recipes/export'};
+if($('#jn-import'))$('#jn-import').onclick=()=>$('#jn-file')?.click();
+if($('#jn-file'))$('#jn-file').onchange=async e=>{
+ let f=e.target.files&&e.target.files[0];if(!f)return;
+ let text=await f.text();e.target.value='';
+ let d=await fetch('/api/join-recipes/import',{method:'POST',headers:{'Content-Type':'application/json'},body:text})
+   .then(r=>r.json()).catch(()=>null);
+ if(!d||!d.ok)return toast(d?.error||'取り込めませんでした');
+ await loadJoins(true);jnRenderList();
+ toast(`取り込みました: 追加${d.added.length}件 / 置き換え${d.replaced.length}件`
+   +(d.skipped&&d.skipped.length?` / 読めなかったもの${d.skipped.length}件`:''));
+};
+async function fillRecipePicker(selected){
+ let sel=$('#m-recipe');if(!sel)return;
+ let items=await loadJoins();
+ sel.innerHTML='<option value="">選択してください</option>'+items.map(x=>
+  `<option value="${E(x.id)}">${E(x.name)}（${(x.sources||[]).length}ファイル）</option>`).join('');
+ sel.value=selected||'';
+ let note=$('#m-recipe-note');
+ if(note){
+  let cur=items.find(x=>x.id===sel.value);
+  note.textContent=cur?`${cur.name}: ${(cur.sources||[]).map(s=>jnBase(s.path)).join(' → ')}`
+   :(items.length?'どのファイルをどのキーで繋ぐかは「ファイル結合」で決めます。上から選んでください。'
+    :'結合マスタがまだありません。上の「マスタを開く」から作成してください。');
+ }
+}
+if($('#m-recipe'))$('#m-recipe').onchange=()=>{fillRecipePicker($('#m-recipe').value);dirty()};
+if($('#m-recipe-open'))$('#m-recipe-open').onclick=()=>{$('#editor').close();document.querySelector('[data-p="joins"]')?.click()};

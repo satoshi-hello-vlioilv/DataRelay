@@ -1,10 +1,12 @@
-"""読取マスタの出し入れと、固定長テキストの実行。
+"""読取マスタの出し入れと、手元のファイルから作る対象の実行。
 
 切り方そのもの（位置で切る・下読み・書き出し用のJSON）は navi_text.py にある。
 こちらは、それを控えDBへ出し入れし、対象1件を最後まで通す側 ―― 本体の名前を
 借りるので、navi_split と同じく app.py の終わりで取り込む。
 
-RNEとの違いは「中間CSVをどう作るか」だけ。仕上げ（変換・公開・控え・同時出力）は
+扱うのは、Navigatorへ問い合わせない2つの入力 ―― 固定長テキスト（1つのファイルを位置で
+切る）と、複数ファイルの結合（キーで繋ぐ）。どちらもRNEとの違いは「中間CSVをどう作るか」
+だけで、仕上げ（変換・公開・控え・同時出力）は
 finish_one_job をそのまま通す。別に書くと、片方にしか直しが入らない壊れ方を繰り返す
 （v1.65.1・v1.66.0・v1.68.0で実際に起きた）。
 """
@@ -42,7 +44,12 @@ for _n in ('_mark_settings_dirty',
            'text_layout_width',
            'validate_output_contract',
            'validate_text_layout',
-           'write_text_intermediate'):globals()[_n]=_borrow(_n)
+           'write_text_intermediate',
+           'find_join_recipe',
+           'join_layouts',
+           'join_reader',
+           'validate_join_recipe',
+           'write_join_intermediate'):globals()[_n]=_borrow(_n)
 del _n
 
 def _uuid4():
@@ -110,7 +117,7 @@ def delete_text_layout(layout_id):
  log.info('TEXT_LAYOUT_DELETE id=%s deleted=%s',lid,n)
  return bool(n)
 
-def process_text_job(j,cfg,work,backup,trigger,job_index,total_jobs,say=None):
+def process_local_job(j,cfg,work,backup,trigger,job_index,total_jobs,say=None):
  """固定長テキスト1件を、読み取り → 変換 → 公開まで通す。
 
  RNEと違うのは「中間CSVの作り方」だけ。そこから先は finish_one_job にそのまま渡す。
@@ -124,31 +131,51 @@ def process_text_job(j,cfg,work,backup,trigger,job_index,total_jobs,say=None):
  def report(stage,**kw):
   if say:say(stage,**kw)
  j['output_file']=resolve_output_filename(j,cfg)
- fmt=validate_output_contract(j,'before-text-read')
+ fmt=validate_output_contract(j,'before-local-read')
  j['_accdb_template']=str(resolve_path(cfg.get('accdb_template','.\\assets\\empty.accdb')))
  # 中間CSVはUTF-8（BOM付き）で書く。読み手の推測順はcp932が先なので、
  # 何で書いたかを対象に持たせて渡す（推測に任せると、化けたまま通ることがある）。
  j['_intermediate_encoding']='utf-8-sig'
- src=resolve_text_path(j,cfg)
- layout=find_text_layout(j.get('layout_id'))
- if not layout:
-  raise ValueError('読取マスタが選ばれていません。対象の設定で、どの読み方で切るかを選んでください')
- bad=validate_text_layout(layout)
- if bad:raise ValueError(f'読取マスタ「{layout["name"]}」が使えません: '+'／'.join(bad))
- if not src.is_file():raise FileNotFoundError('テキストファイルがありません: '+str(src))
+ kind=normalize_job_source(j.get('source'))
+ # 使えないと分かっている取り決めで走り出さない。ここで断れば、公開先にも控えにも触らない。
+ layout=recipe=None;src=None
+ if kind=='join':
+  recipe=find_join_recipe(j.get('recipe_id'))
+  if not recipe:
+   raise ValueError('結合マスタが選ばれていません。対象の設定で、どの繋ぎ方で作るかを選んでください')
+  bad=validate_join_recipe(recipe)
+  if bad:raise ValueError(f'結合マスタ「{recipe["name"]}」が使えません: '+'／'.join(bad))
+ else:
+  src=resolve_text_path(j,cfg)
+  layout=find_text_layout(j.get('layout_id'))
+  if not layout:
+   raise ValueError('読取マスタが選ばれていません。対象の設定で、どの読み方で切るかを選んでください')
+  bad=validate_text_layout(layout)
+  if bad:raise ValueError(f'読取マスタ「{layout["name"]}」が使えません: '+'／'.join(bad))
+  if not src.is_file():raise FileNotFoundError('テキストファイルがありません: '+str(src))
  out_dir=resolve_path(j.get('output_folder') or cfg['default_output_folder']);target=out_dir/j['output_file']
  apply_pending(target,backup,int(cfg['settings']['backup_generations']),backup_enabled=bool(cfg['settings'].get('backup_enabled',True)),retention_days=int(cfg['settings'].get('backup_retention_days',30)),generation_limit_enabled=bool(cfg['settings'].get('backup_generation_limit_enabled',True)),backup_mode=str(cfg['settings'].get('backup_mode','generations')))
- stamp=datetime.now().strftime('%Y%m%d_%H%M%S_%f')+f'_T{job_index}'
+ stamp=datetime.now().strftime('%Y%m%d_%H%M%S_%f')+f'_L{job_index}'
  local_export=work/'export';local_export.mkdir(parents=True,exist_ok=True)
  db=local_export/f'{Path(j["output_file"]).stem}_{stamp}{Path(j["output_file"]).suffix}'
- intermediate=work/f'text_{job_index}_{stamp}.csv'
+ intermediate=work/f'{kind}_{job_index}_{stamp}.csv'
  extras=job_extra_formats(j)
- log.info('PIPELINE job=%s engine=text source=%s layout=%s common_intermediate=CSV format=%s target=%s',
-          j['name'],src,layout['name'],fmt,target)
- report('read',source=src,layout=layout['name'])
- t=phase_log('text_read',job=j['name'],source=src,layout=layout['name'])
- rows,cols,stat=write_text_intermediate(src,layout,intermediate,reject_zero=bool(cfg['settings']['reject_zero_rows']))
- phase_log('text_read',t,job=j['name'],rows=rows,columns=cols,short_rows=stat['short_rows'],broken_cells=stat['broken_cells'])
+ zero=bool(cfg['settings']['reject_zero_rows'])
+ if kind=='join':
+  files=[f'{x["alias"]}:{Path(x["path"]).name}' for x in recipe['sources']]
+  log.info('PIPELINE job=%s engine=join recipe=%s ファイル=%s common_intermediate=CSV format=%s target=%s',
+           j['name'],recipe['name'],files,fmt,target)
+  report('read',source='・'.join(files),layout=recipe['name'])
+  t=phase_log('join_read',job=j['name'],recipe=recipe['name'],sources=len(recipe['sources']))
+  rows,cols,stat=write_join_intermediate(recipe,join_reader(cfg),intermediate,join_layouts(),reject_zero=zero)
+  phase_log('join_read',t,job=j['name'],rows=rows,columns=cols)
+ else:
+  log.info('PIPELINE job=%s engine=text source=%s layout=%s common_intermediate=CSV format=%s target=%s',
+           j['name'],src,layout['name'],fmt,target)
+  report('read',source=src,layout=layout['name'])
+  t=phase_log('text_read',job=j['name'],source=src,layout=layout['name'])
+  rows,cols,stat=write_text_intermediate(src,layout,intermediate,reject_zero=zero)
+  phase_log('text_read',t,job=j['name'],rows=rows,columns=cols,short_rows=stat['short_rows'],broken_cells=stat['broken_cells'])
  try:
   fin=finish_one_job(j,cfg,intermediate=intermediate,db=db,target=target,backup=backup,out_dir=out_dir,
                      local_export=local_export,stamp=stamp,expected_rows=rows,expected_cols=cols,
@@ -160,7 +187,7 @@ def process_text_job(j,cfg,work,backup,trigger,job_index,total_jobs,say=None):
    except Exception:pass
  return fin,target,rows,cols,stat,fmt,extras
 
-def run_text_jobs(jobs,cfg,work,backup,trigger,progress_fn=None,offset=0,total_all=0):
+def run_local_jobs(jobs,cfg,work,backup,trigger,progress_fn=None,offset=0,total_all=0):
  """固定長テキストの対象をまとめて片付ける。(結果の文, 失敗, 一覧用の結果) を返す。
 
  1件ずつ順に処理する。読むのは手元のファイルで、待たされるのは変換と公開だけなので、
@@ -180,9 +207,9 @@ def run_text_jobs(jobs,cfg,work,backup,trigger,progress_fn=None,offset=0,total_a
    elif stage=='publish':progress_fn('publish',f'{j["name"]}: 検査済みファイルを公開しています',90,activity_detail='公開工程')
    elif stage=='extras':progress_fn('publish',f'{j["name"]}: 同じデータからあと{len(kw.get("extras") or [])}形式を作成しています',95,activity_detail='同時出力')
   try:
-   fin,target,rows,cols,stat,fmt,extras=process_text_job(j,cfg,work,backup,trigger,index,total_all,say)
+   fin,target,rows,cols,stat,fmt,extras=process_local_job(j,cfg,work,backup,trigger,index,total_all,say)
   except Exception as e:
-   log.exception('TEXT_JOB_FAILED job=%s',j.get('name'))
+   log.exception('LOCAL_JOB_FAILED job=%s kind=%s',j.get('name'),normalize_job_source(j.get('source')))
    failures.append({'job':j.get('name'),'error':str(e)})
    record_job_run(j['id'],j['name'],'failed',trigger,detail=str(e))
    job_results.append({'job':j['name'],'job_id':j['id'],'status':'failed','detail':str(e)})
@@ -197,8 +224,13 @@ def run_text_jobs(jobs,cfg,work,backup,trigger,progress_fn=None,offset=0,total_a
            +('' if fin['published'] else f' / 更新保留: {fin["pending"]}')+extra_format_note(fin['extra_results']))
   results.append(f'{j["name"]}: '+detail);completed_ids.append(j['id'])
   metrics=serial_run_metrics('text',fmt,total,fin['rows'],fin['cols'])
-  metrics.update(published=bool(fin['published']),pending=str(fin.get('pending') or ''),
-                 text_rows=stat['rows'],text_short_rows=stat['short_rows'],text_broken_cells=stat['broken_cells'])
+  metrics.update(published=bool(fin['published']),pending=str(fin.get('pending') or ''))
+  # 内訳は入力の種類で違う。無いものを0として残すと、後から読むとき嘘になる。
+  if 'short_rows' in stat:
+   metrics.update(text_rows=stat['rows'],text_short_rows=stat['short_rows'],text_broken_cells=stat['broken_cells'])
+  elif 'joins' in stat:
+   metrics.update(join_sources=len(stat['sources']),
+                  join_matched=[x.get('both') for x in stat['joins']])
   record_job_run(j['id'],j['name'],'ok',trigger,detail=detail,rows=fin['rows'],cols=fin['cols'],
                  output_file=j['output_file'],metrics=metrics)
   job_results.append({'job':j['name'],'job_id':j['id'],'status':'ok','detail':detail,'rows':fin['rows'],

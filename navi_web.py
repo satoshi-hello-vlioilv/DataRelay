@@ -40,7 +40,7 @@ from app import (
     enqueue_command, expand_rule_occurrences, find_nearby_file, freshness_view,
     has_template_variables, heartbeat_clients, heartbeat_lock, inspect_task_blank,
     inspect_task_lock, inspect_task_percent, inspect_task_seconds, inspect_tasks,
-    job_extra_formats, job_output_plan, job_schedule_preview, json, jsonify, last_run_info, load,
+    job_extra_formats, job_output_plan, job_schedule_preview, json, jsonify, last_run_info, load, sqlite3,
     load_column_cache, load_job_runs, load_rne_timing, load_split_trials, log, log_files,
     machine_path_view, normalize_output_format, normalize_split_mode, normalize_split_shape,
     split_trial_options,
@@ -61,7 +61,12 @@ from app import (
     JOB_SOURCE_LABEL, normalize_job_source, normalize_text_layout, validate_text_layout,
     text_layout_width, text_layout_overlaps, text_layout_gaps, preview_text, resolve_text_path,
     load_text_layouts, find_text_layout, save_text_layout, delete_text_layout, text_layout_usage,
-    text_layouts_export, text_layouts_import)
+    text_layouts_export, text_layouts_import,
+    JOIN_TYPES, JOIN_TYPE_LABEL, JOIN_TYPE_NOTE, SOURCE_FORMATS, SOURCE_FORMAT_LABEL,
+    JOIN_MAX_SOURCES, join_types_available, normalize_join_recipe, validate_join_recipe,
+    preview_join_recipe, join_recipes_export, join_recipes_import, load_join_recipes,
+    find_join_recipe, save_join_recipe, delete_join_recipe, join_recipe_usage,
+    resolve_join_path, join_reader, join_layouts, read_preview_data)
 
 @app.get('/')
 def index():
@@ -1311,6 +1316,22 @@ def validate():
   add('RNE配置',j.get('name','対象')+' RNE',exists,rp,configured=j.get('rne_path'),item='rne',job_id=j.get('id'),candidates=candidates,needs_reselect=not exists and not candidates)
   op=resolve_path(j.get('output_folder') or c.get('default_output_folder','.\\output'))
   add('出力先',j.get('name','対象')+' 出力先',op.is_dir(),op,item='')
+ # 結合の対象。要るのは「繋ぎ方（結合マスタ）」と、そこに並ぶファイルが在ること。
+ for j in c.get('jobs',[]):
+  if normalize_job_source(j.get('source'))!='join':continue
+  rp=find_join_recipe(j.get('recipe_id'))
+  if not rp:
+   add('ファイル結合',j.get('name','対象')+' 結合マスタ',False,'結合マスタが選ばれていません（または削除されています）',job_id=j.get('id'),item='')
+  else:
+   bad=validate_join_recipe(rp)
+   missing=[x['path'] for x in rp['sources'] if not resolve_join_path(x['path'],c).is_file()]
+   ok_all=not bad and not missing
+   add('ファイル結合',j.get('name','対象')+' 結合マスタ',ok_all,
+       (f'{rp["name"]} / {len(rp["sources"])}ファイル / つなぎ目 {len(rp["joins"])}' if ok_all
+        else '／'.join(bad+([f'見つからないファイル: '+'、'.join(missing[:3])] if missing else []))),
+       job_id=j.get('id'),item='',needs_reselect=bool(missing))
+  op=resolve_path(j.get('output_folder') or c.get('default_output_folder','.\\output'))
+  add('出力先',j.get('name','対象')+' 出力先',op.is_dir(),op,item='')
  # 固定長テキストの対象。要るのは「読むファイル」と「切り方（読取マスタ）」の2つだけ。
  for j in c.get('jobs',[]):
   if normalize_job_source(j.get('source'))!='text':continue
@@ -1471,4 +1492,108 @@ def text_preview_route():
  path=resolve_text_path({'text_path':raw},c)
  out=preview_text(path,layout,int(d.get('lines') or 12))
  out['width']=text_layout_width(layout)
+ return jsonify(out) if out.get('ok') else (jsonify(out),400)
+
+# ==== 結合マスタ（複数ファイルをキーで繋ぐ）===============================
+# 読取マスタが「1つのファイルをどう切るか」なら、こちらは「複数をどう繋ぐか」。
+@app.get('/api/join-recipes')
+def join_recipes_list():
+ items=load_join_recipes();c=load()
+ for x in items:
+  x['used_by']=join_recipe_usage(x['id'],c)
+ return jsonify(ok=True,items=items,max_sources=JOIN_MAX_SOURCES,
+                types=[{'value':k,'label':JOIN_TYPE_LABEL.get(k,k),'note':JOIN_TYPE_NOTE.get(k,'')}
+                       for k in join_types_available()],
+                formats=[{'value':k,'label':SOURCE_FORMAT_LABEL.get(k,k)} for k in SOURCE_FORMATS],
+                layouts=[{'id':x['id'],'name':x['name']} for x in load_text_layouts()])
+
+@app.post('/api/join-recipes')
+def join_recipes_save():
+ d=request.get_json(force=True) or {}
+ try:saved=save_join_recipe(d)
+ except ValueError as e:return jsonify(ok=False,error=str(e)),400
+ except Exception as e:
+  log.exception('JOIN_RECIPE_SAVE_FAILED');return jsonify(ok=False,error=str(e)),500
+ return jsonify(ok=True,recipe=saved)
+
+@app.delete('/api/join-recipes/<recipe_id>')
+def join_recipes_delete(recipe_id):
+ try:gone=delete_join_recipe(recipe_id)
+ except ValueError as e:return jsonify(ok=False,error=str(e)),409
+ return jsonify(ok=bool(gone),error='' if gone else 'その結合マスタはありません')
+
+@app.get('/api/join-recipes/export')
+def join_recipes_export_file():
+ want=[x for x in (request.args.get('ids') or '').split(',') if x.strip()]
+ items=[x for x in load_join_recipes() if not want or x['id'] in want]
+ body=json.dumps(join_recipes_export(items),ensure_ascii=False,indent=1)
+ name='join-recipes-'+datetime.now().strftime('%Y%m%d_%H%M%S')+'.json'
+ r=app.make_response(body)
+ r.headers['Content-Type']='application/json; charset=utf-8'
+ r.headers['Content-Disposition']=f'attachment; filename="{name}"'
+ log.info('JOIN_RECIPE_EXPORT count=%s file=%s',len(items),name)
+ return r
+
+@app.post('/api/join-recipes/import')
+def join_recipes_import_file():
+ raw=request.get_data(as_text=True) or ''
+ recipes,bad=join_recipes_import(raw)
+ if not recipes:return jsonify(ok=False,error='／'.join(bad) or '取り込める結合マスタがありません'),400
+ have={x['name']:x['id'] for x in load_join_recipes()}
+ added=[];replaced=[]
+ for r in recipes:
+  if r['name'] in have:r['id']=have[r['name']];replaced.append(r['name'])
+  else:added.append(r['name'])
+  save_join_recipe(r)
+ log.info('JOIN_RECIPE_IMPORT 追加=%s 置き換え=%s 読めなかったもの=%s',added,replaced,len(bad))
+ return jsonify(ok=True,added=added,replaced=replaced,skipped=bad)
+
+@app.post('/api/join-source')
+def join_source_probe():
+ """1つのファイルの見出しと件数だけを読む。キーを選ぶ材料になる。
+
+ 結合そのものより先に、まず「そのファイルに何という列があるか」が要る。
+ 全部を読むと重いので、先頭だけを見て列と件数の見当を返す。
+ """
+ d=request.get_json(force=True) or {}
+ c=load()
+ src=dict(d or {});raw=str(src.get('path') or '').strip()
+ if not raw:return jsonify(ok=False,error='ファイルの場所を入れてください'),400
+ fmt=str(src.get('format') or '').strip().lower()
+ if fmt=='fixed':
+  lay=find_text_layout(src.get('layout_id'))
+  if not lay:return jsonify(ok=False,error='読取マスタを選んでください'),400
+  path=resolve_join_path(raw,c)
+  pv=preview_text(path,lay,lines=5)
+  if not pv.get('ok'):return jsonify(ok=False,error=pv.get('error') or '読み取れませんでした'),400
+  return jsonify(ok=True,columns=pv['headers'],rows=None,sample=pv['rows'][:3],
+                 path=str(path),format='fixed',note='固定長テキスト（件数は実行時に数えます）')
+ path=resolve_join_path(raw,c)
+ if not path.is_file():return jsonify(ok=False,error=f'ファイルがありません: {path}'),400
+ try:
+  job={'output_format':fmt or path.suffix.lstrip('.'),'table':src.get('table') or '','sheet':src.get('sheet') or ''}
+  used,headers,rows,total=read_preview_data(path,job,limit=3)
+ except Exception as e:
+  return jsonify(ok=False,error=f'読み取れませんでした: {e}'),400
+ tables=[];sheets=[]
+ if used=='sqlite3':
+  try:
+   with sqlite3.connect(path) as conn:
+    tables=[r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name") if not str(r[0]).startswith('_')]
+  except Exception:tables=[]
+ elif used=='xlsx':
+  try:
+   from openpyxl import load_workbook
+   wb=load_workbook(path,read_only=True);sheets=list(wb.sheetnames);wb.close()
+  except Exception:sheets=[]
+ return jsonify(ok=True,columns=headers,rows=total,sample=rows,path=str(path),
+                format=used,tables=tables,sheets=sheets)
+
+@app.post('/api/join-preview')
+def join_preview_route():
+ """繋いだ結果と、つなぎ目ごとの一致を返す。結合の失敗は静かなので、必ず数えて見せる。"""
+ d=request.get_json(force=True) or {}
+ recipe=normalize_join_recipe(d.get('recipe') or {})
+ c=load()
+ out=preview_join_recipe(recipe,join_reader(c),join_layouts(),lines=int(d.get('lines') or 12))
  return jsonify(out) if out.get('ok') else (jsonify(out),400)

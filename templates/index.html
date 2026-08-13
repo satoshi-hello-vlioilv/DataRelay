@@ -21,7 +21,7 @@
 </div>
 <div class="modalfoot"><button type="button" id="bulk-cancel" class="secondary">キャンセル</button><button type="button" id="bulk-apply" disabled>この内容で変更</button></div>
 </div></dialog>
-<main><nav><button class="on" data-p="jobs">対象ファイル</button><button data-p="calendar">カレンダー</button><button data-p="layouts">読取マスタ</button><button data-p="viewer">データビュワー</button><button data-p="paths">共通設定</button><button data-p="logs">ログ・診断</button></nav>
+<main><nav><button class="on" data-p="jobs">対象ファイル</button><button data-p="calendar">カレンダー</button><button data-p="layouts">読取マスタ</button><button data-p="joins">ファイル結合</button><button data-p="viewer">データビュワー</button><button data-p="paths">共通設定</button><button data-p="logs">ログ・診断</button></nav>
 <section id="jobs" class="on"><div class="commandbar"><div class="searchbox"><span>検索</span><input id="search" placeholder="名称、RNE、出力先、ファイル名"></div><select id="filter-enabled"><option value="all">状態: すべて</option><option value="enabled">有効</option><option value="disabled">無効</option></select><select id="filter-schedule"><option value="all">予定: すべて</option><option value="scheduled">自動実行あり</option><option value="manual">手動のみ</option></select><select id="sort"><option value="order">登録順</option><option value="name">名称順</option><option value="rne">RNE名順</option><option value="output">出力先順</option><option value="schedule">予定数順</option></select><button id="add" class="secondary">新規追加</button></div><div id="fresh-board" class="fresh-board" hidden></div>
 <div class="listmeta"><span id="summary"></span><span class="rc-hint"><b>状態</b>のバッジを押すと有効・無効を切り替えます／行を<b>右クリック</b>すると操作メニューが出ます</span><div><button id="bulk-edit" class="textbtn" hidden>選択した対象をまとめて変更</button><button id="select-visible" class="textbtn">表示対象を選択</button><button id="clear-selection" class="textbtn">選択解除</button></div></div><aside id="command-queue" class="command-queue"><div class="queue-head"><div><b>実行キュー</b><span id="cq-summary">待機なし</span></div><div id="cq-overall" class="cq-overall" hidden><div><span id="cq-progress-label">全体 0 / 0</span><b id="cq-progress-percent">0%</b></div><div class="cq-progress-track"><i id="cq-progress-bar"></i><i id="cq-progress-run" class="cq-progress-run"></i></div></div><button id="cq-toggle" class="secondary" type="button">一覧</button></div><div id="cq-list" class="cq-list" hidden></div></aside><div class="tablebox"><table class="jobs-table"><thead><tr><th class="c-check"></th><th class="c-state">状態</th><th class="sortable" data-sort="name">管理名称</th><th class="sortable" data-sort="rne">RNEファイル</th><th>出力ファイル</th><th class="sortable" data-sort="output">出力先</th><th class="c-progress">進捗・次回実行</th><th class="c-action">操作</th></tr></thead><tbody id="jobs-body"></tbody></table><div id="empty" class="empty" hidden>条件に一致する対象はありません。</div></div></section>
 <section id="calendar"><div class="cal-shell">
@@ -55,6 +55,23 @@
 <div class="lay-foot"><span id="lay-state" class="hint"></span><button id="lay-delete" type="button" class="danger">削除</button><button id="lay-save" type="button" class="primary">保存</button></div>
 </article>
 <article class="panel lay-empty" id="lay-empty"><div class="panelhead"><h2>読取マスタを選んでください</h2><p>左の一覧から選ぶか、「新規作成」で作ります。作ったマスタは、対象ファイルの登録画面で「固定長テキスト」を選ぶと使えます。</p></div></article>
+</div></section>
+<section id="joins"><div class="commandbar"><div class="searchbox"><span>検索</span><input id="jn-search" placeholder="結合マスタ名、説明、ファイル名"></div><button id="jn-add" class="secondary">新規作成</button><button id="jn-import" class="secondary">取り込み</button><button id="jn-export" class="secondary">書き出し</button><input id="jn-file" type="file" accept=".json,application/json" hidden></div>
+<div class="jn-wrap">
+<aside class="jn-list-pane"><div class="panelhead"><h2>ファイル結合</h2><p>複数のファイルをキーで突き合わせて1つの表にします。作った繋ぎ方は、対象ファイルの登録から選んで使います。</p></div><div id="jn-list" class="jn-list"></div></aside>
+<article class="panel jn-edit" id="jn-edit" hidden>
+<div class="fieldgrid"><label>結合マスタ名<input id="jn-name" placeholder="例: 受注明細＋品目マスタ"></label><label>用途メモ<input id="jn-desc" placeholder="例: 単価を付けた受注一覧を日次で共有"></label></div>
+<div class="sectiontitle sect-input"><i class="sect-badge sb-input">繋</i>つなぎ方<span id="jn-flow-note" class="jn-flow-note"></span></div>
+<div id="jn-flow" class="jn-flow"></div>
+<div class="jn-flow-actions"><button id="jn-add-source" type="button" class="secondary">＋ ファイルを追加</button><span class="hint">左から順に繋ぎます。1つ目が土台で、2つ目以降をキーで突き合わせます。</span></div>
+<div class="sectiontitle sect-output"><i class="sect-badge sb-output">列</i>出す列<span id="jn-col-mode" class="jn-col-mode"><button type="button" class="on" data-colmode="auto">自動</button><button type="button" data-colmode="pick">選ぶ</button></span></div>
+<div id="jn-columns" class="jn-columns"></div>
+<div class="sectiontitle sect-output"><i class="sect-badge sb-output">試</i>できあがりを見る</div>
+<div id="jn-preview" class="jn-preview"></div>
+<details id="jn-sql-box" class="jn-sql"><summary>組み立てたSQLを見る</summary><pre id="jn-sql"></pre></details>
+<div class="lay-foot"><span id="jn-state" class="hint"></span><button id="jn-delete" type="button" class="danger">削除</button><button id="jn-save" type="button" class="primary">保存</button></div>
+</article>
+<article class="panel lay-empty" id="jn-empty"><div class="panelhead"><h2>結合マスタを選んでください</h2><p>左の一覧から選ぶか、「新規作成」で作ります。作った結合マスタは、対象ファイルの登録画面で「複数ファイルの結合」を選ぶと使えます。</p></div></article>
 </div></section>
 <section id="paths"><div class="settings-shell"><nav class="settings-nav" id="settings-nav">
 <button class="settings-navbtn on" type="button" data-cat="conn"><i class="settings-badge cat-conn">接</i><span class="settings-navtext"><b>接続とパス</b><small>API・DDE・出力先の場所</small></span></button>
@@ -130,7 +147,7 @@
 <div class="sectiontitle sect-input"><i class="sect-badge sb-input">入</i>入力データ</div>
 <div class="src-pick" role="tablist" aria-label="入力の種類">
 <button type="button" class="src-btn on" data-src="rne" role="tab" aria-selected="true"><b>RNE</b><small>Navigatorへ問い合わせて表を受け取る</small></button>
-<button type="button" class="src-btn" data-src="text" role="tab" aria-selected="false"><b>固定長テキスト</b><small>手元のファイルを決めた位置で切る</small></button>
+<button type="button" class="src-btn" data-src="text" role="tab" aria-selected="false"><b>固定長テキスト</b><small>手元のファイルを決めた位置で切る</small></button><button type="button" class="src-btn" data-src="join" role="tab" aria-selected="false"><b>複数ファイルの結合</b><small>キーで突き合わせて1つの表にする</small></button>
 </div>
 <div class="src-pane on" data-src="rne">
 <div class="path-help compact-help"><span>相対パスの基準はアプリフォルダーです。例: <code>.\rne\SIKALOTNOW.RNE</code></span></div>
@@ -142,6 +159,11 @@
 <div class="fieldgrid one"><label>テキストファイル<div class="browse"><input id="m-text-path" placeholder=".\text\JUCHU.txt"><div class="path-actions"><button id="m-text-check" type="button" class="verify-btn">確認</button><button id="m-text-pick" type="button" class="browse-btn">参照</button></div></div></label></div>
 <div class="fieldgrid one"><label>読取マスタ（切り方）<div class="browse"><select id="m-layout"><option value="">選択してください</option></select><button id="m-layout-open" type="button" class="secondary">マスタを開く</button></div></label></div>
 <p id="m-layout-note" class="hint">どの位置で切るかは「読取マスタ」で決めます。同じ形式のファイルが複数あっても、マスタは1つで足ります。</p>
+</div>
+<div class="src-pane" data-src="join">
+<div class="path-help compact-help"><span>読むファイルの場所は結合マスタ側に持ちます。Navigatorへは接続しません。</span></div>
+<div class="fieldgrid one"><label>結合マスタ（繋ぎ方）<div class="browse"><select id="m-recipe"><option value="">選択してください</option></select><button id="m-recipe-open" type="button" class="secondary">マスタを開く</button></div></label></div>
+<p id="m-recipe-note" class="hint">どのファイルをどのキーで繋ぐかは「ファイル結合」で決めます。</p>
 </div>
 
 </div>
