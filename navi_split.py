@@ -43,8 +43,8 @@ for _n in ('_mark_settings_dirty',
            '_rne_key',
            '_spawn_racers',
            '_viewer_output_path',
-           'axis_usable',
-           'axis_balance_scores',
+           'axis_balance_cached',
+           'axis_option',
            'axis_value_weights',
            'block_row_axis',
            'blocked_row_axes',
@@ -69,9 +69,11 @@ for _n in ('_mark_settings_dirty',
            'row_filter_cost',
            'save_column_cache',
            'settings_connection',
+           'split_axis_reload_seconds',
            'split_expected_bytes',
            'split_payload_profile',
            'split_shape_label',
+           'split_time_model',
            'split_transfer_ratio'):globals()[_n]=_borrow(_n)
 del _n
 
@@ -600,6 +602,11 @@ def split_trial_options(job,cfg,row_parts=2):
             （row_parts で判定する。片数が増えるほど条件式が長くなり、使える軸は減る）
    grid   … 行×列。両方が成り立つときだけ
    baseline … 保存済みの基準（あれば、いつ測ったものか）
+
+ 「走らせてみないと分からない」ものは、ここで先に潰す。値が空の行がある軸と、
+ ひとつの値に行が集中している軸は、実測しなくても結果が分かっている：
+ 前者は必ず行が落ち（一致しない）、後者は分けても一番重い片が縮まない。
+ どちらも1回2分前後を捨てることになるので、選べる側には出さない。
  """
  rp=resolve_rne_path(job,cfg)
  out={'rne':str(rp),'job':job.get('name',''),'ready':False,
@@ -626,36 +633,74 @@ def split_trial_options(job,cfg,row_parts=2):
  else:
   columns=cached['columns'];removable=[x['name'] for x in (cached.get('classify') or []) if x.get('removable')]
   out['columns']=len(columns);out['removable']=len(removable)
-  # 列分割は「外せる列」があって初めて成り立つ。1本も無ければ、何回試しても同じ。
-  if removable:
-   out['column']={'ok':True,'why':f'{len(columns)}本のうち{len(removable)}本を分けて運べます'}
-  else:
+  # 断る理由は、実際に断っている理由でなければならない。同名の列があると列分割は
+  # 成立しないのに、ここでは「外せる列」しか見ていなかったため「外せる189本」を
+  # 数えて選ばせ、走らせたあとで「分割して取得できる列がありません」と、
+  # 起きていないことを理由に断っていた（実測 2026-08-13 SIKALOT.RNE）。
+  dupes=duplicate_columns(columns)
+  # 直近の出力が無いと錨が立てられない。行が変わると分かっているRNEでは、
+  # 錨なしの列分割は影実行の入口で必ず止まる。
+  had_output=False
+  try:had_output=_viewer_output_path(job,cfg).is_file()
+  except Exception:had_output=False
+  if dupes:
+   names='、'.join(d['name'] for d in dupes[:3])+('ほか' if len(dupes)>3 else '')
+   out['duplicates']=[d['name'] for d in dupes[:10]]
+   out['column']={'ok':False,'why':f'同じ名前の列があります（{names}）。'
+                  '列分割は列名で担当を決めて、結合でも列名を突き合わせるため、この形は成立しません'}
+  elif not removable:
    out['column']={'ok':False,'why':f'外せる列が1本もありません（{len(columns)}本すべてが結合キーか必須です）'}
+  elif split_incompatible(rp) and not had_output:
+   out['column']={'ok':False,'why':'このRNEは、列を外すと返ってくる行そのものが変わることが確認済みです。'
+                  '行をつなぎ留める錨の列は直近の出力から探しますが、その出力がまだありません。'
+                  '1回実行してからお試しください'}
+  else:
+   out['column']={'ok':True,'why':f'{len(columns)}本のうち{len(removable)}本を分けて運べます'}
  # 行分割は軸しだい。下調べがあれば、使える軸をそのまま出す。
  sv=load_axis_survey(rp)
  axes=[]
+ # 見込みを出すための材料。どれも保存済みの実測から引くだけで、問い合わせはしない。
+ #   model  … 1片にかかる秒数の式（基準の実測が要る）
+ #   axsec  … 行分割で毎回かかる軸の読み直し（本番でも払う）
+ #   scores … 直近の出力から測った、軸ごとの散らばりと空の行
+ model=split_time_model(rp,cfg.get('settings') or {})
+ axsec=split_axis_reload_seconds(rp) or 0.0
+ gate=float((cfg.get('settings') or {}).get('split_min_speedup',1.05) or 1.05)
+ scores=axis_balance_cached(job,cfg,[a.get('name') for a in (sv.get('axes') or [])]) if sv else {}
+ out['model']=model;out['axis_seconds']=axsec or None;out['min_speedup']=gate
  if sv:
   # 過去にサーバーが拒否した軸（条件式が長すぎた等）は、選べる側へ出さない。
   blocks=set(blocked_row_axes(rp))
+  # 1本ずつの判定は axis_option が持つ（軸の判定はぜんぶ本体側にまとめてある）。
   for a in (sv.get('axes') or []):
-   # 使えるかどうかは axis_usable で判定する。控えは調べたときの生の軸なので、
-   # usable/enough という印は入っていない。その印を見ていたため全部が「使えない」に
-   # なり、行分割のチェックがどのRNEでも入れられなかった。
-   good,reason=axis_usable(a,parts)
-   blocked=a.get('name') in blocks
-   usable=bool(good) and not blocked
-   axes.append({'name':a.get('name',''),'location':a.get('location',''),'index':a.get('index',0),
-                'type_name':a.get('type_name',''),'values':a.get('category_count'),
-                'usable':usable,
-                'why':('この軸はサーバーに拒否されたことがあります' if blocked else reason),
-                'blocked':blocked})
-  axes.sort(key=lambda x:(not x['usable'],x['index']))
+   axes.append(axis_option(a,scores.get(a.get('name','')),parts,model,axsec,gate,a.get('name','') in blocks))
+  # 使える軸は「見込みの速い順」に並べる。番号順に並べていたので、いちばん上の軸を
+  # 選ぶと、たまたま偏った軸を掴んでいた。速くならない軸を先頭に置く理由は無い。
+  axes.sort(key=lambda x:(not x['usable'],-((x['gain'] or {}).get('run_speedup') or 0),x['index']))
  out['row']['axes']=axes
  good=[x for x in axes if x['usable']]
  if good:
-  out['row']={'ok':True,'why':f'{len(good)}本の管理ポイントで行を絞れます','axes':axes}
+  best=good[0]
+  tip=''
+  if (best.get('gain') or {}).get('run_speedup'):
+   tip=f'。いちばん速い見込みは「{best["name"]}」で{best["gain"]["run_speedup"]}倍'
+  out['row']={'ok':True,'why':f'{len(good)}本の管理ポイントで行を絞れます'+tip,'axes':axes}
  elif sv:
-  out['row']={'ok':False,'why':'行を絞れる管理ポイントがありません（値が2種以上あるものが要ります）','axes':axes}
+  # 「1本も無い」と「あるが速くならない／行が落ちる」は、利用者から見て別の話。
+  # 直し方が違うので、まとめて同じ文で断らない。
+  slow=[x for x in axes if (x.get('gain') or {}).get('run_speedup')]
+  blank=[x for x in axes if x.get('blank_rows')]
+  if slow:
+   b=max(slow,key=lambda x:x['gain']['run_speedup'])
+   why=(f'{len(axes)}本の管理ポイントはどれも行が一か所に集まっていて、{parts}つに分けても速くなりません'
+        f'（いちばんましな「{b["name"]}」で{b["gain"]["run_speedup"]}倍／基準は{gate}倍）。'
+        '片数を増やすか、別の管理ポイントを持つRNEでお試しください')
+  elif blank:
+   why=(f'行を絞れる管理ポイントがありません（{len(blank)}本は値が空の行があり、'
+        '分けるとその行が結果から落ちます）')
+  else:
+   why='行を絞れる管理ポイントがありません（値が2種以上あるものが要ります）'
+  out['row']={'ok':False,'why':why,'axes':axes}
  else:
   out['row']={'ok':False,'why':'先に「RNEを調査」で管理ポイントを読み込んでください','axes':axes,'need_survey':True}
  # 測る画面を出せるかどうかは「列か行のどちらかが決まっているか」。片方だけでも測れる。
@@ -710,10 +755,24 @@ def _split_trial_run(data,c,job):
  cached=load_column_cache(rp)
  if not cached or cached['stale'] or not cached['columns']:
   return stop('先に「列の分割可否を調べる」を実行してください（列定義が未取得か、RNEが更新されています）')
- removable=[x['name'] for x in (cached.get('classify') or []) if x.get('removable')]
+ columns=cached['columns'];removable=[x['name'] for x in (cached.get('classify') or []) if x.get('removable')]
+ # 同名の列が困るのは、列名で担当を決めて列名で突き合わせる列分割のときだけ。
+ # 行分割はどの片も全列を持ち、縦に積むだけなので同名でも取り違えようがない。
+ # この判定は「外せる列があるか」より先に置く。あとに置いていたので、外せる列が
+ # 189本あって同名の列で止まっている状況でも「分割して取得できる列がありません」と、
+ # 起きていないことを理由に断っていた（実測 2026-08-13 SIKALOT.RNE）。
+ dupes=duplicate_columns(columns)
+ if dupes and uses_columns and not data.get('force'):
+  log.warning('SPLIT_TRIAL_DUPLICATES rne=%s names=%s',rp,[d['name'] for d in dupes[:10]])
+  return stop('同じ名前の列が複数あるため、列分割は行えません（'
+                    +'、'.join(f"{d['name']}×{d['count']}" for d in dupes[:5])
+                    +('ほか' if len(dupes)>5 else '')
+              +'）。列分割は列名で担当を決め、結合でも列名を突き合わせるため、'
+               '同名の列があると外す対象を取り違えたり、結合で片方が消えたりします。'
+               'RNE側で列名を分けてから再度お試しください。',duplicates=dupes)
  if not removable and uses_columns:
-  return stop('分割して取得できる列がありません')
- columns=cached['columns'];trials=load_split_trials(rp)
+  return stop(f'分割して取得できる列がありません（{len(columns)}本すべてが結合キーか必須です）')
+ trials=load_split_trials(rp)
  parts=int(data.get('parts') or 0)
  # 直近の出力から列ごとのデータ量と埋まり具合を測る。分割数の判断にも使うので先に済ませる。
  weights=None;anchors=[];coverage=0.0
@@ -738,17 +797,6 @@ def _split_trial_run(data,c,job):
               f'最も埋まっている列でも全行の{coverage*100:.1f}%しか覆えず、残りの行は担当列がすべて空になるため落ちます。'
               '錨を増やしても覆えないため、このRNEの現在の列構成では分割できません。',
               rowset_mismatch=True,anchor_coverage=coverage,no_anchor=True)
- # 同名の列が困るのは、列名で担当を決めて列名で突き合わせる列分割のときだけ。
- # 行分割はどの片も全列を持ち、縦に積むだけなので同名でも取り違えようがない。
- dupes=duplicate_columns(columns)
- if dupes and uses_columns and not data.get('force'):
-  log.warning('SPLIT_TRIAL_DUPLICATES rne=%s names=%s',rp,[d['name'] for d in dupes[:10]])
-  return stop('同じ名前の列が複数あるため、列分割は行えません（'
-                    +'、'.join(f"{d['name']}×{d['count']}" for d in dupes[:5])
-                    +('ほか' if len(dupes)>5 else '')
-              +'）。列分割は列名で担当を決め、結合でも列名を突き合わせるため、'
-               '同名の列があると外す対象を取り違えたり、結合で片方が消えたりします。'
-               'RNE側で列名を分けてから再度お試しください。',duplicates=dupes)
  if parts<2:
   parts,_g,_d=recommend_split_parts(columns,removable,int(c['settings'].get('api_parallel_max_lines',4) or 4),
                                     trials,load_rne_timing(rp),weights,c['settings'],split_link_profile(rp))
@@ -780,7 +828,7 @@ def _split_trial_run(data,c,job):
   else:
    log.info('SPLIT_TRIAL_AXES_SKIP rne=%s 下調べがないので、実行直前の読み直しだけで進めます',rp)
   # 軸の決め方は入口で確定させてある（指定が無ければ対象の設定、それも無ければ表側の1番目）。
-  scores=axis_balance_scores(job,c,[a.get('name') for a in row_axis_all])
+  scores=axis_balance_cached(job,c,[a.get('name') for a in row_axis_all])
   row_blocks=blocked_row_axes(rp)
   row_axis,ranked,axis_why=pick_row_axis_by_mode(row_axis_all,row_parts,axis_choice['mode'],
                                                  axis_choice['index'],axis_choice['name'],scores,row_blocks)
@@ -794,6 +842,24 @@ def _split_trial_run(data,c,job):
    log.info('SPLIT_TRIAL_AXIS_PICK rne=%s 軸=%s（%s %s番目 / %s）値=%s 期間=%s',
             rp,row_axis['name'],row_axis['location'],row_axis['index']+1,row_axis['type_name'],
             row_axis.get('category_count'),row_axis.get('period'))
+   # 走らせる前に、結末が分かっているものを止める。ここで止めれば2分が浮く。
+   #   実測 2026-08-13 SIKALOT.RNE: 空の行が42行あると事前に記録していながら走らせ、
+   #   64秒かけて「分割なしにだけ42行ある」＝一致しない、で終わった。
+   # 判定は測る画面（split_trial_options）と同じ axis_option を通す。別々に書くと、
+   # 画面では選べるのに走らせると断られる、という食い違いが必ずどこかで生まれる。
+   opt=axis_option(row_axis,scores.get(row_axis.get('name','')),row_parts,
+                   split_time_model(rp,c.get('settings') or {}),split_axis_reload_seconds(rp) or 0.0,
+                   float(c['settings'].get('split_min_speedup',1.05) or 1.05))
+   fc=opt.get('gain')
+   if fc:
+    # 見込みは必ずログへ残す。あとで実測と並べれば、式が合っているかを検算できる。
+    log.info('SPLIT_TRIAL_AXIS_FORECAST rne=%s 軸=%s いちばん多い値=%.0f%% %s分割 → 一番重い片 約%.0fs '
+             '見かけ%.2f倍 / 軸の読み直し%.0fsを含めた実力%.2f倍（分割なし %.0fs）',
+             rp,row_axis['name'],(opt.get('top_share') or 0)*100,row_parts,fc['heavy_seconds'],fc['speedup'],
+             fc['axis_seconds'],fc['run_speedup'],fc['normal_seconds'])
+   if not opt['usable'] and not data.get('force'):
+    return stop(f'「{row_axis["name"]}」は{opt["why"]}。別の軸か、別の片数でお試しください。',
+                forecast=fc,axis=row_axis.get('name'),blank_rows=opt.get('blank_rows') or 0)
  work=LOCAL_RUNTIME/('split_trial_'+datetime.now().strftime('%Y%m%d_%H%M%S'));work.mkdir(parents=True,exist_ok=True)
  user,pw,server,_=creds(resolve_path(c['symnavim_conf']))
  # 基準は分け方を持たない。mode= に column と出ると「列分割を試して失敗した」と読めてしまう。

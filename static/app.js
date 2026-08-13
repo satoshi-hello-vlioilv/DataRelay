@@ -2520,8 +2520,10 @@ function tmApplyOptions(){
   else{rd.hidden=false;rd.className='tm-ready';
    let ng=TM_SHAPES.filter(s=>!(o[s]||{}).ok),axn=(((o.row||{}).axes)||[]).filter(x=>x.usable).length;
    // 列と行は片方だけ揃っていることがある。揃っているほうだけ数を出す。
+   // 軸は見込みの速い順に並んでいるので、先頭が「いちばん速い見込み」。
+   let top=(((o.row||{}).axes)||[]).find(x=>x.usable&&x.gain&&x.gain.run_speedup);
    let have=[o.column.ok?`列 ${o.columns}本（うち外せる ${o.removable}本）`:'',
-             o.row.ok?`行の軸 ${axn}本`:''].filter(Boolean).join(' / ');
+             o.row.ok?`行の軸 ${axn}本`+(top?`（見込み 最大${top.gain.run_speedup}倍）`:''):''].filter(Boolean).join(' / ');
    rd.innerHTML=`<b>この対象で測れるもの</b><span>${E(have||'—')}`
     +(ng.length?` ― ${ng.map(s=>({column:'列分割',row:'行分割',grid:'行×列'})[s]).join('・')}は選べません`:'')+`</span>`}
  }
@@ -2535,11 +2537,18 @@ function tmRenderAxes(axes){
  if(!axes.length){box.innerHTML='<p class="tm-axis-none">まだ軸を読んでいません。手順1で「RNEを調査」を実行すると、ここに出ます。</p>';return}
  box.innerHTML=axes.map(a=>{
   let n=Number(a.values||0);
-  return `<label class="tm-axis-row${a.usable?'':' is-off'}" title="${E(a.why||'')}">`
+  // 見込みは測る前に出る（直近の出力の散らばりと、基準の実測から計算している）。
+  // どれを選べば速いのかが選ぶ場所で分かるので、総当たりしなくて済む。
+  let g=(a.gain&&a.gain.run_speedup)?a.gain:null;
+  let tip=g?`${a.why||''}／一番重い片 約${fmtSeconds(g.heavy_seconds)}`
+   +(g.axis_seconds?`＋軸の読み直し ${fmtSeconds(g.axis_seconds)}`:'')
+   +`。分割なしは ${fmtSeconds(g.normal_seconds)}`:(a.why||'');
+  return `<label class="tm-axis-row${a.usable?'':' is-off'}" title="${E(tip)}">`
    +`<input type="checkbox" class="tm-axis" value="${E(a.name)}"${a.usable?'':' disabled'}`
    +`${a.usable&&keep.has(a.name)?' checked':''}>`
    +`<b>${E(a.name)}</b><span>${E(a.location||'')}${a.index!=null?'#'+(Number(a.index)+1):''}`
    +`${n?` / ${n.toLocaleString()}種`:''}</span>`
+   +(a.usable&&g?`<i>見込み ${g.run_speedup}倍</i>`:'')
    +(a.usable?'':`<em>${E(a.why||'使えません')}</em>`)+`</label>`;
  }).join('');
  $$('#tm-axis-list input.tm-axis').forEach(x=>x.addEventListener('change',tmRefreshPlan));

@@ -768,6 +768,141 @@ def axis_balance_scores(job,cfg,names):
   out[nm]={'top_share':max(counts.values())/total,'distinct':len(counts),'rows':total,'blank_rows':blank}
  return out
 
+# 散らばりの測定は出力ファイルを1回読む。中身は次に本番が走るまで変わらないので、
+# ファイルの署名が同じあいだは測り直さない。測る画面は片数を変えるたびに
+# 「いま何が選べるか」を聞き直すため、そのつど数万行を読むと待たされるだけになる。
+_axis_balance_cache={}
+def axis_balance_cached(job,cfg,names):
+ """axis_balance_scores と同じもの。出力ファイルが変わるまでは使い回す。"""
+ names=sorted({str(x) for x in (names or []) if str(x).strip()!=''})
+ if not names:return {}
+ try:
+  # 出力がまだ無いときは、フォルダーそのものが返ってくる。フォルダーの署名は中身が
+  # 変わっても動かないので、それを鍵にすると「一度読めなかった」がずっと残る。
+  op=_viewer_output_path(job,cfg)
+  if not op.is_file():raise FileNotFoundError(op)
+  st=op.stat();key=(str(op),st.st_mtime_ns,st.st_size,tuple(names))
+ except Exception:
+  return axis_balance_scores(job,cfg,names)
+ if key in _axis_balance_cache:return _axis_balance_cache[key]
+ got=axis_balance_scores(job,cfg,names)
+ _axis_balance_cache.clear();_axis_balance_cache[key]=got
+ return got
+
+# ---- 分割してどれだけ速くなるか、走らせる前に計算する ----------------------
+# 1片の所要は「固定費 ＋ 行数×1行あたり」で説明できる。固定費は接続・問い合わせの
+# 組み立て・書き出しの初期化で、行数によらない。
+#   実測 2026-08-13 SIKALOT.RNE（3片）:
+#     14270行 52.67s / 12704行 46.55s / 1524行 14.47s
+#     → 1行 2.87ms・固定費 10.1秒 で3点とも誤差3%以内
+# 分割で縮むのは行数に比例する側だけなので、固定費より小さくはならない。そして
+# 一番重い片が全体の時間を決める。ひとつの値が全体の86%を占める軸では、何組に
+# 分けても86%ぶんは1片に集まり、1.13倍が上限になる（実測 1.03倍）。
+SPLIT_FIXED_SECONDS=10.0
+def split_time_model(rne_path,settings=None):
+ """1片にかかる秒数の見積り式。基準になる実測が無ければ None。"""
+ t=load_rne_timing(rne_path) or {}
+ rows=int(t.get('rows') or 0);total=float(t.get('total') or 0)
+ if rows<=0 or total<=0:return None
+ fixed=float((settings or {}).get('split_fixed_seconds',SPLIT_FIXED_SECONDS) or SPLIT_FIXED_SECONDS)
+ # 固定費が全体を食い尽くす見積りは意味を持たない（小さいRNEでは実際にそうなる）。
+ fixed=max(0.0,min(fixed,total*0.9))
+ return {'rows':rows,'total':round(total,2),'fixed':round(fixed,2),'per_row':(total-fixed)/rows,
+         'measured_at':t.get('measured_at')}
+
+def split_axis_reload_seconds(rne_path):
+ """行分割で毎回かかる「軸の読み直し」の実測（中央値）。実績が無ければ None。
+
+ これは本番でも毎回払う時間で、見かけの倍率にも実力の倍率にも効く。
+ 実測 2026-08-13 では13.0秒あり、51秒の実行に対して4分の1を占めていた。
+ """
+ vals=[]
+ try:
+  with settings_connection() as c:
+   vals=[float(r['axis_seconds']) for r in c.execute(
+     'SELECT axis_seconds FROM rne_runs WHERE rne_key=? AND axis_seconds IS NOT NULL AND axis_seconds>0'
+     ' ORDER BY id DESC LIMIT 5',(_rne_key(rne_path),))]
+   if not vals:
+    for r in c.execute("SELECT row_json FROM split_plans WHERE rne_key=? AND row_json NOT IN ('','{}')",(_rne_key(rne_path),)):
+     try:v=float((json.loads(r['row_json']) or {}).get('axis_seconds') or 0)
+     except Exception:v=0
+     if v>0:vals.append(v)
+ except Exception:
+  return None
+ if not vals:return None
+ s=sorted(vals);m=len(s)
+ return round(s[m//2] if m%2 else (s[m//2-1]+s[m//2])/2,1)
+
+def axis_expected_gain(top_share,parts,model,axis_seconds=0.0):
+ """その軸で分けたときの見込み。式が作れなければ None。
+
+ 一番重い片が全体を決める。均等に配れても 1片あたり 1/片数 より軽くはならず、
+ ひとつの値が top_share を占めるならそこから下へは行けない。
+ """
+ if not model:return None
+ parts=max(2,int(parts or 2))
+ share=max(float(top_share or 0),1.0/parts)
+ heavy=model['fixed']+share*model['rows']*model['per_row']
+ if heavy<=0:return None
+ sec=max(0.0,float(axis_seconds or 0))
+ return {'share':round(share,4),'parts':parts,'heavy_seconds':round(heavy,1),
+         'normal_seconds':model['total'],'axis_seconds':round(sec,1),
+         'speedup':round(model['total']/heavy,2),
+         'run_speedup':round(model['total']/(heavy+sec),2)}
+
+def axis_better_parts(axis,top_share,model,axis_seconds,gate,now_parts):
+ """いまの片数では基準に届かない軸が、片数を増やせば届くか。届く最小の片数の見込みを返す。
+
+ 片数を増やすと条件式が長くなり、ある長さでサーバーに断られる（KVR52020）。
+ だから axis_usable を通る範囲でしか勧めない。値の数より多い組には分けられないので
+ そこも見る（axis_usable は「2種あるか」までしか見ない）。届かなければ None。
+ """
+ if not model:return None
+ vals=int((axis or {}).get('category_count') or 0)
+ for n in range(max(2,int(now_parts or 2))+1,9):
+  if not (axis or {}).get('is_time') and vals<n:break
+  if not axis_usable(axis,n)[0]:break
+  g=axis_expected_gain(top_share,n,model,axis_seconds)
+  if g and g['run_speedup']>=gate:return g
+ return None
+
+def axis_option(axis,score,parts,model,axis_seconds,gate,blocked=False):
+ """その軸を「測る対象として選ばせてよいか」。理由と見込みを付けて返す。
+
+ 走らせなくても結末が分かるものは、ここで落とす。落とす理由は2つだけ:
+   値が空の行がある … その行はどのカテゴリにも入らないので、必ず結果が食い違う
+   偏りが大きい     … 一番重い片が全体を決めるので、何組に分けても縮まない
+ どちらも直近の出力と基準の実測から計算できる。分からないとき（測っていない）は
+ 落とさない ―― 知らないことを理由に選択肢を消さない。
+ """
+ a=axis or {};sc=score or {}
+ good,reason=axis_usable(a,parts)
+ nm=a.get('name','')
+ usable=bool(good) and not blocked
+ why=('この軸はサーバーに拒否されたことがあります' if blocked else reason)
+ lost=int(sc.get('blank_rows') or 0)
+ gain=None
+ if usable and lost:
+  usable=False
+  why=f'値が空の行が{lost:,}行あります。この軸で分けると、その行が結果から落ちます'
+ elif usable and sc.get('top_share') is not None:
+  gain=axis_expected_gain(sc['top_share'],parts,model,axis_seconds)
+  if gain and gain['run_speedup']<gate:
+   # 実測 2026-08-13: 86%を1つの値が占める軸で、見込み1.13倍・実測1.03倍。
+   usable=False
+   why=(f'いちばん多い値だけで全体の{sc["top_share"]:.0%}を占めます。'
+        f'{parts}つに分けても一番重い片は約{gain["heavy_seconds"]:.0f}秒'
+        f'（分割なしは{gain["normal_seconds"]:.0f}秒）'
+        +(f'、軸の読み直し{gain["axis_seconds"]:.0f}秒を足すと' if gain['axis_seconds'] else 'で')
+        +f'{gain["run_speedup"]}倍にしかならず、基準の{gate}倍に届きません')
+   alt=axis_better_parts(a,sc['top_share'],model,axis_seconds,gate,parts)
+   if alt:why+=f'。{alt["parts"]}つに分ければ{alt["run_speedup"]}倍の見込みです'
+ return {'name':nm,'location':a.get('location',''),'index':a.get('index',0),
+         'type_name':a.get('type_name',''),'values':a.get('category_count'),
+         'usable':usable,'why':why,'blocked':bool(blocked),
+         'top_share':(round(sc['top_share'],4) if sc.get('top_share') is not None else None),
+         'blank_rows':lost or 0,'gain':gain}
+
 def block_row_axis(rne_path,axis_name,reason,server_message='',parts=0,values=0):
  """サーバーに拒否された軸を覚えておく。次からはこの軸を選ばない。
 
@@ -824,7 +959,10 @@ def pick_row_axis_by_mode(axes,parts=2,mode='first',index=1,name='',scores=None,
  """決められた方針で軸を1本選ぶ。選べなければ理由を付けて返す。
 
  どの方針でも、最後は pick_row_axis を通す（使えない軸を掴まないため）。
- 値が空の行がある軸は、行が落ちるので既定では選ばない（名前で名指しされたときだけ通す）。
+ 値が空の行がある軸は、名指しされていても選ばない。空の行はどの組にも入らないので
+ 必ず結果が食い違い、走らせるだけ時間を捨てる。
+   実測 2026-08-13 SIKALOT.RNE: 「検査番号」は空が42行あると事前に分かっていたのに
+   名指しだったので通し、64秒かけて「分割なしにだけ42行ある」で終わった。
  blocked には、過去にサーバーが拒否した軸を渡す。同じ失敗を繰り返さないため。
  """
  mode=normalize_row_axis_mode(mode)
@@ -836,10 +974,15 @@ def pick_row_axis_by_mode(axes,parts=2,mode='first',index=1,name='',scores=None,
  if scores and safe:usable=safe
  note=''
  if mode=='name' and str(name or '').strip():
-  best,ranked=pick_row_axis(axes,parts,str(name).strip(),blocked)
-  if best and best.get('name')==str(name).strip():
-   return best,ranked,f'名前で指定された「{name}」を使います'
-  note=f'指定された「{name}」は使えないので、表側の1番目に戻します'
+  lost=axis_loses_rows(str(name).strip(),scores)
+  if lost:
+   note=(f'指定された「{name}」は値が空の行が{lost}行あり、分けるとその行が結果から落ちます。'
+         'ほかの軸に切り替えます')
+  else:
+   best,ranked=pick_row_axis(axes,parts,str(name).strip(),blocked)
+   if best and best.get('name')==str(name).strip():
+    return best,ranked,f'名前で指定された「{name}」を使います'
+   note=f'指定された「{name}」は使えないので、表側の1番目に戻します'
  elif mode=='index':
   want=max(1,int(index or 1))
   hit=next((a for a in usable if a.get('location')=='表側' and int(a.get('index') or 0)+1==want),None)
@@ -1799,7 +1942,7 @@ def load():
   _prev_profile=cfg['settings'].get('stability_profile')
   if _prev_profile in (None,'stable_api_serial'):
    cfg['settings']['api_parallel_lines']=6; cfg['settings']['stability_profile']='balanced_api_parallel'
-  cfg['settings'].setdefault('api_parallel_lines',6); cfg['settings'].setdefault('stability_profile','balanced_api_parallel'); cfg['settings'].setdefault('backup_enabled',True); _backup_mode_missing='backup_mode' not in cfg['settings']; cfg['settings'].setdefault('backup_mode','generations'); cfg['settings'].setdefault('backup_retention_days',30); cfg['settings'].setdefault('backup_generation_limit_enabled',True); cfg['settings'].setdefault('backup_generations',3); cfg['settings'].setdefault('schedule_catchup_minutes',30); cfg['settings'].setdefault('api_worker_stagger_ms',700); cfg['settings'].setdefault('split_trial_timeout_seconds',1800); cfg['settings'].setdefault('split_anchor_limit',3); cfg['settings'].setdefault('split_min_part_mb',2.0); cfg['settings'].setdefault('split_min_gain_seconds',5.0); cfg['settings'].setdefault('split_min_speedup',1.05); cfg['settings'].setdefault('split_run_enabled',True); cfg['settings'].setdefault('retry_enabled',True); cfg['settings'].setdefault('retry_max',1); cfg['settings'].setdefault('retry_delay_minutes',5); cfg['settings'].setdefault('log_max_mb',10); cfg['settings'].setdefault('log_keep',5)
+  cfg['settings'].setdefault('api_parallel_lines',6); cfg['settings'].setdefault('stability_profile','balanced_api_parallel'); cfg['settings'].setdefault('backup_enabled',True); _backup_mode_missing='backup_mode' not in cfg['settings']; cfg['settings'].setdefault('backup_mode','generations'); cfg['settings'].setdefault('backup_retention_days',30); cfg['settings'].setdefault('backup_generation_limit_enabled',True); cfg['settings'].setdefault('backup_generations',3); cfg['settings'].setdefault('schedule_catchup_minutes',30); cfg['settings'].setdefault('api_worker_stagger_ms',700); cfg['settings'].setdefault('split_trial_timeout_seconds',1800); cfg['settings'].setdefault('split_anchor_limit',3); cfg['settings'].setdefault('split_min_part_mb',2.0); cfg['settings'].setdefault('split_min_gain_seconds',5.0); cfg['settings'].setdefault('split_min_speedup',1.05); cfg['settings'].setdefault('split_fixed_seconds',SPLIT_FIXED_SECONDS); cfg['settings'].setdefault('split_run_enabled',True); cfg['settings'].setdefault('retry_enabled',True); cfg['settings'].setdefault('retry_max',1); cfg['settings'].setdefault('retry_delay_minutes',5); cfg['settings'].setdefault('log_max_mb',10); cfg['settings'].setdefault('log_keep',5)
   if _backup_mode_missing:cfg['settings']['backup_generations']=3
   if int(cfg['settings'].get('api_parallel_lines',6) or 6)==2:cfg['settings']['api_parallel_lines']=6
   cfg.setdefault('navigator_api_dll',r'.\Config\NAVIAP\debugdllVC14x64\SymNaviA.dll'); cfg.setdefault('accdb_template','.\\assets\\empty.accdb');
