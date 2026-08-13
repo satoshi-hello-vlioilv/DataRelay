@@ -4347,6 +4347,11 @@ def any_enabled_schedule_exists():
 # タブが無くなっても、実行中・実行キューあり・自動実行の予定ありのいずれかなら常駐を続ける。
 # 常駐中は通知領域にアイコンを出し、そこから画面を開く／終了できるようにする。
 residency_state={'active':False,'reason':'','since':0.0}
+# 画面の「タスクバーに入れて閉じる」で頼まれた常駐。実行中でも予定でもないが、
+# 利用者が「入れておきたい」と言ったのだから、その1回は残す。
+# 次にタブが開かれた時点で外す（ずっと残ると、閉じても終わらない状態が続く）。
+residency_hold={'on':False,'at':0.0}
+RESIDENCY_HOLD_REASON='画面から「タスクバーに入れる」を選択'
 tray=None
 def pending_queue_count():
  with command_queue_lock:return len(command_queue)+(1 if active_command else 0)
@@ -4356,6 +4361,8 @@ def residency_reason():
  queued=pending_queue_count()
  if queued:return f'実行キュー {queued}件が待機中'
  if any_enabled_schedule_exists():return '自動実行の予定あり'
+ # 頼まれた常駐は最後に見る。ほかに理由があるなら、そちらのほうが役に立つ。
+ if residency_hold['on']:return RESIDENCY_HOLD_REASON
  return ''
 def tray_status_text():
  reason=residency_reason()
@@ -4410,6 +4417,11 @@ def enter_residency(reason,client_ids=''):
   tray.notify('SymfoNavi Data Hub は常駐しています',
               f'{reason}のため実行を続けます。\n画面を開く・終了するには通知領域のアイコンを使用してください。')
 def leave_residency():
+ # 頼まれた常駐は1回きり。画面が戻ってきたら外す。外さないと、次にタブを閉じたときも
+ # 終わらなくなり、「終了したのに残っている」という分かりにくい状態になる。
+ if residency_hold['on']:
+  residency_hold.update(on=False,at=0.0)
+  log.info('APP_RESIDENT_HOLD_CLEAR reason=app_tab_active')
  if not residency_state['active']:return
  residency_state.update(active=False,reason='',since=0.0)
  log.info('APP_RESIDENT_LEAVE reason=app_tab_reopened')
@@ -4440,7 +4452,7 @@ def heartbeat_watchdog():
     log.info('APP_TABS_EMPTY_CONFIRMED closing_clients=%s active_app_tabs=0 grace=%ss action=python_exit',ids,CLOSE_GRACE_SECONDS)
     flush_log()
     _flush_settings_on_exit('app-tabs-empty');stop_event.set();os._exit(0)
-   elif active and residency_state['active']:
+   elif active and (residency_state['active'] or residency_hold['on']):
     leave_residency()
    # ハートビート途絶だけでは終了しない。ネットワーク断、スリープ、ブラウザー破棄との誤判定を避ける。
    # 状態は変わらないので、そのつど出すとログがこれだけで埋まる（実測 7時間ぶんで数千行）。
@@ -5034,7 +5046,24 @@ def heartbeat_status():
  now=time.time()
  with heartbeat_lock:
   age=max(0,now-last_heartbeat_at);clients=[{'client_id':k,'age_seconds':round(now-v['last_seen'],1),'closing':bool(v.get('closing_at'))} for k,v in heartbeat_clients.items()]
- return jsonify(ok=True,app_id=APP_ID,instance_id=INSTANCE_ID,state='healthy' if age<30 else ('delayed' if age<HEARTBEAT_TIMEOUT_SECONDS else 'disconnected'),last_received=datetime.fromtimestamp(last_heartbeat_at).isoformat(timespec='seconds'),age_seconds=round(age,1),timeout_seconds=HEARTBEAT_TIMEOUT_SECONDS,active_clients=sum(1 for x in clients if not x['closing']),recent_clients=sum(1 for x in clients if not x['closing'] and x['age_seconds']<30),closing_clients=sum(1 for x in clients if x['closing']),clients=clients,total=heartbeat_total,server_time=datetime.now().isoformat(timespec='seconds'),auto_shutdown_on_disconnect=False,exit_when_app_tabs_empty=True,close_grace_seconds=CLOSE_GRACE_SECONDS,resident=bool(residency_state['active']),resident_reason=residency_state['reason'],residency_pending_reason=residency_reason(),tray_available=bool(tray),queued_commands=pending_queue_count())
+ return jsonify(ok=True,app_id=APP_ID,instance_id=INSTANCE_ID,state='healthy' if age<30 else ('delayed' if age<HEARTBEAT_TIMEOUT_SECONDS else 'disconnected'),last_received=datetime.fromtimestamp(last_heartbeat_at).isoformat(timespec='seconds'),age_seconds=round(age,1),timeout_seconds=HEARTBEAT_TIMEOUT_SECONDS,active_clients=sum(1 for x in clients if not x['closing']),recent_clients=sum(1 for x in clients if not x['closing'] and x['age_seconds']<30),closing_clients=sum(1 for x in clients if x['closing']),clients=clients,total=heartbeat_total,server_time=datetime.now().isoformat(timespec='seconds'),auto_shutdown_on_disconnect=False,exit_when_app_tabs_empty=True,close_grace_seconds=CLOSE_GRACE_SECONDS,resident=bool(residency_state['active']),resident_reason=residency_state['reason'],residency_pending_reason=residency_reason(),tray_available=bool(tray),resident_hold=bool(residency_hold['on']),queued_commands=pending_queue_count())
+
+@app.post('/api/stay-resident')
+def stay_resident():
+ """画面の「タスクバーに入れて閉じる」。サーバーは残し、タブだけ閉じてもらう。
+
+ 通知領域にアイコンを出せない環境では引き受けない。アイコンが無いまま常駐すると、
+ 動いていることが見えず、止める手段も無くなる（そのために常駐アイコンを付けた）。
+ """
+ if not tray:
+  log.info('APP_RESIDENT_HOLD_REFUSED reason=tray_unavailable')
+  return jsonify(ok=False,tray_available=False,
+                 error='この環境では通知領域にアイコンを出せないため、常駐させると画面からも通知領域からも操作できなくなります。'
+                       '「終了」で終わらせてください'),409
+ residency_hold.update(on=True,at=time.time())
+ log.info('APP_RESIDENT_HOLD_SET source=ui reason=%s（タブが閉じたら常駐します）',RESIDENCY_HOLD_REASON)
+ return jsonify(ok=True,tray_available=True,reason=RESIDENCY_HOLD_REASON,
+                close_grace_seconds=CLOSE_GRACE_SECONDS)
 
 @app.post('/api/shutdown-app')
 def shutdown_app():

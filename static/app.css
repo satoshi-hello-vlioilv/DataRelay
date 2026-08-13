@@ -228,6 +228,30 @@ body>main{margin-top:0!important;margin-bottom:0!important;align-self:stretch!im
 .ctl-exit svg{flex:none}
 @media(max-width:1180px){.ctl-exit span{display:none}.ctl-exit{padding:0 11px}.runtime{min-width:0}.rt-text span{display:none}}
 
+/* V1.77: 終わり方は2通りある（サーバーごと終える／タスクバーに残して閉じる）。
+   別々のボタンを並べると、いつもは片方しか押さないのに2つ場所を取る。
+   押す場所は1つのままにして、右の▾で選び直す ―― 分割ボタンの作法どおり。 */
+.exit-split{position:relative;display:flex;align-items:stretch;margin-left:2px}
+.exit-split .ctl-exit{margin-left:0}
+/* 角の丸みはヘッダーの他のボタンと同じ寸法（--ctl-r）を使う。分割で内側だけ落とす。 */
+.exit-split #app-exit{border-radius:var(--ctl-r) 0 0 var(--ctl-r);border-right-width:0}
+.exit-more{padding:0 7px!important;border-radius:0 var(--ctl-r) var(--ctl-r) 0}
+/* 分割の境目。どちらかに触れているあいだは、押せる範囲がひと続きに見えないよう境目を残す。 */
+.exit-split #app-exit::after{content:"";position:absolute;top:7px;bottom:7px;right:0;width:1px;background:#ffffff2e}
+.exit-more[aria-expanded="true"]{background:#ffffff26;color:#fff}
+.exit-menu{position:absolute;top:calc(100% + 6px);right:0;z-index:5000;width:290px;padding:6px;
+ background:#fff;border:1px solid #cbd9de;border-radius:10px;box-shadow:0 16px 38px #18384442}
+.exit-menu button{display:grid;gap:2px;width:100%;padding:8px 10px;border:0;background:transparent;
+ color:#294853;text-align:left;border-radius:7px;height:auto}
+.exit-menu button:hover:not(:disabled){background:#eaf5f6}
+.exit-menu button:disabled{opacity:.5;cursor:not-allowed}
+.exit-menu b{font-size:12px}
+.exit-menu small{font-size:10.5px;color:#6f858e;line-height:1.5;font-weight:600}
+/* いま押すと何が起きるか。選んである側に印を付けて、次の1回を予想できるようにする。 */
+.exit-menu button[aria-checked="true"] b::after{content:"いま選択中";margin-left:7px;font-size:9.5px;
+ font-weight:900;color:#0b6570;background:#eaf6f9;border-radius:5px;padding:1px 6px;vertical-align:1px}
+@media(max-width:1180px){.exit-menu{width:250px}}
+
 /* V32: unified progress in the target file list — next scheduled run + live execution bar share one cell */
 .jobs-table td.c-progress{padding-top:5px;padding-bottom:5px}
 .rowprogress{display:grid;min-height:32px;align-content:center}

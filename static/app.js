@@ -819,7 +819,106 @@ $('#api-test').onclick=testNavigatorApi;$('#extract-engine').onchange=()=>{updat
 
 $('#suggest-close').onclick=()=>$('#path-suggestion').close();
 async function waitUntilNotRunning(timeoutMs){let start=Date.now();while(Date.now()-start<timeoutMs){try{let s=await fetch('/api/status',{cache:'no-store'}).then(r=>r.json());if(!s.running)return true}catch{return false}await new Promise(r=>setTimeout(r,500))}return false}
-$('#app-exit').onclick=async()=>{if(lastRunning){if(!confirm('スケジュール実行が進行中です。中断してアプリを終了しますか？\n実行中の1件は安全な区切りまで進めてから停止し、以降の予約は開始しません。'))return;toast('実行を中断しています…');try{await fetch('/api/run/cancel',{method:'POST'})}catch{}await waitUntilNotRunning(20000)}else if(!confirm('SymfoNavi Data Hubを終了しますか？\n自動実行の予定が残っていても、この操作でアプリを完全に終了します。')){return}try{await fetch('/api/shutdown-app',{method:'POST'});document.body.innerHTML='<main style="max-width:680px;margin:80px auto;padding:24px"><article class="panel"><h2>アプリを終了しました</h2><p>このブラウザータブを閉じてください。</p></article></main>'}catch{window.close()}};
+/* V1.77: 終わり方は2通りある。押す場所は1つのまま、右の▾で選び直す。
+     quit … サーバーごと終える。タスクバー（通知領域）にも残らない
+     tray … サーバーは通知領域に残したまま、タブだけ閉じる
+   どちらも、済んだらタブを素直に閉じる。以前は必ず「このタブを閉じてください」と
+   出して残っていたが、押した人はもう終わらせるつもりでいる。
+   window.close() はスクリプトで開いたタブ以外では拒否されるので、閉じられなかった
+   ときだけ、実際に起きたこと（終了した／タスクバーに入った）に合う文を1枚出す。 */
+let appExiting=false;
+let exitMode=(localStorage.getItem('navi-exit-mode')==='tray')?'tray':'quit';
+const EXIT_LABEL={quit:'終了',tray:'タスクバーへ'};
+const EXIT_TITLE={quit:'アプリを終了します（サーバーも止めます）',
+                  tray:'サーバーを通知領域に残したまま、このタブを閉じます'};
+function exitPage(title,body){
+ document.body.innerHTML='<main style="max-width:680px;margin:80px auto;padding:24px">'
+  +`<article class="panel"><h2>${E(title)}</h2><p>${E(body)}</p></article></main>`;
+}
+/* 閉じられるなら閉じる。閉じられないブラウザーのときだけ、何が起きたかを出す。 */
+function closeThisTab(title,body){
+ try{window.close()}catch(e){}
+ setTimeout(()=>exitPage(title,body),450);
+}
+async function exitStatus(){
+ try{return await fetch('/api/heartbeat-status',{cache:'no-store'}).then(r=>r.json())}catch{return null}
+}
+/* サーバーが本当に止まったか。答えが返ってくるあいだは、まだ生きている。 */
+async function waitServerGone(timeoutMs){
+ let end=Date.now()+timeoutMs;
+ while(Date.now()<end){
+  await new Promise(r=>setTimeout(r,250));
+  if(!await exitStatus())return true;
+ }
+ return false;
+}
+async function doExitQuit(){
+ if(lastRunning){
+  if(!confirm('スケジュール実行が進行中です。中断してアプリを終了しますか？\n実行中の1件は安全な区切りまで進めてから停止し、以降の予約は開始しません。'))return;
+  toast('実行を中断しています…');
+  try{await fetch('/api/run/cancel',{method:'POST'})}catch{}
+  await waitUntilNotRunning(20000);
+ }else if(!confirm('SymfoNavi Data Hubを終了しますか？\nサーバーも止めるので、タスクバー（通知領域）には残りません。自動実行の予定が残っていても、次に起動するまで動きません。')){
+  return;
+ }
+ appExiting=true;
+ try{await fetch('/api/shutdown-app',{method:'POST'})}catch{}
+ if(await waitServerGone(2500))
+  return closeThisTab('アプリを終了しました','このブラウザータブを閉じてください。');
+ // まだ答えている。常駐に切り替わったのなら、そう言う（「終了しました」は嘘になる）。
+ let st=await exitStatus();
+ if(st&&(st.resident||st.residency_pending_reason))
+  return exitPage('タスクバー（通知領域）に入りました',
+                  `${st.resident_reason||st.residency_pending_reason}のため、サーバーは動いたままです。開くときも終わらせるときも、タスクバー右側のアイコンを使ってください。`);
+ appExiting=false;
+ toast('終了できませんでした。もう一度お試しください');
+}
+async function doExitToTray(){
+ let st=await exitStatus();
+ if(st&&st.tray_available===false)
+  return toast('この環境では通知領域にアイコンを出せないため、残すと開くことも終わらせることもできなくなります。「終了」をお使いください');
+ let r=null;
+ try{r=await fetch('/api/stay-resident',{method:'POST'}).then(x=>x.json())}catch{}
+ if(!r||!r.ok)return toast((r&&r.error)||'タスクバーへ残す設定にできませんでした');
+ appExiting=true;
+ // 閉じる合図を先に送る。閉じられなかった場合でも、常駐へ切り替わることは変わらない。
+ notifyBrowserClosing();
+ closeThisTab('タスクバー（通知領域）に入りました',
+              'サーバーは動いたままです。このブラウザータブを閉じてください。次に開くときも終わらせるときも、タスクバー右側のアイコンを使えます。');
+}
+function runExit(mode){return (mode==='tray')?doExitToTray():doExitQuit()}
+function paintExitMode(){
+ let b=$('#app-exit-label'),m=$('#app-exit');
+ if(b)b.textContent=EXIT_LABEL[exitMode];
+ if(m)m.title=EXIT_TITLE[exitMode];
+ $$('#exit-menu button[data-mode]').forEach(x=>x.setAttribute('aria-checked',String(x.dataset.mode===exitMode)));
+}
+function openExitMenu(on){
+ let menu=$('#exit-menu'),more=$('#app-exit-more');
+ if(!menu||!more)return;
+ menu.hidden=!on;more.setAttribute('aria-expanded',String(!!on));
+ if(!on)return;
+ // 通知領域にアイコンを出せるかは環境しだい。出せないなら選ばせない（残しても操作できない）。
+ exitStatus().then(st=>{
+  let t=$('#exit-menu button[data-mode="tray"]'),note=$('#exit-tray-note');
+  if(!t)return;
+  let no=!!st&&st.tray_available===false;
+  t.disabled=no;
+  if(note)note.textContent=no?'この環境では通知領域にアイコンを出せないため選べません'
+   :'通知領域に残したままタブを閉じます。予定した自動実行はそのまま動きます';
+ });
+}
+if($('#app-exit'))$('#app-exit').onclick=()=>runExit(exitMode);
+if($('#app-exit-more'))$('#app-exit-more').onclick=e=>{e.stopPropagation();openExitMenu($('#exit-menu')?.hidden)};
+$$('#exit-menu button[data-mode]').forEach(b=>b.onclick=e=>{
+ e.stopPropagation();
+ exitMode=b.dataset.mode;
+ try{localStorage.setItem('navi-exit-mode',exitMode)}catch(err){}
+ paintExitMode();openExitMenu(false);runExit(exitMode);
+});
+document.addEventListener('click',e=>{if(!e.target.closest('.exit-split'))openExitMenu(false)});
+document.addEventListener('keydown',e=>{if(e.key==='Escape')openExitMenu(false)});
+paintExitMode();
 
 function resetEditorState(){editing=null;editingRule=null;$('#editor form')?.reset();$('#rule-editor form')?.reset();if($('#m-rules'))$('#m-rules').innerHTML='';if($('#r-detail'))$('#r-detail').innerHTML=''}$('#editor').addEventListener('close',resetEditorState);$('#rule-editor').addEventListener('close',()=>{editingRule=null;$('#rule-editor form')?.reset();if($('#r-detail'))$('#r-detail').innerHTML=''});$('#path-suggestion').addEventListener('close',()=>{$('#suggest-content').innerHTML=''});window.addEventListener('pageshow',()=>{$$('dialog').forEach(d=>{if(d.open)d.close()});resetEditorState()});
 
@@ -1172,7 +1271,7 @@ const HEARTBEAT_CLIENT_ID=(crypto.randomUUID?crypto.randomUUID():String(Date.now
 let hb={lastSend:null,lastOk:null,latency:null,fails:0,reconnects:0,wasDown:false,sending:false};
 function hbTime(d){return d?new Date(d).toLocaleTimeString('ja-JP',{hour12:false}):'—'}
 function paintHeartbeat(serverStatus){let state=$('#hb-state');if(!state)return;let connected=hb.fails===0,label=connected?'正常':(hb.fails<3?'再接続中':'切断中'),cls=connected?'healthy':(hb.fails<3?'reconnecting':'disconnected');state.textContent=label;state.className='hb-status '+cls;$('#hb-last-send').textContent=hbTime(hb.lastSend);$('#hb-last-ok').textContent=hbTime(hb.lastOk);$('#hb-latency').textContent=hb.latency==null?'—':hb.latency+' ms';$('#hb-fails').textContent=hb.fails+'回';$('#hb-reconnects').textContent=hb.reconnects+'回';$('#hb-server-age').textContent=serverStatus?serverStatus.age_seconds+'秒':'—';if($('#hb-app-tabs'))$('#hb-app-tabs').textContent=serverStatus?serverStatus.active_clients+'個':'—';$('#hb-detail').textContent=connected?'通信は正常です。接続断が発生してもサーバーは停止せず自動復旧を待ちます。':'サーバーへ再接続しています。次回試行まで画面を開いたままお待ちください。'}
-async function sendHeartbeat(){if(hb.sending)return false;hb.sending=true;hb.lastSend=new Date();let t=performance.now();try{let r=await fetch('/api/heartbeat',{method:'POST',headers:{'Content-Type':'application/json','X-Heartbeat-Client':HEARTBEAT_CLIENT_ID},body:JSON.stringify({app_id:HEARTBEAT_APP_ID,client_id:HEARTBEAT_CLIENT_ID}),cache:'no-store'});if(!r.ok)throw Error('HTTP '+r.status);await r.json();hb.latency=Math.round(performance.now()-t);hb.lastOk=new Date();if(hb.wasDown)hb.reconnects++;hb.wasDown=false;hb.fails=0;let st=null;try{st=await fetch('/api/heartbeat-status',{cache:'no-store'}).then(x=>x.json())}catch{}paintHeartbeat(st);hideServerLost();return true}catch(e){hb.fails++;hb.wasDown=true;paintHeartbeat();if(hb.fails>=3)showServerLost();return false}finally{hb.sending=false}}
+async function sendHeartbeat(){if(hb.sending||appExiting)return false;hb.sending=true;hb.lastSend=new Date();let t=performance.now();try{let r=await fetch('/api/heartbeat',{method:'POST',headers:{'Content-Type':'application/json','X-Heartbeat-Client':HEARTBEAT_CLIENT_ID},body:JSON.stringify({app_id:HEARTBEAT_APP_ID,client_id:HEARTBEAT_CLIENT_ID}),cache:'no-store'});if(!r.ok)throw Error('HTTP '+r.status);await r.json();hb.latency=Math.round(performance.now()-t);hb.lastOk=new Date();if(hb.wasDown)hb.reconnects++;hb.wasDown=false;hb.fails=0;let st=null;try{st=await fetch('/api/heartbeat-status',{cache:'no-store'}).then(x=>x.json())}catch{}paintHeartbeat(st);hideServerLost();return true}catch(e){hb.fails++;hb.wasDown=true;paintHeartbeat();if(hb.fails>=3)showServerLost();return false}finally{hb.sending=false}}
 function startHeartbeat(){sendHeartbeat();let worker=null;try{const code="let t=null;onmessage=e=>{if(e.data==='start'){clearInterval(t);t=setInterval(()=>postMessage('tick'),10000)}else if(e.data==='stop'){clearInterval(t);t=null}}";worker=new Worker(URL.createObjectURL(new Blob([code],{type:'application/javascript'})));worker.onmessage=()=>sendHeartbeat();worker.postMessage('start')}catch(e){worker=null}setInterval(sendHeartbeat,10000);document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')sendHeartbeat()});window.addEventListener('focus',sendHeartbeat);window.addEventListener('pageshow',sendHeartbeat);if($('#hb-retry'))$('#hb-retry').onclick=sendHeartbeat}
 startHeartbeat();
 // タブ×・ウィンドウ×・遷移など「実際に閉じる」ときだけ明示通知。タブ切替(非アクティブ)ではpagehideは発火しないため誤検知しない。
@@ -1191,11 +1290,13 @@ async function noteResidencyOnce(){
   let d=await fetch('/api/heartbeat-status',{cache:'no-store'}).then(r=>r.json());
   if(!d.residency_pending_reason)return;
   residencyHintShown=true;
-  toast(`このタブを閉じても「${d.residency_pending_reason}」のため常駐します。完全に終了するには「アプリを終了」を押してください。`);
+  toast(`このタブを閉じても「${d.residency_pending_reason}」のため、タスクバー（通知領域）に残ります。完全に終わらせるには右上の「終了」を押してください。`);
  }catch{}
 }
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden')noteResidencyOnce()});
-function showServerLost(){if(serverLostShown)return;serverLostShown=true;let d=$('#server-lost-overlay');if(d&&!d.open)d.showModal()}
+/* 終わらせている最中にサーバーが答えなくなるのは当たり前。「接続が切れました」を
+   かぶせると、終わったのか壊れたのか分からなくなる。 */
+function showServerLost(){if(serverLostShown||appExiting)return;serverLostShown=true;let d=$('#server-lost-overlay');if(d&&!d.open)d.showModal()}
 function hideServerLost(){if(!serverLostShown)return;serverLostShown=false;let d=$('#server-lost-overlay');if(d&&d.open)d.close()}
 if($('#server-lost-reload'))$('#server-lost-reload').onclick=()=>sendHeartbeat();
 
