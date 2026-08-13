@@ -172,6 +172,7 @@ def init_settings_db():
   CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY,display_order INTEGER NOT NULL DEFAULT 0,enabled INTEGER NOT NULL DEFAULT 1,name TEXT NOT NULL,rne TEXT NOT NULL,rne_path TEXT NOT NULL,output_folder TEXT NOT NULL,output_format TEXT NOT NULL,output_file TEXT NOT NULL,table_name TEXT NOT NULL,sheet_name TEXT NOT NULL,read_type TEXT NOT NULL,updated_at TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS schedules (id TEXT PRIMARY KEY,job_id TEXT NOT NULL,display_order INTEGER NOT NULL DEFAULT 0,enabled INTEGER NOT NULL DEFAULT 1,name TEXT NOT NULL,schedule_type TEXT NOT NULL,time_value TEXT,interval_minutes INTEGER,weekdays_json TEXT,month_days_json TEXT,dates_json TEXT,updated_at TEXT NOT NULL,FOREIGN KEY(job_id) REFERENCES jobs(id) ON DELETE CASCADE);
   CREATE TABLE IF NOT EXISTS scheduler_state (state_key TEXT PRIMARY KEY,state_value TEXT NOT NULL,updated_at TEXT NOT NULL);
+  CREATE TABLE IF NOT EXISTS text_layouts (id TEXT PRIMARY KEY,display_order INTEGER NOT NULL DEFAULT 0,name TEXT NOT NULL,description TEXT NOT NULL DEFAULT '',encoding TEXT NOT NULL DEFAULT 'cp932',unit TEXT NOT NULL DEFAULT 'byte',trim TEXT NOT NULL DEFAULT 'both',skip_head INTEGER NOT NULL DEFAULT 0,skip_tail INTEGER NOT NULL DEFAULT 0,skip_blank INTEGER NOT NULL DEFAULT 1,header_row INTEGER NOT NULL DEFAULT 0,columns_json TEXT NOT NULL DEFAULT '[]',sample_path TEXT NOT NULL DEFAULT '',updated_at TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS schema_info (key TEXT PRIMARY KEY,value TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS job_runs (job_id TEXT PRIMARY KEY,job_name TEXT,finished_at TEXT,status TEXT,trigger TEXT,detail TEXT,rows INTEGER,cols INTEGER,output_file TEXT,updated_at TEXT NOT NULL DEFAULT '',metrics TEXT NOT NULL DEFAULT '');
   CREATE TABLE IF NOT EXISTS run_history (id INTEGER PRIMARY KEY AUTOINCREMENT,job_id TEXT,job_name TEXT,finished_at TEXT,status TEXT,trigger TEXT,detail TEXT,rows INTEGER,cols INTEGER,output_file TEXT);
@@ -234,6 +235,11 @@ def ensure_schema_upgrades():
   if 'index_columns' not in cols:c.execute("ALTER TABLE jobs ADD COLUMN index_columns TEXT NOT NULL DEFAULT ''")
   # 前回と中身が同じなら公開しない（対象ごとに選ぶ。既定は従来どおり毎回公開する）。
   if 'skip_if_unchanged' not in cols:c.execute('ALTER TABLE jobs ADD COLUMN skip_if_unchanged INTEGER NOT NULL DEFAULT 0')
+  # 入力の種類。RNE（サーバーへ問い合わせる）か、固定長テキスト（手元のファイルを切る）か。
+  # 既定は rne ―― これまで登録されたものはすべてRNEなので、書き換えずにそのまま動く。
+  if 'source' not in cols:c.execute("ALTER TABLE jobs ADD COLUMN source TEXT NOT NULL DEFAULT 'rne'")
+  if 'text_path' not in cols:c.execute("ALTER TABLE jobs ADD COLUMN text_path TEXT NOT NULL DEFAULT ''")
+  if 'layout_id' not in cols:c.execute("ALTER TABLE jobs ADD COLUMN layout_id TEXT NOT NULL DEFAULT ''")
   rc=[r['name'] for r in c.execute('PRAGMA table_info(rne_columns)')]
   if rc and 'classify_json' not in rc:c.execute("ALTER TABLE rne_columns ADD COLUMN classify_json TEXT NOT NULL DEFAULT ''")
   # 条件欄のデータ項目。絞り込みの条件が付くのはここにある項目だけなので、行分割の判断に要る。
@@ -284,6 +290,21 @@ def _decode_period(raw):
 from navi_output import (OUTPUT_FORMAT_LABEL,normalize_output_format,output_extension,
                          parse_output_format,job_extra_formats,canonical_output_file,
                          validate_output_contract)
+
+# 固定長テキストの切り方（読取マスタ）と読み取りは navi_text.py。
+# RNEと違うのは「表をどう作るか」だけで、そこから先の変換・公開はまったく同じ道を通る。
+import navi_text
+from navi_text import (TEXT_ENCODINGS,TEXT_ENCODING_LABEL,TEXT_UNITS,TEXT_UNIT_LABEL,
+                       TRIM_MODES,TRIM_LABEL,LAYOUT_EXPORT_KIND,
+                       normalize_layout as normalize_text_layout,
+                       validate_layout as validate_text_layout,
+                       layout_width as text_layout_width,
+                       layout_overlaps as text_layout_overlaps,
+                       layout_gaps as text_layout_gaps,
+                       preview_text,read_text_rows,
+                       write_intermediate_csv as write_text_intermediate,
+                       layouts_export as text_layouts_export,
+                       layouts_import as text_layouts_import)
 
 # job_output_plan だけはここに残す。名前の組み立て（resolve_output_filename）と
 # 組で動くもので、形式の話だけでは完結しないため。
@@ -1922,6 +1943,30 @@ def last_run_info(run):
  if run.get('cols') is not None:m.setdefault('cols',run.get('cols'))
  return {'last_run':run.get('finished_at'),'last_status':run.get('status') or '','last_trigger':kind,'last_output':run.get('output_file') or '','last_detail':run.get('detail') or '','last_metrics':m}
 
+# ==== 読取マスタ（固定長テキストの切り方）=================================
+# RNEはサーバーが表の形を知っている。テキストにはそれが無いので、切り方をこちらで持つ。
+# 同じ形式のファイルが複数あってもマスタは1つで足りるよう、対象とは別に管理する。
+JOB_SOURCES=('rne','text')
+JOB_SOURCE_LABEL={'rne':'RNE（Navigatorへ問い合わせ）','text':'固定長テキスト（手元のファイル）'}
+def normalize_job_source(v):
+ v=str(v or '').strip().lower()
+ return v if v in JOB_SOURCES else 'rne'
+
+def resolve_text_path(job,cfg):
+ """読むテキストファイルの場所。書き方の決まりはRNEと同じにする。
+
+ 絶対パス・UNCはそのまま。「.\\」で始まればアプリの場所から。それ以外（名前だけ）は
+ 共通設定の読取フォルダーから探す ―― RNEで慣れた書き方をそのまま使えるようにする。
+ """
+ value=str(job.get('text_path') or '').strip()
+ root=resolve_path(str(cfg.get('text_folder') or '.\\text'))
+ if not value:return root
+ raw=os.path.expandvars(os.path.expanduser(value))
+ p=Path(raw)
+ if p.is_absolute() or raw.startswith('\\\\'):return p
+ if raw.startswith(('.\\','..\\','./','../')):return resolve_path(raw,BASE)
+ return resolve_path(raw,root)
+
 def load():
  init_settings_db()
  with settings_connection() as c:
@@ -1935,8 +1980,8 @@ def load():
     if x['month_days_json']:q['month_days']=json.loads(x['month_days_json'])
     if x['dates_json']:q['dates']=json.loads(x['dates_json'])
     rules.append(q)
-   fmt=normalize_output_format(r['output_format'],r['output_file']); jobs.append({'id':r['id'],'enabled':bool(r['enabled']),'name':r['name'],'rne':r['rne'],'rne_path':r['rne_path'],'output_folder':r['output_folder'],'output_format':fmt,'output_file':canonical_output_file(r['output_file'],fmt),'table':r['table_name'],'sheet':r['sheet_name'],'type':r['read_type'],'naming_mode':(r['naming_mode'] if 'naming_mode' in r.keys() else 'fixed'),'output_pattern':(r['output_pattern'] if 'output_pattern' in r.keys() else ''),'comment':(r['comment'] if 'comment' in r.keys() else ''),'split_mode':normalize_split_mode(r['split_mode'] if 'split_mode' in r.keys() else ''),'split_shape':normalize_split_shape(r['split_shape'] if 'split_shape' in r.keys() else ''),'row_axis_mode':normalize_row_axis_mode(r['row_axis_mode'] if 'row_axis_mode' in r.keys() else ''),'row_axis_index':int((r['row_axis_index'] if 'row_axis_index' in r.keys() else 1) or 1),'row_axis_name':str((r['row_axis_name'] if 'row_axis_name' in r.keys() else '') or ''),'extra_formats':job_extra_formats({'output_format':fmt,'output_file':r['output_file'],'extra_formats':(r['extra_formats'] if 'extra_formats' in r.keys() else '')}),'index_columns':_json_list(r['index_columns'] if 'index_columns' in r.keys() else ''),'skip_if_unchanged':bool(r['skip_if_unchanged'] if 'skip_if_unchanged' in r.keys() else 0),'period':_decode_period(r['period_json'] if 'period_json' in r.keys() else ''),'schedules':rules})
-  cfg['jobs']=jobs; cfg.setdefault('settings',{}); cfg['settings'].setdefault('extract_engine','api'); cfg['settings'].setdefault('api_parallel_max_lines',PARALLEL_LINES_SUPPORTED_MAX); cfg['settings'].setdefault('api_parallel_model','process')
+   fmt=normalize_output_format(r['output_format'],r['output_file']); jobs.append({'id':r['id'],'enabled':bool(r['enabled']),'name':r['name'],'rne':r['rne'],'rne_path':r['rne_path'],'output_folder':r['output_folder'],'output_format':fmt,'output_file':canonical_output_file(r['output_file'],fmt),'table':r['table_name'],'sheet':r['sheet_name'],'type':r['read_type'],'naming_mode':(r['naming_mode'] if 'naming_mode' in r.keys() else 'fixed'),'output_pattern':(r['output_pattern'] if 'output_pattern' in r.keys() else ''),'comment':(r['comment'] if 'comment' in r.keys() else ''),'split_mode':normalize_split_mode(r['split_mode'] if 'split_mode' in r.keys() else ''),'split_shape':normalize_split_shape(r['split_shape'] if 'split_shape' in r.keys() else ''),'row_axis_mode':normalize_row_axis_mode(r['row_axis_mode'] if 'row_axis_mode' in r.keys() else ''),'row_axis_index':int((r['row_axis_index'] if 'row_axis_index' in r.keys() else 1) or 1),'row_axis_name':str((r['row_axis_name'] if 'row_axis_name' in r.keys() else '') or ''),'extra_formats':job_extra_formats({'output_format':fmt,'output_file':r['output_file'],'extra_formats':(r['extra_formats'] if 'extra_formats' in r.keys() else '')}),'index_columns':_json_list(r['index_columns'] if 'index_columns' in r.keys() else ''),'skip_if_unchanged':bool(r['skip_if_unchanged'] if 'skip_if_unchanged' in r.keys() else 0),'source':normalize_job_source(r['source'] if 'source' in r.keys() else ''),'text_path':str((r['text_path'] if 'text_path' in r.keys() else '') or ''),'layout_id':str((r['layout_id'] if 'layout_id' in r.keys() else '') or ''),'period':_decode_period(r['period_json'] if 'period_json' in r.keys() else ''),'schedules':rules})
+  cfg['jobs']=jobs; cfg['text_layouts']=_load_text_layouts(c); cfg.setdefault('settings',{}); cfg['settings'].setdefault('extract_engine','api'); cfg['settings'].setdefault('api_parallel_max_lines',PARALLEL_LINES_SUPPORTED_MAX); cfg['settings'].setdefault('api_parallel_model','process')
   # 既定の並列ラインは6。旧テスト実装では stability_profile='stable_api_serial' の環境で読込のたびに api_parallel_lines を1へ強制していた（毎回1ラインへ戻る不具合の原因）。
   # その名残マーカーが残る環境（または初期状態）だけ一度2へ引き上げ、以降はユーザーが保存した値をそのまま尊重する。
   _prev_profile=cfg['settings'].get('stability_profile')
@@ -1965,7 +2010,7 @@ def load():
  return cfg
 
 def _save_local(v):
- init_settings_db(); now=datetime.now().isoformat(timespec='seconds'); jobs=v.get('jobs',[]); top={k:x for k,x in v.items() if k not in ('jobs','credential_status')}
+ init_settings_db(); now=datetime.now().isoformat(timespec='seconds'); jobs=v.get('jobs',[]); top={k:x for k,x in v.items() if k not in ('jobs','credential_status','text_layouts')}
  with settings_connection() as c:
   c.execute('BEGIN IMMEDIATE'); c.execute('DELETE FROM app_settings')
   for key,value in top.items():
@@ -1973,7 +2018,7 @@ def _save_local(v):
   keep=[]
   for order,j in enumerate(jobs):
    jid=j.get('id') or str(uuid.uuid4()); keep.append(jid)
-   fmt=normalize_output_format(j.get('output_format'),j.get('output_file')); output_file=canonical_output_file(j.get('output_file'),fmt); log.info('設定保存 job=%s requested_format=%s saved_format=%s requested_file=%s saved_file=%s',j.get('name'),j.get('output_format'),fmt,j.get('output_file'),output_file); c.execute('INSERT OR REPLACE INTO jobs (id,display_order,enabled,name,rne,rne_path,output_folder,output_format,output_file,table_name,sheet_name,read_type,naming_mode,output_pattern,comment,split_mode,split_shape,row_axis_mode,row_axis_index,row_axis_name,extra_formats,index_columns,skip_if_unchanged,period_json,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',(jid,order,int(bool(j.get('enabled',True))),j.get('name',''),j.get('rne',''),j.get('rne_path',''),j.get('output_folder',''),fmt,output_file,j.get('table','仕掛'),j.get('sheet','Page1'),j.get('type','詳細データ'),str(j.get('naming_mode') or 'fixed'),str(j.get('output_pattern') or ''),str(j.get('comment') or ''),normalize_split_mode(j.get('split_mode')),normalize_split_shape(j.get('split_shape')),normalize_row_axis_mode(j.get('row_axis_mode')),max(1,min(200,int(j.get('row_axis_index') or 1))),str(j.get('row_axis_name') or ''),json.dumps(job_extra_formats({**j,'output_format':fmt}),ensure_ascii=False),json.dumps([str(x).strip() for x in (j.get('index_columns') or []) if str(x).strip()][:4],ensure_ascii=False),int(bool(j.get('skip_if_unchanged'))),json.dumps(_decode_period(json.dumps(j.get('period') or {},ensure_ascii=False)),ensure_ascii=False),now))
+   fmt=normalize_output_format(j.get('output_format'),j.get('output_file')); output_file=canonical_output_file(j.get('output_file'),fmt); log.info('設定保存 job=%s requested_format=%s saved_format=%s requested_file=%s saved_file=%s',j.get('name'),j.get('output_format'),fmt,j.get('output_file'),output_file); c.execute('INSERT OR REPLACE INTO jobs (id,display_order,enabled,name,rne,rne_path,output_folder,output_format,output_file,table_name,sheet_name,read_type,naming_mode,output_pattern,comment,split_mode,split_shape,row_axis_mode,row_axis_index,row_axis_name,extra_formats,index_columns,skip_if_unchanged,period_json,source,text_path,layout_id,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',(jid,order,int(bool(j.get('enabled',True))),j.get('name',''),j.get('rne',''),j.get('rne_path',''),j.get('output_folder',''),fmt,output_file,j.get('table','仕掛'),j.get('sheet','Page1'),j.get('type','詳細データ'),str(j.get('naming_mode') or 'fixed'),str(j.get('output_pattern') or ''),str(j.get('comment') or ''),normalize_split_mode(j.get('split_mode')),normalize_split_shape(j.get('split_shape')),normalize_row_axis_mode(j.get('row_axis_mode')),max(1,min(200,int(j.get('row_axis_index') or 1))),str(j.get('row_axis_name') or ''),json.dumps(job_extra_formats({**j,'output_format':fmt}),ensure_ascii=False),json.dumps([str(x).strip() for x in (j.get('index_columns') or []) if str(x).strip()][:4],ensure_ascii=False),int(bool(j.get('skip_if_unchanged'))),json.dumps(_decode_period(json.dumps(j.get('period') or {},ensure_ascii=False)),ensure_ascii=False),normalize_job_source(j.get('source')),str(j.get('text_path') or ''),str(j.get('layout_id') or ''),now))
    c.execute('DELETE FROM schedules WHERE job_id=?',(jid,))
    for ro,q in enumerate(j.get('schedules',[])):
     c.execute('INSERT INTO schedules VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',(q.get('id') or str(uuid.uuid4()),jid,ro,int(bool(q.get('enabled',True))),q.get('name','実行ルール'),q.get('type','daily'),q.get('time','06:00'),q.get('interval_minutes'),json.dumps(q.get('weekdays'),ensure_ascii=False) if 'weekdays' in q else None,json.dumps(q.get('month_days'),ensure_ascii=False) if 'month_days' in q else None,json.dumps(q.get('dates'),ensure_ascii=False) if 'dates' in q else None,now))
@@ -2437,7 +2482,10 @@ def read_extract(source,job,reject,expected_rows=None,expected_cols=None):
  if source.suffix.lower()=='.csv':
   hs=None;body=None;encoding_used=''
   last_error=None
-  for encoding in ('cp932','utf-8-sig','utf-8'):
+  # 何で書いたかが分かっているなら、それを先に試す。テキスト変換の中間CSVはUTF-8で
+  # 書いているが、推測はcp932から始まるため、任せると化けたまま通ることがある。
+  order=[x for x in (str(job.get('_intermediate_encoding') or ''),) if x]+['cp932','utf-8-sig','utf-8']
+  for encoding in dict.fromkeys(order):
    try:
     hs,body=_stream_csv_extract(source,encoding,skip_first);encoding_used=encoding;break
    except UnicodeDecodeError as e:last_error=e;hs=None;body=None
@@ -3710,7 +3758,7 @@ def _read_worker_json(path,default=None):
  try:return json.loads(Path(path).read_text(encoding='utf-8'))
  except Exception:return default
 
-def run_api_process_batch(jobs,cfg,user,pw,server,dde_work,backup,max_lines,trigger):
+def run_api_process_batch(jobs,cfg,user,pw,server,dde_work,backup,max_lines,trigger,seed_results=None):
  """Run each Navigator API session in an isolated Python process.
  Finished lines immediately pull the next queued query until the reservation queue is empty.
  """
@@ -3729,6 +3777,8 @@ def run_api_process_batch(jobs,cfg,user,pw,server,dde_work,backup,max_lines,trig
   jobs=sorted(jobs,key=_estimated_cells,reverse=True)
   log.info('BATCH_ORDER strategy=heaviest_first order=%s',[(j['name'],'不明' if _estimated_cells(j)==float('inf') else int(_estimated_cells(j))) for j in jobs])
  queue=deque(enumerate(jobs,1));active={};results=[];failures=[];completed=0
+ # 同じ実行で先に片付けたぶん（固定長テキスト）。一覧から消さないよう、先頭に置いておく。
+ seed_results=list(seed_results or [])
  # 各対象(ジョブ)の実状態を job_id 単位で保持し、完了後に「待機」へ戻る不具合を防ぐ。
  completed_ids=[];failed_ids=[];all_job_ids=[j['id'] for j in jobs]
  with active_workers_lock:active_workers.clear()
@@ -3797,7 +3847,7 @@ def run_api_process_batch(jobs,cfg,user,pw,server,dde_work,backup,max_lines,trig
                          'detail':str(result.get('result') or result.get('error') or ''),'rows':result.get('rows'),'cols':result.get('columns'),
                          'elapsed':round(float(result.get('elapsed') or 0),1),'target':str(result.get('target') or ''),
                          'published':bool(result.get('published',True)),'pending':str(result.get('pending') or '')})
-   set_status(job_results=list(batch_results))
+   set_status(job_results=seed_results+list(batch_results))
    record_job_run(item['job']['id'],item['job']['name'],'ok' if result.get('ok') else 'failed',trigger,detail=(result.get('result') or result.get('error') or ''),rows=result.get('rows'),cols=result.get('columns'),output_file=Path(result.get('target') or '').name,
                   metrics={**{k:result.get(k) for k in ('elapsed','execute_seconds','save_seconds','merge_seconds','transfer_bytes','transfer_kbs','split_parts','split_shape','split_how','row_axis','axis_seconds','race_winner','format') if result.get(k) is not None},
                            # 公開できたか。鮮度の判定がこれを見る（実行できても差し替わっていない場合がある）
@@ -3842,6 +3892,26 @@ def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=No
   startup_started=time.perf_counter();cfg_started=time.perf_counter();cfg=load();log.info('STARTUP_PHASE phase=config_load elapsed=%.2fs',time.perf_counter()-cfg_started);jobs=[j for j in cfg['jobs'] if j.get('enabled') and (not job_ids or j['id'] in job_ids)]
   if not jobs:raise ValueError('実行対象がありません')
   selection_elapsed=time.perf_counter()-cfg_started;first_job=jobs[0]; first_fmt=normalize_output_format(first_job.get('output_format'),first_job.get('output_file')); first_target=resolve_path(first_job.get('output_folder') or cfg['default_output_folder'])/canonical_output_file(first_job.get('output_file'),first_fmt); progress.started=time.time(); requested_lines=max(1,min(int(parallel_lines_override or 1),len(jobs))); execution_mode='parallel' if str(cfg['settings'].get('extract_engine') or 'api').lower()=='api' else 'serial'; set_status(run_id=run_id or uuid.uuid4().hex,execution_mode=execution_mode,requested_lines=requested_lines,parallel_mode=(execution_mode=='parallel'),parallel_lines=[],queue_total=0,queue_waiting=0,queue_active=0,queue_completed=0,queue_completed_ids=[],queue_failed_ids=[],queue_running_ids=[],queue_waiting_ids=[j['id'] for j in jobs],job_results=[],parallel_max_lines=(requested_lines if execution_mode=='parallel' else 0),parallel_speedup=0,batch_job_ids=[j['id'] for j in jobs]); set_status(running=True,current='準備中',current_job_id=first_job['id'],current_job_name=first_job['name'],current_index=1,total_jobs=len(jobs),completed_jobs=0,failed_jobs=0,output_format=first_fmt,output_file=canonical_output_file(first_job.get('output_file'),first_fmt),output_target=str(first_target),started_at=datetime.now().isoformat(timespec='seconds'),elapsed_seconds=0,symnavi_window='起動待ち',step='prepare',step_label='設定を確認しています',step_percent=3,last_result='実行中',error_detail='',job_errors=[]); log.info('BUILD_VERSION=%s',BUILD_VERSION); log.info('処理開始 trigger=%s jobs=%s',trigger,[j['rne'] for j in jobs]);log.info('STARTUP_PHASE phase=config_and_job_selection elapsed=%.2fs',selection_elapsed)
+  # 固定長テキストの対象は、Navigatorへ問い合わせない。手元のファイルを切って表にするだけで、
+  # 接続も資格情報も要らない。だからテキストだけを選んだ実行は、Navigatorの設定が
+  # 1つも無くても走る ―― ここで先に片付けて、残りをこれまでどおりの経路へ渡す。
+  text_jobs=[j for j in jobs if normalize_job_source(j.get('source'))=='text']
+  api_jobs=[j for j in jobs if normalize_job_source(j.get('source'))!='text']
+  text_results=[];text_job_results=[]
+  if text_jobs:
+   log.info('TEXT_BATCH jobs=%s（Navigatorへは接続しません）',[j['name'] for j in text_jobs])
+   _work=dde_staging_folder();_backup=resolve_path(cfg['backup_folder'])
+   text_results,text_failures,text_job_results=run_text_jobs(text_jobs,cfg,_work,_backup,trigger,progress,0,len(jobs))
+   if text_failures:
+    set_status(job_errors=[{'job':r.get('job'),'error':str(r.get('error') or '')} for r in text_failures],failed_jobs=len(text_failures))
+    raise RuntimeError('テキスト変換で%d件失敗しました\n'%len(text_failures)+'\n'.join('・%s: %s'%(r.get('job'),r.get('error')) for r in text_failures))
+   if cancel_requested.is_set():raise RunCancelled(f'{len(text_results)}/{len(jobs)}件完了後に中断されました')
+  if not api_jobs:
+   msg='正常終了 | '+' | '.join(text_results)
+   progress('complete','すべての処理が完了しました',100)
+   set_status(last_result=msg,last_finished_at=datetime.now().isoformat(timespec='seconds'),elapsed_seconds=int(time.time()-progress.started))
+   log.info(msg);return
+  jobs=api_jobs
   # 何が要るかの判断は path_setting_roles に1本化する。画面が「いまは不要」と出している
   # ものを実行時にだけ必須にすると、直しようのない停止になる（v1.60.0〜v1.66.1は
   # symnavim.def が無いだけでAPI方式でも止まっていた）。
@@ -3864,12 +3934,13 @@ def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=No
   log.info('PARALLEL_DECISION engine=%s selected_jobs=%s configured_lines=%s eligible=%s model=process-isolated',engine,len(jobs),api_parallel_lines,isolated)
   log.info('EXECUTION_MODE mode=%s requested_lines=%s selected_jobs=%s',('parallel-process' if isolated else 'serial'),api_parallel_lines,len(jobs))
   if isolated:
-   results,failures,batch_elapsed=run_api_process_batch(jobs,cfg,user,pw,server,dde_work,backup,api_parallel_lines,trigger)
+   results,failures,batch_elapsed=run_api_process_batch(jobs,cfg,user,pw,server,dde_work,backup,api_parallel_lines,trigger,seed_results=text_job_results)
    if cancel_requested.is_set():raise RunCancelled(f'{len(results)}/{len(jobs)}件完了後に中断されました')
    if failures:
     set_status(job_errors=[{'job':r.get('job'),'error':str(r.get('error') or '')} for r in failures],failed_jobs=len(failures))
     raise RuntimeError('API実行で%d件失敗しました\n'%len(failures)+'\n'.join('・%s: %s'%(r.get('job'),r.get('error')) for r in failures))
-   msg='正常終了 | '+(''.join(r['result'] for r in results) if len(results)==1 else '全件%sファイル / %.1f秒 | '%(len(results),batch_elapsed)+' | '.join(r['result'] for r in results))
+   done=list(text_results)+[r['result'] for r in results]
+   msg='正常終了 | '+(done[0] if len(done)==1 else '全件%sファイル / %.1f秒 | '%(len(done),batch_elapsed)+' | '.join(done))
    progress('complete','すべての処理が完了しました',100);set_status(last_result=msg,last_finished_at=datetime.now().isoformat(timespec='seconds'),elapsed_seconds=int(time.time()-progress.started));log.info(msg)
    return
   # ここから下はDDE方式（engine='dde'）専用の直列経路。API方式は上のisolatedブロックで必ずreturnする。
@@ -4024,7 +4095,7 @@ def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=No
     try:
      if p:p.unlink()
     except:pass
-  msg='正常終了 | '+' | '.join(results); progress('complete','すべての処理が完了しました',100); set_status(last_result=msg,last_finished_at=datetime.now().isoformat(timespec='seconds'),elapsed_seconds=int(time.time()-progress.started)); log.info(msg)
+  msg='正常終了 | '+' | '.join(text_results+results); progress('complete','すべての処理が完了しました',100); set_status(last_result=msg,last_finished_at=datetime.now().isoformat(timespec='seconds'),elapsed_seconds=int(time.time()-progress.started)); log.info(msg)
  except RunCancelled as e:
   msg='中断されました: '+str(e); set_status(step='cancelled',step_label='ユーザーの操作により中断しました',step_percent=100,last_result=msg,error_detail='',last_finished_at=datetime.now().isoformat(timespec='seconds'),elapsed_seconds=int(time.time()-getattr(progress,'started',time.time()))); log.info('RUN_CANCELLED %s',msg)
   if status.get('running') and status.get('current_job_id'):
@@ -5123,6 +5194,12 @@ sys.modules.setdefault('app',sys.modules[__name__])
 # 「そのときだけ名前が無い」という、実行して初めて分かる壊れ方になる。
 # 分割の試し打ちと設計。本番の抽出はここを通らないが、保存された割り当ての
 # 読み書きと画面の受け口が使うので、名前は本体へ戻しておく。
+# 読取マスタの出し入れと、固定長テキストの実行。切り方そのものは navi_text.py。
+import navi_textrun
+from navi_textrun import (_json_rows,_layout_row,_load_text_layouts,load_text_layouts,
+                          find_text_layout,save_text_layout,text_layout_usage,delete_text_layout,
+                          process_text_job,run_text_jobs)
+
 import navi_split
 from navi_split import (_split_trial_run, column_weights, compare_csv_content, split_trial_options,
                         load_axis_survey, load_split_baseline, load_split_trials, normalize_measure,

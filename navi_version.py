@@ -4,5 +4,5 @@
 navi_changelog.py にある ―― 800行の読みものなので、それを必要としない経路
 （抽出ワーカー）が読み込まずに済むように分けてある。
 """
-APP_VERSION='1.78.0'; APP_VERSION_TITLE='起動を待たせていたものを、起動の外へ出した'; APP_RELEASED_AT='2026-08-24'
+APP_VERSION='1.79.0'; APP_VERSION_TITLE='固定長テキストを、RNEと同じ「登録」として扱えるようにした'; APP_RELEASED_AT='2026-08-27'
 BUILD_VERSION=f'{APP_VERSION}-web'

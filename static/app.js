@@ -1,5 +1,7 @@
 const UI_BUILD='1.72.0-web';
-let cfg,editing=null,editingRule=null,sortDir=1,scheduleInfo={},rowLive={},rowQueue={},statusFailCount=0,serverLostShown=false;const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)],E=s=>String(s??'').replace(/[&<>"']/g,x=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[x]));const uid=()=>crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random();function toast(t){$('#toast').textContent=t;$('#toast').style.display='block';setTimeout(()=>$('#toast').style.display='none',2500)}/* 設定は変えた瞬間に保存する。保存ボタンの押し忘れで、画面に見えている設定と
+let cfg,editing=null,editingRule=null,sortDir=1,scheduleInfo={},rowLive={},rowQueue={},statusFailCount=0,serverLostShown=false;
+// 読取マスタは一覧の描画（sourceCell）からも読むので、ここで先に用意する。
+let layoutCache=[],layoutMeta={encodings:[],units:[],trims:[]},layEditing=null,laySearch='';const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)],E=s=>String(s??'').replace(/[&<>"']/g,x=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[x]));const uid=()=>crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random();function toast(t){$('#toast').textContent=t;$('#toast').style.display='block';setTimeout(()=>$('#toast').style.display='none',2500)}/* 設定は変えた瞬間に保存する。保存ボタンの押し忘れで、画面に見えている設定と
    実際に使われる設定が食い違うことがあったため、押す操作そのものを無くした。 */
 let saveTimer=null,saveSeq=0,saveRetry=0;
 function saveState(text,kind){let e=$('#dirty');if(e){e.textContent=text;e.className='autosave-state '+(kind||'')}}
@@ -57,7 +59,9 @@ async function setJobsEnabled(ids,on){
 }
 function setJobEnabled(id,on){return setJobsEnabled([id],on)}
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden'&&saveTimer)saveSettingsNow()});
-window.addEventListener('beforeunload',()=>{if(!saveTimer||!cfg)return;clearTimeout(saveTimer);saveTimer=null;try{fetch('/api/config',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(settingsPayload()),keepalive:true})}catch{}});$$('nav button').forEach(b=>b.onclick=()=>{$$('nav button,section').forEach(x=>x.classList.remove('on'));b.classList.add('on');$('#'+b.dataset.p).classList.add('on');if(b.dataset.p==='logs')loadLog();if(b.dataset.p==='calendar')openCalendar();if(b.dataset.p==='viewer')loadViewerJobs()});
+window.addEventListener('beforeunload',()=>{if(!saveTimer||!cfg)return;clearTimeout(saveTimer);saveTimer=null;try{fetch('/api/config',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(settingsPayload()),keepalive:true})}catch{}});$$('nav button').forEach(b=>b.onclick=()=>{$$('nav button,section').forEach(x=>x.classList.remove('on'));b.classList.add('on');$('#'+b.dataset.p).classList.add('on');if(b.dataset.p==='logs')loadLog();if(b.dataset.p==='calendar')openCalendar();if(b.dataset.p==='viewer')loadViewerJobs();if(b.dataset.p==='layouts')openLayouts()});
+// 一覧の「入力」欄が読取マスタの名前を出すので、最初に一度だけ読んでおく。
+loadLayouts().then(()=>{if(typeof cfg!=='undefined'&&cfg)render()});
 const paths={navigator_api_dll:['Navigator API DLL','file',[['DLLファイル','*.dll'],['すべて','*.*']]],symnavi_exe:['SymNavi.exe','file',[['実行ファイル','*.exe'],['すべて','*.*']]],symnavim_conf:['symnavim.conf','file',[['CONFファイル','*.conf'],['すべて','*.*']]],symnavim_def:['symnavim.def','file',[['DEFファイル','*.def'],['すべて','*.*']]],accdb_template:['ACCDB空テンプレート','file',[['Access Database','*.accdb'],['すべて','*.*']]],rne_folder:['RNE基本フォルダー','folder'],default_output_folder:['既定の出力先','folder'],backup_folder:['バックアップ先','folder']};
 let waitingTimer=null,waitingStarted=0;function currentEngine(){return $('#extract-engine')?.value||cfg?.settings?.extract_engine||'api'}function waitingEngineLabel(context='common'){if(context==='api'||(context==='engine'&&currentEngine()==='api'))return 'NAVIGATOR API';if(context==='dde'||(context==='engine'&&currentEngine()==='dde'))return 'DDE COMPATIBILITY';return 'COMMON OPERATION'}function showWaiting(title='確認中',detail='処理を続行しています...',context='common'){let d=$('#waiting-dialog');$('#waiting-engine').textContent=waitingEngineLabel(context);$('#waiting-title').textContent=title;$('#waiting-detail').textContent=detail;waitingStarted=Date.now();clearInterval(waitingTimer);let tick=()=>{let sec=Math.floor((Date.now()-waitingStarted)/1000);$('#waiting-elapsed').textContent=`経過 ${String(Math.floor(sec/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`};tick();waitingTimer=setInterval(tick,1000);if(!d.open)d.showModal()}function updateWaiting(title,detail,context){if(title)$('#waiting-title').textContent=title;if(detail)$('#waiting-detail').textContent=detail;if(context)$('#waiting-engine').textContent=waitingEngineLabel(context)}function hideWaiting(){clearInterval(waitingTimer);waitingTimer=null;let d=$('#waiting-dialog');if(d?.open)d.close()}async function convertPath(input,mode){showWaiting('パス変換中',mode==='relative'?'アプリフォルダー基準へ変換しています...':'実際の絶対パスを解決しています...');try{let r=await fetch('/api/path-convert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({value:input.value,mode})}),d=await r.json();if(!r.ok)return toast(d.error);input.value=d.value;updatePathBadge(input);dirty()}finally{hideWaiting()}}function updatePathBadge(input){let badge=input.closest('label')?.querySelector('.path-badge');if(!badge)return;let relative=input.value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(input.value);badge.textContent=relative?'相対パス / 基準: アプリフォルダー':'絶対パス';badge.className='path-badge '+(relative?'path-kind-relative':'path-kind-absolute')}function isRelativePath(value){return !!value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(value)}function enhancePathInput(input,kind='folder'){if(!input||input.dataset.pathEnhanced)return;input.dataset.pathEnhanced='1';let tools=document.createElement('div');tools.className='path-tools compact-path-tools';tools.innerHTML='<button type="button" class="pathmode path-toggle" title="絶対パスと相対パスを切り替えます"></button><small class="path-badge"></small>';input.closest('label')?.appendChild(tools);let toggle=tools.querySelector('.path-toggle');function refresh(){let relative=isRelativePath(input.value);toggle.textContent=relative?'相対 → 絶対':'絶対 → 相対';toggle.dataset.mode=relative?'absolute':'relative';updatePathBadge(input)}toggle.onclick=async()=>{await convertPath(input,toggle.dataset.mode);refresh()};input.addEventListener('input',refresh);input._refreshPathControl=refresh;refresh()}async function browse(kind,initial,types){showWaiting('参照画面を準備中','設定中のパスを解決して、その場所から開きます...');try{let url=kind==='folder'?'/api/pick-folder':'/api/pick-file',r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({initial,types})}),d=await r.json();if(!r.ok)toast(d.error);return d.path||''}finally{hideWaiting()}}
 async function checkConfiguredPath(item,jobId){showWaiting('ファイル存在確認中','設定場所と周辺フォルダーを検索しています...');try{let r=await fetch('/api/path-check',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({item,job_id:jobId})}),d=await r.json();if(!r.ok)return toast(d.error);showPathResult(d)}finally{hideWaiting()}}function showPathResult(d){let box=$('#suggest-content');if(d.ok){box.innerHTML=`<p class="path-ok">存在を確認しました。</p><code>${E(d.resolved)}</code>`}else if(d.candidates?.length){box.innerHTML=`<p class="path-ng">設定先には存在しません。</p><p>設定値: <code>${E(d.configured)}</code></p><p>実在する修正候補:</p><div class="candidate-list">${d.candidates.map(x=>`<div class="candidate"><code>${E(x)}</code><button class="apply-suggestion" data-path="${E(x)}">このパスへ修正</button></div>`).join('')}</div>`;box.querySelectorAll('.apply-suggestion').forEach(b=>b.onclick=async()=>{let r=await fetch('/api/apply-path-suggestion',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({item:d.item,job_id:d.job_id,candidate:b.dataset.path})}),x=await r.json();if(r.ok){$('#path-suggestion').close();toast('設定を修正しました');await init()}else toast(x.error)})}else{box.innerHTML=`<p class="path-ng">ファイルが見つかりません。</p><p>確認先: <code>${E(d.resolved)}</code></p><p class="reselect">上2階層・下1階層の検索範囲にも候補がありません。参照ボタンから再指定してください。</p>`}if(!$('#path-suggestion').open)$('#path-suggestion').showModal()}
@@ -271,7 +275,7 @@ if($('#bulk-apply'))$('#bulk-apply').onclick=async()=>{
  }catch(e){toast(e.message)}
  finally{hideWaiting()}
 };
-function render(){let a=filtered(),body=$('#jobs-body');let canReorder=(!$('#search').value.trim()&&$('#filter-enabled').value==='all'&&$('#filter-schedule').value==='all');body.innerHTML=a.map(j=>`<tr data-id="${j.id}" draggable="${canReorder}" class="${canReorder?'reorderable':''}"><td class="c-check"><span class="drag-handle" title="${canReorder?'ドラッグで並べ替え（ドロップ後は登録順表示へ戻ります）':'並べ替えは検索・絞り込み解除時に有効です'}">⋮⋮</span><input class="rowcheck" type="checkbox"></td><td><button type="button" class="state ${j.enabled?'on':'off'}" title="クリックで${j.enabled?'無効':'有効'}にします">${j.enabled?'有効':'無効'}</button></td><td><div class="primarytext" title="${E(j.name)}">${E(j.name)}</div><div class="subtext">${E(j.table)} / ${E(j.sheet)}</div>${j.comment?`<div class="job-comment" title="${E(j.comment)}"><i class="jc-ic">用途</i><span>${E(j.comment)}</span></div>`:''}</td><td><div class="primarytext" title="${E(j.rne_path||j.rne)}">${E(j.rne)}</div><div class="subtext pathtext">${E(j.rne_path||'')}</div></td><td>${outputFileCell(j)}</td><td><a class="output-link" href="#" data-path="${E(j.output_folder||cfg.default_output_folder)}" title="出力先を開く">${E(j.output_folder||cfg.default_output_folder)}</a></td><td class="c-progress">${rowProgressCell(j)}</td><td><div class="rowactions"><button class="run-one" title="実行">実行</button><button class="edit secondary" title="詳細">詳細</button><button class="copy secondary" title="複製">複製</button><button class="delete danger" title="削除">削除</button></div></td></tr>`).join('');paintRowProgress();applyScheduleCells();updateSelCount();$('#empty').hidden=a.length>0;$('#summary').textContent=`表示 ${a.length}件 / 登録 ${cfg.jobs.length}件 / 有効 ${cfg.jobs.filter(j=>j.enabled).length}件 / 自動実行ルール ${cfg.jobs.flatMap(j=>j.schedules||[]).filter(r=>r.enabled).length}件`;body.querySelectorAll('tr').forEach(tr=>{let j=cfg.jobs.find(x=>x.id===tr.dataset.id);tr.onclick=e=>{if(!e.target.closest('button,a,input')){tr.classList.toggle('selected');let cb=tr.querySelector('.rowcheck');if(cb)cb.checked=tr.classList.contains('selected');updateSelCount()}};tr.querySelector('.rowcheck').onchange=e=>{tr.classList.toggle('selected',e.target.checked);updateSelCount()};tr.ondblclick=e=>{if(!e.target.closest('button,input,select,a'))openEditor(j)};tr.querySelector('.edit').onclick=()=>openEditor(j);let st=tr.querySelector('.state');if(st)st.onclick=e=>{e.stopPropagation();setJobEnabled(j.id,!j.enabled)};tr.querySelector('.run-one').onclick=()=>runJobs([j.id]);tr.querySelector('.copy').onclick=()=>{let n=structuredClone(j);n.id=uid();n.name+=' コピー';n.schedules=(n.schedules||[]).map(r=>({...r,id:uid(),enabled:false}));cfg.jobs.splice(cfg.jobs.indexOf(j)+1,0,n);render();dirty()};tr.querySelector('.delete').onclick=()=>deleteJob(j);let l=tr.querySelector('.output-link');if(l)bindOutputLink(l,j);bindRowDnD(tr);tr.oncontextmenu=e=>{if(e.target.closest("a.output-link"))return;e.preventDefault();showJobContextMenu(e,j,tr)}})}
+function render(){let a=filtered(),body=$('#jobs-body');let canReorder=(!$('#search').value.trim()&&$('#filter-enabled').value==='all'&&$('#filter-schedule').value==='all');body.innerHTML=a.map(j=>`<tr data-id="${j.id}" draggable="${canReorder}" class="${canReorder?'reorderable':''}"><td class="c-check"><span class="drag-handle" title="${canReorder?'ドラッグで並べ替え（ドロップ後は登録順表示へ戻ります）':'並べ替えは検索・絞り込み解除時に有効です'}">⋮⋮</span><input class="rowcheck" type="checkbox"></td><td><button type="button" class="state ${j.enabled?'on':'off'}" title="クリックで${j.enabled?'無効':'有効'}にします">${j.enabled?'有効':'無効'}</button></td><td><div class="primarytext" title="${E(j.name)}">${E(j.name)}</div><div class="subtext">${E(j.table)} / ${E(j.sheet)}</div>${j.comment?`<div class="job-comment" title="${E(j.comment)}"><i class="jc-ic">用途</i><span>${E(j.comment)}</span></div>`:''}</td><td>${sourceCell(j)}</td><td>${outputFileCell(j)}</td><td><a class="output-link" href="#" data-path="${E(j.output_folder||cfg.default_output_folder)}" title="出力先を開く">${E(j.output_folder||cfg.default_output_folder)}</a></td><td class="c-progress">${rowProgressCell(j)}</td><td><div class="rowactions"><button class="run-one" title="実行">実行</button><button class="edit secondary" title="詳細">詳細</button><button class="copy secondary" title="複製">複製</button><button class="delete danger" title="削除">削除</button></div></td></tr>`).join('');paintRowProgress();applyScheduleCells();updateSelCount();$('#empty').hidden=a.length>0;$('#summary').textContent=`表示 ${a.length}件 / 登録 ${cfg.jobs.length}件 / 有効 ${cfg.jobs.filter(j=>j.enabled).length}件 / 自動実行ルール ${cfg.jobs.flatMap(j=>j.schedules||[]).filter(r=>r.enabled).length}件`;body.querySelectorAll('tr').forEach(tr=>{let j=cfg.jobs.find(x=>x.id===tr.dataset.id);tr.onclick=e=>{if(!e.target.closest('button,a,input')){tr.classList.toggle('selected');let cb=tr.querySelector('.rowcheck');if(cb)cb.checked=tr.classList.contains('selected');updateSelCount()}};tr.querySelector('.rowcheck').onchange=e=>{tr.classList.toggle('selected',e.target.checked);updateSelCount()};tr.ondblclick=e=>{if(!e.target.closest('button,input,select,a'))openEditor(j)};tr.querySelector('.edit').onclick=()=>openEditor(j);let st=tr.querySelector('.state');if(st)st.onclick=e=>{e.stopPropagation();setJobEnabled(j.id,!j.enabled)};tr.querySelector('.run-one').onclick=()=>runJobs([j.id]);tr.querySelector('.copy').onclick=()=>{let n=structuredClone(j);n.id=uid();n.name+=' コピー';n.schedules=(n.schedules||[]).map(r=>({...r,id:uid(),enabled:false}));cfg.jobs.splice(cfg.jobs.indexOf(j)+1,0,n);render();dirty()};tr.querySelector('.delete').onclick=()=>deleteJob(j);let l=tr.querySelector('.output-link');if(l)bindOutputLink(l,j);bindRowDnD(tr);tr.oncontextmenu=e=>{if(e.target.closest("a.output-link"))return;e.preventDefault();showJobContextMenu(e,j,tr)}})}
 /* v1.9.0: 一覧のドラッグ&ドロップ並べ替え（問い合わせ順に反映）と管理単位の削除 */
 let dragSrcId=null,dragGhost=null,dragTargetId=null,dragAfter=false,dragImage=null;
 function clearDragVisuals(){
@@ -389,7 +393,7 @@ async function openFolderPath(path,label){
   toast(d.ok?`${label}を開きました`:(d.error||`${label}を開けませんでした`))}
  catch{toast(`${label}を開けませんでした`)}
 }
-function openEditor(job){editing=structuredClone(job||{id:uid(),name:'新しい対象',enabled:true,rne:'NEW.RNE',rne_path:cfg.rne_folder+'\\NEW.RNE',output_folder:cfg.default_output_folder,output_format:'sqlite3',output_file:'NEW.sqlite3',extra_formats:[],table:'仕掛',sheet:'Page1',type:'詳細データ',naming_mode:'fixed',output_pattern:'',comment:'',split_mode:'auto',split_shape:'auto',period:{enabled:false,control_point:'',unit:'month',from_offset:-1,to_offset:0},schedules:[]});$('#modal-title').textContent=job?'対象を編集':'対象を追加';$('#m-id').value=editing.id;$('#m-name').value=editing.name;$('#m-enabled').checked=editing.enabled;$('#m-rne-path').value=editing.rne_path||'';$('#m-output').value=editing.output_folder||cfg.default_output_folder;editing.output_format=normalizeFormat(editing.output_format);editing.extra_formats=(editing.extra_formats||[]).map(normalizeFormat);editing.index_columns=(editing.index_columns||[]).map(String);if($('#m-skip-unchanged'))$('#m-skip-unchanged').checked=!!editing.skip_if_unchanged;if($('#m-index-columns'))$('#m-index-columns').value=(editing.index_columns||[]).join(', ');$('#m-format').value=editing.output_format;$('#m-output-file').value=editing.output_file;$('#m-table').value=editing.table;$('#m-sheet').value=editing.sheet;$('#m-type').value=editing.type;if($('#m-comment'))$('#m-comment').value=editing.comment||'';if($('#m-split-mode'))$('#m-split-mode').value=editing.split_mode||'auto';if($('#m-split-shape'))$('#m-split-shape').value=editing.split_shape||'auto';if($('#m-axis-mode'))$('#m-axis-mode').value=editing.row_axis_mode||'first';if($('#m-axis-index'))$('#m-axis-index').value=editing.row_axis_index||1;AXIS_PICK.forEach(g=>{if($(g.n))$(g.n).innerHTML=`<option value="${E(editing.row_axis_name||'')}">${E(editing.row_axis_name||'（先に「RNEを調査」）')}</option>`;if($(g.m))$(g.m).value=editing.row_axis_mode||'first';if($(g.i))$(g.i).value=editing.row_axis_index||1});syncAxisPick();syncOutputExtension();initNaming(editing);setPeriodUI(editing.period);renderRuntimeSplit(null);inspReset();loadMaster(false);splitTrialPoll();rulesRender();updatePeriodBadge();loadJobTrend(editing.id);setEditorTab('basic');$('#editor').showModal()}
+function openEditor(job){editing=structuredClone(job||{id:uid(),name:'新しい対象',enabled:true,rne:'NEW.RNE',rne_path:cfg.rne_folder+'\\NEW.RNE',output_folder:cfg.default_output_folder,output_format:'sqlite3',output_file:'NEW.sqlite3',extra_formats:[],table:'仕掛',sheet:'Page1',type:'詳細データ',naming_mode:'fixed',output_pattern:'',comment:'',split_mode:'auto',split_shape:'auto',source:'rne',text_path:'',layout_id:'',period:{enabled:false,control_point:'',unit:'month',from_offset:-1,to_offset:0},schedules:[]});$('#modal-title').textContent=job?'対象を編集':'対象を追加';$('#m-id').value=editing.id;$('#m-name').value=editing.name;$('#m-enabled').checked=editing.enabled;$('#m-rne-path').value=editing.rne_path||'';$('#m-output').value=editing.output_folder||cfg.default_output_folder;editing.output_format=normalizeFormat(editing.output_format);editing.extra_formats=(editing.extra_formats||[]).map(normalizeFormat);editing.index_columns=(editing.index_columns||[]).map(String);if($('#m-skip-unchanged'))$('#m-skip-unchanged').checked=!!editing.skip_if_unchanged;if($('#m-index-columns'))$('#m-index-columns').value=(editing.index_columns||[]).join(', ');$('#m-format').value=editing.output_format;$('#m-output-file').value=editing.output_file;$('#m-table').value=editing.table;$('#m-sheet').value=editing.sheet;$('#m-type').value=editing.type;if($('#m-comment'))$('#m-comment').value=editing.comment||'';if($('#m-split-mode'))$('#m-split-mode').value=editing.split_mode||'auto';if($('#m-split-shape'))$('#m-split-shape').value=editing.split_shape||'auto';if($('#m-axis-mode'))$('#m-axis-mode').value=editing.row_axis_mode||'first';if($('#m-axis-index'))$('#m-axis-index').value=editing.row_axis_index||1;AXIS_PICK.forEach(g=>{if($(g.n))$(g.n).innerHTML=`<option value="${E(editing.row_axis_name||'')}">${E(editing.row_axis_name||'（先に「RNEを調査」）')}</option>`;if($(g.m))$(g.m).value=editing.row_axis_mode||'first';if($(g.i))$(g.i).value=editing.row_axis_index||1});syncAxisPick();setSource(editing.source||'rne');if($('#m-text-path'))$('#m-text-path').value=editing.text_path||'';fillLayoutPicker(editing.layout_id||'');syncOutputExtension();initNaming(editing);setPeriodUI(editing.period);renderRuntimeSplit(null);inspReset();loadMaster(false);splitTrialPoll();rulesRender();updatePeriodBadge();loadJobTrend(editing.id);setEditorTab('basic');$('#editor').showModal()}
 $('#m-format').onchange=()=>{syncOutputExtension();if(currentNamingMode()==='template')refreshNamePreview()};$('#m-rne-check').onclick=async()=>{showWaiting('RNEファイル確認中','設定場所と周辺フォルダーを検索しています...');try{let temp={item:'rne',job_id:editing.id,label:editing.rne,configured:$('#m-rne-path').value,resolved:$('#m-rne-path').value,candidates:[],ok:false};let r=await fetch('/api/path-check',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({item:'rne',job_id:editing.id,value:$('#m-rne-path').value,expected_name:$('#m-rne-path').value.split(/[\\/]/).pop()})}),d=await r.json();if(r.ok)showPathResult(d);else toast(d.error)}finally{hideWaiting()}};$('#m-rne-pick').onclick=async()=>{let p=await browse('file',$('#m-rne-path').value,[['RNEファイル','*.RNE'],['すべて','*.*']]);if(p){let i=$('#m-rne-path'),wasRel=i.value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(i.value);i.value=p;if(wasRel)await convertPath(i,'relative');updatePathBadge(i);i._refreshPathControl?.()}};$('#m-output-pick').onclick=async()=>{let p=await browse('folder',$('#m-output').value);if(p){let i=$('#m-output'),wasRel=i.value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(i.value);i.value=p;if(wasRel)await convertPath(i,'relative');updatePathBadge(i)}};enhancePathInput($('#m-rne-path'),'file');enhancePathInput($('#m-output'),'folder');$('#m-rne-path').addEventListener('input',()=>renderInspTarget());$('#m-name').addEventListener('input',()=>renderInspTarget());
 /* 有効・無効は押した瞬間に効かせる。「設定を反映」を押し忘れて閉じると
    黙って元へ戻る、という切れ目を作らない。まだ保存していない新規の対象だけは
@@ -413,7 +417,9 @@ function collectJob(){
   comment:($('#m-comment')?.value||'').trim(),
   split_mode:($('#m-split-mode')?.value||'auto'),split_shape:($('#m-split-shape')?.value||'auto'),
   row_axis_mode:($('#m-axis-mode')?.value||'first'),row_axis_index:Number($('#m-axis-index')?.value||1)||1,
-  row_axis_name:($('#m-axis-name')?.value||''),period:currentPeriod()};
+  row_axis_name:($('#m-axis-name')?.value||''),period:currentPeriod(),
+  source:currentSource(),text_path:($('#m-text-path')?.value||'').trim(),
+  layout_id:($('#m-layout')?.value||'')};
 }
 async function applyJob(close=true,quiet=false){
  const updated=collectJob();
@@ -2984,4 +2990,221 @@ async function exportPivot(){
   let url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=fname;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),4000);
   toast('集計結果を出力しました');
  }catch{toast('出力に失敗しました')}finally{hideWaiting()}
+}
+
+
+/* ==== 固定長テキスト: 入力の種類と、読取マスタ ============================
+   RNEはサーバーが表の形を知っているが、テキストは知らない。どこで切るかを
+   こちらで決めて名前を付けて持つ ―― それが読取マスタ。対象の登録からは
+   「どのファイルを」「どのマスタで切るか」の2つだけを選ぶ。 */
+function currentSource(){return $('.src-btn.on')?.dataset.src||'rne'}
+function setSource(src){
+ src=(src==='text')?'text':'rne';
+ $$('.src-btn').forEach(b=>{let on=b.dataset.src===src;b.classList.toggle('on',on);b.setAttribute('aria-selected',String(on))});
+ $$('.src-pane').forEach(x=>x.classList.toggle('on',x.dataset.src===src));
+ // RNEを調べる道具は、RNEのときだけ意味がある。出したままにすると、押しても
+ // 何も起きないボタンが並ぶ（押せるのに効かない、がいちばん分かりにくい）。
+ let tool=$('.editor-tab[data-etab="inspect"]');
+ if(tool){tool.hidden=(src==='text');if(src==='text'&&tool.classList.contains('on'))setEditorTab('basic')}
+ let period=$('.editor-tab[data-etab="period"]');
+ if(period)period.hidden=(src==='text');
+ // 番号は「上から何番目か」を表す。隠したぶんを飛ばすと 1・2・4 と並び、
+ // 3が押せないのかと探すことになる。見えているものへ振り直す。
+ let n=0;
+ $$('.editor-tab:not(.etab-tool)').forEach(t=>{
+  let badge=t.querySelector('.etab-badge');
+  if(t.hidden||!badge)return;
+  badge.textContent=String(++n);
+ });
+}
+$$('.src-btn').forEach(b=>b.onclick=()=>{setSource(b.dataset.src);dirty()});
+async function loadLayouts(force){
+ if(layoutCache.length&&!force)return layoutCache;
+ try{
+  let d=await fetch('/api/text-layouts',{cache:'no-store'}).then(r=>r.json());
+  layoutCache=d.items||[];layoutMeta={encodings:d.encodings||[],units:d.units||[],trims:d.trims||[]};
+ }catch{layoutCache=[]}
+ return layoutCache;
+}
+async function fillLayoutPicker(selected){
+ let sel=$('#m-layout');if(!sel)return;
+ let items=await loadLayouts();
+ sel.innerHTML='<option value="">選択してください</option>'+items.map(x=>
+  `<option value="${E(x.id)}">${E(x.name)}（${x.columns.length}列 / ${x.width}${x.unit==='byte'?'バイト':'文字'}）</option>`).join('');
+ sel.value=selected||'';
+ let note=$('#m-layout-note');
+ if(note){
+  let cur=items.find(x=>x.id===sel.value);
+  note.textContent=cur?`${cur.name}: ${cur.columns.map(c=>c.name).slice(0,6).join('・')}${cur.columns.length>6?' ほか':''}`
+   :(items.length?'どの位置で切るかは「読取マスタ」で決めます。上から選んでください。'
+    :'読取マスタがまだありません。上の「マスタを開く」から作成してください。');
+ }
+}
+if($('#m-layout'))$('#m-layout').onchange=()=>{fillLayoutPicker($('#m-layout').value);dirty()};
+if($('#m-layout-open'))$('#m-layout-open').onclick=()=>{$('#editor').close();document.querySelector('[data-p="layouts"]')?.click()};
+if($('#m-text-pick'))$('#m-text-pick').onclick=async()=>{
+ let p=await browse('file',$('#m-text-path').value,[['テキスト','*.txt'],['すべて','*.*']]);
+ if(p){let i=$('#m-text-path'),wasRel=i.value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(i.value);i.value=p;if(wasRel)await convertPath(i,'relative');updatePathBadge(i);i._refreshPathControl?.()}};
+if($('#m-text-check'))$('#m-text-check').onclick=async()=>{
+ let path=($('#m-text-path')?.value||'').trim();
+ if(!path)return toast('テキストファイルを入れてください');
+ let lay=layoutCache.find(x=>x.id===$('#m-layout')?.value);
+ if(!lay)return toast('先に読取マスタを選んでください');
+ let d=await fetch('/api/text-preview',{method:'POST',headers:{'Content-Type':'application/json'},
+   body:JSON.stringify({path,layout:lay,lines:5})}).then(r=>r.json()).catch(()=>null);
+ if(!d||!d.ok)return toast(d?.error||'読み取れませんでした');
+ toast(`読めました: ${d.stat.rows}行を切り出しました（${d.headers.length}列）`);
+};
+/* ---- 読取マスタの画面 ---- */
+function layBlank(){return {id:'',name:'',description:'',encoding:'cp932',unit:'byte',trim:'both',
+ skip_head:0,skip_tail:0,skip_blank:true,header_row:false,sample_path:'',
+ columns:[{name:'列1',start:1,length:10,note:''}]}}
+function layFillSelect(el,items,value){
+ if(!el)return;el.innerHTML=items.map(x=>`<option value="${E(x.value)}">${E(x.label)}</option>`).join('');el.value=value;
+}
+function layRenderList(){
+ let box=$('#lay-list');if(!box)return;
+ let q=laySearch.trim().toLowerCase();
+ let items=layoutCache.filter(x=>!q||[x.name,x.description,...(x.columns||[]).map(c=>c.name)].join(' ').toLowerCase().includes(q));
+ if(!items.length){box.innerHTML='<p class="lay-empty-note">'+(q?'見つかりませんでした':'まだ登録がありません。「新規作成」から作れます。')+'</p>';return}
+ box.innerHTML=items.map(x=>`<button type="button" class="lay-item${layEditing&&layEditing.id===x.id?' on':''}" data-id="${E(x.id)}">`
+  +`<b>${E(x.name)}</b><small>${x.columns.length}列 / ${x.width}${x.unit==='byte'?'バイト':'文字'} / ${E(x.encoding)}</small>`
+  +(x.used_by&&x.used_by.length?`<em>${x.used_by.length}件の対象が使用中</em>`:'')
+  +(x.description?`<small>${E(x.description)}</small>`:'')+'</button>').join('');
+ $$('#lay-list .lay-item').forEach(b=>b.onclick=()=>layOpen(layoutCache.find(x=>x.id===b.dataset.id)));
+}
+function layRenderCols(){
+ let box=$('#lay-cols');if(!box)return;
+ box.innerHTML=(layEditing.columns||[]).map((c,i)=>`<div class="lay-col" data-i="${i}">`
+  +`<input class="lay-name" value="${E(c.name||'')}" placeholder="列名">`
+  +`<input class="lay-start" type="number" min="1" step="1" value="${Number(c.start||1)}">`
+  +`<input class="lay-len" type="number" min="1" step="1" value="${Number(c.length||0)}">`
+  +`<input class="lay-end" value="${Number(c.start||1)+Number(c.length||0)-1}" readonly tabindex="-1">`
+  +`<input class="lay-memo" value="${E(c.note||'')}" placeholder="メモ">`
+  +`<button type="button" class="lay-del" title="この列を消す">×</button></div>`).join('');
+ $$('#lay-cols .lay-col').forEach(row=>{
+  let i=Number(row.dataset.i);
+  let read=()=>{
+   let c=layEditing.columns[i];
+   c.name=row.querySelector('.lay-name').value;
+   c.start=Math.max(1,Number(row.querySelector('.lay-start').value)||1);
+   c.length=Math.max(0,Number(row.querySelector('.lay-len').value)||0);
+   row.querySelector('.lay-end').value=c.start+c.length-1;
+   layRenderWidth();
+  };
+  row.querySelectorAll('input').forEach(inp=>inp.oninput=read);
+  row.querySelector('.lay-memo').oninput=()=>{layEditing.columns[i].note=row.querySelector('.lay-memo').value};
+  row.querySelector('.lay-del').onclick=()=>{layEditing.columns.splice(i,1);layRenderCols()};
+ });
+ layRenderWidth();
+}
+function layRenderWidth(){
+ let cols=layEditing?.columns||[];
+ let width=cols.reduce((m,c)=>Math.max(m,Number(c.start||1)+Number(c.length||0)-1),0);
+ let unit=$('#lay-unit')?.value==='byte'?'バイト':'文字';
+ let w=$('#lay-width');if(w)w.textContent=`1行あたり ${width}${unit} / ${cols.length}列`;
+ // 重なりと隙間は、間違いとは限らない（日付の全体と年だけ、など）。知らせるだけにする。
+ let sorted=cols.slice().sort((a,b)=>a.start-b.start);let over=[],gap=[],pos=1;
+ sorted.forEach(c=>{let s=Number(c.start||1),e=s+Number(c.length||0)-1;
+  if(s<pos)over.push(c.name);else if(s>pos)gap.push(`${pos}〜${s-1}`);pos=Math.max(pos,e+1)});
+ let note=$('#lay-cols-note');
+ if(note)note.textContent=[over.length?`重なり: ${over.slice(0,3).join('・')}`:'',
+   gap.length?`どの列にも入らない範囲: ${gap.slice(0,3).join('・')}`:''].filter(Boolean).join(' / ')
+   ||'開始位置は1文字目を1として数えます。';
+}
+function layOpen(l){
+ layEditing=structuredClone(l||layBlank());
+ $('#lay-empty').hidden=true;$('#lay-edit').hidden=false;
+ $('#lay-title').textContent=layEditing.id?'読取マスタを編集':'読取マスタを作成';
+ $('#lay-name').value=layEditing.name||'';$('#lay-desc').value=layEditing.description||'';
+ layFillSelect($('#lay-enc'),layoutMeta.encodings,layEditing.encoding);
+ layFillSelect($('#lay-unit'),layoutMeta.units,layEditing.unit);
+ layFillSelect($('#lay-trim'),layoutMeta.trims,layEditing.trim);
+ $('#lay-skip-head').value=layEditing.skip_head||0;$('#lay-skip-tail').value=layEditing.skip_tail||0;
+ $('#lay-skip-blank').checked=layEditing.skip_blank!==false;$('#lay-header-row').checked=!!layEditing.header_row;
+ $('#lay-sample').value=layEditing.sample_path||'';
+ $('#lay-preview-result').innerHTML='';
+ $('#lay-delete').hidden=!layEditing.id;
+ $('#lay-state').textContent=(l&&l.used_by&&l.used_by.length)?`${l.used_by.length}件の対象が使用中: ${l.used_by.slice(0,3).join('・')}`:'';
+ layRenderCols();layRenderList();
+}
+function layCollect(){
+ return {...layEditing,name:$('#lay-name').value.trim(),description:$('#lay-desc').value.trim(),
+  encoding:$('#lay-enc').value,unit:$('#lay-unit').value,trim:$('#lay-trim').value,
+  skip_head:Number($('#lay-skip-head').value)||0,skip_tail:Number($('#lay-skip-tail').value)||0,
+  skip_blank:$('#lay-skip-blank').checked,header_row:$('#lay-header-row').checked,
+  sample_path:$('#lay-sample').value.trim()};
+}
+async function laySave(){
+ let body=layCollect();
+ let d=await fetch('/api/text-layouts',{method:'POST',headers:{'Content-Type':'application/json'},
+   body:JSON.stringify(body)}).then(r=>r.json()).catch(()=>null);
+ if(!d||!d.ok)return toast(d?.error||'保存できませんでした');
+ toast('読取マスタを保存しました');
+ await loadLayouts(true);layRenderList();
+ layOpen(layoutCache.find(x=>x.id===d.layout.id)||d.layout);
+}
+async function layDelete(){
+ if(!layEditing?.id)return;
+ if(!confirm(`読取マスタ「${layEditing.name}」を削除しますか？`))return;
+ let d=await fetch('/api/text-layouts/'+encodeURIComponent(layEditing.id),{method:'DELETE'}).then(r=>r.json()).catch(()=>null);
+ if(!d||!d.ok)return toast(d?.error||'削除できませんでした');
+ toast('削除しました');layEditing=null;
+ await loadLayouts(true);layRenderList();
+ $('#lay-edit').hidden=true;$('#lay-empty').hidden=false;
+}
+async function layPreview(){
+ let path=$('#lay-sample').value.trim();
+ if(!path)return toast('確かめるファイルを入れてください');
+ let box=$('#lay-preview-result');box.innerHTML='<p class="hint">読み取っています…</p>';
+ let d=await fetch('/api/text-preview',{method:'POST',headers:{'Content-Type':'application/json'},
+   body:JSON.stringify({path,layout:layCollect(),lines:12})}).then(r=>r.json()).catch(()=>null);
+ if(!d)return box.innerHTML='<p class="lay-note is-ng">下読みできませんでした（通信に失敗しました）</p>';
+ if(!d.ok)return box.innerHTML=`<p class="lay-note is-ng">${E(d.error||'読み取れませんでした')}</p>`;
+ let head='<tr><th>#</th>'+d.headers.map(h=>`<th>${E(h)}</th>`).join('')+'</tr>';
+ let rows=d.rows.map((r,i)=>`<tr><td>${i+1}</td>`+r.map(v=>`<td>${E(v)}</td>`).join('')+'</tr>').join('');
+ box.innerHTML=`<div class="lay-scroll"><table>${head}${rows}</table></div>`
+  +`<p class="hint">${d.stat.rows}行を切り出しました（読んだ行 ${d.stat.lines} / 1行あたり ${d.stat.width}${d.stat.unit==='byte'?'バイト':'文字'}必要）</p>`
+  +(d.notes||[]).map(n=>`<p class="lay-note">${E(n)}</p>`).join('')
+  +(d.raw&&d.raw.length?`<p class="lay-raw hint">元の1行目: <code>${E(d.raw[0])}</code></p>`:'');
+}
+async function openLayouts(){
+ await loadLayouts(true);layRenderList();
+ if(layEditing){let cur=layoutCache.find(x=>x.id===layEditing.id);if(cur)layOpen(cur)}
+}
+if($('#lay-add'))$('#lay-add').onclick=()=>layOpen(null);
+if($('#lay-save'))$('#lay-save').onclick=laySave;
+if($('#lay-delete'))$('#lay-delete').onclick=layDelete;
+if($('#lay-preview'))$('#lay-preview').onclick=layPreview;
+if($('#lay-search'))$('#lay-search').oninput=e=>{laySearch=e.target.value;layRenderList()};
+if($('#lay-unit'))$('#lay-unit').onchange=layRenderWidth;
+if($('#lay-col-add'))$('#lay-col-add').onclick=()=>{
+ let cols=layEditing.columns||[];
+ let next=cols.reduce((m,c)=>Math.max(m,Number(c.start||1)+Number(c.length||0)),1);
+ cols.push({name:'列'+(cols.length+1),start:next,length:10,note:''});
+ layEditing.columns=cols;layRenderCols();
+};
+if($('#lay-export'))$('#lay-export').onclick=()=>{location.href='/api/text-layouts/export'};
+if($('#lay-import'))$('#lay-import').onclick=()=>$('#lay-file')?.click();
+if($('#lay-file'))$('#lay-file').onchange=async e=>{
+ let f=e.target.files&&e.target.files[0];if(!f)return;
+ let text=await f.text();e.target.value='';
+ let d=await fetch('/api/text-layouts/import',{method:'POST',headers:{'Content-Type':'application/json'},body:text})
+   .then(r=>r.json()).catch(()=>null);
+ if(!d||!d.ok)return toast(d?.error||'取り込めませんでした');
+ await loadLayouts(true);layRenderList();
+ toast(`取り込みました: 追加${d.added.length}件 / 置き換え${d.replaced.length}件`
+   +(d.skipped&&d.skipped.length?` / 読めなかったもの${d.skipped.length}件`:''));
+};
+
+/* 一覧の「入力」欄。RNEはRNE名、固定長テキストはファイル名と読取マスタを出す。
+   ここを1つの書き方で済ませると、テキストの行にだけ空欄が並ぶ。 */
+function sourceCell(j){
+ if((j.source||'rne')!=='text')
+  return `<div class="primarytext" title="${E(j.rne_path||j.rne)}">${E(j.rne)}</div>`
+   +`<div class="subtext pathtext">${E(j.rne_path||'')}</div>`;
+ let lay=layoutCache.find(x=>x.id===j.layout_id);
+ let file=String(j.text_path||'').split(/[\\/]/).pop()||'（未設定）';
+ return `<div class="primarytext" title="${E(j.text_path||'')}"><i class="src-tag">テキスト</i>${E(file)}</div>`
+  +`<div class="subtext pathtext">${E(lay?lay.name+'（'+lay.columns.length+'列）':'読取マスタ未選択')}</div>`;
 }

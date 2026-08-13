@@ -40,7 +40,7 @@ from app import (
     enqueue_command, expand_rule_occurrences, find_nearby_file, freshness_view,
     has_template_variables, heartbeat_clients, heartbeat_lock, inspect_task_blank,
     inspect_task_lock, inspect_task_percent, inspect_task_seconds, inspect_tasks,
-    job_extra_formats, job_output_plan, job_schedule_preview, jsonify, last_run_info, load,
+    job_extra_formats, job_output_plan, job_schedule_preview, json, jsonify, last_run_info, load,
     load_column_cache, load_job_runs, load_rne_timing, load_split_trials, log, log_files,
     machine_path_view, normalize_output_format, normalize_split_mode, normalize_split_shape,
     split_trial_options,
@@ -56,7 +56,12 @@ from app import (
     split_batch_run_data, split_batch_state, split_batch_summary, split_breakeven_share,
     split_gain_reason, split_incompatible, split_link_profile, split_payload_profile,
     split_trial_blank, split_trial_lock, split_trial_state, split_useful_parts, status, struct,
-    task_target, threading, time, uuid, write_xlsx_direct)
+    task_target, threading, time, uuid, write_xlsx_direct,
+    TEXT_ENCODINGS, TEXT_ENCODING_LABEL, TEXT_UNITS, TEXT_UNIT_LABEL, TRIM_MODES, TRIM_LABEL,
+    JOB_SOURCE_LABEL, normalize_job_source, normalize_text_layout, validate_text_layout,
+    text_layout_width, text_layout_overlaps, text_layout_gaps, preview_text, resolve_text_path,
+    load_text_layouts, find_text_layout, save_text_layout, delete_text_layout, text_layout_usage,
+    text_layouts_export, text_layouts_import)
 
 @app.get('/')
 def index():
@@ -1288,8 +1293,11 @@ def validate():
   try:
    if root.is_dir() and str(root).lower() not in [str(x).lower() for x in existing_roots]:existing_roots.append(root)
   except OSError:pass
+ # 固定長テキストの対象はRNEを持たない。ここで一緒に見ると「RNEがありません」と
+ # 出続けて、直しようのない赤が並ぶ。入力の種類で分けて、それぞれの入口を確かめる。
  job_results=[]
  for j in c.get('jobs',[]):
+  if normalize_job_source(j.get('source'))=='text':continue
   rp=resolve_rne_path(j,c);exists=rp.is_file();job_results.append((j,rp,exists))
  all_jobs_ok=all(x[2] for x in job_results) if job_results else True
  root_ok=bool(existing_roots) or all_jobs_ok
@@ -1301,6 +1309,22 @@ def validate():
  for j,rp,exists in job_results:
   candidates=find_nearby_file(j.get('rne') or rp.name) if not exists else []
   add('RNE配置',j.get('name','対象')+' RNE',exists,rp,configured=j.get('rne_path'),item='rne',job_id=j.get('id'),candidates=candidates,needs_reselect=not exists and not candidates)
+  op=resolve_path(j.get('output_folder') or c.get('default_output_folder','.\\output'))
+  add('出力先',j.get('name','対象')+' 出力先',op.is_dir(),op,item='')
+ # 固定長テキストの対象。要るのは「読むファイル」と「切り方（読取マスタ）」の2つだけ。
+ for j in c.get('jobs',[]):
+  if normalize_job_source(j.get('source'))!='text':continue
+  tp=resolve_text_path(j,c);ok=tp.is_file()
+  add('テキスト読取',j.get('name','対象')+' 読取ファイル',ok,tp if ok else f'{tp}（見つかりません）',
+      configured=j.get('text_path'),item='text_path',job_id=j.get('id'),needs_reselect=not ok)
+  lay=find_text_layout(j.get('layout_id'))
+  if not lay:
+   add('テキスト読取',j.get('name','対象')+' 読取マスタ',False,'読取マスタが選ばれていません（または削除されています）',job_id=j.get('id'),item='')
+  else:
+   bad=validate_text_layout(lay)
+   add('テキスト読取',j.get('name','対象')+' 読取マスタ',not bad,
+       f'{lay["name"]} / {len(lay["columns"])}列 / {text_layout_width(lay)}{"バイト" if lay["unit"]=="byte" else "文字"}' if not bad else '／'.join(bad),
+       job_id=j.get('id'),item='')
   op=resolve_path(j.get('output_folder') or c.get('default_output_folder','.\\output'))
   add('出力先',j.get('name','対象')+' 出力先',op.is_dir(),op,item='')
  # 同時出力を設定している対象は、1回の実行で何ができるのかをそのまま出す。
@@ -1375,3 +1399,76 @@ def browser_closing():
   heartbeat_clients[client_id]={'app_id':APP_ID,'instance_id':INSTANCE_ID,'last_seen':float(previous.get('last_seen') or now),'user_agent':request.headers.get('User-Agent','')[:160],'closing_at':now,'recovered_count':int(previous.get('recovered_count') or 0)}
  log.info('BROWSER_CLOSE_CANDIDATE client_id=%s grace=%ss',client_id,CLOSE_GRACE_SECONDS)
  return jsonify(ok=True,client_id=client_id,grace_seconds=CLOSE_GRACE_SECONDS)
+
+
+# ==== 読取マスタ（固定長テキストの切り方）=================================
+# RNEの登録と同じ扱いにするための受け口。マスタは対象と別に持ち、複数の対象で使い回す。
+@app.get('/api/text-layouts')
+def text_layouts_list():
+ items=load_text_layouts();c=load()
+ for x in items:
+  x['width']=text_layout_width(x)
+  x['used_by']=text_layout_usage(x['id'],c)
+  x['overlaps']=[[a,b] for a,b in text_layout_overlaps(x)]
+  x['gaps']=[[a,b] for a,b in text_layout_gaps(x)]
+ return jsonify(ok=True,items=items,
+                encodings=[{'value':k,'label':TEXT_ENCODING_LABEL.get(k,k)} for k in TEXT_ENCODINGS],
+                units=[{'value':k,'label':TEXT_UNIT_LABEL.get(k,k)} for k in TEXT_UNITS],
+                trims=[{'value':k,'label':TRIM_LABEL.get(k,k)} for k in TRIM_MODES])
+
+@app.post('/api/text-layouts')
+def text_layouts_save():
+ d=request.get_json(force=True) or {}
+ try:saved=save_text_layout(d)
+ except ValueError as e:return jsonify(ok=False,error=str(e)),400
+ except Exception as e:
+  log.exception('TEXT_LAYOUT_SAVE_FAILED');return jsonify(ok=False,error=str(e)),500
+ return jsonify(ok=True,layout=dict(saved,width=text_layout_width(saved)))
+
+@app.delete('/api/text-layouts/<layout_id>')
+def text_layouts_delete(layout_id):
+ try:gone=delete_text_layout(layout_id)
+ except ValueError as e:return jsonify(ok=False,error=str(e)),409
+ return jsonify(ok=bool(gone),error='' if gone else 'その読取マスタはありません')
+
+@app.get('/api/text-layouts/export')
+def text_layouts_export_file():
+ want=[x for x in (request.args.get('ids') or '').split(',') if x.strip()]
+ items=[x for x in load_text_layouts() if not want or x['id'] in want]
+ payload=text_layouts_export(items)
+ body=json.dumps(payload,ensure_ascii=False,indent=1)
+ name='text-layouts-'+datetime.now().strftime('%Y%m%d_%H%M%S')+'.json'
+ r=app.make_response(body)
+ r.headers['Content-Type']='application/json; charset=utf-8'
+ r.headers['Content-Disposition']=f'attachment; filename="{name}"'
+ log.info('TEXT_LAYOUT_EXPORT count=%s file=%s',len(items),name)
+ return r
+
+@app.post('/api/text-layouts/import')
+def text_layouts_import_file():
+ raw=request.get_data(as_text=True) or ''
+ if request.files.get('file'):raw=request.files['file'].read().decode('utf-8-sig',errors='replace')
+ layouts,bad=text_layouts_import(raw)
+ if not layouts:return jsonify(ok=False,error='／'.join(bad) or '取り込めるマスタがありません'),400
+ # 同じ名前があれば置き換える。取り込みのたびに増え続けると、どれが最新か分からなくなる。
+ have={x['name']:x['id'] for x in load_text_layouts()}
+ added=[];replaced=[]
+ for l in layouts:
+  if l['name'] in have:l['id']=have[l['name']];replaced.append(l['name'])
+  else:added.append(l['name'])
+  save_text_layout(l)
+ log.info('TEXT_LAYOUT_IMPORT 追加=%s 置き換え=%s 読めなかったもの=%s',added,replaced,len(bad))
+ return jsonify(ok=True,added=added,replaced=replaced,skipped=bad)
+
+@app.post('/api/text-preview')
+def text_preview_route():
+ """下読み。位置が合っているかは、数字を見比べるより切った結果を見るほうが早い。"""
+ d=request.get_json(force=True) or {}
+ layout=normalize_text_layout(d.get('layout') or {})
+ c=load()
+ raw=str(d.get('path') or layout.get('sample_path') or '').strip()
+ if not raw:return jsonify(ok=False,error='下読みするファイルを選んでください'),400
+ path=resolve_text_path({'text_path':raw},c)
+ out=preview_text(path,layout,int(d.get('lines') or 12))
+ out['width']=text_layout_width(layout)
+ return jsonify(out) if out.get('ok') else (jsonify(out),400)

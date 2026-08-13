@@ -2162,3 +2162,62 @@ body>main{width:var(--app-shell);max-width:var(--app-shell);
  font-weight:800;color:#0b6d86;background:#e3f3f7;border:1px dashed #9fd0da;
  border-radius:7px;padding:5px 10px}
 .insp-next.is-ng .in-here{color:#a4463d;background:#fbe9e6;border-color:#e7bdb6}
+
+
+/* V1.79: 固定長テキストの読取マスタ。RNEの登録と並ぶもう1つの「入力の決め方」。 */
+.src-pick{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:0 0 9px}
+.src-btn{display:grid;gap:1px;padding:8px 10px;text-align:left;height:auto;
+ background:#fff;border:1px solid #d5e2e6;border-radius:9px;color:#4d6a75}
+.src-btn b{font-size:12px;color:#2b4d59}
+.src-btn small{font-size:10px;color:#7f939b;font-weight:600}
+.src-btn.on{border-color:#0d8191;background:#eef8fa;box-shadow:inset 0 0 0 1px #0d819133}
+.src-btn.on b{color:#0b6570}
+/* .editor-tab は display を指定しているので、hidden 属性だけでは消えない。
+   RNE用の道具はテキストの対象では意味を持たないので、確実に消す。 */
+.editor-tab[hidden]{display:none!important}
+/* 一覧で、RNEの行と見分けが付くようにする（同じ列に別の意味のものが並ぶため）。 */
+.src-tag{font-style:normal;font-size:9px;font-weight:900;color:#0b6570;background:#eaf6f9;
+ border-radius:5px;padding:1px 5px;margin-right:5px;vertical-align:1px}
+.src-pane{display:none}
+.src-pane.on{display:block}
+.lay-wrap{display:grid;grid-template-columns:290px minmax(0,1fr);gap:10px;align-items:start}
+.lay-list-pane{padding:12px;background:#fff;border:1px solid #dfe8eb;border-radius:11px}
+/* 共通の .panelhead は横並び（見出しと右肩の情報）。ここは幅が狭いので縦に積む。 */
+.lay-list-pane .panelhead{display:block}
+.lay-list-pane h2{font-size:15px;margin:0 0 3px}
+.lay-list-pane p{font-size:10.5px;line-height:1.6}
+.lay-list{display:grid;gap:5px;margin-top:8px;max-height:min(70vh,640px);overflow:auto}
+.lay-item{display:grid;gap:2px;padding:8px 10px;text-align:left;height:auto;background:#f8fbfb;
+ border:1px solid #e2eaee;border-radius:8px;color:#33535f}
+.lay-item:hover{border-color:#8ecdd9;background:#f0fafc}
+.lay-item.on{border-color:#0d8191;background:#eaf6f9}
+.lay-item b{font-size:12px;color:#22404d;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lay-item small{font-size:10px;color:#7f939b}
+.lay-item em{font-style:normal;font-size:9.5px;color:#0b6570}
+.lay-empty-note{margin:0;font-size:11px;color:#8b9ca3}
+.lay-edit{padding:14px 16px}
+.lay-opts{grid-template-columns:repeat(4,minmax(120px,1fr))}
+.lay-width{margin-left:auto;font-size:10.5px;font-weight:700;color:#0b6570;background:#eaf6f9;
+ border-radius:6px;padding:2px 8px}
+.lay-cols-head,.lay-col{display:grid;grid-template-columns:minmax(110px,1.4fr) 74px 74px 74px minmax(90px,1fr) 34px;gap:5px;align-items:center}
+.lay-cols-head{padding:0 4px 4px;font-size:9.5px;font-weight:900;color:#7f939b}
+.lay-cols{display:grid;gap:4px;max-height:340px;overflow:auto;padding:1px}
+.lay-col input{height:29px;font-size:11.5px}
+.lay-col .lay-end{background:#f2f7f8;color:#5d7681;text-align:center;border-style:dashed}
+.lay-col .lay-del{height:29px;padding:0;background:#fff;border:1px solid #e0d0ce;color:#a4463d;border-radius:7px}
+.lay-cols-actions{display:flex;align-items:center;gap:10px;margin-top:7px}
+.lay-preview{margin-top:8px}
+.lay-preview table{width:100%;border-collapse:collapse;font-size:11px}
+.lay-preview th,.lay-preview td{border:1px solid #e2eaee;padding:3px 6px;text-align:left;white-space:nowrap}
+.lay-preview th{background:#eef5f6;color:#31505d;font-size:10px}
+.lay-preview td{font-family:Consolas,"Yu Gothic UI",monospace;color:#2b4d59}
+.lay-preview .lay-raw{color:#7f939b;font-size:10px}
+.lay-scroll{overflow-x:auto}
+.lay-note{margin:6px 0 0;padding:7px 9px;background:#fdf6e8;border:1px solid #ecdcb8;border-radius:8px;
+ font-size:10.5px;color:#7a5c22;line-height:1.6}
+.lay-note.is-ng{background:#fdecea;border-color:#f0cbc5;color:#8f3a30}
+.lay-foot{display:flex;align-items:center;gap:8px;margin-top:12px;padding-top:11px;border-top:1px solid #e6eef0}
+.lay-foot .hint{flex:1;margin:0}
+@media(max-width:1000px){.lay-wrap{grid-template-columns:1fr}.lay-opts{grid-template-columns:1fr 1fr}
+ .lay-cols-head,.lay-col{grid-template-columns:minmax(90px,1.2fr) 62px 62px 62px 30px}
+ .lay-cols-head span:nth-child(5),.lay-col .lay-memo{display:none}}
