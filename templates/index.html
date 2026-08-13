@@ -217,15 +217,15 @@
 <div class="sectiontitle sect-inspect"><i class="sect-badge sb-inspect">調</i>RNEを調べる<span class="period-optional" title="この画面のどの操作も、RNEファイルと出力ファイルを書き換えません。影実行の結果も公開しません。詳しい説明は config\README.txt にあります。">RNEも出力も変更しません</span></div>
 <div class="insp">
 <nav id="insp-rail" class="insp-rail" role="tablist" aria-label="調べる手順">
-<button type="button" class="insp-step on" data-istep="read" role="tab"><i class="is-no">1</i><span class="is-txt"><b>RNEを調査</b><small>中身・列・行を1回で</small></span><em class="is-state">未実行</em></button>
-<button type="button" class="insp-step" data-istep="trial" role="tab"><i class="is-no">2</i><span class="is-txt"><b>速さを測る</b><small>影実行で実測</small></span><em class="is-state">未実行</em></button>
-<button type="button" class="insp-step" data-istep="run" role="tab"><i class="is-no">3</i><span class="is-txt"><b>本番の動作</b><small>次に実行したら</small></span><em class="is-state">—</em></button>
-<button type="button" class="insp-step" data-istep="stats" role="tab"><i class="is-no">4</i><span class="is-txt"><b>実績</b><small>条件別の速さ</small></span><em class="is-state">—</em></button>
+<button type="button" class="insp-step on" data-istep="read" role="tab" aria-selected="true"><i class="is-no">1</i><span class="is-txt"><b>RNEの調査</b><small>中身・列・行を1回で</small></span><em class="is-state">未実行</em></button>
+<button type="button" class="insp-step" data-istep="trial" role="tab" aria-selected="false"><i class="is-no">2</i><span class="is-txt"><b>速さの測定</b><small>影実行で実測</small></span><em class="is-state">未実行</em></button>
+<button type="button" class="insp-step" data-istep="run" role="tab" aria-selected="false"><i class="is-no">3</i><span class="is-txt"><b>本番の動作</b><small>次に実行したら</small></span><em class="is-state">—</em></button>
+<button type="button" class="insp-step" data-istep="stats" role="tab" aria-selected="false"><i class="is-no">4</i><span class="is-txt"><b>実績</b><small>条件別の速さ</small></span><em class="is-state">—</em></button>
 </nav>
 <div class="insp-pane">
 
 <section class="insp-panel on" data-istep="read">
-<header class="ip-head"><b>RNEを調査</b><small>SymfoNaviへ1回だけ接続し、<b>中身</b>・<b>列の分け方</b>・<b>行の分け方</b>をまとめて読みます。読んだ内容は控えとして保存し、<b>RNEファイルが変わるまで</b>そのまま使います（影実行でも本番でも調べ直しません）。</small></header>
+<header class="ip-head"><b>RNEの調査</b><small>SymfoNaviへ1回だけ接続し、<b>中身</b>・<b>列の分け方</b>・<b>行の分け方</b>をまとめて読みます。読んだ内容は控えとして保存し、<b>RNEファイルが変わるまで</b>そのまま使います（影実行でも本番でも調べ直しません）。</small></header>
 <div id="m-insp-target" class="insp-target">対象を確認中</div>
 <div id="insp-next" class="insp-next"></div>
 <div id="m-master-state" class="master-state">確認中</div>
@@ -241,14 +241,14 @@
 </section>
 
 <section class="insp-panel" data-istep="trial">
-<header class="ip-head"><b>速さを測る（影実行）</b><small>測るものを選んで<b>一度に</b>走らせます。<b>基準（分割なし）は必ず最初に1回</b>測り、ほかはすべてその時間と比べます。1つだけ選べば、その1件だけを測ります。結果は<b>バイト単位で比較</b>し、<b>出力ファイルは更新しません</b>。この画面は閉じても構いません。</small></header>
+<header class="ip-head"><b>速さの測定（影実行）</b><small>測るものを選んで<b>一度に</b>走らせます。<b>基準（分割なし）は必ず最初に1回</b>測り、ほかはすべてその時間と比べます。1つだけ選べば、その1件だけを測ります。結果は<b>バイト単位で比較</b>し、<b>出力ファイルは更新しません</b>。この画面は閉じても構いません。</small></header>
 <div class="allin">
 <div id="tm-ready" class="tm-ready" hidden></div>
 <div id="tm-list" class="tm-list">
  <div class="tm-item is-base"><label><input type="checkbox" id="tm-normal" checked disabled><span class="tm-name"><b>分割なし（基準）</b><small id="tm-normal-why">ほかはすべてこの時間と比べます</small></span></label><span class="tm-mark" id="tm-normal-mark">必ず測る</span></div>
  <div class="tm-item" data-shape="column"><label><input type="checkbox" class="tm-shape" value="column"><span class="tm-name"><b>列分割</b><small class="tm-why">列を分けて横につなぎます</small></span></label><span class="tm-opt"><label>片数<select id="tm-col-parts"><option value="0">おまかせ</option><option value="2">2</option><option value="3">3</option><option value="4">4</option></select></label></span></div>
  <div class="tm-item" data-shape="row"><label><input type="checkbox" class="tm-shape" value="row"><span class="tm-name"><b>行分割</b><small class="tm-why">行を絞って縦に積みます</small></span></label><span class="tm-opt"><label>片数<select id="tm-row-parts"><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="6">6</option><option value="8">8</option></select></label></span></div>
- <div class="tm-axes" id="tm-axes" hidden><p class="tm-axes-head">どの管理ポイントで行を絞るか<small>選んだぶんだけ、1本ずつ測って比べます。<b>選ばなければ</b>、手順4の「行の軸の決め方」に従って1本だけ測ります</small></p><div id="tm-axis-list" class="tm-axis-list"></div><p class="tm-axes-more"><button id="tm-axis-all" type="button" class="secondary">使える軸をすべて選ぶ</button><button id="tm-axis-none" type="button" class="secondary">選択を解除（自動で1本）</button></p></div>
+ <div class="tm-axes" id="tm-axes" hidden><p class="tm-axes-head">どの管理ポイントで行を絞るか<small>選んだぶんだけ、1本ずつ測って比べます。<b>選ばなければ</b>、手順3「本番の動作」の「行の軸の決め方」に従って1本だけ測ります</small></p><div id="tm-axis-list" class="tm-axis-list"></div><p class="tm-axes-more"><button id="tm-axis-all" type="button" class="secondary">使える軸をすべて選ぶ</button><button id="tm-axis-none" type="button" class="secondary">選択を解除（自動で1本）</button></p></div>
  <div class="tm-item" data-shape="grid"><label><input type="checkbox" class="tm-shape" value="grid"><span class="tm-name"><b>行×列</b><small class="tm-why">行と列の両方で分けます</small></span></label></div>
 </div>
 <div class="tm-foot">
@@ -281,7 +281,7 @@
 <header class="ip-head"><b>本番の動作</b><small>ここまでの結果を受けて、<b>実際のファイル生成</b>で分割を使うかどうかを決めます。裏付け（影実行で結果が一致し、かつ速いこと）が取れた割り当てだけが使われます。</small></header>
 <div class="ip-act"><label class="trial-parts">動作<select id="m-split-mode"><option value="auto">自動（裏付けがあるときだけ）</option><option value="race">競争させる（1本と同時に走らせ、勝った方を採用）</option><option value="force">常に分割</option><option value="off">使わない</option></select></label><label class="trial-parts">分け方<select id="m-split-shape"><option value="auto">自動（実測で速かった形）</option><option value="column">列分割</option><option value="row">行分割</option><option value="grid">行×列</option></select></label><button id="m-split-refresh" type="button" class="secondary">いまの判定を見る</button></div>
 <div class="ip-act axis-pick"><label class="trial-parts">行の軸の決め方<select id="m-axis-mode"><option value="first">表側の1番目（調査不要）</option><option value="index">番号で指定（調査不要）</option><option value="name">名前で指定（調べて選ぶ）</option><option value="balanced">偏りが少ないものを自動で選ぶ</option></select></label><label class="trial-parts" id="m-axis-index-wrap" hidden>表側#<input id="m-axis-index" type="number" min="1" max="200" step="1" value="1"></label><label class="trial-parts" id="m-axis-name-wrap" hidden>軸<select id="m-axis-name"><option value="">（先に「RNEを調査」）</option></select></label><span class="ip-hint" id="m-axis-hint">決め方は対象ごとに保存され、本番の実行でも使われます</span></div><div id="m-split-run-state" class="split-run-state"></div>
-<p class="ip-note">分け方は<b>選ばなくて構いません</b>。既定の「自動」は、手順3で実測した中から<b>いちばん速かった形</b>を使います。形を指定すると、その形の裏付けがあるときだけ使います。<br>行を使う形（行分割・行×列）は、実行のたびに<b>軸の値を読み直して</b>から分けます。値は日々増えるため、測った時点の値で分けると新しい行が落ちるからです。この読み直しにかかる時間は、上の倍率にすでに含まれています。</p>
+<p class="ip-note">分け方は<b>選ばなくて構いません</b>。既定の「自動」は、手順2「速さの測定」で実測した中から<b>いちばん速かった形</b>を使います。形を指定すると、その形の裏付けがあるときだけ使います。<br>行を使う形（行分割・行×列）は、実行のたびに<b>軸の値を読み直して</b>から分けます。値は日々増えるため、測った時点の値で分けると新しい行が落ちるからです。この読み直しにかかる時間は、上の倍率にすでに含まれています。</p>
 </section>
 
 <section class="insp-panel" data-istep="stats">

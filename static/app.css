@@ -1206,12 +1206,19 @@ body > main{max-width:1620px;padding-left:12px;padding-right:12px}
    ①中身を読む ②分け方を探す ③速さを測る ④本番の動作 の順に畳み直した。
    画面に同時に出る操作は1手順ぶんだけになる。 */
 .insp{display:grid;grid-template-columns:238px minmax(0,1fr);gap:16px;align-items:start}
-.insp-rail{display:grid;gap:6px;align-content:start}
+/* V1.75: レールは「行き先を選ぶタブ」。以前は白い角丸のカードにしていたので、
+   押せる操作ボタンなのか、進み具合の説明なのかが見分けられなかった。
+   操作ボタン（塗りつぶしの丸ボタン）とは別物に見えるよう、枠と塗りを外して
+   左の縦線で選択を示す、ふつうの縦タブの形にする。 */
+.insp-rail{display:grid;gap:1px;align-content:start;border-left:2px solid #e2eaee}
 .insp-step{display:grid;grid-template-columns:26px minmax(0,1fr);gap:1px 10px;align-items:center;
-  text-align:left;font:inherit;color:#31505d;background:#fff;border:1px solid #e0e9ed;border-radius:10px;
-  padding:9px 11px;cursor:pointer;transition:border-color .15s,background .15s,box-shadow .15s}
-.insp-step:hover{border-color:#a9cfd8;background:#fbfdfe}
-.insp-step.on{border-color:#0b6570;background:#f2fafb;box-shadow:0 1px 0 rgba(11,101,112,.09)}
+  text-align:left;font:inherit;color:#31505d;background:transparent;border:0;
+  border-left:2px solid transparent;margin-left:-2px;border-radius:0 8px 8px 0;
+  padding:9px 11px;cursor:pointer;transition:background .15s,color .15s,border-color .15s}
+.insp-step:hover{background:#f2f8fa}
+.insp-step:focus-visible{outline:3px solid #ccebef;outline-offset:-3px}
+.insp-step[aria-selected="true"],.insp-step.on{background:#eaf6f9;border-left-color:#0b6570;color:#0b4653}
+.insp-step.on .is-txt b{color:#0b4653}
 .is-no{grid-row:1/3;width:26px;height:26px;border-radius:50%;display:grid;place-items:center;font-style:normal;
   font-size:12px;font-weight:800;background:#eaf2f4;color:#5b7c86;transition:background .15s,color .15s}
 .insp-step.on .is-no{background:#0b6570;color:#fff}
@@ -1263,8 +1270,11 @@ body > main{max-width:1620px;padding-left:12px;padding-right:12px}
 .trial-race[hidden]{display:none!important}
 .trial-race{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:#5b6f79;white-space:nowrap}
 .trial-race input{margin:0}
+/* 狭い画面では横に並ぶ。縦線では選択が分からないので、下線のタブへ切り替える。 */
 @media(max-width:1080px){.insp{grid-template-columns:1fr}
- .insp-rail{grid-template-columns:repeat(4,1fr);gap:6px}
+ .insp-rail{grid-template-columns:repeat(4,1fr);gap:0;border-left:0;border-bottom:2px solid #e2eaee}
+ .insp-step{border-left:0;border-bottom:2px solid transparent;margin:0 0 -2px;border-radius:8px 8px 0 0}
+ .insp-step[aria-selected="true"],.insp-step.on{border-bottom-color:#0b6570}
  .is-state{display:none}}
 
 /* hidden属性は display:none を意味するが、クラス側の display 指定に負けて表示され続けていた。
@@ -1781,7 +1791,8 @@ body:has(.autosave-state.is-saving) .autosave-mark{background:#0b8ea8;box-shadow
 .tm-item.is-off>label{cursor:not-allowed}
 .tm-item.is-off .tm-name small{color:#a4463d}
 .tm-opt{margin-left:auto;flex:none}
-.tm-opt label{display:flex;align-items:center;gap:6px;font-size:10.5px;color:#5d7681}
+.tm-opt label{display:flex;align-items:center;gap:6px;font-size:10.5px;color:#5d7681;white-space:nowrap}
+.tm-opt select{width:auto;min-width:88px}
 .tm-opt select{font-size:11px;padding:3px 6px}
 .tm-item.is-off .tm-opt{display:none}
 .tm-axes{border:1px dashed #cfe2e7;border-radius:9px;background:#fbfeff;padding:9px 11px;margin:-2px 0 0 22px}
@@ -1790,10 +1801,14 @@ body:has(.autosave-state.is-saving) .autosave-mark{background:#0b8ea8;box-shadow
 .tm-axis-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:5px}
 .tm-axis-row{display:flex;align-items:center;gap:7px;padding:5px 8px;border:1px solid #e6eef0;
  border-radius:7px;background:#fff;cursor:pointer;min-width:0}
-.tm-axis-row b{font-size:11.5px;color:#22404d;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.tm-axis-row span{font-size:10px;color:#8b9ca3;margin-left:auto;white-space:nowrap}
-.tm-axis-row em{font-style:normal;font-size:10px;color:#a4463d;margin-left:auto;
- overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* 全体の input は幅100%・高さ35pxなので、指定しないとチェックが欄いっぱいに伸びて
+   軸の名前を押し出す（実機で「検…」まで潰れていた）。 */
+.tm-axis-row input[type=checkbox]{width:16px;height:16px;flex:none;margin:0;padding:0}
+.tm-axis-row b{font-size:11.5px;color:#22404d;overflow:hidden;text-overflow:ellipsis;
+ white-space:nowrap;flex:1 1 auto;min-width:0}
+.tm-axis-row span{font-size:10px;color:#8b9ca3;flex:none;white-space:nowrap}
+.tm-axis-row em{font-style:normal;font-size:10px;color:#a4463d;flex:none;
+ max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tm-axis-row:has(input:checked){border-color:#8ecdd9;background:#f0fafc}
 .tm-axis-row.is-off{opacity:.6;background:#fafbfb;border-style:dashed;cursor:not-allowed}
 .tm-axis-none{margin:0;font-size:10.5px;color:#8b9ca3}
@@ -2110,3 +2125,12 @@ body>main{width:var(--app-shell);max-width:var(--app-shell);
    「設定を反映」まで保存しないため、同じ見た目のまま違う挙動にしない。 */
 .fieldgrid .switch>span{display:grid;gap:1px;font-size:12px}
 .fieldgrid .switch small{font-size:10.5px;color:var(--muted);font-weight:400;line-height:1.5}
+
+/* V1.75: 「次にすること」は案内であって操作ではない。行き先がこの面のときは
+   すぐ下のボタンを名指しするだけにし、同じ名前の押せるものを2つ置かない。
+   別の手順へ移るときだけボタンを出し、控えめな見た目（secondary）にして
+   実際に走らせるボタンと区別する。 */
+.insp-next .in-here{margin-left:auto;white-space:nowrap;font-style:normal;font-size:11.5px;
+ font-weight:800;color:#0b6d86;background:#e3f3f7;border:1px dashed #9fd0da;
+ border-radius:7px;padding:5px 10px}
+.insp-next.is-ng .in-here{color:#a4463d;background:#fbe9e6;border-color:#e7bdb6}

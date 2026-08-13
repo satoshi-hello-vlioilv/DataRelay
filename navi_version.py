@@ -4,5 +4,5 @@
 navi_changelog.py にある ―― 800行の読みものなので、それを必要としない経路
 （抽出ワーカー）が読み込まずに済むように分けてある。
 """
-APP_VERSION='1.74.0'; APP_VERSION_TITLE='有効・無効を一覧から切り替えられるようにした'; APP_RELEASED_AT='2026-08-19'
+APP_VERSION='1.75.0'; APP_VERSION_TITLE='行分割が選べない／説明とボタンの区別がつかない、を直した'; APP_RELEASED_AT='2026-08-19'
 BUILD_VERSION=f'{APP_VERSION}-web'

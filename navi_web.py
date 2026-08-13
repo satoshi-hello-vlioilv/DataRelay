@@ -575,10 +575,14 @@ def column_split_trial_status():
 
 @app.get('/api/split-trial/options')
 def split_trial_options_api():
- """この対象で、いま何が測れるのか。画面はこれを見て、選べないものを理由つきで塞ぐ。"""
+ """この対象で、いま何が測れるのか。画面はこれを見て、選べないものを理由つきで塞ぐ。
+
+ また、使える軸は行の片数で変わる（片数が多いほど条件式が長くなる）。画面が選んだ
+ 片数を row_parts で受け取り、その片数で通る軸だけを「選べる」と返す。
+ """
  c=load();job=next((x for x in c['jobs'] if x['id']==request.args.get('job_id')),None) if request.args.get('job_id') else None
  if not job:return jsonify(ok=False,error='保存済みの対象を選んでください'),200
- try:return jsonify(ok=True,**split_trial_options(job,c))
+ try:return jsonify(ok=True,**split_trial_options(job,c,request.args.get('row_parts')))
  except Exception as e:
   log.exception('SPLIT_TRIAL_OPTIONS_FAILED job=%s',job.get('name'));return jsonify(ok=False,error=str(e)),200
 
