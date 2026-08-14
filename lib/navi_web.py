@@ -26,6 +26,7 @@ from flask import send_file
 import app
 app=app.app          # 受け口を足す先（Flask本体）。以降 @app.get(...) は分ける前と同じ書き方
 import navi_join     # キーの見当を付けるところだけ、直接呼ぶ（本体を経由する用が無い）
+import navi_order    # 結合の順番と待ち合わせの判断
 import navi_book     # マスタをEXCELで出し入れする
 
 from app import (
@@ -71,6 +72,7 @@ from app import (
     find_join_recipe, save_join_recipe, delete_join_recipe, join_recipe_usage,
     resolve_join_path, join_reader, join_layouts, read_preview_data,
     join_candidates, join_sample_reader, sampled_recipe, suggest_join_keys,
+    job_output_paths, job_dependencies, job_wait_reasons,
     VIEWER_MAX_ROWS, viewer_row_budget, output_column_limit, check_output_columns,
     OUTPUT_FORMAT_LABEL,
     COLUMN_TYPES, COLUMN_TYPE_LABEL, COLUMN_TYPE_NOTE, format_keeps_types, normalize_column_type,
@@ -1740,6 +1742,30 @@ def join_source_probe():
  return jsonify(ok=True,columns=headers,rows=total,sample=rows,path=str(origin),
                 format=used,tables=tables,sheets=sheets,copy=copy_info,
                 partial=bool(copy_info.get('mode')=='prefix' and copy_info.get('bytes',0)<copy_info.get('total',0)))
+
+@app.post('/api/join-order')
+def join_order_route():
+ """この結合の材料を、どの対象が作るのか。
+
+ 順番は実行時に自動で決まるが、決まったことが見えないと信用できない。
+ 組み立てている画面で、そのまま見えるようにする。
+ """
+ d=request.get_json(force=True) or {}
+ c=load()
+ recipe=normalize_join_recipe(d.get('recipe') or {})
+ owners=navi_order.output_owners(c,lambda j:job_output_paths(j,c))
+ out=[]
+ for sx in recipe.get('sources') or []:
+  if not sx.get('path'):continue
+  path=resolve_join_path(sx['path'],c)
+  made=[{'id':j['id'],'name':j.get('name',''),'enabled':bool(j.get('enabled'))}
+        for j in owners.get(str(Path(str(path)).as_posix()).lower(),[])]
+  out.append({'alias':sx.get('alias',''),'name':Path(str(path)).name,'path':str(path),
+              'exists':path.is_file(),'made_by':made})
+ opt=navi_order.wait_settings(c)
+ return jsonify(ok=True,sources=out,
+                made_count=len([x for x in out if x['made_by']]),
+                wait=opt)
 
 @app.get('/api/join-candidates')
 def join_candidates_route():

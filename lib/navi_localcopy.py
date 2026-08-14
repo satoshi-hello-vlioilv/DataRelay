@@ -200,3 +200,21 @@ def whole(path,limit=None):
  finally:
   globals()['WHOLE_BYTES']=keep
  return (local or src),info
+
+def read_copy(path):
+ """読むためにローカルへ写した場所。写せなければ元の場所をそのまま返す。
+
+ 公開先のファイルを直接開かないための入口。開くとそのファイルは「使用中」になり、
+ Windowsでは os.replace で差し替えられない ―― つまり、自分のビュワーで見ている
+ せいで、自分の公開が失敗する。実際そうなっていた（SQLite3の出力を共有から直接
+ 開いていた）。写してから読めば、共有のファイルには一度も触らない。
+
+ ついでに、見ている最中に公開されても、見ている中身は壊れない。
+ """
+ try:
+  local,_info=whole(path)
+  return Path(local)
+ except Exception as e:
+  # 写せないことは、読めない理由にはしない。これまでどおり直接読む。
+  log.warning('READ_COPY_FAILED path=%s error=%s（元のファイルを直接読みます）',path,e)
+  return Path(path)

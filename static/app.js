@@ -20,6 +20,9 @@ function collectSettings(){if(!cfg||!cfg.settings)return;let s=cfg.settings,v=id
  if(v('#backup-mode'))s.backup_mode=v('#backup-mode').value||'generations';
  if(v('#backup-retention-days'))s.backup_retention_days=Math.max(1,Math.min(3650,Number(v('#backup-retention-days').value)||30));
  if(v('#schedule-catchup'))s.schedule_catchup_minutes=Math.max(0,Math.min(720,Number(v('#schedule-catchup').value)||0));
+ if(v('#join-wait-enabled'))s.join_wait_enabled=v('#join-wait-enabled').checked;
+ if(v('#join-wait-lookahead'))s.join_wait_lookahead_seconds=Math.max(0,Math.min(3600,Number(v('#join-wait-lookahead').value)||0));
+ if(v('#join-wait-max'))s.join_wait_max_seconds=Math.max(0,Math.min(86400,Number(v('#join-wait-max').value)||0));
  if(v('#worker-stagger'))s.api_worker_stagger_ms=Math.max(0,Math.min(5000,Number(v('#worker-stagger').value)||0));
  if(v('#api-lines'))s.api_parallel_lines=Math.max(1,Math.min(24,Number(v('#api-lines').value)||6));
  if(v('#zero'))s.reject_zero_rows=v('#zero').checked;
@@ -666,11 +669,18 @@ function updateHideProfileUI(){let p=$('#hide-profile').value,custom=p==='custom
 // 参照ボタンは .pathpick で名指しする。data-k だけで拾うと、確認ボタンが先に居る4件で
 // 参照の代わりに確認へ結びついてしまい、参照が何も起きなくなる。
 Object.entries(paths).filter(([k])=>k!=='navigator_api_dll').forEach(([k,a])=>{$('#'+k).onchange=e=>{cfg[k]=e.target.value;dirty();refreshMachinePaths()};document.querySelector(`.pathpick[data-k="${k}"]`).onclick=async()=>{let p=await browse(a[1],cfg[k],a[2]);if(p){cfg[k]=p;$('#'+k).value=p;$('#'+k)._refreshPathControl?.();dirty();refreshMachinePaths()}}});
-$$('.pf-goto').forEach(b=>b.onclick=()=>document.querySelector(`#settings-nav .settings-navbtn[data-cat="${b.dataset.cat}"]`)?.click());$('#extract-engine').value=cfg.settings.extract_engine||'api';updateEngineUI();$('#dde').value=cfg.settings.dde_timeout_seconds;$('#wait').value=cfg.settings.output_wait_seconds;$('#gens').value=cfg.settings.backup_generations||3;if($('#backup-enabled'))$('#backup-enabled').checked=cfg.settings.backup_enabled!==false;if($('#backup-mode'))$('#backup-mode').value=cfg.settings.backup_mode||'generations';if($('#backup-retention-days'))$('#backup-retention-days').value=Number(cfg.settings.backup_retention_days||30);if($('#schedule-catchup'))$('#schedule-catchup').value=Number(cfg.settings.schedule_catchup_minutes??30);if($('#worker-stagger'))$('#worker-stagger').value=Number(cfg.settings.api_worker_stagger_ms??700);updateBackupOptions();if($('#api-lines')){$('#api-lines').value=Math.max(1,Math.min(24,Number(cfg.settings.api_parallel_lines||6)));$('#api-lines').title='既定は6ライン、設定可能範囲は1～24ラインです。変更した時点で保存されます。'}$('#zero').checked=cfg.settings.reject_zero_rows;if($('#retry-enabled')){$('#retry-enabled').checked=cfg.settings.retry_enabled!==false;$('#retry-delay').value=Number(cfg.settings.retry_delay_minutes??5);$('#retry-max').value=Number(cfg.settings.retry_max??1);updateRetryOptions()}if($('#log-max-mb')){$('#log-max-mb').value=Number(cfg.settings.log_max_mb??10);$('#log-keep').value=Number(cfg.settings.log_keep??5)}let hp=cfg.settings.symnavi_hide_profile||'balanced';if(hp==='light')hp='action_only';$('#hide-profile').value=hp;$('#hide-action-duration').value=Number(cfg.settings.symnavi_hide_action_duration_seconds||0.5);updateHideProfileUI();Object.keys(paths).filter(k=>k!=='navigator_api_dll').forEach(k=>enhancePathInput($('#'+k),paths[k][1]));let dllInput=$('#navigator-api-dll');if(dllInput){dllInput.value=cfg.navigator_api_dll||'';dllInput.oninput=()=>{cfg.navigator_api_dll=dllInput.value;dirty();
+$$('.pf-goto').forEach(b=>b.onclick=()=>document.querySelector(`#settings-nav .settings-navbtn[data-cat="${b.dataset.cat}"]`)?.click());$('#extract-engine').value=cfg.settings.extract_engine||'api';updateEngineUI();$('#dde').value=cfg.settings.dde_timeout_seconds;$('#wait').value=cfg.settings.output_wait_seconds;$('#gens').value=cfg.settings.backup_generations||3;if($('#backup-enabled'))$('#backup-enabled').checked=cfg.settings.backup_enabled!==false;if($('#backup-mode'))$('#backup-mode').value=cfg.settings.backup_mode||'generations';if($('#backup-retention-days'))$('#backup-retention-days').value=Number(cfg.settings.backup_retention_days||30);if($('#schedule-catchup'))$('#schedule-catchup').value=Number(cfg.settings.schedule_catchup_minutes??30);if($('#join-wait-enabled')){$('#join-wait-enabled').checked=cfg.settings.join_wait_enabled!==false;$('#join-wait-lookahead').value=Number(cfg.settings.join_wait_lookahead_seconds??60);$('#join-wait-max').value=Number(cfg.settings.join_wait_max_seconds??600);updateJoinWaitOptions()}if($('#worker-stagger'))$('#worker-stagger').value=Number(cfg.settings.api_worker_stagger_ms??700);updateBackupOptions();if($('#api-lines')){$('#api-lines').value=Math.max(1,Math.min(24,Number(cfg.settings.api_parallel_lines||6)));$('#api-lines').title='既定は6ライン、設定可能範囲は1～24ラインです。変更した時点で保存されます。'}$('#zero').checked=cfg.settings.reject_zero_rows;if($('#retry-enabled')){$('#retry-enabled').checked=cfg.settings.retry_enabled!==false;$('#retry-delay').value=Number(cfg.settings.retry_delay_minutes??5);$('#retry-max').value=Number(cfg.settings.retry_max??1);updateRetryOptions()}if($('#log-max-mb')){$('#log-max-mb').value=Number(cfg.settings.log_max_mb??10);$('#log-keep').value=Number(cfg.settings.log_keep??5)}let hp=cfg.settings.symnavi_hide_profile||'balanced';if(hp==='light')hp='action_only';$('#hide-profile').value=hp;$('#hide-action-duration').value=Number(cfg.settings.symnavi_hide_action_duration_seconds||0.5);updateHideProfileUI();Object.keys(paths).filter(k=>k!=='navigator_api_dll').forEach(k=>enhancePathInput($('#'+k),paths[k][1]));let dllInput=$('#navigator-api-dll');if(dllInput){dllInput.value=cfg.navigator_api_dll||'';dllInput.oninput=()=>{cfg.navigator_api_dll=dllInput.value;dirty();
    let v=$('#api-readiness');if(v)v.className='api-readiness is-stale';};}let dllPick=$('#api-dll-pick');if(dllPick)dllPick.onclick=async()=>{let q=await browse('file',dllInput.value,paths.navigator_api_dll[2]);if(q){dllInput.value=q;cfg.navigator_api_dll=q;dirty();await testNavigatorApi()}};let dllCheck=$('#api-dll-check');if(dllCheck)dllCheck.onclick=()=>testNavigatorApi();if(!Array.isArray(cfg.navigator_api_search_roots))cfg.navigator_api_search_roots=DLL_DEFAULT_ROOTS.slice();renderDllRoots();loadDllRequirement();fillSuggestions();render();loadMachinePaths();loadFreshness();saveState('設定を読み込みました／変更はすべて自動で保存されます','');$$('.pathcheck').forEach(b=>b.onclick=()=>checkConfiguredPath(b.dataset.k))}
 ['search','filter-enabled','filter-schedule','sort'].forEach(k=>$('#'+k).addEventListener(k==='search'?'input':'change',render));$$('.sortable').forEach(h=>h.onclick=()=>{$('#sort').value=h.dataset.sort;sortDir*=-1;render()});$('#add').onclick=()=>openEditor(null);$('#select-visible').onclick=()=>{$$('#jobs-body .rowcheck').forEach(x=>{x.checked=true;x.closest('tr').classList.add('selected')});updateSelCount()};$('#clear-selection').onclick=()=>{$$('#jobs-body .rowcheck').forEach(x=>{x.checked=false;x.closest('tr').classList.remove('selected')});updateSelCount()};function resetProgressView(){let q=$('#queue-summary');if(q){q.hidden=true;q.innerHTML=''}let pr=$('#p-results');if(pr){pr.hidden=true;pr.innerHTML=''}let b=$('#p-parallel-lines');if(b){b.hidden=true;b.innerHTML=''}document.querySelector('.current-box')?.classList.remove('parallel-hidden');$('#p-steps')?.classList.remove('parallel-hidden');$('#p-count').textContent='全体 0 / 0';$('#p-percent').textContent='0%';$('#p-bar').style.width='0%';$('#p-job').textContent='準備中';$('#p-output').textContent='';}async function runJobs(ids){resetProgressView();showWaiting(currentEngine()==='api'?'API処理を開始しています':'DDE処理を開始しています',currentEngine()==='api'?'APIセッションと実行対象を準備しています...':'SymfoNavi起動とDDE接続を準備しています...','engine');let r=await fetch('/api/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_ids:ids,parallel_lines:Math.max(1,Math.min(24,Number($('#api-lines')?.value||6)||6))})}),d=await r.json();hideWaiting();if(r.ok){toast(`実行キュー ${d.position}番へ追加しました`);await loadCommandQueue()}else toast(d.error)}$('#run-all').onclick=()=>runJobs(null);$('#run-selected').onclick=()=>{let ids=$$('#jobs-body .rowcheck:checked').map(x=>x.closest('tr').dataset.id);if(ids.length)runJobs(ids)};/* 保存ボタンの代わりに、値が変わったところで保存する。数値欄は打っている途中に
    何度も飛ばさないよう、まとめて少し待ってから送る（scheduleSave）。 */
-['dde','wait','schedule-catchup','worker-stagger','hide-action-duration'].forEach(id=>{let e=$('#'+id);if(e){e.addEventListener('input',dirty);e.addEventListener('change',dirty)}});
+['dde','wait','schedule-catchup','worker-stagger','hide-action-duration','join-wait-lookahead','join-wait-max'].forEach(id=>{let e=$('#'+id);if(e){e.addEventListener('input',dirty);e.addEventListener('change',dirty)}});
+/* 待たない設定にしたときは、待ち方の欄も伏せる。効かない欄を出したままにすると、
+   入れた値が効いていると思わせてしまう。 */
+function updateJoinWaitOptions(){
+ let on=$('#join-wait-enabled')?.checked!==false,box=$('#join-wait-options');
+ if(box){box.style.display=on?'':'none'}
+}
+if($('#join-wait-enabled'))$('#join-wait-enabled').onchange=()=>{updateJoinWaitOptions();dirty()};
 ['zero','extract-engine','hide-profile','backup-mode','backup-enabled'].forEach(id=>{let e=$('#'+id);if(e)e.addEventListener('change',dirty)});
 if($('#backup-enabled'))$('#backup-enabled').addEventListener('change',()=>refreshMachinePaths());
 ['retry-delay','retry-max','log-max-mb','log-keep'].forEach(id=>{let e=$('#'+id);if(e){e.addEventListener('input',dirty);e.addEventListener('change',dirty)}});
@@ -3769,7 +3779,28 @@ function jnCollect(){
 }
 function jnRefresh(){
  clearTimeout(jnPreviewTimer);
- jnPreviewTimer=setTimeout(jnPreview,350);
+ jnPreviewTimer=setTimeout(()=>{jnPreview();jnRenderOrder()},350);
+}
+/* ---- 実行の順番 ------------------------------------------------------------
+   結合の材料が、このアプリのほかの対象の出力であることは珍しくない。そのときは
+   材料を作る側が先に走らないと、正しい形をした「1回ぶん古いファイル」が出来上がる。
+   順番は実行時に自動で決まるが、決まったことが見えないと信用できない ――
+   組み立てているその場に出す。 */
+async function jnRenderOrder(){
+ let box=$('#jn-order');if(!box||!jnEditing)return;
+ let d=await fetch('/api/join-order',{method:'POST',headers:{'Content-Type':'application/json'},
+   body:JSON.stringify({recipe:jnCollect()})}).then(r=>r.json()).catch(()=>null);
+ if(!d||!d.ok||!d.made_count){box.hidden=true;return}
+ box.hidden=false;
+ let made=d.sources.filter(x=>x.made_by.length);
+ box.innerHTML=`<div class="jn-order-head"><i>順</i>`
+  +`<b>${made.length}件の材料は、このアプリのほかの対象が作ります</b>`
+  +`<span>その対象を先に実行し、作成中・まもなく作成なら${d.wait.enabled?`終わるまで待ってから`:''}結合します</span></div>`
+  +made.map(x=>`<div class="jn-order-row"><i>${E(x.alias)}</i><b>${E(x.name)}</b>`
+    +`<span>${x.made_by.map(m=>E(m.name)+(m.enabled?'':'（無効）')).join('、')}</span></div>`).join('')
+  +(d.wait.enabled?`<small>実行の${d.wait.lookahead}秒後までの予定を見ます。最大${d.wait.max_wait}秒待ちます。`
+    +`待ちきれないときは止めずに実行し、材料が古いかもしれないとログへ残します</small>`
+   :`<small class="is-ng">「材料がそろうのを待つ」が切られています。順番だけ整えて、待たずに実行します（共通設定で変えられます）</small>`);
 }
 async function jnPreview(){
  let box=$('#jn-preview');if(!box||!jnEditing)return;
@@ -3803,7 +3834,7 @@ function jnOpen(r){
  $('#jn-delete').hidden=!jnEditing.id;
  $('#jn-state').textContent=(r&&r.used_by&&r.used_by.length)?`${r.used_by.length}件の対象が使用中: ${r.used_by.slice(0,3).join('・')}`:'';
  $('#jn-preview').innerHTML='';
- jnRenderFlow();jnRenderColumns();jnRenderList();
+ jnRenderFlow();jnRenderColumns();jnRenderList();jnRenderOrder();
  jnEditing.sources.forEach((_,i)=>jnProbeSource(i));
 }
 async function jnSave(){

@@ -40,6 +40,7 @@ for _n in ('_mark_settings_dirty',
            'resolve_text_path',
            'serial_run_metrics',
            'set_status',
+           'wait_for_sources',
            'settings_connection',
            'text_layout_column_types',
            'text_layout_width',
@@ -208,12 +209,21 @@ def run_local_jobs(jobs,cfg,work,backup,trigger,progress_fn=None,offset=0,total_
              queue_running_ids=[j['id']])
   def say(stage,**kw):
    if not progress_fn:return
-   if stage=='read':progress_fn('save',f'{j["name"]}: テキストを読み取っています',35,current_job_id=j['id'],activity_detail='固定長テキスト',activity_value=str(kw.get('source') or ''))
+   if stage=='wait':
+    import navi_order
+    progress_fn('prepare',f'{j["name"]}: 材料がそろうのを待っています',20,current_job_id=j['id'],
+                activity_detail='材料の作成待ち',activity_value=navi_order.reason_text(kw.get('reasons') or []))
+   elif stage=='read':progress_fn('save',f'{j["name"]}: テキストを読み取っています',35,current_job_id=j['id'],activity_detail='固定長テキスト',activity_value=str(kw.get('source') or ''))
    elif stage=='unchanged':progress_fn('publish',f'{j["name"]}: 前回と同じ内容のため更新しませんでした',95,activity_detail='変更なし')
    elif stage=='convert':progress_fn('export',f'{j["name"]}: 形式を変換しています',70,activity_detail='形式別変換工程')
    elif stage=='publish':progress_fn('publish',f'{j["name"]}: 検査済みファイルを公開しています',90,activity_detail='公開工程')
    elif stage=='extras':progress_fn('publish',f'{j["name"]}: 同じデータからあと{len(kw.get("extras") or [])}形式を作成しています',95,activity_detail='同時出力')
   try:
+   # 走り出す前に材料の様子を見る。作っている最中か、もうすぐ作り始めるなら待つ
+   # ―― 擦れ違うと、正しい形をした「1回ぶん古いファイル」が出来上がる。
+   held=wait_for_sources(j,cfg,say=say)
+   if held.get('waited'):
+    set_status(activity_detail='材料の作成待ち',activity_value=f'{j["name"]}: {held["waited"]:.0f}秒待ちました')
    fin,target,rows,cols,stat,fmt,extras=process_local_job(j,cfg,work,backup,trigger,index,total_all,say)
   except Exception as e:
    log.exception('LOCAL_JOB_FAILED job=%s kind=%s',j.get('name'),normalize_job_source(j.get('source')))

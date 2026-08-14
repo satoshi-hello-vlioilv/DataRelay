@@ -2445,3 +2445,25 @@ body>main{width:var(--app-shell);max-width:var(--app-shell);
 .lay-type-bar{display:flex;align-items:center;gap:6px}
 #lay-type-pick{width:auto;min-width:126px}
 #lay-type-all{white-space:nowrap}
+
+/* ---- 結合の実行順 ----------------------------------------------------------
+   材料をこのアプリのほかの対象が作るなら、その対象が先に走らないと
+   「正しい形をした1回ぶん古いファイル」が出来上がる。順番は自動で決まるが、
+   決まったことが見えないと信用できないので、組み立てている場所に出す。 */
+.jn-order{display:grid;gap:4px;margin:2px 0 6px;padding:9px 11px;background:#f6fbfc;
+ border:1px solid #d7e9ee;border-radius:9px}
+.jn-order[hidden]{display:none!important}
+.jn-order-head{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.jn-order-head i{font-style:normal;display:grid;place-items:center;width:19px;height:19px;border-radius:6px;
+ background:#0d8191;color:#fff;font-size:10px;font-weight:900;flex:none}
+.jn-order-head b{font-size:11.5px;color:#0b6570}
+.jn-order-head span{font-size:10px;color:#6f858e}
+.jn-order-row{display:grid;grid-template-columns:20px minmax(0,1fr) minmax(0,1.6fr);gap:7px;align-items:center;
+ padding:3px 0 3px 26px;font-size:10.5px}
+.jn-order-row i{font-style:normal;display:grid;place-items:center;width:18px;height:18px;border-radius:5px;
+ background:#eaf6f9;border:1px solid #b9dee6;color:#0b6570;font-size:9px;font-weight:900}
+.jn-order-row b{color:#22404d;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.jn-order-row span{color:#5d7681;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.jn-order-row span::before{content:"← ";color:#93a5ac}
+.jn-order>small{padding-left:26px;font-size:9.5px;color:#7d919a;line-height:1.6}
+.jn-order>small.is-ng{color:#a4463d}

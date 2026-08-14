@@ -308,6 +308,9 @@ import navi_join
 # 組み立てのあいだ、繋ぐ相手をローカルへ写しておくのは navi_localcopy.py。
 import navi_localcopy
 navi_localcopy.setup(LOCAL_ROOT)
+from navi_localcopy import read_copy
+# 結合の順番と待ち合わせの判断は navi_order.py（本体の状態は見ない）。
+import navi_order
 from navi_join import (JOIN_TYPES,JOIN_TYPE_LABEL,JOIN_TYPE_NOTE,SOURCE_FORMATS,SOURCE_FORMAT_LABEL,
                        suggest_keys as suggest_join_keys,
                        MAX_SOURCES as JOIN_MAX_SOURCES,RECIPE_EXPORT_KIND,
@@ -2035,6 +2038,8 @@ def load():
   if _prev_profile in (None,'stable_api_serial'):
    cfg['settings']['api_parallel_lines']=6; cfg['settings']['stability_profile']='balanced_api_parallel'
   cfg['settings'].setdefault('api_parallel_lines',6); cfg['settings'].setdefault('stability_profile','balanced_api_parallel'); cfg['settings'].setdefault('backup_enabled',True); _backup_mode_missing='backup_mode' not in cfg['settings']; cfg['settings'].setdefault('backup_mode','generations'); cfg['settings'].setdefault('backup_retention_days',30); cfg['settings'].setdefault('backup_generation_limit_enabled',True); cfg['settings'].setdefault('backup_generations',3); cfg['settings'].setdefault('schedule_catchup_minutes',30); cfg['settings'].setdefault('api_worker_stagger_ms',700); cfg['settings'].setdefault('split_trial_timeout_seconds',1800); cfg['settings'].setdefault('split_anchor_limit',3); cfg['settings'].setdefault('split_min_part_mb',2.0); cfg['settings'].setdefault('split_min_gain_seconds',5.0); cfg['settings'].setdefault('split_min_speedup',1.05); cfg['settings'].setdefault('split_fixed_seconds',SPLIT_FIXED_SECONDS); cfg['settings'].setdefault('split_run_enabled',True); cfg['settings'].setdefault('retry_enabled',True); cfg['settings'].setdefault('retry_max',1); cfg['settings'].setdefault('retry_delay_minutes',5); cfg['settings'].setdefault('log_max_mb',10); cfg['settings'].setdefault('log_keep',5)
+  # 結合の順番と待ち合わせ（判断は navi_order.py。既定値もあちらが持つ）。
+  for _k,_v in navi_order.WAIT_DEFAULTS.items():cfg['settings'].setdefault(_k,_v)
   if _backup_mode_missing:cfg['settings']['backup_generations']=3
   if int(cfg['settings'].get('api_parallel_lines',6) or 6)==2:cfg['settings']['api_parallel_lines']=6
   cfg.setdefault('navigator_api_dll',r'.\Config\NAVIAP\debugdllVC14x64\SymNaviA.dll'); cfg.setdefault('accdb_template','.\\assets\\empty.accdb');
@@ -3918,8 +3923,9 @@ def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=No
   # 手元のファイルから作る対象（固定長テキスト・複数ファイルの結合）は、Navigatorへ
   # 問い合わせない。接続も資格情報も要らないので、その2つだけを選んだ実行は
   # Navigatorの設定が1つも無くても走る ―― 先に片付けて、残りを従来の経路へ渡す。
-  text_jobs=[j for j in jobs if normalize_job_source(j.get('source')) in ('text','join')]
-  api_jobs=[j for j in jobs if normalize_job_source(j.get('source'))=='rne']
+  # 材料を作る側が先に来るように並べ替え、どの順で流すかへ振り分ける。
+  jobs,text_jobs,api_jobs,after_api=split_batch(jobs,cfg)
+  total_all_jobs=len(jobs)
   text_results=[];text_job_results=[]
   if text_jobs:
    log.info('LOCAL_BATCH jobs=%s（手元のファイルから作ります。Navigatorへは接続しません）',
@@ -3931,6 +3937,8 @@ def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=No
     raise RuntimeError('手元のファイルからの作成で%d件失敗しました\n'%len(text_failures)+'\n'.join('・%s: %s'%(r.get('job'),r.get('error')) for r in text_failures))
    if cancel_requested.is_set():raise RunCancelled(f'{len(text_results)}/{len(jobs)}件完了後に中断されました')
   if not api_jobs:
+   later,_later_results=run_deferred_local(after_api,cfg,trigger,progress,total_all_jobs,text_job_results)
+   text_results=list(text_results)+list(later)
    msg='正常終了 | '+' | '.join(text_results)
    progress('complete','すべての処理が完了しました',100)
    set_status(last_result=msg,last_finished_at=datetime.now().isoformat(timespec='seconds'),elapsed_seconds=int(time.time()-progress.started))
@@ -3963,7 +3971,8 @@ def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=No
    if failures:
     set_status(job_errors=[{'job':r.get('job'),'error':str(r.get('error') or '')} for r in failures],failed_jobs=len(failures))
     raise RuntimeError('API実行で%d件失敗しました\n'%len(failures)+'\n'.join('・%s: %s'%(r.get('job'),r.get('error')) for r in failures))
-   done=list(text_results)+[r['result'] for r in results]
+   later,_later_results=run_deferred_local(after_api,cfg,trigger,progress,total_all_jobs,text_job_results)
+   done=list(text_results)+[r['result'] for r in results]+list(later)
    msg='正常終了 | '+(done[0] if len(done)==1 else '全件%sファイル / %.1f秒 | '%(len(done),batch_elapsed)+' | '.join(done))
    progress('complete','すべての処理が完了しました',100);set_status(last_result=msg,last_finished_at=datetime.now().isoformat(timespec='seconds'),elapsed_seconds=int(time.time()-progress.started));log.info(msg)
    return
@@ -4121,7 +4130,8 @@ def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=No
     try:
      if p:p.unlink()
     except:pass
-  msg='正常終了 | '+' | '.join(text_results+results); progress('complete','すべての処理が完了しました',100); set_status(last_result=msg,last_finished_at=datetime.now().isoformat(timespec='seconds'),elapsed_seconds=int(time.time()-progress.started)); log.info(msg)
+  later,_later_results=run_deferred_local(after_api,cfg,trigger,progress,total_all_jobs,[])
+  msg='正常終了 | '+' | '.join(text_results+results+list(later)); progress('complete','すべての処理が完了しました',100); set_status(last_result=msg,last_finished_at=datetime.now().isoformat(timespec='seconds'),elapsed_seconds=int(time.time()-progress.started)); log.info(msg)
  except RunCancelled as e:
   msg='中断されました: '+str(e); set_status(step='cancelled',step_label='ユーザーの操作により中断しました',step_percent=100,last_result=msg,error_detail='',last_finished_at=datetime.now().isoformat(timespec='seconds'),elapsed_seconds=int(time.time()-getattr(progress,'started',time.time()))); log.info('RUN_CANCELLED %s',msg)
   if status.get('running') and status.get('current_job_id'):
@@ -5060,25 +5070,6 @@ def read_log_lines(limit=1200,q='',preset=''):
 
 
 
-def read_copy(path):
- """読むためにローカルへ写した場所。写せなければ元の場所をそのまま返す。
-
- 公開先のファイルを直接開かないための入口。開くとそのファイルは「使用中」になり、
- Windowsでは os.replace で差し替えられない ―― つまり、自分のビュワーで見ている
- せいで、自分の公開が失敗する。実際そうなっていた（SQLite3の出力を共有から直接
- 開いていた）。写してから読めば、共有のファイルには一度も触らない。
-
- ついでに、見ている最中に公開されても、見ている中身は壊れない。
- """
- try:
-  import navi_localcopy
-  local,_info=navi_localcopy.whole(path)
-  return Path(local)
- except Exception as e:
-  # 写せないことは、読めない理由にはしない。これまでどおり直接読む。
-  log.warning('READ_COPY_FAILED path=%s error=%s（元のファイルを直接読みます）',path,e)
-  return Path(path)
-
 def _viewer_output_path(job,cfg):
  run=(load_job_runs().get(job.get('id')) or {});filename=str(run.get('output_file') or job.get('output_file') or '')
  folder=resolve_path(job.get('output_folder') or cfg.get('default_output_folder'));candidate=folder/filename
@@ -5263,6 +5254,11 @@ sys.modules.setdefault('app',sys.modules[__name__])
 # 分割の試し打ちと設計。本番の抽出はここを通らないが、保存された割り当ての
 # 読み書きと画面の受け口が使うので、名前は本体へ戻しておく。
 # 読取マスタの出し入れと、固定長テキストの実行。切り方そのものは navi_text.py。
+# 結合の順番と待ち合わせに、いまの様子を渡す係。判断は navi_order.py。
+import navi_orderrun
+from navi_orderrun import (job_output_paths,job_dependencies,order_jobs_by_dependency,
+                          job_wait_reasons,wait_for_sources,run_deferred_local,split_batch)
+
 import navi_joinrun
 from navi_joinrun import (_load_join_recipes,load_join_recipes,find_join_recipe,save_join_recipe,
                           join_recipe_usage,delete_join_recipe,resolve_join_path,join_reader,join_layouts,
