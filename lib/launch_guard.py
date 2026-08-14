@@ -14,11 +14,19 @@ URL = 'http://127.0.0.1:5031'
 # VBSランチャーが起動待ちモーダル(loading.html)を開き、準備完了で自動的にアプリへ遷移する。
 # その場合はサーバー側でブラウザーを二重に開かない（NAVI_BROWSER_BY_VBS=1 で抑止）。
 BROWSER_BY_VBS = os.environ.get('NAVI_BROWSER_BY_VBS') == '1'
-LOCAL_ROOT = Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home()) / 'SymfoNaviDataHub'
+APP_NAME = 'DataRelay'
+LEGACY_LOCAL_NAMES = ('SymfoNaviDataHub', 'NaviToSQLite')
+LOCAL_ROOT = Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home()) / APP_NAME
+try:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from navi_paths import migrate_local_root
+    migrate_local_root(LOCAL_ROOT, LEGACY_LOCAL_NAMES)
+except Exception:
+    pass
 RUNTIME = LOCAL_ROOT / 'runtime'
 INFO = RUNTIME / 'app_instance.json'
 LOG = LOCAL_ROOT / 'logs' / 'launcher.log'
-MUTEX_NAME = 'Local\\SymfoNaviDataHub_' + hashlib.sha256(str(BASE).lower().encode('utf-8')).hexdigest()[:20]
+MUTEX_NAME = 'Local\\' + APP_NAME + '_' + hashlib.sha256(str(BASE).lower().encode('utf-8')).hexdigest()[:20]
 ERROR_ALREADY_EXISTS = 183
 CREATE_NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 CREATE_NEW_PROCESS_GROUP = getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0)
@@ -34,7 +42,7 @@ def probe(timeout: float = 0.8) -> bool:
     try:
         with urllib.request.urlopen(URL + '/api/instance', timeout=timeout) as r:
             data = json.loads(r.read().decode('utf-8'))
-            return r.status == 200 and data.get('app') in ('SymfoNaviDataHub','NaviToSQLite')
+            return r.status == 200 and data.get('app') in ('DataRelay','SymfoNaviDataHub','NaviToSQLite')
     except Exception:
         return False
 
@@ -143,7 +151,7 @@ def main() -> int:
                 log(f'アプリサーバーが起動前に終了 returncode={proc.returncode}')
                 break
             time.sleep(0.05 if time.perf_counter() - spawn_started < 4 else 0.25)
-        print('アプリサーバーの起動を確認できませんでした。%LOCALAPPDATA%\\SymfoNaviDataHub\\logs\\launcher.log と app.log を確認してください。')
+        print('アプリサーバーの起動を確認できませんでした。%LOCALAPPDATA%\\'+APP_NAME+'\\logs\\launcher.log と app.log を確認してください。')
         return 2
     finally:
         if not server_ready:

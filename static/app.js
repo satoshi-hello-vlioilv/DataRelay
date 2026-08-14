@@ -937,7 +937,7 @@ async function doExitQuit(){
   toast('実行を中断しています…');
   try{await fetch('/api/run/cancel',{method:'POST'})}catch{}
   await waitUntilNotRunning(20000);
- }else if(!confirm('SymfoNavi Data Hubを終了しますか？\nサーバーも止めるので、タスクバー（通知領域）には残りません。自動実行の予定が残っていても、次に起動するまで動きません。')){
+ }else if(!confirm('DataRelayを終了しますか？\nサーバーも止めるので、タスクバー（通知領域）には残りません。自動実行の予定が残っていても、次に起動するまで動きません。')){
   return;
  }
  appExiting=true;
@@ -1148,7 +1148,13 @@ async function openDoc(id){
 /* 更新履歴は【見出し】と空行で区切って書いてある。そこを本文と同じ点の列で出すと、
    どこが1つの話題なのか読み取れない。見出し・箇条書き・版の3層に分けて組み直す。 */
 function changelogSections(notes){let secs=[],cur=null;(notes||[]).forEach(n=>{let t=String(n||'').trim();if(!t){cur=null;return}let m=t.match(/^【([^】]+)】([\s\S]*)$/);if(m){cur={head:m[1],items:[]};secs.push(cur);if(m[2].trim())cur.items.push(m[2].trim());return}if(!cur){cur={head:'',items:[]};secs.push(cur)}cur.items.push(t)});return secs}
-function renderChangelog(list){let items=list||[];return items.map((e,i)=>{let secs=changelogSections(e.notes),n=secs.reduce((a,b)=>a+b.items.length,0),body=secs.map(sc=>`<div class="cl-sec">${sc.head?`<h4>${E(sc.head)}</h4>`:''}<ul>${sc.items.map(x=>`<li>${E(x)}</li>`).join('')}</ul></div>`).join('');return `<details class="cl-entry${i===0?' is-latest':''}"${i===0?' open':''}><summary><b class="cl-ver">${E(e.version)}</b>${i===0?'<i class="cl-flag">最新</i>':''}<span class="cl-title">${E(e.title)}</span><span class="cl-meta">${e.date?`<time>${E(e.date)}</time>`:''}<em>${n}件</em></span></summary><div class="cl-body">${body}</div></details>`}).join('')}
+const CL_TAGS=['b','code'];
+function clText(v){
+ let t=E(String(v??''));
+ CL_TAGS.forEach(tag=>{t=t.split('&lt;'+tag+'&gt;').join('<'+tag+'>').split('&lt;/'+tag+'&gt;').join('</'+tag+'>')});
+ return t;
+}
+function renderChangelog(list){let items=list||[];return items.map((e,i)=>{let secs=changelogSections(e.notes),n=secs.reduce((a,b)=>a+b.items.length,0),body=secs.map(sc=>`<div class="cl-sec">${sc.head?`<h4>${clText(sc.head)}</h4>`:''}<ul>${sc.items.map(x=>`<li>${clText(x)}</li>`).join('')}</ul></div>`).join('');return `<details class="cl-entry${i===0?' is-latest':''}"${i===0?' open':''}><summary><b class="cl-ver">${E(e.version)}</b>${i===0?'<i class="cl-flag">最新</i>':''}<span class="cl-title">${E(e.title)}</span><span class="cl-meta">${e.date?`<time>${E(e.date)}</time>`:''}<em>${n}件</em></span></summary><div class="cl-body">${body}</div></details>`}).join('')}
 async function loadVersion(){try{let d=await fetch('/api/version').then(r=>r.json()),log=d.changelog||[],meta=`ビルド: ${d.build_version}`+(d.released_at?` / リリース日: ${d.released_at}`:'');if($('#version-badge'))$('#version-badge').textContent='ver '+d.version;if($('#version-current'))$('#version-current').textContent=`${d.version} ${d.title}`;if($('#version-meta'))$('#version-meta').innerHTML=`<span class="vchip"><i>リリース日</i><b>${E(d.released_at||'—')}</b></span>`+`<span class="vchip"><i>ビルド</i><b>${E(d.build_version||'—')}</b></span>`+`<span class="vchip"><i>画面</i><b>${E(UI_BUILD)}</b></span>`;if($('#version-count'))$('#version-count').textContent=`全${log.length}版 / 最新 ${d.version}`;if($('#version-changelog'))$('#version-changelog').innerHTML=renderChangelog(log);if($('#settings-version-summary'))$('#settings-version-summary').innerHTML=`<div class="version-current-badge"><b>${E(d.version)}</b><span>${E(d.title)}</span></div><p class="hint">${E(meta)}</p>`;if($('#settings-version-changelog'))$('#settings-version-changelog').innerHTML=renderChangelog(log)}catch{if($('#version-badge'))$('#version-badge').textContent='ver ?'}}
 if($('#version-expand'))$('#version-expand').onclick=()=>$$('#version-changelog .cl-entry').forEach(x=>x.open=true);
 if($('#version-collapse'))$('#version-collapse').onclick=()=>$$('#version-changelog .cl-entry').forEach((x,i)=>x.open=i===0);
@@ -1345,7 +1351,7 @@ setInterval(loadSchedulePreview,60000);loadSchedulePreview();
    caused false "browser closed" detections. We now: (1) drive the heartbeat from a Web Worker whose timer resists background
    throttling, with a main-thread fallback; (2) send an immediate heartbeat whenever the tab becomes visible again; and
    (3) send an explicit close beacon on real close so genuine closes are detected fast without killing on tab-switch/reload. */
-const HEARTBEAT_APP_ID='SymfoNaviDataHub';
+const HEARTBEAT_APP_ID='DataRelay';
 const HEARTBEAT_CLIENT_ID=(crypto.randomUUID?crypto.randomUUID():String(Date.now())+'-'+Math.random());
 let hb={lastSend:null,lastOk:null,latency:null,fails:0,reconnects:0,wasDown:false,sending:false};
 function hbTime(d){return d?new Date(d).toLocaleTimeString('ja-JP',{hour12:false}):'—'}

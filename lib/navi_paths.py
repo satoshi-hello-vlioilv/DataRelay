@@ -13,6 +13,41 @@ import os,re,shutil,threading,time
 from datetime import datetime
 from pathlib import Path
 
+# ---- 名前を変えたときの引っ越し --------------------------------------------
+# ローカル領域（%LOCALAPPDATA%\<名前>）には、公開前の控え・ログ・設定の控えが入る。
+# アプリの名前を変えたときにここも変えないと、名前だけ新しくて中身が古い場所を
+# 指し続けることになる。かといって黙って新しい場所を作ると、それまでの控えが
+# 見えなくなる（消えはしないが、世代を戻せなくなる）。
+#
+# だから、名前を変えるときは中身も連れていく。移すのは中の棚ごとに1つずつ、
+# 移し先に同じ棚が無いときだけ ―― 起動の途中で片方だけ先に作られていても、
+# 上書きせずに済ませられる。
+LOCAL_SUBDIRS=('backup','logs','cache','runtime','work')
+
+def migrate_local_root(new_root,old_names,parent=None):
+ """旧名のローカル領域から、中身を新しい名前のほうへ移す。移した棚の名前を返す。
+
+ まだログの用意ができていない時点で呼ぶので、ここでは記録しない（返した名前を
+ 呼んだ側が、ログの準備ができてから残す）。
+ """
+ new_root=Path(new_root);base=Path(parent) if parent else new_root.parent
+ moved=[]
+ for name in old_names:
+  old=base/name
+  if not old.is_dir() or old.resolve()==new_root.resolve():continue
+  for sub in LOCAL_SUBDIRS:
+   src=old/sub;dst=new_root/sub
+   if not src.is_dir() or dst.exists():continue
+   try:
+    dst.parent.mkdir(parents=True,exist_ok=True)
+    os.replace(src,dst)                 # 同じドライブなので一瞬で済む
+    moved.append(f'{name}/{sub}')
+   except OSError:
+    try:
+     shutil.move(str(src),str(dst));moved.append(f'{name}/{sub}')
+    except Exception:pass
+ return moved
+
 BASE=None;LOCAL_ROOT=None
 def setup(base,local_root):
  """基準になる2つの場所を決める。app.py から一度だけ呼ぶ。"""
@@ -64,7 +99,7 @@ def foreign_profile_path(value):
  return str(root)
 
 def _looks_generated_backup(value):
- """アプリが自分で作った控え置き場（…/SymfoNaviDataHub/backup）かどうか。
+ """アプリが自分で作った控え置き場（…/<アプリ名>/backup）かどうか。
 
  これを絶対パスのまま設定へ残すと、別のPCでは他人のフォルダーを指す。中身は
  このPCのローカルなので、どのPCで作られたものでも <PC> へ読み替えてよい。

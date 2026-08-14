@@ -104,7 +104,7 @@ class TrayIcon:
             import win32api, win32con, win32gui
             wc = win32gui.WNDCLASS()
             wc.hInstance = win32api.GetModuleHandle(None)
-            wc.lpszClassName = 'SymfoNaviDataHubTray'
+            wc.lpszClassName = 'DataRelayTray'
             wc.lpfnWndProc = {
                 win32con.WM_DESTROY: self._on_destroy,
                 win32con.WM_COMMAND: self._on_command,

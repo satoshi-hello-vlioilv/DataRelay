@@ -9,6 +9,11 @@ from pathlib import Path
 # ここで lib/ を探し先へ足しておけば、以降の import は1行も変わらない。
 sys.path.insert(0,str(Path(__file__).resolve().parent/'lib'))
 
+# このアプリの名前。ローカル領域のフォルダ名にも、実行中かどうかの見分けにも使う。
+# 昔の名前も覚えておく ―― 名前を変えたときに、それまでの控えとログを置き去りにしない。
+APP_NAME='DataRelay'
+LEGACY_LOCAL_NAMES=('SymfoNaviDataHub','NaviToSQLite')
+
 # 並列実行のワーカー(api_worker.py)は抽出処理だけを行い、HTTP層は一切使わない。
 # それでも従来は app.py の取り込みに引きずられて Flask まで読み込んでおり、
 # 1ジョブごとに約90msの無駄な起動時間が発生していた（ジョブ数に比例して積み上がる）。
@@ -38,7 +43,7 @@ if WORKER_MODE:
  DOCS=[];CHANGELOG=[]
 else:
  from navi_changelog import DOCS,CHANGELOG
-BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=Path(os.environ['NAVI_CONFIG_DIR']) if os.environ.get('NAVI_CONFIG_DIR') else BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'DataRelay'; import navi_paths as _paths0; MIGRATED_LOCAL=_paths0.migrate_local_root(LOCAL_ROOT,LEGACY_LOCAL_NAMES); LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=Path(os.environ['NAVI_CONFIG_DIR']) if os.environ.get('NAVI_CONFIG_DIR') else BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
 def docs_dir():
  # Windowsでは Config と config は同じ場所を指す。Linuxでの検証時だけ綴りが分かれるので両方見る。
  for d in (CONFIG_DIR/'docs',BASE/'config'/'docs'):
@@ -50,7 +55,7 @@ def docs_dir():
 # 実測 2026-08-18: 確認用の実行が本物のマスターへ書き込み、登録済みの対象6件が
 # 消えて確認用の3件に置き換わった。確認のときだけ NAVI_CONFIG_DIR で逃がせるようにする。
 # 運用では設定しない（設定しなければこれまでと同じ Config/ を使う）。
-APP_ID='SymfoNaviDataHub'; INSTANCE_ID=str(uuid.uuid4()); app=_UnusedWebLayer() if WORKER_MODE else Flask(__name__)
+APP_ID=APP_NAME; INSTANCE_ID=str(uuid.uuid4()); app=_UnusedWebLayer() if WORKER_MODE else Flask(__name__)
 if not WORKER_MODE:app.config['SEND_FILE_MAX_AGE_DEFAULT']=0
 run_lock=threading.Lock(); stop_event=threading.Event(); status_lock=threading.Lock(); command_queue_lock=threading.RLock(); command_queue_event=threading.Event(); command_queue=[]; active_command=None
 # ブラウザー側ハートビート監視。フロントからの生存信号が途絶えたら、ジョブ実行中でなく、
@@ -2138,7 +2143,7 @@ def resolve_rne_path(job,cfg):
 
 def dde_staging_folder():
  """Use the per-user local work folder for all temporary extraction files."""
- candidates=[LOCAL_ROOT/'work',Path(tempfile.gettempdir())/'SymfoNaviDataHub'/'work',Path('C:/SymfoNaviDataHubWork')]
+ candidates=[LOCAL_ROOT/'work',Path(tempfile.gettempdir())/APP_NAME/'work',Path('C:/DataRelayWork')]
  for p in candidates:
   try:
    text=str(p)
@@ -2147,7 +2152,7 @@ def dde_staging_folder():
    test=p/'.write_test'; test.write_text('ok',encoding='ascii'); test.unlink()
    return p
   except Exception:continue
- raise RuntimeError('SymfoNavi用のローカル一時フォルダーを作成できません')
+ raise RuntimeError(f'{APP_NAME}用のローカル一時フォルダーを作成できません')
 
 def api_data_source_profiles(path):
  # 公式APIサンプルにある追加データソース接続を、明示されたCONFセクションだけから構成する。
@@ -4512,7 +4517,7 @@ def start_tray():
   try:
    from tray_icon import TrayIcon
    icon=BASE/'static'/'favicon.ico'
-   tray=TrayIcon('SymfoNavi Data Hub',f'http://{HOST}:{PORT}',str(icon) if icon.is_file() else None,
+   tray=TrayIcon(APP_NAME,f'http://{HOST}:{PORT}',str(icon) if icon.is_file() else None,
                  on_open=open_app_window,on_exit=request_shutdown_from_tray,status_text=tray_status_text,logger=log)
    return tray if tray.start() else None
   except Exception:
@@ -4530,7 +4535,7 @@ def enter_residency(reason,client_ids=''):
  log.info('APP_RESIDENT_ENTER closing_clients=%s reason=%s action=keep_alive_with_tray',client_ids,reason)
  if tray:
   tray.refresh_tooltip()
-  tray.notify('SymfoNavi Data Hub は常駐しています',
+  tray.notify(f'{APP_NAME} は常駐しています',
               f'{reason}のため実行を続けます。\n画面を開く・終了するには通知領域のアイコンを使用してください。')
 def leave_residency():
  # 頼まれた常駐は1回きり。画面が戻ってきたら外す。外さないと、次にタブを閉じたときも
@@ -5328,7 +5333,7 @@ if __name__=='__main__':
   _probe.bind((HOST,PORT))
  except OSError as e:
   log.error('APP_PORT_IN_USE host=%s port=%s error=%s',HOST,PORT,e)
-  log.error('APP_PORT_IN_USE_HINT 既にSymfoNavi Data Hubが起動しているか、前回のプロセスが残っています。'
+  log.error('APP_PORT_IN_USE_HINT 既に%sが起動しているか、前回のプロセスが残っています。'%APP_NAME+
             'stop_app.bat を実行するか、タスクマネージャーで python.exe / pythonw.exe を終了してから起動し直してください。')
   raise SystemExit(1)
  finally:

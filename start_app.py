@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 
 # BOX上へ__pycache__を書き込まず、ユーザー別のローカル領域へ永続配置する。
-_local_root = Path(os.environ.get("LOCALAPPDATA") or os.environ.get("TEMP") or Path.home()) / "SymfoNaviDataHub"
+_local_root = Path(os.environ.get("LOCALAPPDATA") or os.environ.get("TEMP") or Path.home()) / "DataRelay"
 _pycache = _local_root / "pycache"
 _pycache.mkdir(parents=True, exist_ok=True)
 os.environ["NAVI_LOCAL_ROOT"] = str(_local_root)

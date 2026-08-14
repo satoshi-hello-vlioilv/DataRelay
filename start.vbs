@@ -1,12 +1,12 @@
 Option Explicit
 
-' SymfoNavi Data Hub - single hidden launcher
+' DataRelay - single hidden launcher
 ' Normal startup does not require start.bat.
 
 Const APP_URL = "http://127.0.0.1:5031"
 Const INSTANCE_URL = "http://127.0.0.1:5031/api/instance"
 Const STARTUP_TIMEOUT_SECONDS = 60
-Const LOCAL_APP_FOLDER = "SymfoNaviDataHub"
+Const LOCAL_APP_FOLDER = "DataRelay"
 
 Dim shell, fso, processEnv
 Dim scriptDir, localAppData, localRoot, runtimeDir, logDir, pycacheDir
@@ -237,7 +237,7 @@ Function ApplicationReady()
         If Err.Number = 0 Then
             If http.Status = 200 Then
                 body = http.responseText
-                If InStr(1, body, "SymfoNaviDataHub", vbTextCompare) > 0 Or _
+                If InStr(1, body, "DataRelay", vbTextCompare) > 0 Or _
                    InStr(1, body, "NaviToSQLite", vbTextCompare) > 0 Then
                     ApplicationReady = True
                 End If
@@ -285,7 +285,7 @@ Sub OpenBrowser()
         WriteLog "BROWSER_FAILED error=" & Err.Number & " " & Err.Description
         MsgBox "アプリは起動しましたが、ブラウザーを開けませんでした。" & _
                vbCrLf & vbCrLf & APP_URL, _
-               vbExclamation, "SymfoNavi Data Hub"
+               vbExclamation, "DataRelay"
     End If
     Err.Clear
     On Error GoTo 0
@@ -321,13 +321,13 @@ End Sub
 Sub Fail(title, detail)
     WriteLog "ERROR " & title & " detail=" & detail
     MsgBox title & vbCrLf & vbCrLf & detail, _
-           vbCritical, "SymfoNavi Data Hub"
+           vbCritical, "DataRelay"
     WScript.Quit 1
 End Sub
 
 Sub FailEarly(title, detail)
     MsgBox title & vbCrLf & vbCrLf & detail, _
-           vbCritical, "SymfoNavi Data Hub"
+           vbCritical, "DataRelay"
     WScript.Quit 1
 End Sub
 
