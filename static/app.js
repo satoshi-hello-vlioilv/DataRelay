@@ -3057,13 +3057,14 @@ function setSource(src){
  // 番号は「上から何番目か」を表す。隠したぶんを飛ばすと 1・2・4 と並び、
  // 3が押せないのかと探すことになる。見えているものへ振り直す。
  // 出力の表の名前は、入力の種類で自然な既定が違う。RNEは業務の呼び名（仕掛など）が
- // そのまま入るが、固定長テキストにはその手がかりが無いので DATA を既定にする。
+ // そのまま入るが、手元のファイルから作るもの（テキスト・結合）にはその手がかりが
+ // 無いので DATA を既定にする。
  // 書き換えるのは、まだ既定のままのときだけ（利用者が入れた名前には触らない）。
  let tb=$('#m-table');
  if(tb){
-  let now=tb.value.trim();
-  if(src==='text'&&(!now||now==='仕掛'))tb.value=TEXT_TABLE_DEFAULT;
-  else if(src!=='text'&&now===TEXT_TABLE_DEFAULT)tb.value='仕掛';
+  let now=tb.value.trim(),local=(src!=='rne');
+  if(local&&(!now||now==='仕掛'))tb.value=TEXT_TABLE_DEFAULT;
+  else if(!local&&now===TEXT_TABLE_DEFAULT)tb.value='仕掛';
  }
  let n=0;
  $$('.editor-tab:not(.etab-tool)').forEach(t=>{
@@ -3238,6 +3239,24 @@ if($('#lay-col-add'))$('#lay-col-add').onclick=()=>{
  let next=cols.reduce((m,c)=>Math.max(m,Number(c.start||1)+Number(c.length||0)),1);
  cols.push({name:'列'+(cols.length+1),start:next,length:10,note:''});
  layEditing.columns=cols;layRenderCols();
+};
+/* 列名とメモの入れ替え。固定長のレイアウト表は「定義名（ADDYMD）」と
+   「日本語項目名（登録年月日）」の2つの呼び名を持っていることが多く、出力の列名を
+   どちらにするかは後から変えたくなる。1本ずつ打ち直すのは200列では現実的でない。
+   メモが空の列は触らない（入れ替えると名前が消えてしまうため）。もう一度押せば戻る。 */
+if($('#lay-swap'))$('#lay-swap').onclick=()=>{
+ let cols=(layEditing&&layEditing.columns)||[];
+ if(!cols.length)return toast('列がありません');
+ let target=cols.filter(c=>String(c.note||'').trim());
+ if(!target.length)return toast('メモが入っている列がありません。入れ替えるものがありません');
+ target.forEach(c=>{let n=String(c.name||'');c.name=String(c.note).trim();c.note=n});
+ layRenderCols();
+ let names=cols.map(c=>String(c.name||''));
+ let dupes=[...new Set(names.filter((x,i)=>names.indexOf(x)!==i))];
+ let skipped=cols.length-target.length;
+ toast(`${target.length}列の名前とメモを入れ替えました`
+  +(skipped?`（メモが空の${skipped}列はそのまま）`:'')
+  +(dupes.length?` ／ 同じ名前になった列があります: ${dupes.slice(0,3).join('・')}${dupes.length>3?' ほか':''}。このままでは保存できません`:''));
 };
 if($('#lay-export'))$('#lay-export').onclick=()=>{location.href='/api/text-layouts/export'};
 if($('#lay-import'))$('#lay-import').onclick=()=>$('#lay-file')?.click();

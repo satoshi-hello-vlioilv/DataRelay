@@ -1976,12 +1976,13 @@ def normalize_job_source(v):
 def job_table_name(job):
  """出力の表の名前。空なら入力の種類ごとの既定を使う。
 
- RNEは「仕掛」など業務の呼び名がそのまま入る。固定長テキストにはその手がかりが
- 無いので、決め打ちの DATA を既定にする（利用者の指定）。
+ RNEは「仕掛」など業務の呼び名がそのまま入る。手元のファイルから作るもの
+ （固定長テキスト・複数ファイルの結合）にはその手がかりが無いので、決め打ちの
+ DATA を既定にする（利用者の指定）。
  """
  name=str((job or {}).get('table') or '').strip()
  if name:return name
- return TEXT_TABLE_DEFAULT if normalize_job_source((job or {}).get('source'))=='text' else '仕掛'
+ return TEXT_TABLE_DEFAULT if normalize_job_source((job or {}).get('source')) in ('text','join') else '仕掛'
 
 def resolve_text_path(job,cfg):
  """読むテキストファイルの場所。書き方の決まりはRNEと同じにする。
