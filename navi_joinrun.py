@@ -112,7 +112,8 @@ def join_reader(cfg):
   path=resolve_join_path(src['path'],cfg)
   if not path.is_file():raise FileNotFoundError(f'{src["alias"]}: ファイルがありません: {path}')
   job={'output_format':src['format'],'table':src.get('table') or '','sheet':src.get('sheet') or ''}
-  _fmt,headers,rows,_total=read_preview_data(path,job,limit=int(limit or JOIN_SOURCE_MAX_ROWS))
+  # max_columns=None ―― ここはデータとして読む。表示の都合で切ると列が消えたまま結合される。
+  _fmt,headers,rows,_total,_cols=read_preview_data(path,job,limit=int(limit or JOIN_SOURCE_MAX_ROWS),max_columns=None)
   return headers,rows
  return reader
 

@@ -26,7 +26,12 @@ TRIM_MODES=('both','right','left','none')
 TRIM_LABEL={'both':'前後の空白を取る','right':'後ろの空白だけ取る','left':'前の空白だけ取る','none':'そのまま'}
 LAYOUT_EXPORT_KIND='symfonavi-text-layouts'
 LAYOUT_EXPORT_VERSION=1
-MAX_COLUMNS=200
+# 列の数に、こちらの都合で上限は置かない。固定長のレイアウトは数百項目になることが
+# ふつうにあり、200で黙って切っていたため、200項目を超えるマスタは登録した時点で
+# 後ろが消えていた（実測: 製造マスター REC SIZE 1395 が 1058バイト/200列で保存）。
+# 実際に効く上限は「どの形式で出すか」の側にある（navi_output.output_column_limit）。
+# ここに残すのは、壊れた取り込みで際限なく増えないための歯止めだけで、超えたら断る。
+MAX_COLUMNS=4096
 
 def _int(v,default=0):
  try:return int(str(v).strip())
@@ -60,7 +65,7 @@ def normalize_layout(d):
  if unit not in TEXT_UNITS:unit='byte'
  trim=str(d.get('trim') or '').strip().lower()
  if trim not in TRIM_MODES:trim='both'
- cols=[normalize_column(c,i) for i,c in enumerate(d.get('columns') or [])][:MAX_COLUMNS]
+ cols=[normalize_column(c,i) for i,c in enumerate(d.get('columns') or [])]
  return {'id':str(d.get('id') or '').strip(),
          'name':str(d.get('name') or '').strip(),
          'description':str(d.get('description') or '').strip(),
@@ -82,6 +87,9 @@ def validate_layout(layout):
  l=normalize_layout(layout);bad=[]
  if not l['name']:bad.append('マスタ名を入れてください')
  if not l['columns']:bad.append('列を1つ以上決めてください')
+ # 切って黙って通すのではなく、断って気づけるようにする。
+ if len(l['columns'])>MAX_COLUMNS:
+  bad.append(f'列が多すぎます（{len(l["columns"]):,}本）。{MAX_COLUMNS:,}本までにしてください')
  seen={}
  for i,c in enumerate(l['columns'],1):
   if c['length']<1:bad.append(f'{i}番目「{c["name"]}」の長さが0です。長さか終了位置を入れてください')

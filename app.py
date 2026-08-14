@@ -292,7 +292,8 @@ def _decode_period(raw):
 # 出力形式の読み替え・拡張子・同時出力の絞り込み・食い違い検査は navi_output.py。
 from navi_output import (OUTPUT_FORMAT_LABEL,normalize_output_format,output_extension,
                          parse_output_format,job_extra_formats,canonical_output_file,
-                         validate_output_contract)
+                         validate_output_contract,output_column_limit,check_output_columns,
+                         sqlite_column_limit)
 
 # 複数ファイルの結合（結合マスタ）は navi_join.py。繋ぎ方の組み立てと一致の数え方だけを持つ。
 import navi_join
@@ -2646,6 +2647,9 @@ def export_data(source,dst,job,reject,expected_rows=None,expected_cols=None,data
  else:
   parse_started=phase_log('intermediate_parse',job=job.get('name'),source=source);hs,body=read_extract(source,job,reject,expected_rows,expected_cols);phase_log('intermediate_parse',parse_started,job=job.get('name'),rows=len(body),columns=len(hs))
  fmt=validate_output_contract(job,'export'); log.info('出力開始 configured_format=%s effective_format=%s configured_file=%s work_file=%s rows=%s columns=%s',job.get('output_format'),fmt,job.get('output_file'),dst,len(body),len(hs))
+ # 列の上限は形式ごとに違う（ACCESS 255／EXCEL 16384／SQLiteは実行中の版に聞く／CSV・TXTは無し）。
+ # 途中まで書いてから生のDBエラーで落ちると何が起きたか分からないので、書き始める前に断る。
+ check_output_columns(fmt,len(hs),'読み取る列')
  if dst.exists():dst.unlink()
  if fmt=='sqlite3':
   sqlite_started=time.perf_counter();c=sqlite3.connect(dst)
@@ -5079,7 +5083,27 @@ def _viewer_output_path(job,cfg):
  except Exception:pass
  return candidate
 
-def read_preview_data(path,job,limit=500):
+# 画面へ渡す量は「列の本数」ではなく「行×列のセル数」で決まる。かつては列を200本で
+# 切っていたが、切られると表の形そのものが変わってしまう（300列の出力を開くと、
+# 後ろの100列が無いファイルに見える）。減らすなら行のほうにする ―― 行は元から
+# 先頭10万行で切っていて、そう書いてもある。
+VIEWER_MAX_CELLS=20_000_000
+VIEWER_MAX_ROWS=100_000
+
+def viewer_row_budget(columns):
+ """その列数のとき、画面へ何行まで渡すか。列が多いほど行を控える。"""
+ columns=max(1,int(columns or 1))
+ return max(1,min(VIEWER_MAX_ROWS,VIEWER_MAX_CELLS//columns))
+
+def read_preview_data(path,job,limit=500,max_columns=None):
+ """ファイルの中身を、見出しと行にして返す。
+
+ max_columns は既定で None ―― 列は切らない。切ってよい理由がこちら側には無く、
+ 実際に効く上限は「どの形式で書くか」の側にしかない（navi_output.output_column_limit）。
+ 引数だけ残してあるのは、描画の都合で本当に絞りたい呼び出しのため。
+
+ 返す最後の値は「切る前に何列あったか」。切ったなら切ったと言えるようにするためで、
+ 黙って200列に見せるのが一番たちが悪い（実際に読取マスタで起きていた）。"""
  fmt=normalize_output_format(job.get('output_format'),path.name);headers=[];rows=[];total=None
  if fmt=='sqlite3':
   with sqlite3.connect(path) as conn:
@@ -5125,8 +5149,11 @@ def read_preview_data(path,job,limit=500):
    except:pass
    pythoncom.CoUninitialize()
  else:raise ValueError(f'未対応形式です: {fmt}')
- headers=['' if x is None else str(x) for x in headers][:200];rows=[['' if v is None else str(v) for v in list(row)[:len(headers)]] for row in rows]
- return fmt,headers,rows,total
+ headers=['' if x is None else str(x) for x in headers];total_columns=len(headers)
+ if max_columns and total_columns>int(max_columns):
+  log.info('PREVIEW_COLUMNS_TRIMMED file=%s total=%s shown=%s note=表示のためだけに切っています',path.name,total_columns,int(max_columns));headers=headers[:int(max_columns)]
+ rows=[['' if v is None else str(v) for v in list(row)[:len(headers)]] for row in rows]
+ return fmt,headers,rows,total,total_columns
 
 
 

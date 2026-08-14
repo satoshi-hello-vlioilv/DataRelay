@@ -66,7 +66,9 @@ from app import (
     JOIN_MAX_SOURCES, join_types_available, normalize_join_recipe, validate_join_recipe,
     preview_join_recipe, join_recipes_export, join_recipes_import, load_join_recipes,
     find_join_recipe, save_join_recipe, delete_join_recipe, join_recipe_usage,
-    resolve_join_path, join_reader, join_layouts, read_preview_data)
+    resolve_join_path, join_reader, join_layouts, read_preview_data,
+    VIEWER_MAX_ROWS, viewer_row_budget, output_column_limit, check_output_columns,
+    OUTPUT_FORMAT_LABEL)
 
 @app.get('/')
 def index():
@@ -1247,7 +1249,12 @@ def data_viewer(job_id):
  path=_viewer_output_path(job,c)
  if not path.is_file():return jsonify(ok=False,error=f'出力ファイルが見つかりません: {path}'),404
  try:
-  fmt,headers,rows,total=read_preview_data(path,job,limit=100000);return jsonify(ok=True,name=job['name'],format=fmt,path=str(path),modified=datetime.fromtimestamp(path.stat().st_mtime).isoformat(timespec='seconds'),headers=headers,rows=rows,total_rows=total,preview_limit=100000,truncated=total is not None and total>len(rows))
+  fmt,headers,rows,total,total_cols=read_preview_data(path,job,limit=VIEWER_MAX_ROWS)
+  # 列は何本あっても全部渡す。多いときに控えるのは行のほう（表の形は変えない）。
+  keep=viewer_row_budget(len(headers));limited=len(rows)>keep
+  if limited:rows=rows[:keep]
+  return jsonify(ok=True,name=job['name'],format=fmt,path=str(path),modified=datetime.fromtimestamp(path.stat().st_mtime).isoformat(timespec='seconds'),headers=headers,rows=rows,total_rows=total,preview_limit=len(rows),truncated=total is not None and total>len(rows),
+                 total_columns=total_cols,row_budget=keep,row_budget_limited=limited)
  except Exception as e:log.exception('DATA_VIEWER_FAILED job=%s path=%s',job.get('name'),path);return jsonify(ok=False,error=str(e)),200
 
 @app.post('/api/validate')
@@ -1346,6 +1353,15 @@ def validate():
    add('テキスト読取',j.get('name','対象')+' 読取マスタ',not bad,
        f'{lay["name"]} / {len(lay["columns"])}列 / {text_layout_width(lay)}{"バイト" if lay["unit"]=="byte" else "文字"}' if not bad else '／'.join(bad),
        job_id=j.get('id'),item='')
+   # 読取マスタは列の数が先に分かる。出す形式に入らないなら、実行してから落ちる前に言う。
+   # 入らない形式はACCESS(255)くらいで、たいていは何も出ない検査になる。
+   n=len(lay['columns'])
+   for f in [normalize_output_format(j.get('output_format'),j.get('output_file'))]+job_extra_formats(j):
+    lim=output_column_limit(f)
+    if lim is not None and n>lim:
+     add('テキスト読取',j.get('name','対象')+f' 列数（{OUTPUT_FORMAT_LABEL.get(f,f)}）',False,
+         f'{OUTPUT_FORMAT_LABEL.get(f,f)}は{lim:,}列までですが、読取マスタは{n:,}列あります。列数に上限の無いCSV／TXTで出すか、読取マスタの列を減らしてください',
+         job_id=j.get('id'),item='')
   op=resolve_path(j.get('output_folder') or c.get('default_output_folder','.\\output'))
   add('出力先',j.get('name','対象')+' 出力先',op.is_dir(),op,item='')
  # 同時出力を設定している対象は、1回の実行で何ができるのかをそのまま出す。
@@ -1572,7 +1588,8 @@ def join_source_probe():
  if not path.is_file():return jsonify(ok=False,error=f'ファイルがありません: {path}'),400
  try:
   job={'output_format':fmt or path.suffix.lstrip('.'),'table':src.get('table') or '','sheet':src.get('sheet') or ''}
-  used,headers,rows,total=read_preview_data(path,job,limit=3)
+  # 結合元の列は一覧から選ぶためのもの。表示の都合で切ると選べない列ができる。
+  used,headers,rows,total,_cols=read_preview_data(path,job,limit=3,max_columns=None)
  except Exception as e:
   return jsonify(ok=False,error=f'読み取れませんでした: {e}'),400
  tables=[];sheets=[]

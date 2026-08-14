@@ -105,7 +105,7 @@ def normalize_recipe(d):
                'as':str(c.get('as') or '').strip()})
  return {'id':str(d.get('id') or '').strip(),'name':str(d.get('name') or '').strip(),
          'description':str(d.get('description') or '').strip(),
-         'sources':srcs,'joins':joins,'columns':cols[:200],
+         'sources':srcs,'joins':joins,'columns':cols,
          'updated_at':str(d.get('updated_at') or '')}
 
 def validate_recipe(recipe):

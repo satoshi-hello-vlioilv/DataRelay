@@ -6,7 +6,7 @@
 
 app.py から分けてある。外から見える名前は分ける前と同じ（app からも読める）。
 """
-import json,re
+import json,re,sqlite3
 from pathlib import Path
 from navi_log import log
 
@@ -50,6 +50,38 @@ def canonical_output_file(filename,fmt):
  for suffix in ('sqlite3','sqlite','accdb','xlsx','xls','csv','txt'):
   if stem.lower().endswith(suffix):stem=stem[:-len(suffix)]
  return (stem or 'output')+ext
+
+def sqlite_column_limit():
+ """このPythonに入っているSQLiteが、1つの表に持てる列の数。
+
+ 決め打ちの数字を書かない。SQLITE_MAX_COLUMN は組み立てた人が変えられるので、
+ 動いている本人に聞くのが確実（既定は2000、上限は32767まで上げられる）。"""
+ try:
+  with sqlite3.connect(':memory:') as conn:return int(conn.getlimit(sqlite3.SQLITE_LIMIT_COLUMN))
+ except Exception:return 2000
+
+def output_column_limit(fmt):
+ """その形式が受け取れる列の数。制限が無い形式は None。
+
+ 列の上限は「読み取り側の都合」ではなく「書き出す形式の都合」でしか決まらない。
+ 固定長のレイアウトが何百項目あろうと、CSVで出すなら何の問題も無い。逆に
+ ACCESSは255項目で本当に入らない。だから制限はここ一箇所にだけ置いて、
+ 読み取り・プレビュー・結合の側では列を切らない。"""
+ fmt=normalize_output_format(fmt)
+ if fmt=='accdb':return 255      # Accessの1テーブルあたりフィールド数
+ if fmt=='xlsx':return 16384     # Excelのシート列数(XFD)。見出し1行ぶんも同じ枠
+ if fmt=='sqlite3':return sqlite_column_limit()
+ return None                     # csv/txt は区切って並べるだけなので上限は無い
+
+def check_output_columns(fmt,count,where=''):
+ """列が多すぎて入らないなら、書き出す前に、数を添えて断る。
+
+ 黙って切ると出来上がった物が静かに欠ける。生のDBエラーを出すと何が起きたか
+ 分からない。どちらも避けて、形式名と両方の数を出す。"""
+ limit=output_column_limit(fmt);count=int(count or 0)
+ if limit is None or count<=limit:return count
+ label=OUTPUT_FORMAT_LABEL.get(normalize_output_format(fmt),fmt)
+ raise ValueError(f'{label}は{limit:,}列までです（いまは{count:,}列）。{where or "出力する列"}を減らすか、列数に上限の無いCSV／TXTで出してください')
 
 def validate_output_contract(job,stage):
  configured=str(job.get('output_format') or '').lower(); filename=str(job.get('output_file') or '')
