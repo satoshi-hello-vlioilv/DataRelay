@@ -83,7 +83,7 @@ footer{grid-row:3;position:static;min-height:56px;padding-top:7px;padding-bottom
    縦一列に積んで「伸びるのは表だけ」と書けば、上に何が増えても減っても何も起きない。 */
 html body{align-content:stretch;justify-content:stretch}
 body>main{margin:0 auto;align-self:stretch;justify-self:center}
-main>nav,main>section.on{align-self:start}
+main>nav,main>section.on{align-self:stretch}
 #jobs.on{overflow:hidden;display:flex;flex-direction:column}
 #jobs.on>*{flex:0 0 auto}
 #jobs .tablebox{flex:1 1 auto;min-height:0;height:auto;margin-top:0}
