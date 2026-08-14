@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>SymfoNavi Data Hub を起動しています…</title>
+<title>DataRelay を起動しています…</title>
 <style>
 :root{
   --navy:#153247; --navy2:#1e6079; --teal:#0d8191; --teal2:#20aaa6;
@@ -110,9 +110,9 @@ h1{font-size:22px;margin:4px 0 2px}
   <div class="err" id="err">
     <b>サーバーの起動を確認できませんでした。</b><br>
     時間をおいて再度お試しください。改善しない場合は次のログをご確認ください。<br>
-    <code>%LOCALAPPDATA%\SymfoNaviDataHub\logs\vbs_launcher.log</code><br>
-    <code>%LOCALAPPDATA%\SymfoNaviDataHub\logs\startup.log</code><br>
-    <code>%LOCALAPPDATA%\SymfoNaviDataHub\logs\launcher.log / app.log</code>
+    <code>%LOCALAPPDATA%\DataRelay\logs\vbs_launcher.log</code><br>
+    <code>%LOCALAPPDATA%\DataRelay\logs\startup.log</code><br>
+    <code>%LOCALAPPDATA%\DataRelay\logs\launcher.log / app.log</code>
     <div><button class="btn" id="retry">再確認する</button></div>
   </div>
 </div>
@@ -213,7 +213,7 @@ h1{font-size:22px;margin:4px 0 2px}
     fetch(INSTANCE+'?_='+Date.now(),{cache:'no-store'})
       .then(function(r){ return r.ok ? r.json() : null; })
       .then(function(d){
-        if(d && (d.app==='SymfoNaviDataHub' || d.app==='NaviToSQLite')){
+        if(d && (d.app==='DataRelay' || d.app==='SymfoNaviDataHub' || d.app==='NaviToSQLite')){
           showVersion(d.version||d.build_version,'起動したサーバーが返したバージョン');
           ready();
         }

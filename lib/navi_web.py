@@ -30,7 +30,7 @@ import navi_order    # 結合の順番と待ち合わせの判断
 import navi_book     # マスタをEXCELで出し入れする
 
 from app import (
-    APP_ID, APP_RELEASED_AT, APP_VERSION, APP_VERSION_TITLE, BASE, BUILD_VERSION, CHANGELOG,
+    APP_ID, APP_NAME, APP_RELEASED_AT, APP_VERSION, APP_VERSION_TITLE, BASE, BUILD_VERSION, CHANGELOG,
     CLOSE_GRACE_SECONDS, DEFAULT_DLL_SEARCH_ROOTS, DOCS, INSPECT_ALL_ORDER, INSPECT_ALL_SPEC,
     INSPECT_TASK_SPECS, INSTANCE_ID, LOCAL_RUNTIME, LOG_FILTERS, LOG_PATH, LOG_READ_BYTES,
     PORT, Path, ROW_AXIS_MODE_LABEL, SPLIT_BATCH_MAX, _api_diag_cache_path, _dll_requirement,
@@ -1394,7 +1394,7 @@ def validate():
 def instance_info():
  # versionは版だけ、build_versionは版＋ビルド名。起動待ちモーダルは前者を出す（差し込んだ値と
  # 同じ形にして、サーバーが立った瞬間に表示が変わって見えないようにする）。
- r=app.make_response(jsonify(app=APP_ID,instance_id=INSTANCE_ID,display_name='SymfoNavi Data Hub',version=APP_VERSION,build_version=BUILD_VERSION,pid=os.getpid(),port=PORT,path=str(BASE)))
+ r=app.make_response(jsonify(app=APP_ID,instance_id=INSTANCE_ID,display_name=APP_NAME,version=APP_VERSION,build_version=BUILD_VERSION,pid=os.getpid(),port=PORT,path=str(BASE)))
  # 起動待ちモーダル(loading.html)がfile://から状態を確認できるよう、ローカル情報に限りCORSを許可する。
  r.headers['Access-Control-Allow-Origin']='*'; r.headers['Cache-Control']='no-store'; return r
 

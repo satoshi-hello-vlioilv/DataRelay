@@ -2,7 +2,7 @@
 import json, os, sys, traceback
 from pathlib import Path
 
-_local_root=Path(os.environ.get('NAVI_LOCAL_ROOT') or os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home()/'SymfoNaviDataHub')
+_local_root=Path(os.environ.get('NAVI_LOCAL_ROOT') or os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home()/'DataRelay')
 os.environ['NAVI_LOCAL_ROOT']=str(_local_root)
 os.environ['PYTHONPYCACHEPREFIX']=str(_local_root/'pycache')
 os.environ['PYTHONDONTWRITEBYTECODE']='0'
