@@ -1,4 +1,4 @@
-﻿SymfoNavi Data Hub 現行フォルダ・ファイル構成
+﻿DataRelay 現行フォルダ・ファイル構成
 
 【置き場所の決まり】(v1.84.0)
 
@@ -101,7 +101,7 @@ app.py、launch_guard.py、process_manager.pyの記述から、
 
 
 【高速化後のローカル実行領域】
-%LOCALAPPDATA%\SymfoNaviDataHub\
+%LOCALAPPDATA%\DataRelay\
 ├─ runtime\             PID情報・API診断キャッシュ
 ├─ logs\                launcher.log・app.log
 ├─ pycache\             Pythonバイトコードキャッシュ（置きっぱなし可）

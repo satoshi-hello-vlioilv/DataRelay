@@ -24,6 +24,10 @@ from pathlib import Path
 # 上書きせずに済ませられる。
 LOCAL_SUBDIRS=('backup','logs','cache','runtime','work')
 
+# ローカル領域として使ってきた名前（新しい順）。名前を変えても、前の名前で
+# 書かれた設定は残り続けるので、見分けるときは全部を候補にする。
+APP_LOCAL_NAMES=('datarelay','symfonavidatahub','navitosqlite')
+
 def migrate_local_root(new_root,old_names,parent=None):
  """旧名のローカル領域から、中身を新しい名前のほうへ移す。移した棚の名前を返す。
 
@@ -103,9 +107,12 @@ def _looks_generated_backup(value):
 
  これを絶対パスのまま設定へ残すと、別のPCでは他人のフォルダーを指す。中身は
  このPCのローカルなので、どのPCで作られたものでも <PC> へ読み替えてよい。
+
+ 昔の名前で書かれた設定も見分ける ―― 名前を変えた時点で見分けられなくなると、
+ 他人のフォルダーを指した絶対パスが設定に残り、別のPCで実行できなくなる。
  """
  parts=[x.lower() for x in _split_any(value)]
- return len(parts)>=2 and parts[-1]=='backup' and parts[-2]=='symfonavidatahub'
+ return len(parts)>=2 and parts[-1]=='backup' and parts[-2] in APP_LOCAL_NAMES
 
 def resolve_path(value,base=None):
  """Resolve absolute, UNC, or app-relative paths without changing stored values.

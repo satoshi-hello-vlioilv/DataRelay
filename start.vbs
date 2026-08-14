@@ -238,6 +238,7 @@ Function ApplicationReady()
             If http.Status = 200 Then
                 body = http.responseText
                 If InStr(1, body, "DataRelay", vbTextCompare) > 0 Or _
+                   InStr(1, body, "SymfoNaviDataHub", vbTextCompare) > 0 Or _
                    InStr(1, body, "NaviToSQLite", vbTextCompare) > 0 Then
                     ApplicationReady = True
                 End If
