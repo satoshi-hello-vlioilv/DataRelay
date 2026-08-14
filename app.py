@@ -299,9 +299,9 @@ from navi_output import (OUTPUT_FORMAT_LABEL,normalize_output_format,output_exte
 
 # 複数ファイルの結合（結合マスタ）は navi_join.py。繋ぎ方の組み立てと一致の数え方だけを持つ。
 import navi_join
-# 組み立てのあいだ、繋ぐ相手をローカルへ写しておくのは navi_joincache.py。
-import navi_joincache
-navi_joincache.setup(LOCAL_ROOT)
+# 組み立てのあいだ、繋ぐ相手をローカルへ写しておくのは navi_localcopy.py。
+import navi_localcopy
+navi_localcopy.setup(LOCAL_ROOT)
 from navi_join import (JOIN_TYPES,JOIN_TYPE_LABEL,JOIN_TYPE_NOTE,SOURCE_FORMATS,SOURCE_FORMAT_LABEL,
                        suggest_keys as suggest_join_keys,
                        MAX_SOURCES as JOIN_MAX_SOURCES,RECIPE_EXPORT_KIND,
@@ -625,7 +625,7 @@ def read_header_names(path,job):
  """出力ファイルの見出し行だけを読む。中身は読まないので大きなファイルでも軽い。"""
  path=Path(path);fmt=normalize_output_format(job.get('output_format'),path.name)
  if fmt=='sqlite3':
-  with sqlite3.connect(path) as conn:
+  with contextlib.closing(sqlite3.connect(path)) as conn:
    table=str(job.get('table') or '')
    names=[r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE '_更新情報' ORDER BY name")]
    if table not in names:table=names[0] if names else ''
@@ -1411,7 +1411,7 @@ def column_samples(path,job,columns,exact_limit=5000,sample_limit=4000):
      k=rng.randrange(seen[i])
      if k<sample_limit:sm[k]=v
  if fmt=='sqlite3':
-  with sqlite3.connect(path) as conn:
+  with contextlib.closing(sqlite3.connect(path)) as conn:
    table=str(job.get('table') or '')
    tables=[r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE '_更新情報' ORDER BY name")]
    if table not in tables:table=tables[0] if tables else ''
@@ -3518,7 +3518,8 @@ def finish_one_job(j,cfg,*,intermediate,db,target,backup,out_dir,local_export,st
   else:log.info('PUBLISH_SKIPPED_UNCHANGED job=%s target=%s digest=%s elapsed=%.2fs',j['name'],target,digest[:12],total)
   say('unchanged',total=total)
   return {'unchanged':True,'rows':int(expected_rows or 0),'cols':int(expected_cols or 0),
-          'published':True,'pending':'','extra_results':[],'total':total,'digest':digest}
+          'published':True,'pending':'','hold_reason':'','hold_waited':None,'hold_attempts':None,
+          'hold_advice':[],'extra_results':[],'total':total,'digest':digest}
  # 同時出力があるときは、中間データの解析をここで1回だけ行い、全形式で使い回す。
  shared=None
  if extras and not api_direct_output:
@@ -3541,6 +3542,8 @@ def finish_one_job(j,cfg,*,intermediate,db,target,backup,out_dir,local_export,st
  shared=None   # 大きい対象では中間データだけで数百MBになる。次の対象へ持ち越さない。
  return {'unchanged':False,'rows':nr,'cols':nc,
          'published':bool(pub['published']),'pending':str(pub.get('pending') or ''),
+         'hold_reason':str(pub.get('reason') or ''),'hold_waited':pub.get('waited'),
+         'hold_attempts':pub.get('attempts'),'hold_advice':list(pub.get('advice') or []),
          'extra_results':extra_results,'total':time.perf_counter()-job_started,'digest':digest}
 
 def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,backup):
@@ -3692,7 +3695,7 @@ def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,
            'split_parts':0,'split_shape':'','split_how':'','row_axis':'','axis_seconds':None,
            'split_reason':'','race_winner':'','execute_seconds':0,'save_seconds':0,
            'total_seconds':round(total,2),'transfer_bytes':0,'merge_seconds':0,'transfer_kbs':None}
-  nr,nc=fin['rows'],fin['cols'];pub={'published':fin['published'],'pending':fin['pending']}
+  nr,nc=fin['rows'],fin['cols'];pub={'published':fin['published'],'pending':fin['pending'],'reason':fin.get('hold_reason') or '','waited':fin.get('hold_waited'),'attempts':fin.get('hold_attempts'),'advice':list(fin.get('hold_advice') or [])}
   extra_results=fin['extra_results'];total=fin['total']
   update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='完了',percent=100,detail=f'{nr}件/{nc}列',elapsed=round(total,1));log.info('PARALLEL_JOB_RESULT line=%s job=%s format=%s rows=%s columns=%s elapsed=%.2fs target=%s published=%s',line_name,j['name'],fmt,nr,nc,total,target,pub['published'])
   log.info('JOB_PROFILE line=%s job=%s rows=%s columns=%s %s',line_name,j['name'],nr,nc,phase_profile_summary())
@@ -3725,6 +3728,8 @@ def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,
           # 公開できたかどうかは実績の文字列にしか残っていなかった。共有先が使用中で
           # 差し替えられなかったことに気づけるよう、値としても持ち帰る。
           'published':bool(pub['published']),'pending':str(pub.get('pending') or ''),
+          'hold_reason':str(pub.get('reason') or ''),'hold_waited':pub.get('waited'),
+          'hold_attempts':pub.get('attempts'),'hold_advice':list(pub.get('advice') or []),
           'column_names':column_names,'rne_path':str(rp),'extra_formats':extra_results,
           'split_parts':(int(run_stats.get('parts') or 0) or (len(split_used['plan']) if split_used else 0)) if split_used else 0,
           'split_shape':(split_used['mode'] if split_used else ''),'split_how':split_shape_text if split_used else '',
@@ -3858,7 +3863,12 @@ def run_api_process_batch(jobs,cfg,user,pw,server,dde_work,backup,max_lines,trig
    record_job_run(item['job']['id'],item['job']['name'],'ok' if result.get('ok') else 'failed',trigger,detail=(result.get('result') or result.get('error') or ''),rows=result.get('rows'),cols=result.get('columns'),output_file=Path(result.get('target') or '').name,
                   metrics={**{k:result.get(k) for k in ('elapsed','execute_seconds','save_seconds','merge_seconds','transfer_bytes','transfer_kbs','split_parts','split_shape','split_how','row_axis','axis_seconds','race_winner','format') if result.get(k) is not None},
                            # 公開できたか。鮮度の判定がこれを見る（実行できても差し替わっていない場合がある）
-                           'published':bool(result.get('published',True)),'pending':str(result.get('pending') or '')})
+                           'published':bool(result.get('published',True)),'pending':str(result.get('pending') or ''),
+                           # 差し替えられなかったなら、その理由と、粘った時間と、次にすること。
+                           # 「使用中でした」だけでは、画面を見た人は何をすればよいのか分からない。
+                           'hold_reason':str(result.get('hold_reason') or ''),
+                           'hold_waited':result.get('hold_waited'),'hold_attempts':result.get('hold_attempts'),
+                           'hold_advice':list(result.get('hold_advice') or [])})
    # RNE単位の実績。時間帯・端末・分け方まで残し、あとから条件別に見比べられるようにする。
    if result.get('rne_path'):
     record_rne_run(result['rne_path'],item['job'],'ok' if result.get('ok') else 'failed',trigger,
@@ -4081,7 +4091,7 @@ def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=No
       if p:p.unlink()
      except:pass
     continue
-   nr,nc=fin['rows'],fin['cols'];pub={'published':fin['published'],'pending':fin['pending']}
+   nr,nc=fin['rows'],fin['cols'];pub={'published':fin['published'],'pending':fin['pending'],'reason':fin.get('hold_reason') or '','waited':fin.get('hold_waited'),'attempts':fin.get('hold_attempts'),'advice':list(fin.get('hold_advice') or [])}
    extra_results=fin['extra_results'];total=fin['total']
    detail=f'{nr}件/{nc}列 / {total:.1f}秒'+('' if pub['published'] else f' / 更新保留: {pub["pending"]}')+extra_format_note(extra_results)
    results.append(f'{j["name"]}: '+detail); completed_ids.append(j['id'])
@@ -4089,7 +4099,9 @@ def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=No
    # 「件数だけ」になり、所要も転送量も後から追えなくなる。
    metrics=serial_run_metrics(engine,fmt,total,nr,nc,locals().get('intermediate'),locals().get('dde_save_seconds'))
    # 並列と同じ形で、公開できたかどうかも残す（鮮度の判定がこれを見る）
-   metrics.update(published=bool(pub['published']),pending=str(pub.get('pending') or ''))
+   metrics.update(published=bool(pub['published']),pending=str(pub.get('pending') or ''),
+                  hold_reason=str(pub.get('reason') or ''),hold_waited=pub.get('waited'),
+                  hold_attempts=pub.get('attempts'),hold_advice=list(pub.get('advice') or []))
    record_job_run(j['id'],j['name'],'ok',trigger,detail=detail,rows=nr,cols=nc,output_file=j['output_file'],metrics=metrics)
    record_rne_run(rp,j,'ok',trigger,metrics,engine=engine,fmt=fmt)
    job_results.append({'job':j['name'],'job_id':j['id'],'status':'ok','detail':detail,'rows':nr,'cols':nc,'elapsed':round(total,1),'target':str(target),'published':bool(pub['published']),'pending':str(pub.get('pending') or '')})
@@ -5042,6 +5054,25 @@ def read_log_lines(limit=1200,q='',preset=''):
 
 
 
+def read_copy(path):
+ """読むためにローカルへ写した場所。写せなければ元の場所をそのまま返す。
+
+ 公開先のファイルを直接開かないための入口。開くとそのファイルは「使用中」になり、
+ Windowsでは os.replace で差し替えられない ―― つまり、自分のビュワーで見ている
+ せいで、自分の公開が失敗する。実際そうなっていた（SQLite3の出力を共有から直接
+ 開いていた）。写してから読めば、共有のファイルには一度も触らない。
+
+ ついでに、見ている最中に公開されても、見ている中身は壊れない。
+ """
+ try:
+  import navi_localcopy
+  local,_info=navi_localcopy.whole(path)
+  return Path(local)
+ except Exception as e:
+  # 写せないことは、読めない理由にはしない。これまでどおり直接読む。
+  log.warning('READ_COPY_FAILED path=%s error=%s（元のファイルを直接読みます）',path,e)
+  return Path(path)
+
 def _viewer_output_path(job,cfg):
  run=(load_job_runs().get(job.get('id')) or {});filename=str(run.get('output_file') or job.get('output_file') or '')
  folder=resolve_path(job.get('output_folder') or cfg.get('default_output_folder'));candidate=folder/filename
@@ -5075,7 +5106,7 @@ def read_preview_data(path,job,limit=500,max_columns=None):
  黙って200列に見せるのが一番たちが悪い（実際に読取マスタで起きていた）。"""
  fmt=normalize_output_format(job.get('output_format'),path.name);headers=[];rows=[];total=None
  if fmt=='sqlite3':
-  with sqlite3.connect(path) as conn:
+  with contextlib.closing(sqlite3.connect(path)) as conn:
    table=str(job.get('table') or '');names=[r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE '_更新情報' ORDER BY name")]
    if table not in names:table=names[0] if names else ''
    if not table:raise ValueError('表示できるテーブルがありません')

@@ -1819,9 +1819,17 @@ async function loadFreshness(){
     let note=x.state==='held'
      ? '新しいデータは公開先の横に控えてあります。次の実行で自動的に反映します'
      : (x.next_run?`次の予定 ${E(String(x.next_run).replace('T',' '))}`:E(x.hint||''));
+    let why='';
+    if(x.state==='held'&&(x.hold_reason||x.hold_advice?.length)){
+     why=`<em class="fb-why">`
+      +(x.hold_reason?`<b>${E(x.hold_reason)}</b>`:'')
+      +(x.hold_waited!=null?`<span>${E(x.hold_waited)}秒 ${E(x.hold_attempts||'')}回 試しました</span>`:'')
+      +(x.hold_advice||[]).map(t=>`<span>・${E(t)}</span>`).join('')
+      +`</em>`;
+    }
     return `<button type="button" class="fb-row ${E(tone)}" data-id="${E(x.id)}">`
      +`<i>${E(word)}</i><b>${E(x.name)}</b>`
-     +`<span>${when}</span><small>${note}</small></button>`}).join('')
+     +`<span>${when}</span><small>${note}</small>${why}</button>`}).join('')
    +`</div>`;
   box.querySelectorAll('.fb-row').forEach(b=>b.onclick=()=>{
    let j=cfg?.jobs?.find(x=>x.id===b.dataset.id);

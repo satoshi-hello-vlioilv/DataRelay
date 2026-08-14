@@ -137,14 +137,14 @@ def sampled_recipe(recipe,cfg):
  (差し替えた取り決め, ファイルごとの内訳) を返す。写せなかったものは元のまま
  ―― 写しは速さのためのものなので、無ければ無いで、これまでどおり読むだけ。
  """
- import navi_joincache
+ import navi_localcopy
  r=normalize_join_recipe(recipe);out=[];srcs=[]
  for s in r['sources']:
   s=dict(s);raw=s['path']
   info={'alias':s['alias'],'path':raw,'ok':False,'note':''}
   path=resolve_join_path(raw,cfg)
   if raw and path.is_file():
-   local,detail=navi_joincache.sample(path,s['format'])
+   local,detail=navi_localcopy.sample(path,s['format'])
    info.update({k:detail[k] for k in ('ok','mode','bytes','total','elapsed','cached','note')})
    if local:
     # 名前は元のまま持たせる。ここを写しの名前にすると、件数の内訳も画面の

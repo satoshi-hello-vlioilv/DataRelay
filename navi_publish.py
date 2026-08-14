@@ -17,6 +17,42 @@ from datetime import datetime
 from pathlib import Path
 from navi_log import log
 
+# 差し替えを何秒粘るか。以前は3秒固定だった ―― ビュワーや他のPCが「たまたま開いて
+# いた」だけの数秒を待てず、保留にしていた。伸ばしたぶんは待つが、待って通れば
+# 保留も注意の帯も出ない。間隔は詰めすぎない（共有へ何十回も叩きに行かないため）。
+REPLACE_DEADLINE_SECONDS=20.0
+REPLACE_BACKOFF=(0.25,0.5,1.0,1.5,2.0,3.0)
+
+# 使用中を表すWindowsのエラー番号。5=アクセス拒否 32=別のプロセスが使用中 33=ロック中
+BUSY_WINERRORS=(5,32,33)
+BUSY_WINERROR_LABEL={5:'アクセスが拒否されました（WinError 5）',
+                     32:'別のプロセスがこのファイルを使用しています（WinError 32）',
+                     33:'ファイルの一部がロックされています（WinError 33）'}
+
+def busy_reason(err):
+ """差し替えられなかった理由を、そのまま人が読める形にする。
+
+ 「公開先が使用中」とだけ言われても、次に何をすればよいのか分からない。
+ 分かっているところまでは全部言う ―― 何番のエラーで、何を意味するのか。
+ """
+ if err is None:return '理由を取得できませんでした'
+ wid=getattr(err,'winerror',None)
+ if wid in BUSY_WINERROR_LABEL:return BUSY_WINERROR_LABEL[wid]
+ msg=getattr(err,'strerror',None) or str(err)
+ return f'{msg}'+(f'（WinError {wid}）' if wid else '')
+
+def busy_advice(dst,err):
+ """次に何をすればよいか。分かっている手がかりから順に並べる。"""
+ tips=[]
+ wid=getattr(err,'winerror',None)
+ name=Path(dst).name
+ if wid==5:
+  tips.append(f'{name} が読み取り専用になっていないか、書き込みの権限があるかを確かめてください')
+ tips.append(f'このファイルを開いているアプリを閉じてください（EXCEL・ACCESS・ほかのPCのビュワーなど）')
+ tips.append(f'共有側で誰が開いているかは、ファイルサーバーの「共有フォルダー → 開いているファイル」で確認できます')
+ tips.append('新しいデータは公開先の横に控えてあります。次の実行のはじめに自動で反映します（取り直しは起きません）')
+ return tips
+
 LOCAL_ROOT=None;LOCAL_BACKUP=None
 def setup(local_root,local_backup):
  """このPCのローカル領域と、控えの逃がし先を決める。app.py から一度だけ呼ぶ。"""
@@ -94,6 +130,13 @@ def apply_pending(dst,backup_root,generations,backup_enabled=True,retention_days
   log.warning('PENDING_APPLY_DEFERRED pending=%s target=%s error=%s',newest,dst,e)
   return None
 
+def _wait(attempts,dst,err,started):
+ """次の試行までの間。だんだん空ける ―― 詰めて叩いても、開いている側は閉じない。"""
+ gap=REPLACE_BACKOFF[min(attempts-1,len(REPLACE_BACKOFF)-1)]
+ log.info('PUBLISH_BUSY_RETRY target=%s 回=%s 経過=%.1f秒 理由=%s 次まで=%.2f秒',
+          dst,attempts,time.time()-started,busy_reason(err),gap)
+ time.sleep(gap)
+
 def publish(src,dst,backup_root,generations,from_pending=False,backup_enabled=True,retention_days=30,generation_limit_enabled=True,backup_mode='generations'):
  """Copy locally-created output, then atomically replace the public file.
  If another PC has the target open, keep the new correct file as *.pending_* and return immediately.
@@ -122,8 +165,10 @@ def publish(src,dst,backup_root,generations,from_pending=False,backup_enabled=Tr
   # 照合用サイズはincomingを動かす前に確定させる。
   # from_pending時のincomingはsrcそのもののため、os.replace後にsrc.stat()はできない。
   expected_size=incoming.stat().st_size
-  deadline=time.time()+3.0; last=None; backed_up=False
+  started_wait=time.time();deadline=started_wait+REPLACE_DEADLINE_SECONDS
+  last=None; backed_up=False; attempts=0
   while time.time()<deadline:
+   attempts+=1
    try:
     if dst.exists() and backup_enabled and not backed_up:
      backup=bdir/f'{dst.stem}_{stamp}{dst.suffix}'
@@ -147,11 +192,17 @@ def publish(src,dst,backup_root,generations,from_pending=False,backup_enabled=Tr
     if published_size!=expected_size:raise IOError(f'公開後サイズ不一致 source={expected_size} target={published_size}')
     log.info('PUBLISH_FINAL_VERIFY target=%s size=%s elapsed=%.2fs',dst,published_size,time.perf_counter()-verify_started)
     return {'published':True,'path':str(dst)}
-   except PermissionError as e:last=e;time.sleep(.25)
+   except PermissionError as e:last=e;_wait(attempts,dst,e,started_wait)
    except OSError as e:
-    if getattr(e,'winerror',None) in (5,32,33):last=e;time.sleep(.25)
+    if getattr(e,'winerror',None) in BUSY_WINERRORS:last=e;_wait(attempts,dst,e,started_wait)
     else:raise
-  if from_pending:raise PermissionError(f'公開先が使用中です: {dst}') from last
+  waited=time.time()-started_wait
+  log.warning('PUBLISH_BUSY_GIVEUP target=%s 粘った時間=%.1f秒 試した回数=%s 理由=%s',
+              dst,waited,attempts,busy_reason(last))
+  for tip in busy_advice(dst,last):log.warning('PUBLISH_BUSY_ADVICE %s',tip)
+  if from_pending:
+   raise PermissionError(f'公開先が使用中のため差し替えられませんでした（{busy_reason(last)}／'
+                         f'{waited:.0f}秒 {attempts}回 試しました）: {dst}') from last
   # 保留ファイルは「次に公開できるようになるまでの1枚」であればよい。公開先が
   # ずっと使用中のままだと、実行のたびに新しい保留ファイルが増えていき、古いものは
   # このあと一度も読まれずに残り続けていた（apply_pendingは常に最新の1件しか見ない）。
@@ -165,7 +216,9 @@ def publish(src,dst,backup_root,generations,from_pending=False,backup_enabled=Tr
   os.replace(incoming,pending)
   log.warning('公開先使用中。新しいファイルを更新保留として保存 %s%s',pending,
               f'（古い保留 {removed_old}件を整理）' if removed_old else '')
-  return {'published':False,'path':str(dst),'pending':str(pending),'reason':'他のPCまたはアプリが公開先ファイルを使用中'}
+  return {'published':False,'path':str(dst),'pending':str(pending),
+          'reason':busy_reason(last),'winerror':getattr(last,'winerror',None),
+          'waited':round(waited,1),'attempts':attempts,'advice':busy_advice(dst,last)}
  finally:
   if incoming.exists() and incoming!=src:
    try:incoming.unlink()

@@ -20,6 +20,7 @@ app.py 側に残してある。あれは受け口の形をした本体の状態�
 """
 # send_file だけは本体が使っていないので、ここで直接受け取る。
 # jsonify / render_template / request は本体経由で来る（下の import）。
+import contextlib
 from flask import send_file
 
 import app
@@ -47,7 +48,7 @@ from app import (
     split_trial_options,
     path_setting_roles,
     os, output_extension, pick_anchor_columns, pick_row_axis_by_mode, plan_run_split,
-    queue_snapshot, re, read_header_names, read_log_lines, read_preview_data,
+    queue_snapshot, re, read_copy, read_header_names, read_log_lines, read_preview_data,
     recommend_split_parts, render_filename_segments, render_template, request,
     resolve_output_filename, resolve_path, resolve_rne_path, retry_lock, retry_view,
     retry_waiting, rne_master_view, rne_run_stats, rotate_log_if_needed, row_axis_choice,
@@ -304,7 +305,7 @@ def period_control_points():
   try:
    op=_viewer_output_path(job,c)
    if op.is_file():
-    out_cols=read_header_names(op,job);out_from=str(op)
+    out_cols=read_header_names(read_copy(op),job);out_from=str(op)
     if out_cols:save_column_cache(rp,out_cols,source='output',job=job)
    else:out_error='まだ出力ファイルがありません（1回実行すると列名が読めます）'
   except Exception as oe:out_error=str(oe)
@@ -343,7 +344,7 @@ def column_plan():
   try:
    op=_viewer_output_path(job,c)
    if op.is_file():
-    columns=read_header_names(op,job)
+    columns=read_header_names(read_copy(op),job)
     if columns:source='output';notes.append(f'直近の出力ファイルから読み取りました（{op.name}）')
   except Exception as e:notes.append(f'出力ファイルから読めませんでした: {e}')
  classify=[];classify_error='';layout={}
@@ -385,7 +386,7 @@ def column_plan():
  try:
   op=_viewer_output_path(job,c)
   if op.is_file() and columns:
-   pw=column_weights(op,job,columns)
+   pw=column_weights(read_copy(op),job,columns)
    if pw:panchors,pcov=pick_anchor_columns(removable,pw,int(c['settings'].get('split_anchor_limit',3) or 3))
  except Exception as pe:
   log.warning('COLUMN_PLAN_WEIGHTS_FAILED rne=%s error=%s',rp,pe)
@@ -535,7 +536,7 @@ def row_split_plan():
  cand=None;cand_error=''
  try:
   op=_viewer_output_path(job,c)
-  if op.is_file():cand=row_split_candidates(op,job,columns,removable,parts)
+  if op.is_file():cand=row_split_candidates(read_copy(op),job,columns,removable,parts)
   else:cand_error='直近の出力ファイルがありません。1回実行すると候補を探せます'
  except Exception as e:
   cand_error=str(e);log.warning('ROW_SPLIT_CANDIDATES_FAILED rne=%s error=%s',rp,e)
@@ -1254,7 +1255,8 @@ def data_viewer(job_id):
  path=_viewer_output_path(job,c)
  if not path.is_file():return jsonify(ok=False,error=f'出力ファイルが見つかりません: {path}'),404
  try:
-  fmt,headers,rows,total,total_cols=read_preview_data(path,job,limit=VIEWER_MAX_ROWS)
+  # 公開先は直接開かない（開くと差し替えられなくなる）。写してから読む。
+  fmt,headers,rows,total,total_cols=read_preview_data(read_copy(path),job,limit=VIEWER_MAX_ROWS)
   # 列は何本あっても全部渡す。多いときに控えるのは行のほう（表の形は変えない）。
   keep=viewer_row_budget(len(headers));limited=len(rows)>keep
   if limited:rows=rows[:keep]
@@ -1584,7 +1586,7 @@ def join_source_probe():
  場所が決まっていて実物があるなら、先に一度だけローカルへ写し、以降はその写しを
  読む。組み立てのあいだ、共有フォルダーへ何度も往復しないため。
  """
- import navi_joincache
+ import navi_localcopy
  d=request.get_json(force=True) or {}
  c=load()
  src=dict(d or {});raw=str(src.get('path') or '').strip()
@@ -1594,7 +1596,7 @@ def join_source_probe():
  copy_info={'ok':False,'note':''}
  read_path=origin
  if origin.is_file():
-  local,copy_info=navi_joincache.sample(origin,fmt or origin.suffix.lstrip('.'))
+  local,copy_info=navi_localcopy.sample(origin,fmt or origin.suffix.lstrip('.'))
   if local:read_path=local
  if fmt=='fixed':
   lay=find_text_layout(src.get('layout_id'))
@@ -1615,7 +1617,7 @@ def join_source_probe():
  tables=[];sheets=[]
  if used=='sqlite3':
   try:
-   with sqlite3.connect(path) as conn:
+   with contextlib.closing(sqlite3.connect(path)) as conn:
     tables=[r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name") if not str(r[0]).startswith('_')]
   except Exception:tables=[]
  elif used=='xlsx':
@@ -1634,15 +1636,15 @@ def join_candidates_route():
  場所を手で打たせるのは、いちばん間違えやすく、いちばん確かめにくい。出力先は
  こちらが知っているのだから、まず出す ―― 打つのは、そこに無いものを指すときだけでよい。
  """
- import navi_joincache
+ import navi_localcopy
  c=load()
- return jsonify(items=join_candidates(c),cache=navi_joincache.stats())
+ return jsonify(items=join_candidates(c),cache=navi_localcopy.stats())
 
 @app.post('/api/join-cache/clear')
 def join_cache_clear_route():
- import navi_joincache
- n=navi_joincache.clear()
- return jsonify(ok=True,removed=n,cache=navi_joincache.stats())
+ import navi_localcopy
+ n=navi_localcopy.clear()
+ return jsonify(ok=True,removed=n,cache=navi_localcopy.stats())
 
 @app.post('/api/join-keys')
 def join_keys_route():

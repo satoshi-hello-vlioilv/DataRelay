@@ -72,23 +72,20 @@ footer{grid-row:3;position:static;min-height:56px;padding-top:7px;padding-bottom
  footer{min-height:44px}
 }
 
-/* V9: 対象ファイル一覧を一般的な上ぞろえへ固定。 */
-#jobs.on{height:100%;overflow:hidden;display:grid;grid-template-rows:auto auto minmax(0,1fr);align-content:start;align-items:start}
-#jobs .tablebox{align-self:start;height:100%;min-height:0}
+/* 対象ファイル一覧は上ぞろえ。余りの高さを取るのは表だけ。
+
+   以前は grid-template-rows で「何行目が auto で、どこが 1fr か」を数えて書いていた。
+   数える書き方は、要素が1つ増えた瞬間に崩れる ―― 実際、注意の帯（fresh-board）が
+   出ると1つずれて、余りの高さを実行キューが取り、その下に大きな空白ができていた。
+
+   縦一列に積んで「伸びるのは表だけ」と書けば、上に何が増えても減っても何も起きない。 */
+html body{align-content:stretch;justify-content:stretch}
+body>main{margin:0 auto;align-self:stretch;justify-self:center}
+main>nav,main>section.on{align-self:start}
+#jobs.on{height:100%;overflow:hidden;display:flex;flex-direction:column}
+#jobs.on>*{flex:0 0 auto}
+#jobs .tablebox{flex:1 1 auto;min-height:0;height:auto;margin-top:0}
 #jobs .jobs-table{vertical-align:top}
-
-/* V10: main grid item vertical top alignment. margin:auto in CSS grid vertically centered the entire list area. */
-body>main{margin:0 auto!important;align-self:stretch!important}
-main>nav{align-self:start!important}
-main>section.on{align-self:start!important}
-#jobs.on{align-content:start!important;justify-content:stretch!important;justify-items:stretch!important}
-#jobs .commandbar,#jobs .listmeta,#jobs .tablebox{align-self:start!important}
-
-/* V11: force target list to top. Previous main{margin:auto} centered the grid item vertically in some browsers. */
-html body{align-content:stretch!important;justify-content:stretch!important}
-body>main{margin-top:0!important;margin-bottom:0!important;align-self:stretch!important;justify-self:center!important}
-#jobs.on{height:100%!important;align-self:stretch!important;align-content:start!important;place-content:start stretch!important;grid-template-rows:auto auto auto minmax(0,1fr)!important}
-#jobs .tablebox{margin-top:0!important;align-self:start!important}
 
 /* V12 log report UX: execution-command oriented report copying and cleanup. */
 .danger-lite{background:#fff4f1!important;color:#a33a2d!important;border-color:#efc7bf!important}
@@ -2393,3 +2390,10 @@ body>main{width:var(--app-shell);max-width:var(--app-shell);
 .jn-hint-again{padding:3px 9px;font-size:9.5px;background:#fff;color:#5d7681;border:1px solid #dfe8eb;
  border-radius:999px;justify-self:start}
 .jn-hint-again:hover{background:#f2f8f9;border-color:#cfe6ec;color:#0b6570}
+
+/* 差し替えられなかった理由。「使用中でした」だけでは直しようがないので、
+   何番のエラーで、何秒粘って、次に何をすればよいのかまで出す。 */
+.fb-why{grid-column:2/-1;display:grid;gap:2px;margin-top:4px;padding:6px 8px;font-style:normal;
+ background:#fffaf1;border:1px solid #ecd9b4;border-radius:7px}
+.fb-why b{font-size:10.5px;color:#8a6114}
+.fb-why span{font-size:10px;color:#7a6a52;line-height:1.6}

@@ -59,7 +59,14 @@ def freshness_view():
                 'next_run':nxt,'hint':prev.get('hint',''),'expect_minutes':gap,
                 'status':info.get('last_status',''),'rows':(run.get('rows') if run else None),
                 'output':info.get('last_output',''),'held':bool(held),
-                'pending':str((run.get('metrics') or {}).get('pending') or '')})
+                'pending':str((run.get('metrics') or {}).get('pending') or ''),
+                # 差し替えられなかった理由と、粘った時間と、次にすること。
+                # 何が起きたのか分からないまま「共有先が古いまま」とだけ出すのは、
+                # 直しようのない不安を置いていくのと同じ。
+                'hold_reason':str((run.get('metrics') or {}).get('hold_reason') or ''),
+                'hold_waited':(run.get('metrics') or {}).get('hold_waited'),
+                'hold_attempts':(run.get('metrics') or {}).get('hold_attempts'),
+                'hold_advice':list((run.get('metrics') or {}).get('hold_advice') or [])})
  bad=[x for x in items if x['state']!='ok']
  held_n=len([x for x in items if x['state']=='held'])
  # 「取れているのに共有先が古い」は、失敗の次に急ぐ。読み手がいま騙されている状態なので、

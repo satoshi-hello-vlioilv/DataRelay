@@ -14,7 +14,7 @@
 共有している入れ物（split_trial_state など）は中身を書き換えるだけで、
 丸ごと差し替わることはないので、実体を持っていて構わない。
 """
-import csv,json,shutil,sqlite3,time
+import contextlib,csv,json,shutil,sqlite3,time
 from datetime import datetime
 from pathlib import Path
 import app
@@ -222,7 +222,7 @@ def column_weights(path,job,columns):
  # 錨を選ぶには件数だけでなく「どの行が埋まっているか」が要る。列ごとに1バイト/行で持つ。
  mask=[bytearray() for _ in range(n)]
  if fmt=='sqlite3':
-  with sqlite3.connect(path) as conn:
+  with contextlib.closing(sqlite3.connect(path)) as conn:
    table=str(job.get('table') or '')
    tables=[r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE '_更新情報' ORDER BY name")]
    if table not in tables:table=tables[0] if tables else ''

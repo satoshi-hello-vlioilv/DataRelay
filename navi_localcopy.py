@@ -1,20 +1,24 @@
-"""結合で読むファイルを、いったんこのPCのローカルへ写して使う。
+"""共有の上にあるファイルを、いったんこのPCのローカルへ写してから読む。
 
-結合の相手は、たいてい共有フォルダーの上にある。組み立てている間は、キーを1つ
-変えるたびに全部のファイルを読み直すことになる ―― 8ファイルなら8往復、共有が
-混んでいれば1回の下読みで何十秒も待たされる。
+理由は2つある。
 
-そこで、場所が決まっていて実物があるなら、先に一度だけローカルへ写す。あとの
-下読みは全部その写しを読むので、共有へは触りにいかない。写しは元の大きさと
-更新日時で見分けるので、元が差し替わればひとりでに写し直す。
+1つは速さ。結合の相手も、ビュワーで開くファイルも、たいてい共有フォルダーの上に
+ある。組み立てている間はキーを1つ変えるたびに全部を読み直すので、8ファイルなら
+8往復、共有が混んでいれば1回の下読みで何十秒も待たされる。
+
+もう1つが本題で、こちらのほうが重い ―― 読むために開くと、そのファイルは
+「使用中」になる。Windowsでは、誰かが開いているファイルは os.replace で差し替え
+られない。つまり、自分のビュワーで見ているせいで、自分の公開が失敗しうる。
+実際そうなっていた（SQLite3の出力を共有から直接開いていた）。写してから読めば、
+共有のファイルには一度も触らない。見ている間に公開されても、見ている中身は壊れない。
 
 写し方は形式で違う。
   CSV・TXT・固定長テキスト … 先頭だけを行の切れ目で切って写す（組み立てには十分）
   EXCEL・SQLite3・ACCESS   … 途中で切ると壊れるので、丸ごと。大きすぎるものは写さない
 
-写しはあくまで「組み立てを軽くするため」のもので、実行のときは使わない。
-本番は元のファイルを最初から最後まで読む ―― ここを取り違えると、静かに中途半端な
-ファイルが出来上がってしまう。呼び分けは navi_joinrun 側で分けてある。
+写しはあくまで「読むため」のもので、実行のときは使わない。本番は元のファイルを
+最初から最後まで読む ―― ここを取り違えると、静かに中途半端なファイルが出来上がって
+しまう。呼び分けは navi_joinrun 側で分けてある。
 
 app.py から分けてある。本体の状態は一切見ない（受け取るのはローカル領域の場所だけ）。
 """
@@ -39,7 +43,7 @@ def setup(local_root):
  LOCAL_ROOT=Path(local_root)
 
 def cache_dir():
- d=(LOCAL_ROOT or Path('.'))/'work'/'join-cache';d.mkdir(parents=True,exist_ok=True);return d
+ d=(LOCAL_ROOT or Path('.'))/'work'/'read-cache';d.mkdir(parents=True,exist_ok=True);return d
 
 def _key(path,st,want):
  """同じ元ファイルには同じ名前。大きさと更新日時も混ぜるので、差し替われば別物になる。
@@ -165,3 +169,34 @@ def clear():
   except Exception:pass
  log.info('JOIN_CACHE_CLEAR removed=%s',n)
  return n
+
+# 読むために写すときの上限。結合の組み立て（64MB）より大きく取ってある ――
+# あちらは速さのための写しなので、写さなくても困らない。こちらは「公開先を開かない」
+# ためのもので、写せないと公開が止まりうるので、もっと粘る値にしている。
+READ_COPY_BYTES=256*1024*1024
+
+def whole(path,limit=None):
+ """丸ごと写して、その場所を返す。写せなければ元の場所。(場所, 内訳) を返す。
+
+ 読むため専用。先頭だけの写しでは表として読めない（SQLite3もEXCELも途中で切ると
+ 壊れる）ので、形式によらず丸ごと写す道を分けてある。
+
+ 写せなかったときは元の場所を返す ―― そのときは公開先を直接開くことになるので、
+ あとで公開が「使用中」で失敗したときに繋がるよう、警告として残す。
+ """
+ src=Path(path);cap=int(limit or READ_COPY_BYTES)
+ try:size=src.stat().st_size
+ except Exception as e:
+  return src,{'ok':False,'mode':None,'note':f'読めませんでした: {e}'}
+ if size>cap:
+  log.warning('LOCAL_COPY_SKIPPED_TOO_BIG path=%s size=%s cap=%s '
+              '（写さずに直接開きます。この間、この公開先は差し替えられません）',src,size,cap)
+  return src,{'ok':False,'mode':None,'total':size,
+              'note':f'{_size(size)}あるので写していません。元のファイルを直接開きます'}
+ keep=globals()['WHOLE_BYTES']
+ try:
+  globals()['WHOLE_BYTES']=cap
+  local,info=sample(src,'sqlite3')      # 形式の別は見ない。丸ごとなら同じことをすればよい
+ finally:
+  globals()['WHOLE_BYTES']=keep
+ return (local or src),info
