@@ -136,6 +136,9 @@ def process_local_job(j,cfg,work,backup,trigger,job_index,total_jobs,say=None):
  # 中間CSVはUTF-8（BOM付き）で書く。読み手の推測順はcp932が先なので、
  # 何で書いたかを対象に持たせて渡す（推測に任せると、化けたまま通ることがある）。
  j['_intermediate_encoding']='utf-8-sig'
+ # 読込形式（詳細データ／集計表）はRNEの読み方。ここで作る中間CSVは必ず見出し1行なので、
+ # 集計表のまま持ち込まれると見出しを1行読み飛ばして列が全部ずれる。入口で揃えておく。
+ j['type']='詳細データ'
  kind=normalize_job_source(j.get('source'))
  # 使えないと分かっている取り決めで走り出さない。ここで断れば、公開先にも控えにも触らない。
  layout=recipe=None;src=None

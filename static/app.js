@@ -140,6 +140,28 @@ function renderAlsoFormats(){
 }
 function formatName(f){return {sqlite3:'SQLite3',txt:'TXT',csv:'CSV',xlsx:'EXCEL',accdb:'ACCESS'}[f]||f}
 function segmentHtml(segments){return (segments||[]).map(s=>s.var?`<span class="fname-var">${E(s.text)}</span>`:E(s.text)).join('')}
+/* 一覧の「管理名称」の下に出す短い説明。入力の種類で、意味を持つ項目が違う。
+     テーブル名 … SQLite3・ACCESSへ出すときだけ使う（CSVやEXCELでは使わない）
+     シート名   … RNEの読込シート（入力側）と、EXCELへ出すとき（出力側）
+     読込形式   … RNEの読み方。固定長テキストや結合には無い区別
+   関係のない項目を並べると、そこに設定としての意味があるように見えてしまう。
+   固定長テキストの行に「Page1」と出ていたのがこれで、シートという概念そのものが無い。
+   full=true では、短く切らずに全部を返す（マウスを当てたときの説明用）。 */
+/* その対象の「入力の名前」。並べ替えと検索が、RNE以外でも同じように効くようにする。 */
+function jobSourceName(j){
+ let src=j.source||'rne';
+ if(src==='text')return String(j.text_path||'').split(/[\\/]/).pop()||'';
+ if(src==='join'){let r=joinCache.find(x=>x.id===j.recipe_id);return r?r.name:''}
+ return j.rne||'';
+}
+function jobFormats(j){return [normalizeFormat(j.output_format),...(j.extra_formats||[]).map(normalizeFormat)]}
+function jobMetaCell(j,full){
+ let src=j.source||'rne',f=jobFormats(j),bits=[];
+ if(j.table&&f.some(x=>x==='sqlite3'||x==='accdb'))bits.push('表 '+j.table);
+ if(j.sheet&&(src==='rne'||f.includes('xlsx')))bits.push('シート '+j.sheet);
+ if(full&&src==='rne'&&j.type)bits.push('読込 '+j.type);
+ return bits.join(' / ');
+}
 function outputFileCell(j){
  // 変数扱いはバックエンドが実トークンの有無で判定した output_is_variable のみ。単に変数欄へ入力しただけでは変数バッジを出さない。
  if(j.output_is_variable){
@@ -147,7 +169,9 @@ function outputFileCell(j){
   let body=segs.length?segmentHtml(segs):E(j.output_file_preview||'(実行時に決定)');
   return `<div class="primarytext" title="${E(j.output_pattern||'')}"><span class="name-var-badge">変数</span>${body}</div><div class="subtext" title="${E(j.output_pattern||'')}">${E(j.output_pattern||'')} / ${E(formatName(j.output_format))}${alsoBadge(j)}</div>`;
  }
- return `<div class="primarytext">${E(j.output_file)}</div><div class="subtext">${E(formatName(j.output_format))}${alsoBadge(j)} / ${E(j.type)}</div>`;
+ // 読込形式（詳細データ／集計表）はRNEの読み方。テキストや結合には無い区別なので出さない。
+ let how=(j.source||'rne')==='rne'?` / ${E(j.type)}`:'';
+ return `<div class="primarytext">${E(j.output_file)}</div><div class="subtext">${E(formatName(j.output_format))}${alsoBadge(j)}${how}</div>`;
 }
 function alsoBadge(j){
  // 1回の実行で複数の形式が出る対象は、一覧の時点で分かるようにする。
@@ -155,7 +179,7 @@ function alsoBadge(j){
  if(!x.length)return '';
  return `<span class="also-badge" title="1回の抽出から同時に出します: ${E(x.map(formatName).join(' / '))}">＋${x.map(formatName).join('・')}</span>`;
 }function scheduleSummary(r){if(r.type==='daily')return `毎日 ${r.time}`;if(r.type==='weekdays')return `${(r.weekdays||[]).map(x=>'月火水木金土日'[x]).join('・')} ${r.time}`;if(r.type==='monthly')return `毎月 ${(r.month_days||[]).join(',')}日 ${r.time}`;if(r.type==='interval')return `${r.interval_minutes||60}分間隔`;if(r.type==='specific_dates')return `${(r.dates||[]).length}日指定 ${r.time}`;return ''}function typeName(t){return {daily:'毎日',weekdays:'曜日指定',monthly:'月日指定',interval:'一定間隔',specific_dates:'特定日'}[t]||t}
-function filtered(){let q=$('#search').value.trim().toLowerCase(),fe=$('#filter-enabled').value,fs=$('#filter-schedule').value,sort=$('#sort').value;let a=cfg.jobs.filter(j=>[j.name,j.rne,j.rne_path,j.output_file,j.output_folder,j.table,j.output_format,j.comment].join(' ').toLowerCase().includes(q)).filter(j=>fe==='all'||fe==='enabled'&&j.enabled||fe==='disabled'&&!j.enabled).filter(j=>fs==='all'||fs==='scheduled'&&(j.schedules||[]).some(r=>r.enabled)||fs==='manual'&&!(j.schedules||[]).some(r=>r.enabled));let key=j=>sort==='name'?j.name:sort==='rne'?j.rne:sort==='output'?(j.output_folder||''):sort==='schedule'?(j.schedules||[]).filter(r=>r.enabled).length:cfg.jobs.indexOf(j);a.sort((x,y)=>typeof key(x)==='number'?(key(x)-key(y))*sortDir:String(key(x)).localeCompare(String(key(y)),'ja')*sortDir);return a}
+function filtered(){let q=$('#search').value.trim().toLowerCase(),fe=$('#filter-enabled').value,fs=$('#filter-schedule').value,sort=$('#sort').value;let a=cfg.jobs.filter(j=>[j.name,j.rne,j.rne_path,j.text_path,jobSourceName(j),j.output_file,j.output_folder,j.table,j.output_format,j.comment].join(' ').toLowerCase().includes(q)).filter(j=>fe==='all'||fe==='enabled'&&j.enabled||fe==='disabled'&&!j.enabled).filter(j=>fs==='all'||fs==='scheduled'&&(j.schedules||[]).some(r=>r.enabled)||fs==='manual'&&!(j.schedules||[]).some(r=>r.enabled));let key=j=>sort==='name'?j.name:sort==='rne'?jobSourceName(j):sort==='output'?(j.output_folder||''):sort==='schedule'?(j.schedules||[]).filter(r=>r.enabled).length:cfg.jobs.indexOf(j);a.sort((x,y)=>typeof key(x)==='number'?(key(x)-key(y))*sortDir:String(key(x)).localeCompare(String(key(y)),'ja')*sortDir);return a}
 // 出力先リンク: 1回クリックでフォルダーを開き、2回で詳細（設定編集）を開く。
 // ブラウザは1回目のclickを先に配ってからdblclickを出すので、待たずに開くと必ずフォルダーが先に出てしまう。
 // そこで開く動作だけを DBLCLICK_WINDOW ぶん遅らせ、その間に2回目が来たら取り消して詳細へ回す。
@@ -279,7 +303,7 @@ if($('#bulk-apply'))$('#bulk-apply').onclick=async()=>{
  }catch(e){toast(e.message)}
  finally{hideWaiting()}
 };
-function render(){let a=filtered(),body=$('#jobs-body');let canReorder=(!$('#search').value.trim()&&$('#filter-enabled').value==='all'&&$('#filter-schedule').value==='all');body.innerHTML=a.map(j=>`<tr data-id="${j.id}" draggable="${canReorder}" class="${canReorder?'reorderable':''}"><td class="c-check"><span class="drag-handle" title="${canReorder?'ドラッグで並べ替え（ドロップ後は登録順表示へ戻ります）':'並べ替えは検索・絞り込み解除時に有効です'}">⋮⋮</span><input class="rowcheck" type="checkbox"></td><td><button type="button" class="state ${j.enabled?'on':'off'}" title="クリックで${j.enabled?'無効':'有効'}にします">${j.enabled?'有効':'無効'}</button></td><td><div class="primarytext" title="${E(j.name)}">${E(j.name)}</div><div class="subtext">${E(j.table)} / ${E(j.sheet)}</div>${j.comment?`<div class="job-comment" title="${E(j.comment)}"><i class="jc-ic">用途</i><span>${E(j.comment)}</span></div>`:''}</td><td>${sourceCell(j)}</td><td>${outputFileCell(j)}</td><td><a class="output-link" href="#" data-path="${E(j.output_folder||cfg.default_output_folder)}" title="出力先を開く">${E(j.output_folder||cfg.default_output_folder)}</a></td><td class="c-progress">${rowProgressCell(j)}</td><td><div class="rowactions"><button class="run-one" title="実行">実行</button><button class="edit secondary" title="詳細">詳細</button><button class="copy secondary" title="複製">複製</button><button class="delete danger" title="削除">削除</button></div></td></tr>`).join('');paintRowProgress();applyScheduleCells();updateSelCount();$('#empty').hidden=a.length>0;$('#summary').textContent=`表示 ${a.length}件 / 登録 ${cfg.jobs.length}件 / 有効 ${cfg.jobs.filter(j=>j.enabled).length}件 / 自動実行ルール ${cfg.jobs.flatMap(j=>j.schedules||[]).filter(r=>r.enabled).length}件`;body.querySelectorAll('tr').forEach(tr=>{let j=cfg.jobs.find(x=>x.id===tr.dataset.id);tr.onclick=e=>{if(!e.target.closest('button,a,input')){tr.classList.toggle('selected');let cb=tr.querySelector('.rowcheck');if(cb)cb.checked=tr.classList.contains('selected');updateSelCount()}};tr.querySelector('.rowcheck').onchange=e=>{tr.classList.toggle('selected',e.target.checked);updateSelCount()};tr.ondblclick=e=>{if(!e.target.closest('button,input,select,a'))openEditor(j)};tr.querySelector('.edit').onclick=()=>openEditor(j);let st=tr.querySelector('.state');if(st)st.onclick=e=>{e.stopPropagation();setJobEnabled(j.id,!j.enabled)};tr.querySelector('.run-one').onclick=()=>runJobs([j.id]);tr.querySelector('.copy').onclick=()=>{let n=structuredClone(j);n.id=uid();n.name+=' コピー';n.schedules=(n.schedules||[]).map(r=>({...r,id:uid(),enabled:false}));cfg.jobs.splice(cfg.jobs.indexOf(j)+1,0,n);render();dirty()};tr.querySelector('.delete').onclick=()=>deleteJob(j);let l=tr.querySelector('.output-link');if(l)bindOutputLink(l,j);bindRowDnD(tr);tr.oncontextmenu=e=>{if(e.target.closest("a.output-link"))return;e.preventDefault();showJobContextMenu(e,j,tr)}})}
+function render(){let a=filtered(),body=$('#jobs-body');let canReorder=(!$('#search').value.trim()&&$('#filter-enabled').value==='all'&&$('#filter-schedule').value==='all');body.innerHTML=a.map(j=>`<tr data-id="${j.id}" draggable="${canReorder}" class="${canReorder?'reorderable':''}"><td class="c-check"><span class="drag-handle" title="${canReorder?'ドラッグで並べ替え（ドロップ後は登録順表示へ戻ります）':'並べ替えは検索・絞り込み解除時に有効です'}">⋮⋮</span><input class="rowcheck" type="checkbox"></td><td><button type="button" class="state ${j.enabled?'on':'off'}" title="クリックで${j.enabled?'無効':'有効'}にします">${j.enabled?'有効':'無効'}</button></td><td><div class="primarytext" title="${E(j.name)}">${E(j.name)}</div><div class="subtext" title="${E(jobMetaCell(j,true))}">${E(jobMetaCell(j))}</div>${j.comment?`<div class="job-comment" title="${E(j.comment)}"><i class="jc-ic">用途</i><span>${E(j.comment)}</span></div>`:''}</td><td>${sourceCell(j)}</td><td>${outputFileCell(j)}</td><td><a class="output-link" href="#" data-path="${E(j.output_folder||cfg.default_output_folder)}" title="出力先を開く">${E(j.output_folder||cfg.default_output_folder)}</a></td><td class="c-progress">${rowProgressCell(j)}</td><td><div class="rowactions"><button class="run-one" title="実行">実行</button><button class="edit secondary" title="詳細">詳細</button><button class="copy secondary" title="複製">複製</button><button class="delete danger" title="削除">削除</button></div></td></tr>`).join('');paintRowProgress();applyScheduleCells();updateSelCount();$('#empty').hidden=a.length>0;$('#summary').textContent=`表示 ${a.length}件 / 登録 ${cfg.jobs.length}件 / 有効 ${cfg.jobs.filter(j=>j.enabled).length}件 / 自動実行ルール ${cfg.jobs.flatMap(j=>j.schedules||[]).filter(r=>r.enabled).length}件`;body.querySelectorAll('tr').forEach(tr=>{let j=cfg.jobs.find(x=>x.id===tr.dataset.id);tr.onclick=e=>{if(!e.target.closest('button,a,input')){tr.classList.toggle('selected');let cb=tr.querySelector('.rowcheck');if(cb)cb.checked=tr.classList.contains('selected');updateSelCount()}};tr.querySelector('.rowcheck').onchange=e=>{tr.classList.toggle('selected',e.target.checked);updateSelCount()};tr.ondblclick=e=>{if(!e.target.closest('button,input,select,a'))openEditor(j)};tr.querySelector('.edit').onclick=()=>openEditor(j);let st=tr.querySelector('.state');if(st)st.onclick=e=>{e.stopPropagation();setJobEnabled(j.id,!j.enabled)};tr.querySelector('.run-one').onclick=()=>runJobs([j.id]);tr.querySelector('.copy').onclick=()=>{let n=structuredClone(j);n.id=uid();n.name+=' コピー';n.schedules=(n.schedules||[]).map(r=>({...r,id:uid(),enabled:false}));cfg.jobs.splice(cfg.jobs.indexOf(j)+1,0,n);render();dirty()};tr.querySelector('.delete').onclick=()=>deleteJob(j);let l=tr.querySelector('.output-link');if(l)bindOutputLink(l,j);bindRowDnD(tr);tr.oncontextmenu=e=>{if(e.target.closest("a.output-link"))return;e.preventDefault();showJobContextMenu(e,j,tr)}})}
 /* v1.9.0: 一覧のドラッグ&ドロップ並べ替え（問い合わせ順に反映）と管理単位の削除 */
 let dragSrcId=null,dragGhost=null,dragTargetId=null,dragAfter=false,dragImage=null;
 function clearDragVisuals(){
@@ -337,7 +361,15 @@ function fillSuggestions(){let sets={names:cfg.jobs.map(j=>j.name),rne:cfg.jobs.
 function rulesRender(){let box=$('#m-rules');box.innerHTML=editing.schedules.length?editing.schedules.map(r=>`<div class="rule-row" data-id="${r.id}"><input class="rule-toggle" type="checkbox" ${r.enabled?'checked':''}><b>${E(r.name)}</b><span class="rule-type">${typeName(r.type)}</span><span class="rule-summary">${E(scheduleSummary(r))}</span><button class="rule-edit secondary" type="button">編集</button><button class="rule-delete danger" type="button">削除</button></div>`).join(''):'<div class="empty">自動実行ルールはありません。手動実行のみです。</div>';box.querySelectorAll('.rule-row').forEach(el=>{let r=editing.schedules.find(x=>x.id===el.dataset.id);el.querySelector('.rule-toggle').onchange=e=>{r.enabled=e.target.checked;dirty()};el.querySelector('.rule-edit').onclick=()=>openRule(r);el.querySelector('.rule-delete').onclick=()=>{editing.schedules=editing.schedules.filter(x=>x.id!==r.id);rulesRender()}});updateRuleCount()}
 let contextJob=null,contextRow=null;
 function hideJobContextMenu(){let m=$('#job-context-menu');if(m)m.hidden=true;contextJob=null;contextRow=null}
-function showJobContextMenu(e,j,tr){let m=$('#job-context-menu');if(!m)return;contextJob=j;contextRow=tr;m.hidden=false;let ids=contextTargets(),many=ids.length>1;if($('#jcm-name'))$('#jcm-name').textContent=many?`選択した ${ids.length}件`:(j.name||'');if($('#jcm-rne'))$('#jcm-rne').textContent=many?'まとめて実行できます':(j.rne||'');let rb=m.querySelector('[data-action="run"]');if(rb)rb.textContent=many?`選択した ${ids.length}件を実行`:'実行';let tb=m.querySelector('[data-action="toggle"]');if(tb)tb.textContent=(many?`選択した ${ids.length}件を`:'')+(j.enabled?'無効にする':'有効にする');let x=Math.min(e.clientX,innerWidth-m.offsetWidth-8),y=Math.min(e.clientY,innerHeight-m.offsetHeight-8);m.style.left=Math.max(8,x)+'px';m.style.top=Math.max(8,y)+'px'}
+function showJobContextMenu(e,j,tr){let m=$('#job-context-menu');if(!m)return;contextJob=j;contextRow=tr;m.hidden=false;let ids=contextTargets(),many=ids.length>1;if($('#jcm-name'))$('#jcm-name').textContent=many?`選択した ${ids.length}件`:(j.name||'');if($('#jcm-rne'))$('#jcm-rne').textContent=many?'まとめて実行できます':(jobSourceName(j)||'');let rb=m.querySelector('[data-action="run"]');if(rb)rb.textContent=many?`選択した ${ids.length}件を実行`:'実行';let tb=m.querySelector('[data-action="toggle"]');if(tb)tb.textContent=(many?`選択した ${ids.length}件を`:'')+(j.enabled?'無効にする':'有効にする');
+ // 入力の種類で、意味を持つ操作と呼び名が変わる。RNEを調べる道具は、RNEのときだけ出す
+ // （押しても何も起きない項目を残すと、押せるのに効かない、を作ってしまう）。
+ let src=j.source||'rne',isRne=src==='rne';
+ m.querySelectorAll('[data-action="inspect"],[data-action="inspect-now"]').forEach(b=>b.hidden=!isRne);
+ let ob=m.querySelector('[data-action="open-rne"]');
+ if(ob){ob.textContent=isRne?'RNEのフォルダー':src==='text'?'テキストのフォルダー':'結合マスタを開く';ob.hidden=false}
+ let cb=m.querySelector('[data-action="copy-rne"]');
+ if(cb)cb.textContent=isRne?'RNEパス':src==='text'?'テキストのパス':'結合マスタ名';let x=Math.min(e.clientX,innerWidth-m.offsetWidth-8),y=Math.min(e.clientY,innerHeight-m.offsetHeight-8);m.style.left=Math.max(8,x)+'px';m.style.top=Math.max(8,y)+'px'}
 async function copyTextValue(v,label){try{await navigator.clipboard.writeText(v||'');toast(label+'をコピーしました')}catch{toast('クリップボードへコピーできませんでした')}}
 async function openJobOutput(j){try{let r=await fetch('/api/open-path',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:j.output_folder||cfg.default_output_folder})}),d=await r.json();toast(r.ok&&d.ok?'出力先を開きました':d.error||'出力先を開けませんでした')}catch{toast('出力先を開けませんでした')}}
 function duplicateJob(j){let n=structuredClone(j);n.id=uid();n.name+=' コピー';n.schedules=(n.schedules||[]).map(r=>({...r,id:uid(),enabled:false}));cfg.jobs.splice(cfg.jobs.indexOf(j)+1,0,n);render();dirty()}
@@ -376,10 +408,20 @@ if($('#job-context-menu')){$('#job-context-menu').onclick=e=>{
  else if(act==='inspect-now')inspectNow(j);
  else if(act==='run')runJobs(ids);
  else if(act==='open-output')openJobOutput(j);
- else if(act==='open-rne')openFolderPath(jobFolder(j.rne_path||j.rne)||cfg.rne_folder,'RNEのフォルダー');
+ else if(act==='open-rne'){
+  // 開く先は入力の種類しだい。結合は複数のファイルを読むので、繋ぎ方の画面へ送る。
+  let src=j.source||'rne';
+  if(src==='join')document.querySelector('[data-p="joins"]')?.click();
+  else if(src==='text')openFolderPath(jobFolder(j.text_path)||cfg.text_folder,'テキストのフォルダー');
+  else openFolderPath(jobFolder(j.rne_path||j.rne)||cfg.rne_folder,'RNEのフォルダー');
+ }
  else if(act==='log')showJobLog(j);
  else if(act==='viewer'){document.querySelector('[data-p="viewer"]')?.click();setTimeout(()=>{let sel=$('#viewer-job');if(sel){sel.value=j.id;sel.dispatchEvent(new Event('change'))}},100)}
- else if(act==='copy-rne')copyTextValue(j.rne_path||j.rne,'RNEパス');
+ else if(act==='copy-rne'){
+  let src=j.source||'rne';
+  copyTextValue(src==='text'?(j.text_path||''):src==='join'?jobSourceName(j):(j.rne_path||j.rne),
+                src==='text'?'テキストのパス':src==='join'?'結合マスタ名':'RNEパス');
+ }
  else if(act==='copy-output')copyTextValue(j.output_folder||cfg.default_output_folder,'出力先');
  else if(act==='copy-file')copyTextValue(j.output_file||'','出力ファイル名');
  else if(act==='move-up')moveJob(j,-1);

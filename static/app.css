@@ -1775,6 +1775,9 @@ body:has(.autosave-state.is-saving) .autosave-mark{background:#0b8ea8;box-shadow
 
 /* V1.56: 右クリックの操作盤。どの対象への操作かを先頭で言い、種類ごとにまとめる。 */
 .job-context-menu{width:236px;max-height:min(86vh,620px);overflow:auto}
+/* メニューの項目は display を指定しているので、hidden 属性だけでは消えない。
+   入力の種類で意味を持たない操作（RNEを調べる等）は、確実に消す。 */
+.job-context-menu button[hidden]{display:none!important}
 .jcm-head{display:grid;gap:1px;padding:7px 9px 8px;margin:-6px -6px 5px;border-bottom:1px solid #e5ecef;background:#f4f9fa;border-radius:9px 9px 0 0}
 .jcm-head b{font-size:12px;color:#17384e;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .jcm-head span{font:10px Consolas,monospace;color:#7b8f98;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
