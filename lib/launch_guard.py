@@ -9,7 +9,7 @@ import time
 import urllib.request
 from pathlib import Path
 
-BASE = Path(__file__).resolve().parent
+BASE = Path(__file__).resolve().parent.parent
 URL = 'http://127.0.0.1:5031'
 # VBSランチャーが起動待ちモーダル(loading.html)を開き、準備完了で自動的にアプリへ遷移する。
 # その場合はサーバー側でブラウザーを二重に開かない（NAVI_BROWSER_BY_VBS=1 で抑止）。

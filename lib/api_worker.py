@@ -9,6 +9,12 @@ os.environ['PYTHONDONTWRITEBYTECODE']='0'
 # appの取り込み前に立てる必要がある。ワーカーは抽出処理だけを行うためHTTP層(Flask)を読み込まない。
 os.environ['NAVI_WORKER_MODE']='1'
 
+# 本体（app.py）は1つ上、いっしょに使う部品はこの lib/ にある。
+# ワーカーは別プロセスなので、探し先は自分で用意する必要がある。
+_here=Path(__file__).resolve().parent
+sys.path.insert(0,str(_here))
+sys.path.insert(0,str(_here.parent))
+
 def atomic_json(path,data):
     p=Path(path);p.parent.mkdir(parents=True,exist_ok=True);tmp=p.with_suffix(p.suffix+'.tmp')
     tmp.write_text(json.dumps(data,ensure_ascii=False),encoding='utf-8');os.replace(tmp,p)

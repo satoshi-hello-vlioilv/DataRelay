@@ -1,6 +1,6 @@
 ﻿import json,os,subprocess,sys,time,urllib.request
 from pathlib import Path
-BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; INFO=LOCAL_ROOT/'runtime'/'app_instance.json'; URL='http://127.0.0.1:5031'
+BASE=Path(__file__).resolve().parent.parent; LOCAL_ROOT=Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'SymfoNaviDataHub'; INFO=LOCAL_ROOT/'runtime'/'app_instance.json'; URL='http://127.0.0.1:5031'
 def req(path,method='GET'):
  try:
   with urllib.request.urlopen(urllib.request.Request(URL+path,method=method),timeout=1.2) as r:return r.status,r.read().decode()

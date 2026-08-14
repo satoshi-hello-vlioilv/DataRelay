@@ -1,5 +1,26 @@
 ﻿SymfoNavi Data Hub 現行フォルダ・ファイル構成
 
+【置き場所の決まり】(v1.84.0)
+
+  直下に置くのは「起動するもの」だけです。
+  ダブルクリックしたり、コマンドから叩いたりするものが直下にあり、
+  アプリの中身は lib/ にまとめてあります。
+
+  <直下>
+    start.vbs / start.bat ... Windowsからの起動
+    stop_app.bat          ... 停止（lib/process_manager.py を呼びます）
+    start_app.py          ... Pythonからの起動（lib/launch_guard.py を呼びます）
+    app.py                ... アプリ本体（python app.py で直接も起動できます）
+    loading.html          ... 起動待ちの画面（start.vbs が読みます）
+    templates/ static/    ... 画面
+    config/ Config/       ... 設定と接続情報
+    assets/               ... 付属ファイル
+
+  <lib/>
+    アプリの中身です。取り込むときの名前は分ける前と同じで、
+    app.py と start_app.py が起動時に lib/ を探し先へ足しています。
+    そのため、コードの import は1行も変わっていません。
+
 【各ファイルの役割】
 
 ■ start_app.py

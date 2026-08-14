@@ -343,7 +343,7 @@ Function SourceVersion()
     On Error Resume Next
     ' 版は navi_version.py にある（v1.64.0で app.py から分けた）。
     ' 古い配置でも起動できるよう、無ければ app.py を見に行く。
-    ap = fso.BuildPath(scriptDir, "navi_version.py")
+    ap = fso.BuildPath(fso.BuildPath(scriptDir, "lib"), "navi_version.py")
     If Not fso.FileExists(ap) Then ap = fso.BuildPath(scriptDir, "app.py")
     If Not fso.FileExists(ap) Then Exit Function
     Set si = CreateObject("ADODB.Stream")

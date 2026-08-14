@@ -8,5 +8,5 @@ if not defined PY (
   pause
   exit /b 1
 )
-%PY% process_manager.py
+%PY% lib\process_manager.py
 pause

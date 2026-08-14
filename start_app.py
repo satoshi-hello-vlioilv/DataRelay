@@ -10,6 +10,10 @@ os.environ["NAVI_LOCAL_ROOT"] = str(_local_root)
 os.environ["PYTHONPYCACHEPREFIX"] = str(_pycache)
 os.environ["PYTHONDONTWRITEBYTECODE"] = "0"
 
+# 起動の見張り役も lib/ にある（直下は起動するファイルだけ）。
+import sys
+sys.path.insert(0,str(Path(__file__).resolve().parent/'lib'))
+
 from launch_guard import main
 if __name__ == '__main__':
     raise SystemExit(main())

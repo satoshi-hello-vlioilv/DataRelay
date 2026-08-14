@@ -3,6 +3,12 @@ import atexit, calendar, configparser, contextlib, copy, csv, gc, json, logging,
 from collections import deque
 from datetime import datetime, timedelta, date
 from pathlib import Path
+
+# アプリの中身は lib/ に置いてある。直下に残すのは起動するファイルだけ、という
+# 分け方にしてある（app.py と start_app.py）。取り込む名前は分ける前と同じなので、
+# ここで lib/ を探し先へ足しておけば、以降の import は1行も変わらない。
+sys.path.insert(0,str(Path(__file__).resolve().parent/'lib'))
+
 # 並列実行のワーカー(api_worker.py)は抽出処理だけを行い、HTTP層は一切使わない。
 # それでも従来は app.py の取り込みに引きずられて Flask まで読み込んでおり、
 # 1ジョブごとに約90msの無駄な起動時間が発生していた（ジョブ数に比例して積み上がる）。
@@ -2935,7 +2941,7 @@ def run_inspect_worker(job,cfg,user,pw,server,want,timeout=180):
   env['NAVI_WORKER_SPAWN_AT']=repr(time.time())
   flags=getattr(subprocess,'CREATE_NO_WINDOW',0)
   t=time.perf_counter()
-  proc=subprocess.Popen([sys.executable,str(BASE/'api_worker.py'),str(pp)],cwd=str(BASE),env=env,creationflags=flags)
+  proc=subprocess.Popen([sys.executable,str(BASE/'lib'/'api_worker.py'),str(pp)],cwd=str(BASE),env=env,creationflags=flags)
   try:rc=proc.wait(timeout=timeout)
   except subprocess.TimeoutExpired:
    proc.kill();log.warning('INSPECT_WORKER_TIMEOUT job=%s timeout=%ss',job.get('name'),timeout)
@@ -3811,7 +3817,7 @@ def run_api_process_batch(jobs,cfg,user,pw,server,dde_work,backup,max_lines,trig
   payload_path.write_text(json.dumps(payload,ensure_ascii=False),encoding='utf-8')
   env=os.environ.copy();env['NAVI_WORKER_LINE']=line;env['NAVI_WORKER_STATUS']=str(status_path);env['NAVI_WORKER_RESULT']=str(result_path);env['NAVI_WORKER_SPAWN_AT']=repr(time.time())
   flags=getattr(subprocess,'CREATE_NO_WINDOW',0)
-  proc=subprocess.Popen([sys.executable,str(BASE/'api_worker.py'),str(payload_path)],cwd=str(BASE),env=env,creationflags=flags)
+  proc=subprocess.Popen([sys.executable,str(BASE/'lib'/'api_worker.py'),str(payload_path)],cwd=str(BASE),env=env,creationflags=flags)
   active[slot]={'proc':proc,'job':job,'index':index,'line':line,'status':status_path,'result':result_path,'started':time.perf_counter()}
   with active_workers_lock:active_workers[slot]=proc
   update_parallel_line(line,job=job['name'],job_id=job['id'],state='起動',percent=2,detail=f'予約 {index}/{total} / PID {proc.pid}',queue_index=index,slot=slot,started_at=datetime.now().isoformat(timespec='seconds'))
@@ -4675,7 +4681,7 @@ def _spawn_racers(job,cfg,user,pw,server,work,jobs_spec,timeout=1800,stop_when=N
   env['NAVI_WORKER_STATUS']=str(d/'status.json')
   env['NAVI_WORKER_SPAWN_AT']=repr(time.time())
   flags=getattr(subprocess,'CREATE_NO_WINDOW',0)
-  procs.append({'spec':spec,'proc':subprocess.Popen([sys.executable,str(BASE/'api_worker.py'),str(pp)],cwd=str(BASE),env=env,creationflags=flags),
+  procs.append({'spec':spec,'proc':subprocess.Popen([sys.executable,str(BASE/'lib'/'api_worker.py'),str(pp)],cwd=str(BASE),env=env,creationflags=flags),
                 'result':d/'result.json','status':d/'status.json','done':False})
  done={};order=0
  while any(not p['done'] for p in procs):
