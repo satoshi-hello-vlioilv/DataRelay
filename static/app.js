@@ -5,7 +5,9 @@ let cfg,editing=null,editingRule=null,sortDir=1,scheduleInfo={},rowLive={},rowQu
 // 読取マスタは一覧の描画（sourceCell）からも読むので、ここで先に用意する。
 let layoutCache=[],layoutMeta={encodings:[],units:[],trims:[],types:[],stamp_formats:[],max_scale:9,date_format_default:'YYYYMMDD',datetime_format_default:'YYYYMMDDHHMMSS',type_formats:{}},layEditing=null,laySearch='';
 let joinCache=[],joinMeta={types:[],formats:[],layouts:[],max_sources:8},jnEditing=null,jnSearch='',
-    jnProbe={},jnPreviewTimer=null,jnColMode='auto';const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)],E=s=>String(s??'').replace(/[&<>"']/g,x=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[x]));const uid=()=>crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random();function toast(t){$('#toast').textContent=t;$('#toast').style.display='block';setTimeout(()=>$('#toast').style.display='none',2500)}/* 設定は変えた瞬間に保存する。保存ボタンの押し忘れで、画面に見えている設定と
+    jnProbe={},jnPreviewTimer=null,jnColMode='auto',
+    jnCandidates=[],jnCandLoaded=false,jnPickFor=-1,jnPickQ='',jnPickIdx=0,
+    jnMode={},jnHints={},jnHintBusy={},jnHintOpen={};const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)],E=s=>String(s??'').replace(/[&<>"']/g,x=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[x]));const uid=()=>crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random();function toast(t){$('#toast').textContent=t;$('#toast').style.display='block';setTimeout(()=>$('#toast').style.display='none',2500)}/* 設定は変えた瞬間に保存する。保存ボタンの押し忘れで、画面に見えている設定と
    実際に使われる設定が食い違うことがあったため、押す操作そのものを無くした。 */
 let saveTimer=null,saveSeq=0,saveRetry=0;
 function saveState(text,kind){let e=$('#dirty');if(e){e.textContent=text;e.className='autosave-state '+(kind||'')}}
@@ -3398,6 +3400,111 @@ function jnRenderList(){
   +(x.used_by&&x.used_by.length?`<em>${x.used_by.length}件の対象が使用中</em>`:'')+'</button>').join('');
  $$('#jn-list .lay-item').forEach(b=>b.onclick=()=>jnOpen(joinCache.find(x=>x.id===b.dataset.id)));
 }
+/* ---- 繋ぐ相手を「選ぶ」 ----------------------------------------------------
+   場所を手で打たせるのは、いちばん間違えやすく、いちばん確かめにくい。打ち間違えても
+   画面は何も言わず、実行して初めて「ファイルがありません」になる。
+   出力先はこちらが知っているのだから、まず候補として出す ―― 打つのは、そこに無いものを
+   指したいときだけでよい。
+
+   ただし「候補しか選べない」にはしない。共有の受領ファイルなど、このアプリが作って
+   いないものも繋ぐ。そこで2つの入れ方を並べず、切り替えにした。画面に出ているのは
+   常に1つだけなので、見るものは増えない。 */
+async function jnLoadCandidates(force){
+ if(jnCandLoaded&&!force)return jnCandidates;
+ try{
+  let d=await fetch('/api/join-candidates',{cache:'no-store'}).then(r=>r.json());
+  jnCandidates=d.items||[];jnCandLoaded=true;
+ }catch{jnCandidates=[]}
+ return jnCandidates;
+}
+function jnBytes(n){
+ if(n==null)return '';
+ if(n<1024)return n+'B';
+ if(n<1048576)return (n/1024).toFixed(0)+'KB';
+ return (n/1048576).toFixed(n<10485760?1:0)+'MB';
+}
+function jnWhen(t){
+ if(!t)return '';
+ let d=new Date(t*1000),now=new Date(),ms=now-d;
+ if(ms<3600e3)return Math.max(1,Math.round(ms/60e3))+'分前';
+ if(ms<86400e3)return Math.round(ms/3600e3)+'時間前';
+ if(ms<7*86400e3)return Math.round(ms/86400e3)+'日前';
+ return `${d.getMonth()+1}/${d.getDate()}`;
+}
+/* いま入っている場所が候補のどれかなら、その候補。無ければ null。
+   これがあるので、直接入力で打った場所でも候補側に切り替えれば選択済みに見える。 */
+function jnCandOf(path){
+ let v=String(path||'').trim().toLowerCase();
+ if(!v)return null;
+ return jnCandidates.find(x=>String(x.path).toLowerCase()===v)||null;
+}
+/* そのファイルの入れ方。開いた時点で決める ―― 手で打った場所なら直接入力で開く。
+   自分が打ったものが別の見た目で出てくると、入れた場所が消えたのかと思う。
+
+   見分けるのは「このアプリが作るファイルか」。ほかの結合マスタが使っている場所も
+   一覧には出すが（別の繋ぎ方でも使い回せる）、それは開き方を変える理由にはしない
+   ―― 1回保存しただけで、手で打った場所まで候補側で開くようになってしまう。 */
+function jnModeOf(i){
+ if(jnMode[i])return jnMode[i];
+ let p=jnEditing&&jnEditing.sources[i]&&jnEditing.sources[i].path;
+ if(!p)return 'pick';
+ let c=jnCandOf(p);
+ return (c&&c.role!=='recipe')?'pick':'manual';
+}
+function jnPickList(){
+ let q=jnPickQ.trim().toLowerCase();
+ let items=jnCandidates.filter(x=>!q||[x.name,x.job,x.path].join(' ').toLowerCase().includes(q));
+ return items.slice(0,120);
+}
+function jnRenderPick(){
+ let box=$('#jn-pick-list');if(!box)return;
+ let items=jnPickList(),cur=jnPickFor>=0?String(jnEditing.sources[jnPickFor].path||'').toLowerCase():'';
+ if(!items.length){
+  box.innerHTML='<p class="jn-pick-none">'+(jnPickQ?'見つかりませんでした。「直接入力する」で場所を打てます。'
+   :'候補がありません。対象ファイルを1回実行すると、その出力先がここに並びます。')+'</p>';
+ }else{
+  let wasMissing=false;
+  box.innerHTML=items.map((x,n)=>{
+   let head='';
+   if(!x.exists&&!wasMissing){wasMissing=true;head='<div class="jn-pick-sep">まだ作られていません（次の実行で出来ます）</div>'}
+   return head+`<button type="button" class="jn-pick-item${n===jnPickIdx?' on':''}${x.exists?'':' is-missing'}${String(x.path).toLowerCase()===cur?' is-cur':''}" data-n="${n}">`
+    +`<b>${E(x.name)}</b>`
+    +`<span class="jn-pick-meta"><i class="jn-fmt">${E((x.format||'').toUpperCase())}</i>`
+    +(x.job?`<em>${E(x.job)}</em>`:'')
+    +(x.exists?`<span>${E(jnBytes(x.size))} ・ ${E(jnWhen(x.mtime))}</span>`:'<span class="is-ng">まだありません</span>')
+    +`</span><small title="${E(x.path)}">${E(x.path)}</small></button>`;
+  }).join('');
+ }
+ $$('#jn-pick-list .jn-pick-item').forEach(b=>b.onclick=()=>jnPickChoose(Number(b.dataset.n)));
+ let note=$('#jn-pick-note');
+ if(note)note.textContent=`${items.length}件`+(jnCandidates.length>items.length?` / 全${jnCandidates.length}件`:'');
+ let on=box.querySelector('.jn-pick-item.on');if(on)on.scrollIntoView({block:'nearest'});
+}
+async function jnOpenPick(i,anchor){
+ jnPickFor=i;jnPickQ='';jnPickIdx=0;
+ let pop=$('#jn-pick');if(!pop)return;
+ pop.hidden=false;
+ $('#jn-pick-q').value='';
+ // 押したところの真下へ出す。画面の下や右にはみ出すときだけ寄せる。
+ let r=anchor.getBoundingClientRect(),w=Math.max(r.width,340);
+ pop.style.width=w+'px';
+ pop.style.left=Math.max(8,Math.min(r.left,window.innerWidth-w-8))+'px';
+ pop.style.top=Math.min(r.bottom+6,window.innerHeight-120)+'px';
+ $('#jn-pick-q').focus();
+ jnRenderPick();
+ await jnLoadCandidates(!jnCandidates.length);
+ jnRenderPick();
+}
+function jnClosePick(){let p=$('#jn-pick');if(p)p.hidden=true;jnPickFor=-1}
+function jnPickChoose(n){
+ let x=jnPickList()[n];if(!x||jnPickFor<0)return;
+ let i=jnPickFor,s=jnEditing.sources[i];
+ s.path=x.path;
+ if(x.format&&x.format!=='fixed')s.format=x.format;
+ s.table='';s.sheet='';
+ jnMode[i]='pick';delete jnHints[i];delete jnHints[i-1];
+ jnClosePick();jnRenderFlow();jnProbeSource(i);
+}
 /* ---- 1枚＝1ファイル ---- */
 function jnCardHtml(s,i){
  let p=jnProbe[i]||{};
@@ -3410,13 +3517,27 @@ function jnCardHtml(s,i){
  else if(s.format==='fixed')
   extra=`<select class="jn-layout"><option value="">読取マスタを選ぶ</option>`
    +joinMeta.layouts.map(l=>`<option value="${E(l.id)}"${l.id===s.layout_id?' selected':''}>${E(l.name)}</option>`).join('')+`</select>`;
+ // 先頭だけを写して読んでいるときは、件数もその範囲の数字。そう言わずに数字だけ出すと、
+ // 5万行のファイルが4千行に見える。数字は、どこまで読んだかとセットでなければ嘘になる。
  let stat=p.error?`<span class="is-ng">${E(p.error)}</span>`
-  :p.columns?`<span><b>${p.rows==null?'—':Number(p.rows).toLocaleString()}</b>行</span><span><b>${p.columns.length}</b>列</span>`
+  :p.columns?`<span><b>${p.rows==null?'—':Number(p.rows).toLocaleString()}</b>行${p.partial?'（読んだぶん）':''}</span><span><b>${p.columns.length}</b>列</span>`
+   +(p.copy&&p.copy.ok?`<i class="jn-local${p.partial?' is-part':''}" title="${E(p.copy.note||'')}">${p.partial?'先頭だけローカル':'ローカル'}</i>`:'')
   :'<span>ファイルを選ぶと列が出ます</span>';
+ let mode=jnModeOf(i),cand=jnCandOf(s.path);
+ // 入れ方は2つあるが、画面に出るのは常に片方だけ。並べて置くと、どちらが効いているのかを
+ // 毎回読み解くことになる ―― それが認知の負荷そのものなので、切り替えにしている。
+ let picker=mode==='pick'
+  ? `<button type="button" class="jn-pick-btn${s.path?'':' is-empty'}">`
+    +(s.path?`<b>${E(jnBase(s.path))}</b>`+(cand&&cand.job?`<span>${E(cand.job)}</span>`:'<span>一覧に無い場所</span>')
+            :'<b>ファイルを選ぶ</b><span>作ったファイルから選べます</span>')
+    +`<i>▾</i></button>`
+  : `<input class="jn-path" value="${E(s.path)}" placeholder="例: .\\output\\juchu.csv">`;
  return `<div class="jn-card" data-i="${i}">`
   +`<div class="jn-card-head"><i class="jn-alias">${E(s.alias)}</i><b title="${E(s.path)}">${E(jnBase(s.path)||'ファイル'+(i+1))}</b>`
   +(jnEditing.sources.length>2?'<button type="button" class="jn-card-del" title="このファイルを外す">×</button>':'')+`</div>`
-  +`<input class="jn-path" value="${E(s.path)}" placeholder="例: .\\output\\juchu.csv">`
+  +`<div class="jn-how"><button type="button" class="${mode==='pick'?'on':''}" data-how="pick">候補から選ぶ</button>`
+  +`<button type="button" class="${mode==='manual'?'on':''}" data-how="manual">直接入力</button></div>`
+  +picker
   +`<div class="jn-card-extra"><select class="jn-format">`
   +joinMeta.formats.map(f=>`<option value="${E(f.value)}"${f.value===s.format?' selected':''}>${E(f.label)}</option>`).join('')
   +`</select>${extra}</div>`
@@ -3441,11 +3562,49 @@ function jnLinkHtml(j,i){
  return `<div class="jn-link" data-i="${i}">`
   +`<div class="jn-link-head">${E(jnEditing.sources[i].alias)} と ${E(jnEditing.sources[i+1].alias)} を繋ぐ</div>`
   +`<div class="jn-types">`+joinMeta.types.map(t=>`<button type="button" class="${t.value===j.type?'on':''}" data-type="${E(t.value)}" title="${E(t.note)}">${E(t.label)}</button>`).join('')+`</div>`
+  +jnHintHtml(i)
   +(j.keys||[]).map((k,n)=>`<div class="jn-key" data-n="${n}"><select class="jn-key-l">${opt(left,k.left)}</select>`
     +`<i>&#8660;</i><select class="jn-key-r">${opt(right,k.right)}</select>`
     +((j.keys||[]).length>1?'<button type="button" title="このキーを外す">×</button>':'<span></span>')+`</div>`).join('')
   +`<button type="button" class="jn-key-add">＋ キーを追加</button>`
   +bar+`</div>`;
+}
+/* ---- キーの見当 ------------------------------------------------------------
+   300列あるファイルを2つ並べて「突き合わせる列を選んでください」は、あまりに酷い。
+   名前が似ているとも限らない（品番／品目コード／ITEM_CD は同じものを指す）。
+   ローカルへ写してあるのだから、中身を実際に見て、値が重なっている組を出す。
+   探すのは機械の仕事で、決めるのは人 ―― 押すまで何も変えない。 */
+function jnHintHtml(i){
+ if(jnHintBusy[i])return '<div class="jn-hint is-busy">実データからキーを探しています…</div>';
+ // キーが決まっているなら、見当は用済み。出したままにすると、下の選択欄と同じことが
+ // 2か所に出て、どちらが効いているのか読み解く手間だけが残る。呼べば戻ってくる。
+ let j=jnEditing.joins[i]||{};
+ if((j.keys||[]).some(k=>k.left&&k.right)&&!jnHintOpen[i])
+  return '<button type="button" class="jn-hint-again">実データからキーを探す</button>';
+ let h=jnHints[i];
+ if(!h)return '';
+ if(h.error)return `<div class="jn-hint is-ng">${E(h.error)}</div>`;
+ if(!h.items||!h.items.length)
+  return '<div class="jn-hint is-none">値が重なっている列は見つかりませんでした。'
+   +'キーの書き方が違うのかもしれません（前ゼロ・空白・全角）</div>';
+ return `<div class="jn-hint"><div class="jn-hint-head">実データで重なっている列</div>`
+  +h.items.map((x,n)=>`<button type="button" class="jn-hint-item" data-n="${n}">`
+   +`<b>${E(x.left)} <i>&#8660;</i> ${E(x.right)}</b>`
+   +`<span>一致 ${Math.round(x.score*100)}% ・ ${Number(x.left_distinct).toLocaleString()}種類`
+   +(x.unique?' ・ 右で1件に決まる':' ・ <em>右に重複あり（行が増えます）</em>')+`</span></button>`).join('')
+  +`</div>`;
+}
+async function jnSuggestKeys(i,force){
+ let a=jnEditing.sources[i],b=jnEditing.sources[i+1];
+ if(!a||!b||!a.path||!b.path)return;
+ if(jnHintBusy[i]||(jnHints[i]&&!force))return;
+ jnHintBusy[i]=true;jnRenderFlow();
+ try{
+  let d=await fetch('/api/join-keys',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({recipe:jnCollect(),index:i})}).then(r=>r.json());
+  jnHints[i]=d.ok?{items:d.items||[]}:{error:d.error||'探せませんでした'};
+ }catch{jnHints[i]={error:'探せませんでした（通信に失敗しました）'}}
+ jnHintBusy[i]=false;jnRenderFlow();
 }
 function jnRenderFlow(){
  let box=$('#jn-flow');if(!box||!jnEditing)return;
@@ -3461,7 +3620,16 @@ function jnRenderFlow(){
  // カードの操作
  $$('#jn-flow .jn-card').forEach(card=>{
   let i=Number(card.dataset.i),s=jnEditing.sources[i];
-  card.querySelector('.jn-path').onchange=e=>{s.path=e.target.value.trim();jnProbeSource(i)};
+  // 入れ方を切り替えても、入っている場所はそのまま持ち越す。切り替えで消えると、
+  // 「戻せない」不安から片方しか使えなくなる。
+  card.querySelectorAll('.jn-how button').forEach(b=>b.onclick=()=>{
+   jnMode[i]=b.dataset.how;jnRenderFlow();
+   if(jnMode[i]==='pick'&&!s.path)jnOpenPick(i,card.querySelector('.jn-pick-btn'));
+  });
+  let pb=card.querySelector('.jn-pick-btn');
+  if(pb)pb.onclick=()=>jnOpenPick(i,pb);
+  let pi=card.querySelector('.jn-path');
+  if(pi)pi.onchange=e=>{s.path=e.target.value.trim();delete jnHints[i];delete jnHints[i-1];jnProbeSource(i)};
   card.querySelector('.jn-format').onchange=e=>{s.format=e.target.value;jnProbeSource(i)};
   let t=card.querySelector('.jn-table');if(t)t.onchange=e=>{s.table=e.target.value;jnProbeSource(i)};
   let sh=card.querySelector('.jn-sheet');if(sh)sh.onchange=e=>{s.sheet=e.target.value;jnProbeSource(i)};
@@ -3491,6 +3659,23 @@ function jnRenderFlow(){
    if(del)del.onclick=()=>{j.keys.splice(n,1);jnRenderFlow();jnRefresh()};
   });
   link.querySelector('.jn-key-add').onclick=()=>{j.keys.push({left:'',right:''});jnRenderFlow()};
+  // 見当を押したら、そのままキーに入れる。押すまでは何も変えない。
+  let again=link.querySelector('.jn-hint-again');
+  if(again)again.onclick=()=>{jnHintOpen[i]=true;jnSuggestKeys(i,true)};
+  link.querySelectorAll('.jn-hint-item').forEach(b=>b.onclick=()=>{
+   let x=(jnHints[i]&&jnHints[i].items||[])[Number(b.dataset.n)];if(!x)return;
+   jnHintOpen[i]=false;
+   let empty=(j.keys||[]).findIndex(k=>!k.left&&!k.right);
+   if(empty<0){j.keys=j.keys||[];j.keys.push({left:'',right:''});empty=j.keys.length-1}
+   j.keys[empty]={left:x.left,right:x.right};
+   jnRenderFlow();jnRefresh();
+  });
+ });
+ // 両側の列がそろっていて、まだキーが決まっていないつなぎ目は、こちらから探しにいく。
+ // 「探す」を押させると、押せることに気付かない人はずっと300列を目で追うことになる。
+ jnEditing.joins.forEach((j,i)=>{
+  let has=(j.keys||[]).some(k=>k.left&&k.right);
+  if(!has&&jnColsOf(i).length&&jnColsOf(i+1).length)jnSuggestKeys(i);
  });
 }
 function jnRenderColumns(){
@@ -3522,6 +3707,9 @@ function jnRenderColumns(){
 }
 async function jnProbeSource(i){
  let s=jnEditing.sources[i];
+ // このファイルが変われば、その両隣のつなぎ目の見当はもう古い。持ち越すと、
+ // 前のファイルの列名を勧め続けることになる。
+ delete jnHints[i];delete jnHints[i-1];
  if(!s.path){jnProbe[i]=null;jnRenderFlow();jnRenderColumns();return}
  try{
   let d=await fetch('/api/join-source',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -3569,7 +3757,7 @@ function jnOpen(r){
  jnEditing.columns=jnEditing.columns||[];
  jnColMode=(jnEditing.columns.length?'pick':'auto');
  $$('#jn-col-mode button').forEach(b=>b.classList.toggle('on',b.dataset.colmode===jnColMode));
- jnProbe={};
+ jnProbe={};jnMode={};jnHints={};jnHintBusy={};jnHintOpen={};jnClosePick();
  $('#jn-empty').hidden=true;$('#jn-edit').hidden=false;
  $('#jn-name').value=jnEditing.name||'';$('#jn-desc').value=jnEditing.description||'';
  $('#jn-delete').hidden=!jnEditing.id;
@@ -3596,9 +3784,29 @@ async function jnDelete(){
  $('#jn-edit').hidden=true;$('#jn-empty').hidden=false;
 }
 async function openJoins(){
- await loadJoins(true);jnRenderList();
+ await loadJoins(true);jnLoadCandidates(true);jnRenderList();
  if(jnEditing){let cur=joinCache.find(x=>x.id===jnEditing.id);if(cur)jnOpen(cur)}
 }
+/* 候補の一覧: 打って絞り、上下で選び、Enterで決める。マウスへ持ち替えずに済ませる。 */
+if($('#jn-pick-q'))$('#jn-pick-q').oninput=e=>{jnPickQ=e.target.value;jnPickIdx=0;jnRenderPick()};
+if($('#jn-pick-q'))$('#jn-pick-q').onkeydown=e=>{
+ let n=jnPickList().length;
+ if(e.key==='ArrowDown'){e.preventDefault();jnPickIdx=Math.min(n-1,jnPickIdx+1);jnRenderPick()}
+ else if(e.key==='ArrowUp'){e.preventDefault();jnPickIdx=Math.max(0,jnPickIdx-1);jnRenderPick()}
+ else if(e.key==='Enter'){e.preventDefault();if(n)jnPickChoose(jnPickIdx)}
+ else if(e.key==='Escape'){e.preventDefault();jnClosePick()}
+};
+if($('#jn-pick-close'))$('#jn-pick-close').onclick=jnClosePick;
+if($('#jn-pick-manual'))$('#jn-pick-manual').onclick=()=>{
+ // 「一覧に無い」は行き止まりにしない。そのまま直接入力へ切り替えて、打てる状態で返す。
+ let i=jnPickFor;jnClosePick();
+ if(i>=0){jnMode[i]='manual';jnRenderFlow();
+  let el=document.querySelector(`#jn-flow .jn-card[data-i="${i}"] .jn-path`);if(el)el.focus()}
+};
+document.addEventListener('mousedown',e=>{
+ let p=$('#jn-pick');
+ if(p&&!p.hidden&&!p.contains(e.target)&&!e.target.closest('.jn-pick-btn'))jnClosePick();
+});
 if($('#jn-add'))$('#jn-add').onclick=()=>jnOpen(null);
 if($('#jn-save'))$('#jn-save').onclick=jnSave;
 if($('#jn-delete'))$('#jn-delete').onclick=jnDelete;
@@ -3609,6 +3817,9 @@ if($('#jn-add-source'))$('#jn-add-source').onclick=()=>{
  jnEditing.sources.push({alias:JN_ALIAS[n]||('S'+(n+1)),path:'',format:'csv',table:'',sheet:'',layout_id:''});
  jnEditing.joins.push({type:'inner',keys:[{left:'',right:''}]});
  jnRenderFlow();jnRenderColumns();
+ // 足した直後にすることは1つしかない ―― どのファイルかを決めること。だから開いておく。
+ let btn=document.querySelector(`#jn-flow .jn-card[data-i="${n}"] .jn-pick-btn`);
+ if(btn){btn.scrollIntoView({block:'nearest',inline:'center'});jnOpenPick(n,btn)}
 };
 $$('#jn-col-mode button').forEach(b=>b.onclick=()=>{
  jnColMode=b.dataset.colmode;

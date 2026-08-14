@@ -72,7 +72,14 @@
 <div class="lay-foot"><span id="jn-state" class="hint"></span><button id="jn-delete" type="button" class="danger">削除</button><button id="jn-save" type="button" class="primary">保存</button></div>
 </article>
 <article class="panel lay-empty" id="jn-empty"><div class="panelhead"><h2>結合マスタを選んでください</h2><p>左の一覧から選ぶか、「新規作成」で作ります。作った結合マスタは、対象ファイルの登録画面で「複数ファイルの結合」を選ぶと使えます。</p></div></article>
-</div></section>
+</div>
+<!-- 候補から選ぶための一覧。カードごとに作らず、1枚を使い回して開く位置だけ変える。 -->
+<div id="jn-pick" class="jn-pick" hidden>
+ <div class="jn-pick-head"><input id="jn-pick-q" placeholder="ファイル名、対象名で絞る" autocomplete="off"><button type="button" id="jn-pick-close" title="閉じる">×</button></div>
+ <div id="jn-pick-list" class="jn-pick-list"></div>
+ <div class="jn-pick-foot"><span id="jn-pick-note"></span><button type="button" id="jn-pick-manual">一覧に無い ―― 直接入力する</button></div>
+</div>
+</section>
 <section id="paths"><div class="settings-shell"><nav class="settings-nav" id="settings-nav">
 <button class="settings-navbtn on" type="button" data-cat="conn"><i class="settings-badge cat-conn">接</i><span class="settings-navtext"><b>接続とパス</b><small>API・DDE・出力先の場所</small></span></button>
 <button class="settings-navbtn" type="button" data-cat="engine"><i class="settings-badge cat-engine">方</i><span class="settings-navtext"><b>抽出方式</b><small>API並列 / DDE設定を内包</small></span></button>

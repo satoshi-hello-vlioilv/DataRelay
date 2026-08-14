@@ -299,7 +299,11 @@ from navi_output import (OUTPUT_FORMAT_LABEL,normalize_output_format,output_exte
 
 # 複数ファイルの結合（結合マスタ）は navi_join.py。繋ぎ方の組み立てと一致の数え方だけを持つ。
 import navi_join
+# 組み立てのあいだ、繋ぐ相手をローカルへ写しておくのは navi_joincache.py。
+import navi_joincache
+navi_joincache.setup(LOCAL_ROOT)
 from navi_join import (JOIN_TYPES,JOIN_TYPE_LABEL,JOIN_TYPE_NOTE,SOURCE_FORMATS,SOURCE_FORMAT_LABEL,
+                       suggest_keys as suggest_join_keys,
                        MAX_SOURCES as JOIN_MAX_SOURCES,RECIPE_EXPORT_KIND,
                        join_types_available,sqlite_supports_full,
                        normalize_recipe as normalize_join_recipe,
@@ -5224,7 +5228,8 @@ sys.modules.setdefault('app',sys.modules[__name__])
 # 読取マスタの出し入れと、固定長テキストの実行。切り方そのものは navi_text.py。
 import navi_joinrun
 from navi_joinrun import (_load_join_recipes,load_join_recipes,find_join_recipe,save_join_recipe,
-                          join_recipe_usage,delete_join_recipe,resolve_join_path,join_reader,join_layouts)
+                          join_recipe_usage,delete_join_recipe,resolve_join_path,join_reader,join_layouts,
+                          join_candidates,join_sample_reader,sampled_recipe)
 
 import navi_textrun
 from navi_textrun import (_json_rows,_layout_row,_load_text_layouts,load_text_layouts,

@@ -301,6 +301,86 @@ def write_intermediate_csv(recipe,reader,dst,layouts=None,reject_zero=False,enco
    log.warning('JOIN_NO_MATCH %s→%s キーが1組も一致していません',j.get('left'),j.get('right'))
  return len(rows),len(names),stats
 
+# ---- キーの見当を付ける ----------------------------------------------------
+# 300列あるファイルを2つ並べて「突き合わせる列を選んでください」は、あまりに酷い。
+# 名前が似ているとも限らない（品番／品目コード／ITEM_CD は同じものを指す）。
+# だから、名前ではなく中身で見当を付ける ―― 実データを少し読んで、値が実際に
+# 重なっている列の組を探す。これは人が目でやると何時間もかかり、機械なら一瞬で済む。
+
+# 総当たりはしない。左の値から「値→その値を持つ列」の索引を作り、右の値でその索引を
+# 引く。300列×300列の90,000通りを1つずつ突き合わせるのではなく、読んだ値の数だけの
+# 手間で全部の組が数えられる。
+KEY_SAMPLE_ROWS=2000
+KEY_MAX_DISTINCT=4000
+KEY_MIN_SCORE=0.30
+
+def _key_sets(headers,rows):
+ """列ごとの「空でない値の集合」。全部同じ値の列と、空ばかりの列は外す。"""
+ out={}
+ for i,h in enumerate(headers or []):
+  vals=set()
+  for r in rows:
+   if len(vals)>=KEY_MAX_DISTINCT:break
+   v=r[i] if i<len(r) else ''
+   v=('' if v is None else str(v)).strip()
+   if v:vals.add(v)
+  # 1種類しかない列はキーにならない（全部が一致してしまい、意味のない100%になる）。
+  if len(vals)>=2:out[i]=vals
+ return out
+
+def _name_score(a,b):
+ """名前の近さ。中身が同じくらい重なる組が複数あるときの、最後の決め手にだけ使う。"""
+ a=str(a or '').strip().lower();b=str(b or '').strip().lower()
+ if not a or not b:return 0.0
+ if a==b:return 1.0
+ if a in b or b in a:return 0.6
+ sa=set(a);sb=set(b)
+ return 0.3*len(sa&sb)/max(1,len(sa|sb))
+
+def suggest_keys(left_headers,left_rows,right_headers,right_rows,limit=5):
+ """実データで重なっている列の組を、強い順に返す。
+
+ score は「少ないほうの種類数のうち、何割が相手にもあったか」。左に900種類、右に
+ 50,000種類あって900種類全部が見つかれば1.0 ―― 明細と台帳の関係はこの形になる。
+
+ unique は「右で1件に決まるか」。ここが偽なら、繋いだ結果は行が増える。走らせて
+ から気付くのでは遅いので、選ぶ前に言う。
+ """
+ lrows=list(left_rows or [])[:KEY_SAMPLE_ROWS]
+ rrows=list(right_rows or [])[:KEY_SAMPLE_ROWS]
+ lsets=_key_sets(left_headers,lrows);rsets=_key_sets(right_headers,rrows)
+ if not lsets or not rsets:return []
+ index={}
+ for i,vals in lsets.items():
+  for v in vals:index.setdefault(v,[]).append(i)
+ hits={}
+ for j,vals in rsets.items():
+  for v in vals:
+   for i in index.get(v,()):hits[(i,j)]=hits.get((i,j),0)+1
+ out=[]
+ for (i,j),n in hits.items():
+  small=min(len(lsets[i]),len(rsets[j]))
+  score=n/small if small else 0.0
+  if score<KEY_MIN_SCORE:continue
+  lname=left_headers[i];rname=right_headers[j]
+  # 右が1行に決まるか（読んだぶんの中での話）。増えるなら増えると言う。
+  rvals=[str(r[j]).strip() for r in rrows if j<len(r) and str(r[j] if r[j] is not None else '').strip()]
+  unique=len(rvals)==len(set(rvals))
+  out.append({'left':lname,'right':rname,'score':round(score,4),'matched':n,
+              'left_distinct':len(lsets[i]),'right_distinct':len(rsets[j]),
+              'unique':unique,'same_name':lname==rname,
+              '_rank':(score,min(1.0,small/50),_name_score(lname,rname))})
+ # 重なりの割合がいちばん、次に種類の多さ（2種類の区分より900種類の品番）、最後に名前。
+ out.sort(key=lambda x:x['_rank'],reverse=True)
+ seen_l=set();seen_r=set();picked=[]
+ for x in out:
+  # 同じ列を何度も勧めない。1つの列は1つの相手とだけ組ませて並べる。
+  if x['left'] in seen_l or x['right'] in seen_r:continue
+  seen_l.add(x['left']);seen_r.add(x['right'])
+  x.pop('_rank');picked.append(x)
+  if len(picked)>=max(1,int(limit or 5)):break
+ return picked
+
 # ---- 持ち出しと取り込み ----------------------------------------------------
 def recipes_export(recipes):
  return {'kind':RECIPE_EXPORT_KIND,'version':RECIPE_EXPORT_VERSION,

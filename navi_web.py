@@ -24,6 +24,7 @@ from flask import send_file
 
 import app
 app=app.app          # 受け口を足す先（Flask本体）。以降 @app.get(...) は分ける前と同じ書き方
+import navi_join     # キーの見当を付けるところだけ、直接呼ぶ（本体を経由する用が無い）
 
 from app import (
     APP_ID, APP_RELEASED_AT, APP_VERSION, APP_VERSION_TITLE, BASE, BUILD_VERSION, CHANGELOG,
@@ -67,6 +68,7 @@ from app import (
     preview_join_recipe, join_recipes_export, join_recipes_import, load_join_recipes,
     find_join_recipe, save_join_recipe, delete_join_recipe, join_recipe_usage,
     resolve_join_path, join_reader, join_layouts, read_preview_data,
+    join_candidates, join_sample_reader, sampled_recipe, suggest_join_keys,
     VIEWER_MAX_ROWS, viewer_row_budget, output_column_limit, check_output_columns,
     OUTPUT_FORMAT_LABEL,
     COLUMN_TYPES, COLUMN_TYPE_LABEL, COLUMN_TYPE_NOTE, format_keeps_types,
@@ -1578,22 +1580,32 @@ def join_source_probe():
 
  結合そのものより先に、まず「そのファイルに何という列があるか」が要る。
  全部を読むと重いので、先頭だけを見て列と件数の見当を返す。
+
+ 場所が決まっていて実物があるなら、先に一度だけローカルへ写し、以降はその写しを
+ 読む。組み立てのあいだ、共有フォルダーへ何度も往復しないため。
  """
+ import navi_joincache
  d=request.get_json(force=True) or {}
  c=load()
  src=dict(d or {});raw=str(src.get('path') or '').strip()
  if not raw:return jsonify(ok=False,error='ファイルの場所を入れてください'),400
  fmt=str(src.get('format') or '').strip().lower()
+ origin=resolve_join_path(raw,c)
+ copy_info={'ok':False,'note':''}
+ read_path=origin
+ if origin.is_file():
+  local,copy_info=navi_joincache.sample(origin,fmt or origin.suffix.lstrip('.'))
+  if local:read_path=local
  if fmt=='fixed':
   lay=find_text_layout(src.get('layout_id'))
   if not lay:return jsonify(ok=False,error='読取マスタを選んでください'),400
-  path=resolve_join_path(raw,c)
-  pv=preview_text(path,lay,lines=5)
+  pv=preview_text(read_path,lay,lines=5)
   if not pv.get('ok'):return jsonify(ok=False,error=pv.get('error') or '読み取れませんでした'),400
   return jsonify(ok=True,columns=pv['headers'],rows=None,sample=pv['rows'][:3],
-                 path=str(path),format='fixed',note='固定長テキスト（件数は実行時に数えます）')
- path=resolve_join_path(raw,c)
- if not path.is_file():return jsonify(ok=False,error=f'ファイルがありません: {path}'),400
+                 path=str(origin),format='fixed',copy=copy_info,
+                 note='固定長テキスト（件数は実行時に数えます）')
+ if not origin.is_file():return jsonify(ok=False,error=f'ファイルがありません: {origin}'),400
+ path=read_path
  try:
   job={'output_format':fmt or path.suffix.lstrip('.'),'table':src.get('table') or '','sheet':src.get('sheet') or ''}
   # 結合元の列は一覧から選ぶためのもの。表示の都合で切ると選べない列ができる。
@@ -1611,14 +1623,68 @@ def join_source_probe():
    from openpyxl import load_workbook
    wb=load_workbook(path,read_only=True);sheets=list(wb.sheetnames);wb.close()
   except Exception:sheets=[]
- return jsonify(ok=True,columns=headers,rows=total,sample=rows,path=str(path),
-                format=used,tables=tables,sheets=sheets)
+ return jsonify(ok=True,columns=headers,rows=total,sample=rows,path=str(origin),
+                format=used,tables=tables,sheets=sheets,copy=copy_info,
+                partial=bool(copy_info.get('mode')=='prefix' and copy_info.get('bytes',0)<copy_info.get('total',0)))
+
+@app.get('/api/join-candidates')
+def join_candidates_route():
+ """繋ぐ相手の候補。このアプリ自身が作ったファイルを先に並べる。
+
+ 場所を手で打たせるのは、いちばん間違えやすく、いちばん確かめにくい。出力先は
+ こちらが知っているのだから、まず出す ―― 打つのは、そこに無いものを指すときだけでよい。
+ """
+ import navi_joincache
+ c=load()
+ return jsonify(items=join_candidates(c),cache=navi_joincache.stats())
+
+@app.post('/api/join-cache/clear')
+def join_cache_clear_route():
+ import navi_joincache
+ n=navi_joincache.clear()
+ return jsonify(ok=True,removed=n,cache=navi_joincache.stats())
+
+@app.post('/api/join-keys')
+def join_keys_route():
+ """つなぎ目1つぶんの、キーの見当。実データの重なりで探す。
+
+ 300列を2つ並べて「突き合わせる列を選んでください」は酷なので、名前ではなく
+ 中身で探して、強い順に出す。決めるのは人だが、探すのは機械の仕事。
+ """
+ d=request.get_json(force=True) or {}
+ c=load()
+ recipe,_info=sampled_recipe(d.get('recipe') or {},c)
+ i=max(0,int(d.get('index') or 0))
+ srcs=recipe.get('sources') or []
+ if i+1>=len(srcs):return jsonify(ok=False,error='つなぎ目がありません'),400
+ try:
+  reader=join_sample_reader(c);lay=join_layouts()
+  lh,lr=navi_join.read_source(srcs[i],reader,lay,limit=navi_join.KEY_SAMPLE_ROWS)
+  rh,rr=navi_join.read_source(srcs[i+1],reader,lay,limit=navi_join.KEY_SAMPLE_ROWS)
+ except Exception as e:
+  return jsonify(ok=False,error=f'読み取れませんでした: {e}'),400
+ items=suggest_join_keys(lh,lr,rh,rr,limit=int(d.get('limit') or 5))
+ log.info('JOIN_KEY_SUGGEST index=%s 左=%s列/%s行 右=%s列/%s行 候補=%s',
+          i,len(lh),len(lr),len(rh),len(rr),
+          ' | '.join(f'{x["left"]}={x["right"]}({x["score"]:.0%})' for x in items) or 'なし')
+ return jsonify(ok=True,items=items,left_rows=len(lr),right_rows=len(rr),
+                sampled=len(lr)>=navi_join.KEY_SAMPLE_ROWS or len(rr)>=navi_join.KEY_SAMPLE_ROWS)
 
 @app.post('/api/join-preview')
 def join_preview_route():
- """繋いだ結果と、つなぎ目ごとの一致を返す。結合の失敗は静かなので、必ず数えて見せる。"""
+ """繋いだ結果と、つなぎ目ごとの一致を返す。結合の失敗は静かなので、必ず数えて見せる。
+
+ 読むのはローカルの写し。組み立てのあいだ、共有フォルダーへ何度も往復しないため。
+ 本番の実行はこの道を通らない（写しは先頭だけのことがある）。
+ """
  d=request.get_json(force=True) or {}
- recipe=normalize_join_recipe(d.get('recipe') or {})
  c=load()
- out=preview_join_recipe(recipe,join_reader(c),join_layouts(),lines=int(d.get('lines') or 12))
+ recipe,copies=sampled_recipe(d.get('recipe') or {},c)
+ out=preview_join_recipe(recipe,join_sample_reader(c),join_layouts(),lines=int(d.get('lines') or 12))
+ out['copies']=copies
+ cut=[x for x in copies if x.get('mode')=='prefix' and x.get('bytes') and x.get('total') and x['bytes']<x['total']]
+ if cut and out.get('ok'):
+  out.setdefault('notes',[]).append(
+   'ローカルへ写した先頭だけを読んでいます（'+'、'.join(x['alias'] for x in cut)
+   +'）。件数はその範囲での数字で、実行のときは元のファイルを最初から最後まで読みます')
  return jsonify(out) if out.get('ok') else (jsonify(out),400)

@@ -2329,3 +2329,67 @@ body>main{width:var(--app-shell);max-width:var(--app-shell);
 .jn-sql summary{font-size:10.5px;color:#6f858e;cursor:pointer}
 .jn-sql pre{height:auto;max-height:180px;font-size:11px;margin:6px 0 0}
 @media(max-width:1000px){.jn-wrap{grid-template-columns:1fr}}
+
+/* ---- 繋ぐ相手を選ぶ（候補／直接入力の切り替えと、候補の一覧）------------------
+   候補と直接入力を並べて置くと、どちらが効いているのかを毎回読み解くことになる。
+   出るのは常に片方だけにして、切り替えの帯だけを常に見えるところへ置く。 */
+.jn-how{display:grid;grid-template-columns:1fr 1fr;gap:2px;padding:2px;background:#eef4f5;
+ border:1px solid #dfe8eb;border-radius:8px}
+.jn-how button{padding:4px 2px;font-size:10px;font-weight:700;color:#5d7681;background:transparent;
+ border:0;border-radius:6px;line-height:1.4}
+.jn-how button.on{background:#fff;color:#0b6570;box-shadow:0 1px 2px rgba(18,60,72,.12)}
+.jn-pick-btn{display:grid;grid-template-columns:1fr auto;align-items:center;gap:6px;width:100%;
+ min-height:29px;padding:4px 8px;text-align:left;background:#fff;border:1px solid #cfdde2;border-radius:8px}
+.jn-pick-btn b{grid-column:1;font-size:11.5px;color:#22404d;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.jn-pick-btn span{grid-column:1;font-size:9.5px;color:#7d919a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.jn-pick-btn i{grid-column:2;grid-row:1/3;font-style:normal;color:#0d8191;font-size:11px}
+.jn-pick-btn.is-empty{border-style:dashed;border-color:#9ec8d2;background:#f7fbfc}
+.jn-pick-btn.is-empty b{color:#0b6570}
+.jn-local{font-style:normal;padding:1px 6px;border-radius:999px;background:#eaf6f9;border:1px solid #b9dee6;
+ color:#0b6570;font-size:9px;font-weight:700}
+.jn-local.is-part{background:#fdf3e3;border-color:#e6cb9a;color:#8a6114}
+/* 候補の一覧は1枚を使い回す。カードごとに持つと、開いたまま裏で消える窓が増える。 */
+.jn-pick{position:fixed;z-index:60;min-width:340px;max-width:520px;background:#fff;border:1px solid #cfdde2;
+ border-radius:12px;box-shadow:0 14px 40px rgba(18,60,72,.22);overflow:hidden}
+.jn-pick-head{display:grid;grid-template-columns:1fr auto;gap:6px;padding:8px;border-bottom:1px solid #eaf0f2}
+.jn-pick-head input{height:30px;font-size:11.5px}
+.jn-pick-head button{width:30px;height:30px;padding:0;background:#fff;border:1px solid #dfe8eb;
+ border-radius:8px;color:#6f858e;font-size:14px}
+.jn-pick-list{max-height:min(46vh,340px);overflow:auto;padding:5px}
+.jn-pick-item{display:grid;gap:1px;width:100%;padding:6px 8px;text-align:left;background:transparent;
+ border:1px solid transparent;border-radius:8px}
+.jn-pick-item b{font-size:11.5px;color:#22404d;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.jn-pick-item small{font-size:9px;color:#93a5ac;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.jn-pick-meta{display:flex;align-items:center;gap:6px;font-size:9.5px;color:#6f858e;flex-wrap:wrap}
+.jn-pick-meta em{font-style:normal;color:#0b6570;font-weight:700;overflow:hidden;text-overflow:ellipsis;
+ white-space:nowrap;max-width:180px}
+.jn-pick-meta .is-ng{color:#a4463d}
+.jn-fmt{font-style:normal;padding:0 5px;border-radius:4px;background:#eef4f5;border:1px solid #e0e9ec;
+ color:#5d7681;font-size:8.5px;font-weight:900;letter-spacing:.03em}
+.jn-pick-item:hover,.jn-pick-item.on{background:#f2f8f9;border-color:#cfe6ec}
+.jn-pick-item.is-cur{background:#eaf6f9;border-color:#8ecdd9}
+.jn-pick-item.is-missing b{color:#7d919a}
+.jn-pick-sep{padding:7px 8px 3px;font-size:9px;font-weight:900;color:#93a5ac}
+.jn-pick-none{padding:14px 10px;font-size:10.5px;color:#6f858e;line-height:1.7}
+.jn-pick-foot{display:flex;align-items:center;gap:8px;padding:7px 9px;border-top:1px solid #eaf0f2;
+ background:#fafcfc}
+.jn-pick-foot span{font-size:9.5px;color:#93a5ac}
+.jn-pick-foot button{margin-left:auto;padding:4px 10px;font-size:10px;background:#fff;color:#0b6570;
+ border:1px solid #cfdde2;border-radius:999px;font-weight:700}
+/* ---- キーの見当 ---- */
+.jn-hint{display:grid;gap:3px;padding:6px;background:#f7fbfc;border:1px solid #dcebef;border-radius:8px}
+.jn-hint-head{font-size:9px;font-weight:900;color:#0b6570;letter-spacing:.02em}
+.jn-hint-item{display:grid;gap:1px;width:100%;padding:5px 7px;text-align:left;background:#fff;
+ border:1px solid #d7e6ea;border-radius:7px}
+.jn-hint-item b{font-size:10.5px;color:#22404d;font-weight:700;overflow:hidden;text-overflow:ellipsis;
+ white-space:nowrap}
+.jn-hint-item b i{font-style:normal;color:#0d8191;padding:0 2px}
+.jn-hint-item span{font-size:9px;color:#6f858e}
+.jn-hint-item span em{font-style:normal;color:#8a6114;font-weight:700}
+.jn-hint-item:hover{background:#eaf6f9;border-color:#8ecdd9}
+.jn-hint.is-busy,.jn-hint.is-none,.jn-hint.is-ng{font-size:9.5px;color:#6f858e;line-height:1.6}
+.jn-hint.is-ng{background:#fdf4f2;border-color:#f0d8d3;color:#a4463d}
+
+.jn-hint-again{padding:3px 9px;font-size:9.5px;background:#fff;color:#5d7681;border:1px solid #dfe8eb;
+ border-radius:999px;justify-self:start}
+.jn-hint-again:hover{background:#f2f8f9;border-color:#cfe6ec;color:#0b6570}
