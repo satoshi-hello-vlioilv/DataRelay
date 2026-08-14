@@ -83,6 +83,57 @@ def check_output_columns(fmt,count,where=''):
  label=OUTPUT_FORMAT_LABEL.get(normalize_output_format(fmt),fmt)
  raise ValueError(f'{label}は{limit:,}列までです（いまは{count:,}列）。{where or "出力する列"}を減らすか、列数に上限の無いCSV／TXTで出してください')
 
+# ---- 列の型 ----------------------------------------------------------------
+# 固定長テキストは、どこまでいっても文字の並びでしかない。「00123」が数量なのか
+# 品番なのかは、ファイルを見ても分からない ―― 読取マスタで決めてもらう。
+# 決めてもらった型を活かせるかどうかは、書き出す形式の側で違う。
+#   SQLite3 … TEXT / INTEGER / REAL（日付型は無いのでISO文字列。文字のまま正しく並ぶ）
+#   ACCESS  … 長いテキスト / 長整数 / 倍精度 / 日付時刻
+#   EXCEL   … 数値セルと日付セル（右寄せ・計算・並べ替えがそのまま効く）
+#   CSV・TXT… 型は持てない。ただし値の形は揃う（20260814 → 2026-08-14 など）
+# 型の名前をここに置いてあるのは、決める側（読取マスタ）と使う側（書き出し）で
+# 語彙が2つに割れないようにするため。
+COLUMN_TYPES=('text','integer','real','date','datetime')
+COLUMN_TYPE_LABEL={'text':'文字','integer':'整数','real':'小数','date':'日付','datetime':'日時'}
+COLUMN_TYPE_NOTE={'text':'そのまま文字として出します（既定）。品番・コード・電話番号など、先頭の0に意味があるものはこれ。',
+                  'integer':'整数にします。前の0は落ちます（00123→123）。末尾の符号（123-）も読みます。',
+                  'real':'小数にします。小数点が無いときは「小数桁」で入れる位置を決めます（0012345 桁2→123.45）。',
+                  'date':'日付にします。読み方は書式で決めます（既定 YYYYMMDD）。出力は 2026-08-14 の形。',
+                  'datetime':'日付と時刻にします（既定 YYYYMMDDHHMMSS）。出力は 2026-08-14 09:30:00 の形。'}
+
+def normalize_column_type(value):
+ v=str(value or '').strip().lower()
+ v={'str':'text','string':'text','char':'text','int':'integer','number':'real','float':'real',
+    'decimal':'real','double':'real','time':'datetime','timestamp':'datetime'}.get(v,v)
+ return v if v in COLUMN_TYPES else 'text'
+
+def format_keeps_types(fmt):
+ """その形式が、型をファイルの中に持てるか。CSV・TXTは持てない（値の形は揃う）。"""
+ return normalize_output_format(fmt) in ('sqlite3','accdb','xlsx')
+
+def sqlite_column_type(t):
+ return {'integer':'INTEGER','real':'REAL'}.get(normalize_column_type(t),'TEXT')
+
+def accdb_column_type(t):
+ """AccessのDDLで使う型。日付時刻はDATETIME、整数はLONG（-21億〜21億）。"""
+ return {'integer':'LONG','real':'DOUBLE','date':'DATETIME','datetime':'DATETIME'}.get(normalize_column_type(t),'LONGTEXT')
+
+def accdb_schema_type(t):
+ """schema.ini（TransferTextの取込定義）で使う型名。DDLとは綴りが違う。"""
+ return {'integer':'Long','real':'Double','date':'DateTime','datetime':'DateTime'}.get(normalize_column_type(t),'LongChar')
+
+def job_column_types(job,headers=None):
+ """この対象の列の型。決めていない列（RNEなど型の概念が無い入力）は文字。
+
+ 対象には名前で持たせる。並び順で持つと、列が1本増えただけで全部ずれる。"""
+ raw=(job or {}).get('_column_types') or {}
+ if isinstance(raw,str):
+  try:raw=json.loads(raw or '{}')
+  except Exception:raw={}
+ if not isinstance(raw,dict):raw={}
+ if headers is None:return {k:normalize_column_type(v) for k,v in raw.items()}
+ return {h:normalize_column_type(raw.get(h)) for h in headers}
+
 def validate_output_contract(job,stage):
  configured=str(job.get('output_format') or '').lower(); filename=str(job.get('output_file') or '')
  effective=normalize_output_format(configured,filename); expected={'sqlite3':'.sqlite3','txt':'.txt','csv':'.csv','xlsx':'.xlsx','accdb':'.accdb'}[effective]; actual=Path(filename).suffix.lower(); match=configured==effective and actual==expected

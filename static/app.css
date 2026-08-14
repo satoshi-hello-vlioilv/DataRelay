@@ -2211,17 +2211,27 @@ body>main{width:var(--app-shell);max-width:var(--app-shell);
 .lay-opts{grid-template-columns:repeat(4,minmax(120px,1fr))}
 .lay-width{margin-left:auto;font-size:10.5px;font-weight:700;color:#0b6570;background:#eaf6f9;
  border-radius:6px;padding:2px 8px}
-.lay-cols-head,.lay-col{display:grid;grid-template-columns:minmax(110px,1.4fr) 74px 74px 74px minmax(90px,1fr) 34px;gap:5px;align-items:center}
+.lay-cols-head,.lay-col{display:grid;grid-template-columns:minmax(96px,1.3fr) 62px 62px 62px 84px 104px minmax(80px,1fr) 30px;gap:5px;align-items:center}
 .lay-cols-head{padding:0 4px 4px;font-size:9.5px;font-weight:900;color:#7f939b}
 .lay-cols{display:grid;gap:4px;max-height:min(52vh,560px);overflow:auto;padding:1px}
-.lay-col input{height:29px;font-size:11.5px}
+.lay-col input,.lay-col select{height:29px;font-size:11.5px}
+.lay-col select{padding:0 4px}
 .lay-col .lay-end{background:#f2f7f8;color:#5d7681;text-align:center;border-style:dashed}
+/* 型を決めた列は、ひと目で分かるようにする。300本並ぶ一覧で、どこに型が入っているかを
+   1本ずつ開いて確かめるのは現実的でない。 */
+.lay-col.is-typed .lay-type{background:#eaf6f9;border-color:#bcdfe6;color:#0b6570;font-weight:700}
+/* 文字の列に「小数桁も書式も無い」ことを、空欄ではなく見た目で示す（押しても効かない欄を
+   触らせない）。 */
+.lay-col .lay-fmt[disabled]{background:#f5f7f8;border-style:dashed;color:#a8b8be}
 .lay-col .lay-del{height:29px;padding:0;background:#fff;border:1px solid #e0d0ce;color:#a4463d;border-radius:7px}
+.lay-type-bar{display:flex;align-items:center;gap:6px}
+.lay-type-bar select{height:29px;font-size:11.5px}
 .lay-cols-actions{display:flex;align-items:center;gap:10px;margin-top:7px}
 .lay-preview{margin-top:8px}
 .lay-preview table{width:100%;border-collapse:collapse;font-size:11px}
 .lay-preview th,.lay-preview td{border:1px solid #e2eaee;padding:3px 6px;text-align:left;white-space:nowrap}
 .lay-preview th{background:#eef5f6;color:#31505d;font-size:10px}
+.lay-preview .lay-th-type{display:block;font-weight:700;font-size:9px;color:#0b6570}
 .lay-preview td{font-family:Consolas,"Yu Gothic UI",monospace;color:#2b4d59}
 .lay-preview .lay-raw{color:#7f939b;font-size:10px}
 .lay-scroll{overflow-x:auto}
@@ -2235,8 +2245,9 @@ body>main{width:var(--app-shell);max-width:var(--app-shell);
  border-radius:0 0 10px 10px}
 .lay-foot .hint{flex:1;margin:0}
 @media(max-width:1000px){.lay-wrap{grid-template-columns:1fr}.lay-opts{grid-template-columns:1fr 1fr}
- .lay-cols-head,.lay-col{grid-template-columns:minmax(90px,1.2fr) 62px 62px 62px 30px}
- .lay-cols-head span:nth-child(5),.lay-col .lay-memo{display:none}}
+ .lay-cols-head,.lay-col{grid-template-columns:minmax(90px,1.2fr) 58px 58px 58px 78px 30px}
+ .lay-cols-head span:nth-child(6),.lay-cols-head span:nth-child(7),
+ .lay-col .lay-fmt,.lay-col .lay-memo{display:none}}
 
 
 /* V1.80: ファイル結合。繋がっているものを、繋がって見えるように置く。

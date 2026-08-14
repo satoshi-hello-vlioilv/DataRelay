@@ -13,6 +13,8 @@ import csv,json
 from datetime import datetime
 from pathlib import Path
 from navi_log import log
+# 型の名前は navi_output に置いてある（決める側と使う側で語彙を2つに割らないため）。
+from navi_output import COLUMN_TYPES,COLUMN_TYPE_LABEL,COLUMN_TYPE_NOTE,normalize_column_type
 
 # 文字コード。固定長のテキストは業務システムからの受け渡しが多く、既定はcp932。
 TEXT_ENCODINGS=('cp932','utf-8-sig','utf-8','euc_jp','shift_jis','utf-16','latin-1')
@@ -32,6 +34,20 @@ LAYOUT_EXPORT_VERSION=1
 # 実際に効く上限は「どの形式で出すか」の側にある（navi_output.output_column_limit）。
 # ここに残すのは、壊れた取り込みで際限なく増えないための歯止めだけで、超えたら断る。
 MAX_COLUMNS=4096
+# 日付・日時の読み方。書式は「並び」だけを書いてもらい、区切り文字は何でも読み飛ばす
+# （YYYYMMDD も YYYY/MM/DD も YYYY年MM月DD日 も、同じ仕組みで読める）。
+STAMP_TOKENS=('YYYY','YY','MM','DD','HH','MI','NN','SS')
+# MM は月にも分にも使われる。世の中の仕様書は YYYYMMDDHHMMSS と書くのがふつうなので、
+# 「時（HH）より後ろの MM は分」として読む。MI・NN と書いてあれば、位置によらず分。
+STAMP_ROLE={'YYYY':'Y','YY':'y','MM':'M','DD':'D','HH':'h','MI':'m','NN':'m','SS':'s'}
+DATE_FORMAT_DEFAULT='YYYYMMDD'
+DATETIME_FORMAT_DEFAULT='YYYYMMDDHHMMSS'
+# よく使う書式。画面の候補に出すだけで、手で書いた書式も受け付ける。
+STAMP_FORMAT_SAMPLES=('YYYYMMDD','YYMMDD','YYYY/MM/DD','YYYY-MM-DD','YYYY年MM月DD日',
+                      'YYYYMMDDHHMMSS','YYYYMMDDHHMM','YYYY/MM/DD HH:MM:SS')
+# 2桁の年の読み替え。69以下は2000年代、70以上は1900年代（広く使われている区切り）。
+CENTURY_PIVOT=69
+MAX_SCALE=9
 
 def _int(v,default=0):
  try:return int(str(v).strip())
@@ -43,6 +59,9 @@ def normalize_column(c,index=0):
  開始位置は1始まり（画面でもテキストエディタでも1文字目は1）。長さと終了位置の
  どちらで書いても構わないが、持ち方は「開始＋長さ」の1通りに寄せる ―― 2通りで
  持つと、片方だけ直したときに食い違う。
+
+ 型は既定が文字。これまでのマスタには型が入っていないので、読み込んだ時点で
+ 全部「文字」になり、これまでとまったく同じ結果になる。
  """
  c=dict(c or {})
  start=max(1,_int(c.get('start'),1))
@@ -50,9 +69,116 @@ def normalize_column(c,index=0):
  if length<1:
   end=_int(c.get('end'),0)
   length=(end-start+1) if end>=start else 0
+ t=normalize_column_type(c.get('type'))
+ fmt=str(c.get('format') or '').strip()
+ if t in ('date','datetime') and not fmt:
+  fmt=DATE_FORMAT_DEFAULT if t=='date' else DATETIME_FORMAT_DEFAULT
+ if t not in ('date','datetime'):fmt=''
  return {'name':str(c.get('name') or '').strip() or f'列{index+1}',
          'start':start,'length':max(0,length),'end':start+max(0,length)-1,
+         'type':t,'scale':max(0,min(MAX_SCALE,_int(c.get('scale'),0))) if t=='real' else 0,
+         'format':fmt,
          'note':str(c.get('note') or '').strip()}
+
+# ---- 型のあてはめ ----------------------------------------------------------
+# ここでやるのは「読んだ文字を、決めた型の書き方へ揃える」ところまで。中間CSVは
+# 文字で受け渡すので、返すのも文字。実際に型として持たせるのは書き出す側
+# （navi_output.sqlite_column_type ほか）で、その2つを1本の取り決めで繋いでいる。
+def _stamp_plan(pattern):
+ """書式を「どの位置から何文字を、何として読むか」の並びへ直す。
+
+ YYYY/YY/MM/DD/HH/MI(NN)/SS を順に拾い、それ以外の文字は区切りとして読み飛ばす。
+ こうしておくと、区切りのある書式も無い書式も同じ道で読める。
+ 返すのは (役割, 桁数) の並び。役割は Y y M D h m s と、区切りの None。"""
+ plan=[];i=0;p=str(pattern or '');seen_hour=False
+ while i<len(p):
+  for tok in STAMP_TOKENS:
+   if p.startswith(tok,i):
+    role=STAMP_ROLE[tok]
+    # 時より後ろの MM は分。YYYYMMDDHHMMSS をそのまま書けるようにするため。
+    if tok=='MM' and seen_hour:role='m'
+    if role=='h':seen_hour=True
+    plan.append((role,len(tok)));i+=len(tok);break
+  else:
+   plan.append((None,1));i+=1
+ return plan
+
+def _parse_stamp(value,pattern,want_time):
+ """書式どおりに読めたら (年,月,日,時,分,秒)。読めなければ None。"""
+ s=str(value or '').strip()
+ if not s:return None
+ got={};pos=0
+ for role,n in _stamp_plan(pattern):
+  if role is None:
+   pos+=1;continue                     # 区切りは中身を見ない（/ でも - でも 年 でもよい）
+  chunk=s[pos:pos+n];pos+=n
+  if len(chunk)!=n or not chunk.isdigit():return None
+  got[role]=int(chunk)
+ if pos<len(s.rstrip()):return None     # 余りがあるなら書式が合っていない
+ y=got.get('Y')
+ if y is None and 'y' in got:y=(2000+got['y']) if got['y']<=CENTURY_PIVOT else (1900+got['y'])
+ mo=got.get('M',1);d=got.get('D',1);h=got.get('h',0);mi=got.get('m',0);se=got.get('s',0)
+ if y is None:return None
+ try:datetime(y,mo,d,h,mi,se)           # 20260231 のような日付はここで落ちる
+ except ValueError:return None
+ return (y,mo,d,h,mi,se) if want_time else (y,mo,d,0,0,0)
+
+def _to_number(text,scale,integer_only):
+ """数字として読む。読めなければ None。
+
+ 前の0・桁区切りのカンマ・前後の空白は落とす。末尾の符号（123-）も読む ――
+ 基幹システムからの固定長では、負の数をこう書いてくることがある。"""
+ s=str(text or '').strip().replace(',','').replace('　','')
+ if not s:return ''
+ sign=''
+ if s[-1] in '+-':sign='-' if s[-1]=='-' else '';s=s[:-1].strip()
+ if s[:1] in '+-':
+  sign='-' if s[0]=='-' else sign;s=s[1:]
+ if not s:return None
+ if integer_only:
+  if not s.isdigit():return None
+  return sign+str(int(s))
+ if s.isdigit():
+  # 小数点が書かれていない。桁を決めてあれば、その桁数ぶんを小数として入れる
+  # （0012345 で桁2 なら 123.45）。決めていなければ整数のまま。
+  # ここで float を通さないのは、桁の多い値が指数表記や丸めになるのを避けるため。
+  if scale:
+   s=s.rjust(scale+1,'0');return sign+str(int(s[:-scale]))+'.'+s[-scale:]
+  return sign+str(int(s))
+ head,dot,tail=s.partition('.')
+ if not dot or not head.isdigit() or not tail.isdigit():
+  try:float(s)
+  except ValueError:return None
+  return sign+s
+ return sign+str(int(head or '0'))+'.'+(tail or '0')
+
+def _converter(col):
+ """列1本ぶんの変換。文字（既定）なら None を返し、呼ぶ側で何もしない。"""
+ t=col.get('type') or 'text'
+ if t=='text':return None
+ if t=='integer':return lambda v:_to_number(v,0,True)
+ if t=='real':
+  scale=int(col.get('scale') or 0)
+  return lambda v:_to_number(v,scale,False)
+ want_time=(t=='datetime');pattern=col.get('format') or (DATETIME_FORMAT_DEFAULT if want_time else DATE_FORMAT_DEFAULT)
+ def stamp(v):
+  if not str(v or '').strip():return ''
+  got=_parse_stamp(v,pattern,want_time)
+  if not got:return None
+  y,mo,d,h,mi,se=got
+  return f'{y:04d}-{mo:02d}-{d:02d} {h:02d}:{mi:02d}:{se:02d}' if want_time else f'{y:04d}-{mo:02d}-{d:02d}'
+ return stamp
+
+def layout_converters(layout):
+ """列ごとの変換の並び。1つも型を決めていなければ空（そのぶん何もしない）。"""
+ cols=layout['columns'] if isinstance(layout,dict) and 'columns' in layout else normalize_layout(layout)['columns']
+ fns=[_converter(c) for c in cols]
+ return fns if any(fns) else []
+
+def layout_column_types(layout):
+ """列名 → 型。書き出す側へ渡すのはこれ（並び順ではなく名前で渡す）。"""
+ l=layout if isinstance(layout,dict) and 'columns' in layout else normalize_layout(layout)
+ return {c['name']:c.get('type') or 'text' for c in l['columns']}
 
 def normalize_layout(d):
  """読取マスタ1件を整える。壊れた値は既定へ倒す（保存を断るのは validate_layout）。"""
@@ -93,6 +219,18 @@ def validate_layout(layout):
  seen={}
  for i,c in enumerate(l['columns'],1):
   if c['length']<1:bad.append(f'{i}番目「{c["name"]}」の長さが0です。長さか終了位置を入れてください')
+  # 日付・日時は書式で読む。年が無い書式では、いつの日付か決まらない。
+  if c['type'] in ('date','datetime'):
+   plan=[t for t,_ in _stamp_plan(c['format']) if t]
+   if not plan:bad.append(f'{i}番目「{c["name"]}」の書式が空です（例 {DATE_FORMAT_DEFAULT}）')
+   elif 'Y' not in plan and 'y' not in plan:
+    bad.append(f'{i}番目「{c["name"]}」の書式に年がありません（YYYY か YY を入れてください）: {c["format"]}')
+   elif c['type']=='datetime' and not [t for t in plan if t in ('h','m','s')]:
+    bad.append(f'{i}番目「{c["name"]}」は日時ですが、書式に時刻がありません（HH・MM・SS）: {c["format"]}')
+   else:
+    need=sum(n for t,n in _stamp_plan(c['format']))
+    if need>c['length']:
+     bad.append(f'{i}番目「{c["name"]}」の書式は{need}桁必要ですが、切り出す長さが{c["length"]}しかありません')
   seen[c['name']]=seen.get(c['name'],0)+1
  dupes=[k for k,v in seen.items() if v>1]
  # 同じ名前の列は、SQLite3のテーブルもXLSXの見出しも作れない（分割でも同じ理由で断っている）。
@@ -169,16 +307,33 @@ def read_text_rows(path,layout,limit=None,keep_raw=False):
  headers=[c['name'] for c in cols]
  body=[];raws=[]
  stat={'lines':0,'rows':0,'skipped_blank':0,'skipped_head':0,'skipped_tail':0,
-       'short_rows':0,'broken_cells':0,'width':width,'unit':l['unit'],'encoding':l['encoding']}
+       'short_rows':0,'broken_cells':0,'width':width,'unit':l['unit'],'encoding':l['encoding'],
+       'types':layout_column_types(l),'type_errors':0,'type_samples':{}}
+ # 型を1つも決めていなければ、ここは丸ごと通らない（これまでとまったく同じ道）。
+ convs=layout_converters(l)
+ def typed(values):
+  for i,fn in enumerate(convs):
+   if fn is None:continue
+   got=fn(values[i])
+   if got is None:
+    # 決めた型に読めない値。黙って通すと、出来上がったファイルの型が嘘になる。
+    # 空にしたうえで数え、どの列のどんな値だったかを1つ覚えておく。
+    stat['type_errors']+=1
+    stat['type_samples'].setdefault(headers[i],values[i])
+    values[i]=''
+   else:values[i]=got
+  return values
  tail=max(0,l['skip_tail'])
  hold=[]                                   # 末尾を捨てるぶんだけ手元に留める
  blank=(b'' if l['unit']=='byte' else '')
  def take(line):
   if l['unit']=='byte':
    if len(line)<width:stat['short_rows']+=1
-   return _slice_byte(line,cols,l['encoding'],l['trim'],stat)
-  if len(line)<width:stat['short_rows']+=1
-  return _slice_char(line,cols,l['trim'])
+   out=_slice_byte(line,cols,l['encoding'],l['trim'],stat)
+  else:
+   if len(line)<width:stat['short_rows']+=1
+   out=_slice_char(line,cols,l['trim'])
+  return typed(out) if convs else out
  header_seen=[False]
  for line in _read_lines(path,l['encoding'],l['unit']):
   stat['lines']+=1
@@ -219,13 +374,19 @@ def preview_text(path,layout,lines=12):
  except Exception as e:
   log.warning('TEXT_PREVIEW_FAILED path=%s error=%s',p,e)
   out['error']=f'読み取れませんでした: {e}';return out
- out.update(ok=True,headers=headers,rows=body,raw=raws,stat=stat,size=p.stat().st_size)
+ out.update(ok=True,headers=headers,rows=body,raw=raws,stat=stat,size=p.stat().st_size,
+            types=[c['type'] for c in normalize_layout(layout)['columns']])
  if stat['short_rows']:
   out['notes'].append(f'{stat["short_rows"]}行が取り決めより短く、足りない列は空になりました'
                       f'（この取り決めは{stat["width"]}{"バイト" if stat["unit"]=="byte" else "文字"}必要です）')
  if stat['broken_cells']:
   out['notes'].append(f'{stat["broken_cells"]}か所で、切れ目が文字の途中に来ました。'
                       '位置の数え方（文字／バイト）か、開始位置が合っていない可能性があります')
+ if stat['type_errors']:
+  # どの列のどんな値だったかまで出す。「型が合いません」だけでは直しようがない。
+  ex='、'.join(f'{k}「{v}」' for k,v in list(stat['type_samples'].items())[:3])
+  out['notes'].append(f'{stat["type_errors"]}か所が、決めた型に読めませんでした（空にしています）: {ex}。'
+                      '型や書式・小数桁、または開始位置を確かめてください')
  if out['overlaps']:
   out['notes'].append('重なっている列があります: '+'、'.join(f'{a}↔{b}' for a,b in out['overlaps'][:3]))
  return out
@@ -254,6 +415,11 @@ def write_intermediate_csv(path,layout,dst,reject_zero=False,encoding='utf-8-sig
  if stat['broken_cells']:
   log.warning('TEXT_BROKEN_CELLS file=%s 箇所=%s 切れ目が文字の途中に来ています。'
               '位置の数え方（文字／バイト）か開始位置を確かめてください',p,stat['broken_cells'])
+ if stat['type_errors']:
+  log.warning('TEXT_TYPE_ERRORS file=%s 箇所=%s 決めた型に読めない値を空にしました 例=%s',
+              p,stat['type_errors'],'、'.join(f'{k}「{v}」' for k,v in list(stat['type_samples'].items())[:3]))
+ typed={k:v for k,v in stat['types'].items() if v!='text'}
+ if typed:log.info('TEXT_COLUMN_TYPES file=%s 型を決めた列=%s 内訳=%s',p,len(typed),typed)
  return len(body),len(headers),stat
 
 # ---- 持ち出しと取り込み ----------------------------------------------------

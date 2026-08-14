@@ -3,7 +3,7 @@ const UI_BUILD='1.72.0-web';
 const TEXT_TABLE_DEFAULT='DATA';
 let cfg,editing=null,editingRule=null,sortDir=1,scheduleInfo={},rowLive={},rowQueue={},statusFailCount=0,serverLostShown=false;
 // 読取マスタは一覧の描画（sourceCell）からも読むので、ここで先に用意する。
-let layoutCache=[],layoutMeta={encodings:[],units:[],trims:[]},layEditing=null,laySearch='';
+let layoutCache=[],layoutMeta={encodings:[],units:[],trims:[],types:[],stamp_formats:[],max_scale:9,date_format_default:'YYYYMMDD',datetime_format_default:'YYYYMMDDHHMMSS',type_formats:{}},layEditing=null,laySearch='';
 let joinCache=[],joinMeta={types:[],formats:[],layouts:[],max_sources:8},jnEditing=null,jnSearch='',
     jnProbe={},jnPreviewTimer=null,jnColMode='auto';const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)],E=s=>String(s??'').replace(/[&<>"']/g,x=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[x]));const uid=()=>crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random();function toast(t){$('#toast').textContent=t;$('#toast').style.display='block';setTimeout(()=>$('#toast').style.display='none',2500)}/* 設定は変えた瞬間に保存する。保存ボタンの押し忘れで、画面に見えている設定と
    実際に使われる設定が食い違うことがあったため、押す操作そのものを無くした。 */
@@ -440,7 +440,7 @@ async function openFolderPath(path,label){
  catch{toast(`${label}を開けませんでした`)}
 }
 function openEditor(job){editing=structuredClone(job||{id:uid(),name:'新しい対象',enabled:true,rne:'NEW.RNE',rne_path:cfg.rne_folder+'\\NEW.RNE',output_folder:cfg.default_output_folder,output_format:'sqlite3',output_file:'NEW.sqlite3',extra_formats:[],table:'仕掛',sheet:'Page1',type:'詳細データ',naming_mode:'fixed',output_pattern:'',comment:'',split_mode:'auto',split_shape:'auto',source:'rne',text_path:'',layout_id:'',recipe_id:'',period:{enabled:false,control_point:'',unit:'month',from_offset:-1,to_offset:0},schedules:[]});$('#modal-title').textContent=job?'対象を編集':'対象を追加';$('#m-id').value=editing.id;$('#m-name').value=editing.name;$('#m-enabled').checked=editing.enabled;$('#m-rne-path').value=editing.rne_path||'';$('#m-output').value=editing.output_folder||cfg.default_output_folder;editing.output_format=normalizeFormat(editing.output_format);editing.extra_formats=(editing.extra_formats||[]).map(normalizeFormat);editing.index_columns=(editing.index_columns||[]).map(String);if($('#m-skip-unchanged'))$('#m-skip-unchanged').checked=!!editing.skip_if_unchanged;if($('#m-index-columns'))$('#m-index-columns').value=(editing.index_columns||[]).join(', ');$('#m-format').value=editing.output_format;$('#m-output-file').value=editing.output_file;$('#m-table').value=editing.table;$('#m-sheet').value=editing.sheet;$('#m-type').value=editing.type;if($('#m-comment'))$('#m-comment').value=editing.comment||'';if($('#m-split-mode'))$('#m-split-mode').value=editing.split_mode||'auto';if($('#m-split-shape'))$('#m-split-shape').value=editing.split_shape||'auto';if($('#m-axis-mode'))$('#m-axis-mode').value=editing.row_axis_mode||'first';if($('#m-axis-index'))$('#m-axis-index').value=editing.row_axis_index||1;AXIS_PICK.forEach(g=>{if($(g.n))$(g.n).innerHTML=`<option value="${E(editing.row_axis_name||'')}">${E(editing.row_axis_name||'（先に「RNEを調査」）')}</option>`;if($(g.m))$(g.m).value=editing.row_axis_mode||'first';if($(g.i))$(g.i).value=editing.row_axis_index||1});syncAxisPick();setSource(editing.source||'rne');if($('#m-text-path'))$('#m-text-path').value=editing.text_path||'';fillLayoutPicker(editing.layout_id||'');fillRecipePicker(editing.recipe_id||'');syncOutputExtension();initNaming(editing);setPeriodUI(editing.period);renderRuntimeSplit(null);inspReset();loadMaster(false);splitTrialPoll();rulesRender();updatePeriodBadge();loadJobTrend(editing.id);setEditorTab('basic');$('#editor').showModal()}
-$('#m-format').onchange=()=>{syncOutputExtension();if(currentNamingMode()==='template')refreshNamePreview()};$('#m-rne-check').onclick=async()=>{showWaiting('RNEファイル確認中','設定場所と周辺フォルダーを検索しています...');try{let temp={item:'rne',job_id:editing.id,label:editing.rne,configured:$('#m-rne-path').value,resolved:$('#m-rne-path').value,candidates:[],ok:false};let r=await fetch('/api/path-check',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({item:'rne',job_id:editing.id,value:$('#m-rne-path').value,expected_name:$('#m-rne-path').value.split(/[\\/]/).pop()})}),d=await r.json();if(r.ok)showPathResult(d);else toast(d.error)}finally{hideWaiting()}};$('#m-rne-pick').onclick=async()=>{let p=await browse('file',$('#m-rne-path').value,[['RNEファイル','*.RNE'],['すべて','*.*']]);if(p){let i=$('#m-rne-path'),wasRel=i.value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(i.value);i.value=p;if(wasRel)await convertPath(i,'relative');updatePathBadge(i);i._refreshPathControl?.()}};$('#m-output-pick').onclick=async()=>{let p=await browse('folder',$('#m-output').value);if(p){let i=$('#m-output'),wasRel=i.value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(i.value);i.value=p;if(wasRel)await convertPath(i,'relative');updatePathBadge(i)}};enhancePathInput($('#m-rne-path'),'file');enhancePathInput($('#m-output'),'folder');$('#m-rne-path').addEventListener('input',()=>renderInspTarget());$('#m-name').addEventListener('input',()=>renderInspTarget());
+$('#m-format').onchange=()=>{syncOutputExtension();if(currentNamingMode()==='template')refreshNamePreview();if($('#m-layout'))fillLayoutPicker($('#m-layout').value)};$('#m-rne-check').onclick=async()=>{showWaiting('RNEファイル確認中','設定場所と周辺フォルダーを検索しています...');try{let temp={item:'rne',job_id:editing.id,label:editing.rne,configured:$('#m-rne-path').value,resolved:$('#m-rne-path').value,candidates:[],ok:false};let r=await fetch('/api/path-check',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({item:'rne',job_id:editing.id,value:$('#m-rne-path').value,expected_name:$('#m-rne-path').value.split(/[\\/]/).pop()})}),d=await r.json();if(r.ok)showPathResult(d);else toast(d.error)}finally{hideWaiting()}};$('#m-rne-pick').onclick=async()=>{let p=await browse('file',$('#m-rne-path').value,[['RNEファイル','*.RNE'],['すべて','*.*']]);if(p){let i=$('#m-rne-path'),wasRel=i.value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(i.value);i.value=p;if(wasRel)await convertPath(i,'relative');updatePathBadge(i);i._refreshPathControl?.()}};$('#m-output-pick').onclick=async()=>{let p=await browse('folder',$('#m-output').value);if(p){let i=$('#m-output'),wasRel=i.value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(i.value);i.value=p;if(wasRel)await convertPath(i,'relative');updatePathBadge(i)}};enhancePathInput($('#m-rne-path'),'file');enhancePathInput($('#m-output'),'folder');$('#m-rne-path').addEventListener('input',()=>renderInspTarget());$('#m-name').addEventListener('input',()=>renderInspTarget());
 /* 有効・無効は押した瞬間に効かせる。「設定を反映」を押し忘れて閉じると
    黙って元へ戻る、という切れ目を作らない。まだ保存していない新規の対象だけは
    一覧に行がないので、下書きに持たせて「設定を反映」で確定する。 */
@@ -3078,7 +3078,10 @@ async function loadLayouts(force){
  if(layoutCache.length&&!force)return layoutCache;
  try{
   let d=await fetch('/api/text-layouts',{cache:'no-store'}).then(r=>r.json());
-  layoutCache=d.items||[];layoutMeta={encodings:d.encodings||[],units:d.units||[],trims:d.trims||[]};
+  layoutCache=d.items||[];layoutMeta={encodings:d.encodings||[],units:d.units||[],trims:d.trims||[],
+   types:d.types||[],stamp_formats:d.stamp_formats||[],max_scale:d.max_scale||9,
+   date_format_default:d.date_format_default||'YYYYMMDD',datetime_format_default:d.datetime_format_default||'YYYYMMDDHHMMSS',
+   type_formats:d.type_formats||{}};
  }catch{layoutCache=[]}
  return layoutCache;
 }
@@ -3091,7 +3094,11 @@ async function fillLayoutPicker(selected){
  let note=$('#m-layout-note');
  if(note){
   let cur=items.find(x=>x.id===sel.value);
+  let typed=cur?(cur.columns||[]).filter(c=>(c.type||'text')!=='text').length:0;
+  let fmt=$('#m-format')?.value||'';
+  let keeps=layoutMeta.type_formats&&layoutMeta.type_formats[fmt];
   note.textContent=cur?`${cur.name}: ${cur.columns.map(c=>c.name).slice(0,6).join('・')}${cur.columns.length>6?' ほか':''}`
+    +(typed?` ／ 型あり ${typed}列（${keeps===false?'この形式は型を持てません。値の形だけそろいます':'数値・日付として出ます'}）`:'')
    :(items.length?'どの位置で切るかは「読取マスタ」で決めます。上から選んでください。'
     :'読取マスタがまだありません。上の「マスタを開く」から作成してください。');
  }
@@ -3114,7 +3121,14 @@ if($('#m-text-check'))$('#m-text-check').onclick=async()=>{
 /* ---- 読取マスタの画面 ---- */
 function layBlank(){return {id:'',name:'',description:'',encoding:'cp932',unit:'byte',trim:'both',
  skip_head:0,skip_tail:0,skip_blank:true,header_row:false,sample_path:'',
- columns:[{name:'列1',start:1,length:10,note:''}]}}
+ columns:[{name:'列1',start:1,length:10,type:'text',scale:0,format:'',note:''}]}}
+/* 型ごとの「詳細」欄。小数は桁数、日付・日時は書式。文字と整数には無い（押しても効かない
+   欄は、空にするのではなく使えないと分かる見た目にする）。 */
+function layTypeDefaultFormat(t){
+ return t==='date'?layoutMeta.date_format_default:t==='datetime'?layoutMeta.datetime_format_default:'';
+}
+function layTypeLabel(t){return (layoutMeta.types.find(x=>x.value===t)||{}).label||t}
+function layTypeNote(t){return (layoutMeta.types.find(x=>x.value===t)||{}).note||''}
 function layFillSelect(el,items,value){
  if(!el)return;el.innerHTML=items.map(x=>`<option value="${E(x.value)}">${E(x.label)}</option>`).join('');el.value=value;
 }
@@ -3124,18 +3138,32 @@ function layRenderList(){
  let items=layoutCache.filter(x=>!q||[x.name,x.description,...(x.columns||[]).map(c=>c.name)].join(' ').toLowerCase().includes(q));
  if(!items.length){box.innerHTML='<p class="lay-empty-note">'+(q?'見つかりませんでした':'まだ登録がありません。「新規作成」から作れます。')+'</p>';return}
  box.innerHTML=items.map(x=>`<button type="button" class="lay-item${layEditing&&layEditing.id===x.id?' on':''}" data-id="${E(x.id)}">`
-  +`<b>${E(x.name)}</b><small>${x.columns.length}列 / ${x.width}${x.unit==='byte'?'バイト':'文字'} / ${E(x.encoding)}</small>`
+  +`<b>${E(x.name)}</b><small>${x.columns.length}列 / ${x.width}${x.unit==='byte'?'バイト':'文字'} / ${E(x.encoding)}${(()=>{let t=(x.columns||[]).filter(c=>(c.type||'text')!=='text').length;return t?` / 型あり ${t}列`:''})()}</small>`
   +(x.used_by&&x.used_by.length?`<em>${x.used_by.length}件の対象が使用中</em>`:'')
   +(x.description?`<small>${E(x.description)}</small>`:'')+'</button>').join('');
  $$('#lay-list .lay-item').forEach(b=>b.onclick=()=>layOpen(layoutCache.find(x=>x.id===b.dataset.id)));
 }
+/* 型の詳細欄は、型によって意味が変わる1つの欄にした。列を2つに増やすと、300本並ぶ
+   一覧で横に伸びすぎる。小数なら桁数、日付・日時なら書式、それ以外では使えない。 */
+function layFmtCell(c){
+ let t=c.type||'text';
+ if(t==='real')return `<input class="lay-fmt" type="number" min="0" max="${layoutMeta.max_scale}" step="1" value="${Number(c.scale||0)}" title="小数の桁数。小数点が書かれていない値に、右から何桁ぶんの小数を入れるか（0012345 で 2 なら 123.45）。">`;
+ if(t==='date'||t==='datetime')
+  return `<input class="lay-fmt" list="lay-fmt-list" value="${E(c.format||layTypeDefaultFormat(t))}" placeholder="${E(layTypeDefaultFormat(t))}" title="読み方の並び。YYYY・YY・MM・DD・HH・MI・SS を並べます。区切り文字は何でも読み飛ばします。">`;
+ return `<input class="lay-fmt" value="" disabled tabindex="-1" title="この型には設定するものがありません">`;
+}
 function layRenderCols(){
  let box=$('#lay-cols');if(!box)return;
- box.innerHTML=(layEditing.columns||[]).map((c,i)=>`<div class="lay-col" data-i="${i}">`
+ let opts=(layoutMeta.types.length?layoutMeta.types:[{value:'text',label:'文字'}]);
+ box.innerHTML=(layEditing.columns||[]).map((c,i)=>`<div class="lay-col${(c.type&&c.type!=='text')?' is-typed':''}" data-i="${i}">`
   +`<input class="lay-name" value="${E(c.name||'')}" placeholder="列名">`
   +`<input class="lay-start" type="number" min="1" step="1" value="${Number(c.start||1)}">`
   +`<input class="lay-len" type="number" min="1" step="1" value="${Number(c.length||0)}">`
   +`<input class="lay-end" value="${Number(c.start||1)+Number(c.length||0)-1}" readonly tabindex="-1">`
+  +`<select class="lay-type" title="${E(layTypeNote(c.type||'text'))}">`
+   +opts.map(o=>`<option value="${E(o.value)}" ${((c.type||'text')===o.value)?'selected':''}>${E(o.label)}</option>`).join('')
+  +`</select>`
+  +layFmtCell(c)
   +`<input class="lay-memo" value="${E(c.note||'')}" placeholder="メモ">`
   +`<button type="button" class="lay-del" title="この列を消す">×</button></div>`).join('');
  $$('#lay-cols .lay-col').forEach(row=>{
@@ -3148,17 +3176,37 @@ function layRenderCols(){
    row.querySelector('.lay-end').value=c.start+c.length-1;
    layRenderWidth();
   };
-  row.querySelectorAll('input').forEach(inp=>inp.oninput=read);
+  ['.lay-name','.lay-start','.lay-len'].forEach(sel=>{row.querySelector(sel).oninput=read});
   row.querySelector('.lay-memo').oninput=()=>{layEditing.columns[i].note=row.querySelector('.lay-memo').value};
+  row.querySelector('.lay-type').onchange=e=>{
+   let c=layEditing.columns[i];c.type=e.target.value;
+   // 型を変えたら、その型の既定の詳細に入れ替える（前の型の桁数や書式を持ち越さない）。
+   c.scale=c.type==='real'?(Number(c.scale)||0):0;
+   c.format=layTypeDefaultFormat(c.type);
+   row.classList.toggle('is-typed',c.type!=='text');
+   row.querySelector('.lay-fmt').outerHTML=layFmtCell(c);
+   layBindFmt(row,i);layRenderWidth();
+  };
+  layBindFmt(row,i);
   row.querySelector('.lay-del').onclick=()=>{layEditing.columns.splice(i,1);layRenderCols()};
  });
  layRenderWidth();
+}
+function layBindFmt(row,i){
+ let f=row.querySelector('.lay-fmt');if(!f||f.disabled)return;
+ f.oninput=()=>{
+  let c=layEditing.columns[i];
+  if(c.type==='real')c.scale=Math.max(0,Math.min(layoutMeta.max_scale,Number(f.value)||0));
+  else c.format=f.value;
+  layRenderWidth();
+ };
 }
 function layRenderWidth(){
  let cols=layEditing?.columns||[];
  let width=cols.reduce((m,c)=>Math.max(m,Number(c.start||1)+Number(c.length||0)-1),0);
  let unit=$('#lay-unit')?.value==='byte'?'バイト':'文字';
- let w=$('#lay-width');if(w)w.textContent=`1行あたり ${width}${unit} / ${cols.length}列`;
+ let typed=cols.filter(c=>(c.type||'text')!=='text').length;
+ let w=$('#lay-width');if(w)w.textContent=`1行あたり ${width}${unit} / ${cols.length}列`+(typed?` / 型あり ${typed}列`:'');
  // 重なりと隙間は、間違いとは限らない（日付の全体と年だけ、など）。知らせるだけにする。
  let sorted=cols.slice().sort((a,b)=>a.start-b.start);let over=[],gap=[],pos=1;
  sorted.forEach(c=>{let s=Number(c.start||1),e=s+Number(c.length||0)-1;
@@ -3176,6 +3224,9 @@ function layOpen(l){
  layFillSelect($('#lay-enc'),layoutMeta.encodings,layEditing.encoding);
  layFillSelect($('#lay-unit'),layoutMeta.units,layEditing.unit);
  layFillSelect($('#lay-trim'),layoutMeta.trims,layEditing.trim);
+ layFillSelect($('#lay-type-pick'),layoutMeta.types,'integer');
+ let fl=$('#lay-fmt-list');
+ if(fl)fl.innerHTML=(layoutMeta.stamp_formats||[]).map(x=>`<option value="${E(x)}">`).join('');
  $('#lay-skip-head').value=layEditing.skip_head||0;$('#lay-skip-tail').value=layEditing.skip_tail||0;
  $('#lay-skip-blank').checked=layEditing.skip_blank!==false;$('#lay-header-row').checked=!!layEditing.header_row;
  $('#lay-sample').value=layEditing.sample_path||'';
@@ -3217,7 +3268,8 @@ async function layPreview(){
    body:JSON.stringify({path,layout:layCollect(),lines:12})}).then(r=>r.json()).catch(()=>null);
  if(!d)return box.innerHTML='<p class="lay-note is-ng">下読みできませんでした（通信に失敗しました）</p>';
  if(!d.ok)return box.innerHTML=`<p class="lay-note is-ng">${E(d.error||'読み取れませんでした')}</p>`;
- let head='<tr><th>#</th>'+d.headers.map(h=>`<th>${E(h)}</th>`).join('')+'</tr>';
+ let head='<tr><th>#</th>'+d.headers.map((h,i)=>{let t=(d.types||[])[i]||'text';
+   return `<th>${E(h)}${t!=='text'?`<small class="lay-th-type">${E(layTypeLabel(t))}</small>`:''}</th>`}).join('')+'</tr>';
  let rows=d.rows.map((r,i)=>`<tr><td>${i+1}</td>`+r.map(v=>`<td>${E(v)}</td>`).join('')+'</tr>').join('');
  box.innerHTML=`<div class="lay-scroll"><table>${head}${rows}</table></div>`
   +`<p class="hint">${d.stat.rows}行を切り出しました（読んだ行 ${d.stat.lines} / 1行あたり ${d.stat.width}${d.stat.unit==='byte'?'バイト':'文字'}必要）</p>`
@@ -3237,8 +3289,23 @@ if($('#lay-unit'))$('#lay-unit').onchange=layRenderWidth;
 if($('#lay-col-add'))$('#lay-col-add').onclick=()=>{
  let cols=layEditing.columns||[];
  let next=cols.reduce((m,c)=>Math.max(m,Number(c.start||1)+Number(c.length||0)),1);
- cols.push({name:'列'+(cols.length+1),start:next,length:10,note:''});
+ cols.push({name:'列'+(cols.length+1),start:next,length:10,type:'text',scale:0,format:'',note:''});
  layEditing.columns=cols;layRenderCols();
+};
+/* 型をまとめて設定する。1本ずつ選ぶのは300列では現実的でない。
+   すでに型を決めてある列は残す（上書きすると、丁寧に入れた設定が一度で消える）。
+   全部を戻したいときは「文字」を選ぶ ―― そのときだけは上書きする。 */
+if($('#lay-type-all'))$('#lay-type-all').onclick=()=>{
+ let cols=(layEditing&&layEditing.columns)||[];
+ if(!cols.length)return toast('列がありません');
+ let t=$('#lay-type-pick').value||'text';
+ let target=t==='text'?cols.filter(c=>(c.type||'text')!=='text'):cols.filter(c=>(c.type||'text')==='text');
+ if(!target.length)return toast(t==='text'?'型を決めている列がありません':`型を決めていない列がありません（すでに全${cols.length}列に型があります）`);
+ target.forEach(c=>{c.type=t;c.scale=t==='real'?(Number(c.scale)||0):0;c.format=layTypeDefaultFormat(t)});
+ layRenderCols();
+ let kept=cols.length-target.length;
+ toast(`${target.length}列を「${layTypeLabel(t)}」にしました`
+  +(kept?(t==='text'?`（もともと文字の${kept}列はそのまま）`:`（すでに型を決めていた${kept}列はそのまま）`):''));
 };
 /* 列名とメモの入れ替え。固定長のレイアウト表は「定義名（ADDYMD）」と
    「日本語項目名（登録年月日）」の2つの呼び名を持っていることが多く、出力の列名を

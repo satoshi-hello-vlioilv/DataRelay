@@ -41,6 +41,7 @@ for _n in ('_mark_settings_dirty',
            'serial_run_metrics',
            'set_status',
            'settings_connection',
+           'text_layout_column_types',
            'text_layout_width',
            'validate_output_contract',
            'validate_text_layout',
@@ -156,6 +157,9 @@ def process_local_job(j,cfg,work,backup,trigger,job_index,total_jobs,say=None):
   bad=validate_text_layout(layout)
   if bad:raise ValueError(f'読取マスタ「{layout["name"]}」が使えません: '+'／'.join(bad))
   if not src.is_file():raise FileNotFoundError('テキストファイルがありません: '+str(src))
+  # 列の型は、読み方の側（読取マスタ）で決まり、書き出す側で使う。中間CSVは文字しか
+  # 運べないので、名前で対応づけて対象に持たせて渡す（並び順で渡すと1本ずれる）。
+  j['_column_types']=text_layout_column_types(layout)
  out_dir=resolve_path(j.get('output_folder') or cfg['default_output_folder']);target=out_dir/j['output_file']
  apply_pending(target,backup,int(cfg['settings']['backup_generations']),backup_enabled=bool(cfg['settings'].get('backup_enabled',True)),retention_days=int(cfg['settings'].get('backup_retention_days',30)),generation_limit_enabled=bool(cfg['settings'].get('backup_generation_limit_enabled',True)),backup_mode=str(cfg['settings'].get('backup_mode','generations')))
  stamp=datetime.now().strftime('%Y%m%d_%H%M%S_%f')+f'_L{job_index}'

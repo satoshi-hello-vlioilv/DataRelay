@@ -68,7 +68,10 @@ from app import (
     find_join_recipe, save_join_recipe, delete_join_recipe, join_recipe_usage,
     resolve_join_path, join_reader, join_layouts, read_preview_data,
     VIEWER_MAX_ROWS, viewer_row_budget, output_column_limit, check_output_columns,
-    OUTPUT_FORMAT_LABEL)
+    OUTPUT_FORMAT_LABEL,
+    COLUMN_TYPES, COLUMN_TYPE_LABEL, COLUMN_TYPE_NOTE, format_keeps_types,
+    STAMP_FORMAT_SAMPLES, DATE_FORMAT_DEFAULT, DATETIME_FORMAT_DEFAULT, MAX_SCALE,
+    text_layout_column_types)
 
 @app.get('/')
 def index():
@@ -1451,7 +1454,12 @@ def text_layouts_list():
  return jsonify(ok=True,items=items,
                 encodings=[{'value':k,'label':TEXT_ENCODING_LABEL.get(k,k)} for k in TEXT_ENCODINGS],
                 units=[{'value':k,'label':TEXT_UNIT_LABEL.get(k,k)} for k in TEXT_UNITS],
-                trims=[{'value':k,'label':TRIM_LABEL.get(k,k)} for k in TRIM_MODES])
+                trims=[{'value':k,'label':TRIM_LABEL.get(k,k)} for k in TRIM_MODES],
+                types=[{'value':k,'label':COLUMN_TYPE_LABEL.get(k,k),'note':COLUMN_TYPE_NOTE.get(k,'')} for k in COLUMN_TYPES],
+                stamp_formats=list(STAMP_FORMAT_SAMPLES),max_scale=MAX_SCALE,
+                date_format_default=DATE_FORMAT_DEFAULT,datetime_format_default=DATETIME_FORMAT_DEFAULT,
+                # どの形式なら型をファイルに持てるか。画面で「CSVでは形が揃うだけ」と言うために要る。
+                type_formats={k:format_keeps_types(k) for k in OUTPUT_FORMAT_LABEL})
 
 @app.post('/api/text-layouts')
 def text_layouts_save():

@@ -1,7 +1,7 @@
 from __future__ import annotations
 import atexit, calendar, configparser, contextlib, copy, csv, gc, json, logging, os, re, shutil, socket, sqlite3, struct, subprocess, sys, tempfile, threading, time, traceback, uuid, webbrowser
 from collections import deque
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from pathlib import Path
 # 並列実行のワーカー(api_worker.py)は抽出処理だけを行い、HTTP層は一切使わない。
 # それでも従来は app.py の取り込みに引きずられて Flask まで読み込んでおり、
@@ -293,7 +293,9 @@ def _decode_period(raw):
 from navi_output import (OUTPUT_FORMAT_LABEL,normalize_output_format,output_extension,
                          parse_output_format,job_extra_formats,canonical_output_file,
                          validate_output_contract,output_column_limit,check_output_columns,
-                         sqlite_column_limit)
+                         sqlite_column_limit,COLUMN_TYPES,COLUMN_TYPE_LABEL,COLUMN_TYPE_NOTE,
+                         normalize_column_type,format_keeps_types,sqlite_column_type,
+                         accdb_column_type,accdb_schema_type,job_column_types)
 
 # 複数ファイルの結合（結合マスタ）は navi_join.py。繋ぎ方の組み立てと一致の数え方だけを持つ。
 import navi_join
@@ -321,7 +323,9 @@ from navi_text import (TEXT_ENCODINGS,TEXT_ENCODING_LABEL,TEXT_UNITS,TEXT_UNIT_L
                        preview_text,read_text_rows,
                        write_intermediate_csv as write_text_intermediate,
                        layouts_export as text_layouts_export,
-                       layouts_import as text_layouts_import)
+                       layouts_import as text_layouts_import,
+                       STAMP_FORMAT_SAMPLES,DATE_FORMAT_DEFAULT,DATETIME_FORMAT_DEFAULT,MAX_SCALE,
+                       layout_column_types as text_layout_column_types)
 
 # job_output_plan だけはここに残す。名前の組み立て（resolve_output_filename）と
 # 組で動くもので、形式の話だけでは完結しないため。
@@ -2547,67 +2551,10 @@ def read_extract(source,job,reject,expected_rows=None,expected_cols=None):
  return hs,body
 
 
-def _xlsx_col_name(index):
- name=''
- while index:
-  index,rem=divmod(index-1,26); name=chr(65+rem)+name
- return name or 'A'
-def _xlsx_xml_text(value):
- s='' if value is None else str(value)
- s=''.join(ch for ch in s if ch in ('\t','\n','\r') or ord(ch)>=32)
- return s.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')
-def write_xlsx_direct(dst,sheet_name,headers,body):
- # Write a minimal XLSX directly as ZIP/XML. All cells are inline strings to preserve values exactly.
- import zipfile
- sheet_name=(sheet_name or 'Page1')[:31]
- started=time.perf_counter(); rows_written=0; cell_count=0
- with zipfile.ZipFile(dst,'w',compression=zipfile.ZIP_DEFLATED,compresslevel=6) as z:
-  z.writestr('[Content_Types].xml','''<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/><Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/><Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/></Types>''')
-  z.writestr('_rels/.rels','''<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/></Relationships>''')
-  z.writestr('xl/_rels/workbook.xml.rels','''<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>''')
-  safe_sheet=sheet_name.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;').replace('"','&quot;')
-  z.writestr('xl/workbook.xml',f'''<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="{safe_sheet}" sheetId="1" r:id="rId1"/></sheets></workbook>''')
-  z.writestr('xl/styles.xml','''<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="1"><font><sz val="11"/><name val="Yu Gothic"/></font></fonts><fills count="1"><fill><patternFill patternType="none"/></fill></fills><borders count="1"><border/></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/></cellXfs></styleSheet>''')
-  z.writestr('docProps/app.xml','''<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes"><Application>SymfoNavi Data Hub</Application></Properties>''')
-  z.writestr('docProps/core.xml','''<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:dcmitype="http://purl.org/dc/dcmitype/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><dc:creator>SymfoNavi Data Hub</dc:creator><cp:lastModifiedBy>SymfoNavi Data Hub</cp:lastModifiedBy></cp:coreProperties>''')
-  def row_xml(row_index,row):
-   nonlocal cell_count
-   cells=[]
-   for c,v in enumerate(row,1):
-    ref=f'{_xlsx_col_name(c)}{row_index}'; cell_count+=1
-    cells.append(f'<c r="{ref}" t="inlineStr"><is><t>{_xlsx_xml_text(v)}</t></is></c>')
-   return f'<row r="{row_index}">'+''.join(cells)+'</row>'
-  last_col=_xlsx_col_name(len(headers)); last_row=len(body)+1
-  with z.open('xl/worksheets/sheet1.xml','w') as f:
-   f.write(f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><dimension ref="A1:{last_col}{last_row}"/><sheetData>'.encode('utf-8'))
-   f.write(row_xml(1,headers).encode('utf-8'))
-   for r,row in enumerate(body,2):
-    f.write(row_xml(r,row).encode('utf-8')); rows_written+=1
-   f.write(b'</sheetData></worksheet>')
- return {'sheet':sheet_name,'rows':rows_written,'columns':len(headers),'cells':cell_count,'elapsed':time.perf_counter()-started}
-def verify_xlsx_direct(dst,expected_columns):
- import zipfile,re
- started=time.perf_counter()
- with zipfile.ZipFile(dst,'r') as z:
-  bad=z.testzip();names=set(z.namelist());required={'[Content_Types].xml','xl/workbook.xml','xl/worksheets/sheet1.xml'};missing=sorted(required-names)
-  head=z.read('xl/worksheets/sheet1.xml')[:65536].decode('utf-8',errors='ignore')
- if bad or missing:raise RuntimeError(f'XLSX ZIP構造検査失敗 bad={bad} missing={missing}')
- m=re.search(r'<row[^>]*r="1"[^>]*>(.*?)</row>',head,re.S); header_columns=len(re.findall(r'<c\b',m.group(1))) if m else 0
- log.info('XLSX_LIGHT_VERIFY_DIRECT header_columns=%s expected_columns=%s elapsed=%.2fs',header_columns,expected_columns,time.perf_counter()-started)
- if header_columns!=expected_columns:raise RuntimeError(f'XLSX列数検査失敗 expected={expected_columns} actual={header_columns}')
- log.info('XLSX_ZIP_TEST bad_entry=%s missing_required=%s entries=%s elapsed=%.2fs',bad,missing,len(names),time.perf_counter()-started)
-
-def verify_xlsx_fast(dst,expected_columns):
- import zipfile,re
- started=time.perf_counter()
- with zipfile.ZipFile(dst,'r') as z:
-  names=set(z.namelist());required={'[Content_Types].xml','xl/workbook.xml','xl/worksheets/sheet1.xml'};missing=sorted(required-names)
-  if missing:raise RuntimeError(f'XLSX必須XML不足 missing={missing}')
-  head=z.read('xl/worksheets/sheet1.xml')[:65536].decode('utf-8',errors='ignore')
- m=re.search(r'<row[^>]*r="1"[^>]*>(.*?)</row>',head,re.S); header_columns=len(re.findall(r'<c\b',m.group(1))) if m else 0
- log.info('XLSX_FAST_VERIFY header_columns=%s expected_columns=%s elapsed=%.2fs',header_columns,expected_columns,time.perf_counter()-started)
- if header_columns!=expected_columns:raise RuntimeError(f'XLSX列数検査失敗 expected={expected_columns} actual={header_columns}')
- return header_columns
+# XLSXの組み立てと検査は navi_xlsx.py。ZIP/XMLを直接書く話なので、本体から切り離してある。
+import navi_xlsx
+from navi_xlsx import (write_xlsx_direct,verify_xlsx_direct,verify_xlsx_fast,
+                       _xlsx_col_name,_xlsx_xml_text,_xlsx_cell,_xlsx_serial)
 
 def prewarm_access_async(reason='accdb'):
  def worker():
@@ -2650,13 +2597,26 @@ def export_data(source,dst,job,reject,expected_rows=None,expected_cols=None,data
  # 列の上限は形式ごとに違う（ACCESS 255／EXCEL 16384／SQLiteは実行中の版に聞く／CSV・TXTは無し）。
  # 途中まで書いてから生のDBエラーで落ちると何が起きたか分からないので、書き始める前に断る。
  check_output_columns(fmt,len(hs),'読み取る列')
+ # 列の型。決めているのは読取マスタだけで、RNEの対象には無い（＝全部文字＝これまでどおり）。
+ types=job_column_types(job,hs);typed={k:v for k,v in types.items() if v!='text'}
+ if typed:log.info('OUTPUT_COLUMN_TYPES format=%s 型を決めた列=%s 形式が型を持てる=%s 内訳=%s',
+                   fmt,len(typed),format_keeps_types(fmt),typed)
  if dst.exists():dst.unlink()
  if fmt=='sqlite3':
   sqlite_started=time.perf_counter();c=sqlite3.connect(dst)
   try:
-   c.execute('PRAGMA synchronous=FULL'); c.execute(f'CREATE TABLE {qi(job["table"])} ('+', '.join(qi(x)+' TEXT' for x in hs)+')')
+   # 型は列ごとに置く。決めていない列はこれまでどおりTEXT。日付はSQLiteに型が無いので
+   # ISO文字列（2026-08-14）のまま入れる ―― この形なら文字として並べても正しく並ぶ。
+   c.execute('PRAGMA synchronous=FULL'); c.execute(f'CREATE TABLE {qi(job["table"])} ('+', '.join(qi(x)+' '+sqlite_column_type(types.get(x)) for x in hs)+')')
    insert_started=time.perf_counter()
-   if body:c.executemany(f'INSERT INTO {qi(job["table"])} VALUES ('+','.join('?' for _ in hs)+')',body)
+   # 型を決めた列の空欄は、空文字ではなく未入力（NULL）で入れる。数値の列に '' を入れると
+   # SQLiteはその1件だけを文字として持ってしまい、SUMも並べ替えも静かに狂う。
+   # 値そのものはSQLiteの型親和性が数値へ直すので、こちらで作り直すのは空欄だけ。
+   blanks=[i for i,x in enumerate(hs) if types.get(x)!='text']
+   rows_in=body
+   if blanks and body:
+    rows_in=[[(None if (i in blanks and v=='') else v) for i,v in enumerate(r)] for r in body]
+   if rows_in:c.executemany(f'INSERT INTO {qi(job["table"])} VALUES ('+','.join('?' for _ in hs)+')',rows_in)
    log.info('SQLITE_INSERT rows=%s columns=%s elapsed=%.2fs',len(body),len(hs),time.perf_counter()-insert_started)
    # 読み手（BI・アプリ）は絞り込んで読む。索引が1つも無いと毎回すべての行を走査する。
    # どの列で絞るかはこのアプリからは分からないので、対象ごとに指定してもらう。
@@ -2681,7 +2641,7 @@ def export_data(source,dst,job,reject,expected_rows=None,expected_cols=None,data
   # openpyxlのセル逐次appendが環境により極端に遅くなるため、XLSXをZIP/XMLとして直接生成する。
   # すべてinline stringで保存し、中間CSVの内容を文字列として保持する。
   try:
-   write_started=time.perf_counter();info=write_xlsx_direct(dst,job.get('sheet') or 'Page1',hs,body)
+   write_started=time.perf_counter();info=write_xlsx_direct(dst,job.get('sheet') or 'Page1',hs,body,types=types)
    log.info('XLSX_DIRECT_WRITE mode=zip_xml sheet=%s rows=%s columns=%s cells=%s size=%s elapsed=%.2fs',info['sheet'],info['rows'],info['columns'],info['cells'],dst.stat().st_size,time.perf_counter()-write_started)
    if info['rows']!=len(body):raise RuntimeError(f'XLSX書込み件数不一致 expected={len(body)} actual={info["rows"]}')
    verify_xlsx_direct(dst,len(hs))
@@ -2711,13 +2671,16 @@ def export_data(source,dst,job,reject,expected_rows=None,expected_cols=None,data
    bulk_csv=bulk_dir/'bulk.csv';schema_file=bulk_dir/'schema.ini';prep_started=time.perf_counter()
    with bulk_csv.open('w',encoding='cp932',errors='strict',newline='') as f:
     w=csv.writer(f,lineterminator='\r\n',quoting=csv.QUOTE_MINIMAL);w.writerow(hs);w.writerows(body)
+   # schema.ini の型は、これから作る表の型と必ず同じにする。ここだけ文字のままだと
+   # TransferTextが文字として読み込んで型の変換に失敗し、取り込みエラー表ができる。
    schema_lines=['[bulk.csv]','Format=CSVDelimited','ColNameHeader=True','CharacterSet=932','MaxScanRows=0']
-   for i,h in enumerate(hs,1):schema_lines.append(f'Col{i}="{str(h).replace(chr(34),chr(34)*2)}" LongChar')
+   if [x for x in hs if types.get(x) in ('date','datetime')]:schema_lines.append('DateTimeFormat=yyyy-mm-dd hh:nn:ss')
+   for i,h in enumerate(hs,1):schema_lines.append(f'Col{i}="{str(h).replace(chr(34),chr(34)*2)}" {accdb_schema_type(types.get(h))}')
    schema_file.write_text('\r\n'.join(schema_lines)+'\r\n',encoding='cp932',errors='strict')
    log.info('ACCDB_BULK_PREP csv=%s schema=%s encoding=cp932 bom=False rows=%s columns=%s size=%s elapsed=%.2fs',bulk_csv,schema_file,len(body),len(hs),bulk_csv.stat().st_size,time.perf_counter()-prep_started)
    import pythoncom,win32com.client
    com_started=time.perf_counter();pythoncom.CoInitialize();log.info('ACCDB_COM_INITIALIZE elapsed=%.2fs',time.perf_counter()-com_started)
-   table_raw=str(job.get('table') or '仕掛');table=table_raw.replace(']',']]');cols=', '.join('['+str(h).replace(']',']]')+'] LONGTEXT' for h in hs)
+   table_raw=str(job.get('table') or '仕掛');table=table_raw.replace(']',']]');cols=', '.join('['+str(h).replace(']',']]')+'] '+accdb_column_type(types.get(h)) for h in hs)
    access_error=None
    try:
     dispatch_started=time.perf_counter();access_app=win32com.client.DispatchEx('Access.Application');dispatch_elapsed=time.perf_counter()-dispatch_started;access_app.Visible=False
@@ -2795,8 +2758,10 @@ def export_data(source,dst,job,reject,expected_rows=None,expected_cols=None,data
     except:pass
     conn.Execute(f'CREATE TABLE [{table}] ({cols})')
     fallback_started=time.perf_counter();rs=win32com.client.Dispatch('ADODB.Recordset');rs.CursorLocation=3;rs.Open(f'SELECT * FROM [{table}] WHERE 1=0',conn,3,4);field_names=[str(x) for x in hs]
+    # 型を決めた列の空欄は未入力（NULL）で渡す。数値・日付のフィールドへ '' を入れると弾かれる。
+    blank_at=[i for i,x in enumerate(hs) if types.get(x)!='text']
     for index,row in enumerate(body,1):
-     rs.AddNew(field_names,[str(v) if v is not None else '' for v in row])
+     rs.AddNew(field_names,[None if (i in blank_at and (v is None or str(v)=='')) else (str(v) if v is not None else '') for i,v in enumerate(row)])
      if index%250==0:rs.UpdateBatch();log.info('ACCDB_FALLBACK_PROGRESS rows=%s/%s elapsed=%.1fs',index,len(body),time.perf_counter()-fallback_started)
     rs.UpdateBatch();rs.Close();rs=None
     check=conn.Execute(f'SELECT COUNT(*) AS C FROM [{table}]')[0];actual=int(check.Fields(0).Value);check.Close();conn.Close();conn=None
