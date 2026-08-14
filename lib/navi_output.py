@@ -93,18 +93,23 @@ def check_output_columns(fmt,count,where=''):
 #   CSV・TXT… 型は持てない。ただし値の形は揃う（20260814 → 2026-08-14 など）
 # 型の名前をここに置いてあるのは、決める側（読取マスタ）と使う側（書き出し）で
 # 語彙が2つに割れないようにするため。
-COLUMN_TYPES=('text','integer','real','date','datetime')
-COLUMN_TYPE_LABEL={'text':'文字','integer':'整数','real':'小数','date':'日付','datetime':'日時'}
+COLUMN_TYPES=('text','integer','numeric','real','date','datetime')
+COLUMN_TYPE_LABEL={'text':'文字','integer':'整数','numeric':'数値','real':'小数（桁指定）',
+                   'date':'日付','datetime':'日時'}
 COLUMN_TYPE_NOTE={'text':'そのまま文字として出します（既定）。品番・コード・電話番号など、先頭の0に意味があるものはこれ。',
                   'integer':'整数にします。前の0は落ちます（00123→123）。末尾の符号（123-）も読みます。',
-                  'real':'小数にします。小数点が無いときは「小数桁」で入れる位置を決めます（0012345 桁2→123.45）。',
+                  'numeric':'書いてあるとおりに数値にします（123.45→123.45、1234→1234）。小数点が値に入っているならこちら。桁の指定はありません。',
+                  'real':'小数点が値に入っていないときに使います。右から何桁ぶんを小数にするかを「小数桁」で決めます（0012345 桁2→123.45）。',
                   'date':'日付にします。読み方は書式で決めます（既定 YYYYMMDD）。出力は 2026-08-14 の形。',
                   'datetime':'日付と時刻にします（既定 YYYYMMDDHHMMSS）。出力は 2026-08-14 09:30:00 の形。'}
+# 数値として扱う型。書き出す側は、この並びを見て数値のセル・列にする。
+NUMERIC_TYPES=('integer','numeric','real')
 
 def normalize_column_type(value):
  v=str(value or '').strip().lower()
- v={'str':'text','string':'text','char':'text','int':'integer','number':'real','float':'real',
-    'decimal':'real','double':'real','time':'datetime','timestamp':'datetime'}.get(v,v)
+ v={'str':'text','string':'text','char':'text','int':'integer',
+    'number':'numeric','float':'numeric','decimal':'numeric','double':'numeric','num':'numeric',
+    'time':'datetime','timestamp':'datetime'}.get(v,v)
  return v if v in COLUMN_TYPES else 'text'
 
 def format_keeps_types(fmt):
@@ -112,15 +117,15 @@ def format_keeps_types(fmt):
  return normalize_output_format(fmt) in ('sqlite3','accdb','xlsx')
 
 def sqlite_column_type(t):
- return {'integer':'INTEGER','real':'REAL'}.get(normalize_column_type(t),'TEXT')
+ return {'integer':'INTEGER','numeric':'REAL','real':'REAL'}.get(normalize_column_type(t),'TEXT')
 
 def accdb_column_type(t):
  """AccessのDDLで使う型。日付時刻はDATETIME、整数はLONG（-21億〜21億）。"""
- return {'integer':'LONG','real':'DOUBLE','date':'DATETIME','datetime':'DATETIME'}.get(normalize_column_type(t),'LONGTEXT')
+ return {'integer':'LONG','numeric':'DOUBLE','real':'DOUBLE','date':'DATETIME','datetime':'DATETIME'}.get(normalize_column_type(t),'LONGTEXT')
 
 def accdb_schema_type(t):
  """schema.ini（TransferTextの取込定義）で使う型名。DDLとは綴りが違う。"""
- return {'integer':'Long','real':'Double','date':'DateTime','datetime':'DateTime'}.get(normalize_column_type(t),'LongChar')
+ return {'integer':'Long','numeric':'Double','real':'Double','date':'DateTime','datetime':'DateTime'}.get(normalize_column_type(t),'LongChar')
 
 def job_column_types(job,headers=None):
  """この対象の列の型。決めていない列（RNEなど型の概念が無い入力）は文字。

@@ -73,7 +73,7 @@ from app import (
     join_candidates, join_sample_reader, sampled_recipe, suggest_join_keys,
     VIEWER_MAX_ROWS, viewer_row_budget, output_column_limit, check_output_columns,
     OUTPUT_FORMAT_LABEL,
-    COLUMN_TYPES, COLUMN_TYPE_LABEL, COLUMN_TYPE_NOTE, format_keeps_types,
+    COLUMN_TYPES, COLUMN_TYPE_LABEL, COLUMN_TYPE_NOTE, format_keeps_types, normalize_column_type,
     STAMP_FORMAT_SAMPLES, DATE_FORMAT_DEFAULT, DATETIME_FORMAT_DEFAULT, MAX_SCALE,
     text_layout_column_types)
 
@@ -1487,11 +1487,15 @@ def text_layouts_delete(layout_id):
 # あり、そういうものは実際にはEXCELで作られている（仕様書がEXCELなのだから当然）。
 # だから、そのまま開いて直して返せる形でも出し入れできるようにする。
 
-def _from_label(mapping,default=''):
+def _from_label(mapping,default='',fallback=None):
  """画面の言葉でも、中の言葉でも受ける取り出し口を作る。
 
  EXCELを直すのは人なので、「整数」と書いても "integer" と書いても通るのが当たり前。
  どちらか片方しか受けないのは、こちらの都合を人に押しつけているだけ。
+
+ 対応表のどれにも当たらなかったときは fallback へ渡す。decimal・float のような
+ 別の言い方をそこで拾えるようにするため ―― ここで既定へ倒してしまうと、書いた人には
+ なぜ「文字」になったのかが分からない。
  """
  rev={str(v):k for k,v in mapping.items()}
  def pick(value):
@@ -1499,13 +1503,14 @@ def _from_label(mapping,default=''):
   if not t:return default
   if t in mapping:return t
   if t in rev:return rev[t]
-  # 「Shift-JIS（cp932）」のような、括弧つきの表記も拾う
+  # 「Shift-JIS（cp932）」のような、括弧つきの表記も拾う。
+  # 1.85.0より前のEXCELにある「小数」は、前方一致で real（桁で位置指定）へ戻る。
   for k,v in mapping.items():
    if t==str(v) or t.startswith(str(v)) or str(v).startswith(t):return k
-  return default
+  return fallback(t) if fallback else default
  return pick
 
-_TYPE_FROM=_from_label(COLUMN_TYPE_LABEL,'text')
+_TYPE_FROM=_from_label(COLUMN_TYPE_LABEL,'text',fallback=normalize_column_type)
 _ENC_FROM=_from_label(TEXT_ENCODING_LABEL,'cp932')
 _UNIT_FROM=_from_label(TEXT_UNIT_LABEL,'byte')
 _TRIM_FROM=_from_label(TRIM_LABEL,'both')

@@ -10,7 +10,7 @@ app.py から分けてある。本体の状態は一切見ない（受け取る�
 import time,zipfile,re
 from datetime import date,datetime
 from navi_log import log
-from navi_output import normalize_column_type
+from navi_output import normalize_column_type,NUMERIC_TYPES
 
 def _xlsx_col_name(index):
  name=''
@@ -48,7 +48,7 @@ def _xlsx_cell(ref,value,kind):
   return f'<c r="{ref}" t="inlineStr"><is><t>{_xlsx_xml_text(value)}</t></is></c>'
  s='' if value is None else str(value).strip()
  if not s:return ''
- if kind in ('integer','real'):
+ if kind in NUMERIC_TYPES:
   try:float(s)
   except ValueError:return f'<c r="{ref}" t="inlineStr"><is><t>{_xlsx_xml_text(value)}</t></is></c>'
   return f'<c r="{ref}"><v>{s}</v></c>'

@@ -2210,7 +2210,7 @@ body>main{width:var(--app-shell);max-width:var(--app-shell);
 .lay-opts{grid-template-columns:repeat(4,minmax(120px,1fr))}
 .lay-width{margin-left:auto;font-size:10.5px;font-weight:700;color:#0b6570;background:#eaf6f9;
  border-radius:6px;padding:2px 8px}
-.lay-cols-head,.lay-col{display:grid;grid-template-columns:minmax(96px,1.3fr) 62px 62px 62px 84px 104px minmax(80px,1fr) 30px;gap:5px;align-items:center}
+.lay-cols-head,.lay-col{display:grid;grid-template-columns:minmax(96px,1.3fr) 58px 58px 58px 116px 96px minmax(80px,1fr) 30px;gap:5px;align-items:center}
 .lay-cols-head{padding:0 4px 4px;font-size:9.5px;font-weight:900;color:#7f939b}
 .lay-cols{display:grid;gap:4px;max-height:min(52vh,560px);overflow:auto;padding:1px}
 .lay-col input,.lay-col select{height:29px;font-size:11.5px}
@@ -2439,3 +2439,9 @@ body>main{width:var(--app-shell);max-width:var(--app-shell);
  background:#eaf6f9;color:#0d8191;font-size:30px;font-weight:300;line-height:1}
 .drop-card b{font-size:17px;color:#17384e}
 .drop-card span{font-size:12px;color:#647581}
+
+/* 型を選ぶ欄は、名前が切れない幅を持たせる。「数値」と「小数（桁指定）」は
+   切れてしまうと区別が付かず、型を分けた意味が消える。 */
+.lay-type-bar{display:flex;align-items:center;gap:6px}
+#lay-type-pick{width:auto;min-width:126px}
+#lay-type-all{white-space:nowrap}

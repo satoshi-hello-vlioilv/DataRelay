@@ -146,17 +146,20 @@ def _to_number(text,scale,integer_only):
    s=s.rjust(scale+1,'0');return sign+str(int(s[:-scale]))+'.'+s[-scale:]
   return sign+str(int(s))
  head,dot,tail=s.partition('.')
- if not dot or not head.isdigit() or not tail.isdigit():
-  try:float(s)
-  except ValueError:return None
-  return sign+s
- return sign+str(int(head or '0'))+'.'+(tail or '0')
+ if dot and (head=='' or head.isdigit()) and (tail=='' or tail.isdigit()):
+  # 整数部の前の0だけ落とす。小数部は書いてあるとおりに残す（0012.50 → 12.50）。
+  # 末尾の0を落とすと「小数第2位まで」という情報が消えてしまう。
+  return sign+str(int(head or '0'))+'.'+(tail or '0')
+ try:float(s)
+ except ValueError:return None
+ return sign+s
 
 def _converter(col):
  """列1本ぶんの変換。文字（既定）なら None を返し、呼ぶ側で何もしない。"""
  t=col.get('type') or 'text'
  if t=='text':return None
  if t=='integer':return lambda v:_to_number(v,0,True)
+ if t=='numeric':return lambda v:_to_number(v,0,False)
  if t=='real':
   scale=int(col.get('scale') or 0)
   return lambda v:_to_number(v,scale,False)
