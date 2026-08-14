@@ -65,7 +65,22 @@ async function setJobsEnabled(ids,on){
 }
 function setJobEnabled(id,on){return setJobsEnabled([id],on)}
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden'&&saveTimer)saveSettingsNow()});
-window.addEventListener('beforeunload',()=>{if(!saveTimer||!cfg)return;clearTimeout(saveTimer);saveTimer=null;try{fetch('/api/config',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(settingsPayload()),keepalive:true})}catch{}});$$('nav button').forEach(b=>b.onclick=()=>{$$('nav button,section').forEach(x=>x.classList.remove('on'));b.classList.add('on');$('#'+b.dataset.p).classList.add('on');if(b.dataset.p==='logs')loadLog();if(b.dataset.p==='calendar')openCalendar();if(b.dataset.p==='viewer')loadViewerJobs();if(b.dataset.p==='layouts')openLayouts();if(b.dataset.p==='joins')openJoins()});
+window.addEventListener('beforeunload',()=>{if(!saveTimer||!cfg)return;clearTimeout(saveTimer);saveTimer=null;try{fetch('/api/config',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(settingsPayload()),keepalive:true})}catch{}});const MASTER_TABS=['paths','layouts','joins'];
+function showPane(p){
+ $$('nav button,#subnav button,section').forEach(x=>x.classList.remove('on'));
+ $('#'+p)?.classList.add('on');
+ let inMasters=MASTER_TABS.includes(p);
+ // 上のタブは「いま何の話をしているか」を指す。下の段に居るあいだは共通設定を点けたまま。
+ document.querySelector(`nav button[data-p="${inMasters?'paths':p}"]`)?.classList.add('on');
+ let sub=$('#subnav');
+ if(sub){sub.hidden=!inMasters;if(inMasters)sub.querySelector(`button[data-p="${p}"]`)?.classList.add('on')}
+ if(p==='logs')loadLog();
+ if(p==='calendar')openCalendar();
+ if(p==='viewer')loadViewerJobs();
+ if(p==='layouts')openLayouts();
+ if(p==='joins')openJoins();
+}
+$$('nav button,#subnav button').forEach(b=>b.onclick=()=>showPane(b.dataset.p));
 // 一覧の「入力」欄が読取マスタの名前を出すので、最初に一度だけ読んでおく。
 Promise.all([loadLayouts(),loadJoins()]).then(()=>{if(typeof cfg!=='undefined'&&cfg)render()});
 const paths={navigator_api_dll:['Navigator API DLL','file',[['DLLファイル','*.dll'],['すべて','*.*']]],symnavi_exe:['SymNavi.exe','file',[['実行ファイル','*.exe'],['すべて','*.*']]],symnavim_conf:['symnavim.conf','file',[['CONFファイル','*.conf'],['すべて','*.*']]],symnavim_def:['symnavim.def','file',[['DEFファイル','*.def'],['すべて','*.*']]],accdb_template:['ACCDB空テンプレート','file',[['Access Database','*.accdb'],['すべて','*.*']]],rne_folder:['RNE基本フォルダー','folder'],text_folder:['固定長テキストの基本フォルダー','folder'],default_output_folder:['既定の出力先','folder'],backup_folder:['バックアップ先','folder']};
@@ -3335,18 +3350,35 @@ if($('#lay-swap'))$('#lay-swap').onclick=()=>{
   +(skipped?`（メモが空の${skipped}列はそのまま）`:'')
   +(dupes.length?` ／ 同じ名前になった列があります: ${dupes.slice(0,3).join('・')}${dupes.length>3?' ほか':''}。このままでは保存できません`:''));
 };
-if($('#lay-export'))$('#lay-export').onclick=()=>{location.href='/api/text-layouts/export'};
-if($('#lay-import'))$('#lay-import').onclick=()=>$('#lay-file')?.click();
-if($('#lay-file'))$('#lay-file').onchange=async e=>{
- let f=e.target.files&&e.target.files[0];if(!f)return;
- let text=await f.text();e.target.value='';
- let d=await fetch('/api/text-layouts/import',{method:'POST',headers:{'Content-Type':'application/json'},body:text})
+/* ---- マスタの出し入れ ------------------------------------------------------
+   JSONは機械には正しいが、人には読めない。読取マスタの列定義は300行を超えることが
+   あり、そういうものは実際にはEXCELで作られている（仕様書がEXCELなのだから当然）。
+   だからEXCELでも出し入れできるようにし、そのうえで、落とすだけでも取り込めるようにする。
+
+   取り込む側では形式を選ばせない ―― 落としたものが何なのかは中身を見れば分かる。
+   選ぶ必要があるのは書き出すときだけ。 */
+async function importMaster(kind,file){
+ let url=kind==='layout'?'/api/text-layouts/import':'/api/join-recipes/import';
+ let body=await file.arrayBuffer();
+ let d=await fetch(url,{method:'POST',headers:{'Content-Type':'application/octet-stream'},body})
    .then(r=>r.json()).catch(()=>null);
  if(!d||!d.ok)return toast(d?.error||'取り込めませんでした');
- await loadLayouts(true);layRenderList();
+ if(kind==='layout'){await loadLayouts(true);layRenderList()}
+ else{await loadJoins(true);jnRenderList()}
  toast(`取り込みました: 追加${d.added.length}件 / 置き換え${d.replaced.length}件`
    +(d.skipped&&d.skipped.length?` / 読めなかったもの${d.skipped.length}件`:''));
-};
+}
+function bindMasterIO(kind,ids){
+ let ex=$('#'+ids.export),im=$('#'+ids.import),fi=$('#'+ids.file),fm=$('#'+ids.format);
+ let base=kind==='layout'?'/api/text-layouts/export':'/api/join-recipes/export';
+ if(ex)ex.onclick=()=>{location.href=base+'?format='+(fm?.value||'xlsx')};
+ if(im)im.onclick=()=>fi?.click();
+ if(fi)fi.onchange=async e=>{
+  let f=e.target.files&&e.target.files[0];e.target.value='';
+  if(f)await importMaster(kind,f);
+ };
+}
+bindMasterIO('layout',{export:'lay-export',import:'lay-import',file:'lay-file',format:'lay-format'});
 
 /* 一覧の「入力」欄。RNEはRNE名、固定長テキストはファイル名と読取マスタを出す。
    ここを1つの書き方で済ませると、テキストの行にだけ空欄が並ぶ。 */
@@ -3834,18 +3866,48 @@ $$('#jn-col-mode button').forEach(b=>b.onclick=()=>{
  $$('#jn-col-mode button').forEach(x=>x.classList.toggle('on',x===b));
  jnRenderColumns();jnRefresh();
 });
-if($('#jn-export'))$('#jn-export').onclick=()=>{location.href='/api/join-recipes/export'};
-if($('#jn-import'))$('#jn-import').onclick=()=>$('#jn-file')?.click();
-if($('#jn-file'))$('#jn-file').onchange=async e=>{
- let f=e.target.files&&e.target.files[0];if(!f)return;
- let text=await f.text();e.target.value='';
- let d=await fetch('/api/join-recipes/import',{method:'POST',headers:{'Content-Type':'application/json'},body:text})
-   .then(r=>r.json()).catch(()=>null);
- if(!d||!d.ok)return toast(d?.error||'取り込めませんでした');
- await loadJoins(true);jnRenderList();
- toast(`取り込みました: 追加${d.added.length}件 / 置き換え${d.replaced.length}件`
-   +(d.skipped&&d.skipped.length?` / 読めなかったもの${d.skipped.length}件`:''));
-};
+bindMasterIO('join',{export:'jn-export',import:'jn-import',file:'jn-file',format:'jn-format'});
+
+/* ---- 落として取り込む ------------------------------------------------------
+   受けているのはいまの画面。読取マスタを開いているなら読取マスタ、ファイル結合を
+   開いているなら結合マスタ ―― どちらに入るのかを、落とす前に文字で出す。
+   「落としたら何かが起きた」を作らない。 */
+function dropKind(){
+ if($('#layouts')?.classList.contains('on'))return 'layout';
+ if($('#joins')?.classList.contains('on'))return 'join';
+ return '';
+}
+let dropDepth=0;
+function showVeil(on){
+ let v=$('#drop-veil');if(!v)return;
+ v.hidden=!on;
+ if(!on)return;
+ let k=dropKind();
+ $('#drop-title').textContent=k==='layout'?'ここに落とすと読取マスタを取り込みます'
+                                          :'ここに落とすと結合マスタを取り込みます';
+ $('#drop-note').textContent='EXCEL（.xlsx）でも JSON でも受けます。同じ名前のものは置き換えます';
+}
+// dragenter/leave は子要素をまたぐたびに飛んでくる。数えておかないと、
+// 中の要素の上を通っただけで案内が消える。
+window.addEventListener('dragenter',e=>{
+ if(!dropKind()||![...(e.dataTransfer?.types||[])].includes('Files'))return;
+ e.preventDefault();dropDepth++;showVeil(true);
+});
+window.addEventListener('dragover',e=>{if(dropKind()&&$('#drop-veil')&&!$('#drop-veil').hidden)e.preventDefault()});
+window.addEventListener('dragleave',e=>{
+ if(!dropKind())return;
+ dropDepth=Math.max(0,dropDepth-1);
+ if(!dropDepth)showVeil(false);
+});
+window.addEventListener('drop',async e=>{
+ let k=dropKind();
+ dropDepth=0;showVeil(false);
+ if(!k)return;
+ let f=e.dataTransfer?.files?.[0];
+ if(!f)return;
+ e.preventDefault();
+ await importMaster(k,f);
+});
 async function fillRecipePicker(selected){
  let sel=$('#m-recipe');if(!sel)return;
  let items=await loadJoins();

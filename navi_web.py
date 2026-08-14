@@ -20,12 +20,13 @@ app.py 側に残してある。あれは受け口の形をした本体の状態�
 """
 # send_file だけは本体が使っていないので、ここで直接受け取る。
 # jsonify / render_template / request は本体経由で来る（下の import）。
-import contextlib
+import contextlib,shutil
 from flask import send_file
 
 import app
 app=app.app          # 受け口を足す先（Flask本体）。以降 @app.get(...) は分ける前と同じ書き方
 import navi_join     # キーの見当を付けるところだけ、直接呼ぶ（本体を経由する用が無い）
+import navi_book     # マスタをEXCELで出し入れする
 
 from app import (
     APP_ID, APP_RELEASED_AT, APP_VERSION, APP_VERSION_TITLE, BASE, BUILD_VERSION, CHANGELOG,
@@ -1480,24 +1481,102 @@ def text_layouts_delete(layout_id):
  except ValueError as e:return jsonify(ok=False,error=str(e)),409
  return jsonify(ok=bool(gone),error='' if gone else 'その読取マスタはありません')
 
+
+# ---- マスタをEXCELで出し入れする ------------------------------------------
+# JSONは機械には正しいが、人には読めない。読取マスタの列定義は300行を超えることが
+# あり、そういうものは実際にはEXCELで作られている（仕様書がEXCELなのだから当然）。
+# だから、そのまま開いて直して返せる形でも出し入れできるようにする。
+
+def _from_label(mapping,default=''):
+ """画面の言葉でも、中の言葉でも受ける取り出し口を作る。
+
+ EXCELを直すのは人なので、「整数」と書いても "integer" と書いても通るのが当たり前。
+ どちらか片方しか受けないのは、こちらの都合を人に押しつけているだけ。
+ """
+ rev={str(v):k for k,v in mapping.items()}
+ def pick(value):
+  t=str(value or '').strip()
+  if not t:return default
+  if t in mapping:return t
+  if t in rev:return rev[t]
+  # 「Shift-JIS（cp932）」のような、括弧つきの表記も拾う
+  for k,v in mapping.items():
+   if t==str(v) or t.startswith(str(v)) or str(v).startswith(t):return k
+  return default
+ return pick
+
+_TYPE_FROM=_from_label(COLUMN_TYPE_LABEL,'text')
+_ENC_FROM=_from_label(TEXT_ENCODING_LABEL,'cp932')
+_UNIT_FROM=_from_label(TEXT_UNIT_LABEL,'byte')
+_TRIM_FROM=_from_label(TRIM_LABEL,'both')
+_JOIN_FROM=_from_label(JOIN_TYPE_LABEL,'inner')
+
+def _book_response(path,name):
+ r=send_file(path,as_attachment=True,download_name=name,
+             mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+ r.headers['Cache-Control']='no-store'
+ return r
+
+def _book_tmp(name):
+ import tempfile
+ d=Path(tempfile.mkdtemp(prefix='navi_book_'))
+ return d/name
+
+def _uploaded():
+ """持ち込まれたファイルを (バイト列, 名前) で受ける。落としたものも、選んだものも同じ道。"""
+ f=request.files.get('file')
+ if f:return f.read(),str(f.filename or '')
+ return request.get_data() or b'', str(request.args.get('filename') or '')
+
+def _is_xlsx(blob,name):
+ # 中身で見分ける。拡張子は当てにならない（名前を変えただけのものが来る）。
+ return blob[:2]==b'PK' or str(name).lower().endswith(('.xlsx','.xlsm'))
+
 @app.get('/api/text-layouts/export')
 def text_layouts_export_file():
  want=[x for x in (request.args.get('ids') or '').split(',') if x.strip()]
  items=[x for x in load_text_layouts() if not want or x['id'] in want]
- payload=text_layouts_export(items)
- body=json.dumps(payload,ensure_ascii=False,indent=1)
- name='text-layouts-'+datetime.now().strftime('%Y%m%d_%H%M%S')+'.json'
+ stamp=datetime.now().strftime('%Y%m%d_%H%M%S')
+ if str(request.args.get('format') or 'json').lower()=='xlsx':
+  # EXCELには「型」も画面と同じ言葉で書く。開いた人が読めなければ意味が無い。
+  shown=[dict(x,columns=[dict(c,type=COLUMN_TYPE_LABEL.get(c.get('type'),c.get('type','')))
+                         for c in (x.get('columns') or [])],
+              encoding=TEXT_ENCODING_LABEL.get(x.get('encoding'),x.get('encoding','')),
+              unit=TEXT_UNIT_LABEL.get(x.get('unit'),x.get('unit','')),
+              trim=TRIM_LABEL.get(x.get('trim'),x.get('trim',''))) for x in items]
+  name=f'読取マスタ_{stamp}.xlsx';tmp=_book_tmp(name)
+  navi_book.layouts_to_xlsx(shown,tmp)
+  log.info('TEXT_LAYOUT_EXPORT format=xlsx count=%s file=%s',len(items),name)
+  return _book_response(tmp,name)
+ body=json.dumps(text_layouts_export(items),ensure_ascii=False,indent=1)
+ name=f'text-layouts-{stamp}.json'
  r=app.make_response(body)
  r.headers['Content-Type']='application/json; charset=utf-8'
  r.headers['Content-Disposition']=f'attachment; filename="{name}"'
- log.info('TEXT_LAYOUT_EXPORT count=%s file=%s',len(items),name)
+ log.info('TEXT_LAYOUT_EXPORT format=json count=%s file=%s',len(items),name)
  return r
 
 @app.post('/api/text-layouts/import')
 def text_layouts_import_file():
- raw=request.get_data(as_text=True) or ''
- if request.files.get('file'):raw=request.files['file'].read().decode('utf-8-sig',errors='replace')
- layouts,bad=text_layouts_import(raw)
+ """JSONでもEXCELでも受ける。持ち込む側に形式を選ばせない ―― 中身を見れば分かる。"""
+ blob,fname=_uploaded()
+ if _is_xlsx(blob,fname):
+  tmp=_book_tmp('import.xlsx');tmp.write_bytes(blob)
+  try:
+   layouts,bad=navi_book.layouts_from_xlsx(tmp,label_to_type=_TYPE_FROM,label_to_encoding=_ENC_FROM,
+                                           label_to_unit=_UNIT_FROM,label_to_trim=_TRIM_FROM)
+  finally:
+   try:shutil.rmtree(tmp.parent,ignore_errors=True)
+   except Exception:pass
+  # EXCELから来たものも、JSONと同じ検査を通す。入口が2つでも、通す門は1つ。
+  checked=[];
+  for l in layouts:
+   l=normalize_text_layout(l);problems=validate_text_layout(l)
+   if problems:bad.append(f'「{l["name"] or "名前なし"}」: '+'／'.join(problems));continue
+   checked.append(l)
+  layouts=checked
+ else:
+  layouts,bad=text_layouts_import(blob.decode('utf-8-sig',errors='replace'))
  if not layouts:return jsonify(ok=False,error='／'.join(bad) or '取り込めるマスタがありません'),400
  # 同じ名前があれば置き換える。取り込みのたびに増え続けると、どれが最新か分からなくなる。
  have={x['name']:x['id'] for x in load_text_layouts()}
@@ -1554,18 +1633,46 @@ def join_recipes_delete(recipe_id):
 def join_recipes_export_file():
  want=[x for x in (request.args.get('ids') or '').split(',') if x.strip()]
  items=[x for x in load_join_recipes() if not want or x['id'] in want]
+ stamp=datetime.now().strftime('%Y%m%d_%H%M%S')
+ if str(request.args.get('format') or 'json').lower()=='xlsx':
+  # 固定長テキストを混ぜている結合では、読取マスタをidで持っている。EXCELには
+  # 名前で書く ―― 開いた人にidを見せても、何のことか分からない。
+  names={x['id']:x['name'] for x in load_text_layouts()}
+  shown=[dict(x,sources=[dict(sx,_layout_name=names.get(sx.get('layout_id'),''))
+                         for sx in (x.get('sources') or [])]) for x in items]
+  name=f'結合マスタ_{stamp}.xlsx';tmp=_book_tmp(name)
+  navi_book.recipes_to_xlsx(shown,tmp,join_label=lambda t:JOIN_TYPE_LABEL.get(t,t))
+  log.info('JOIN_RECIPE_EXPORT format=xlsx count=%s file=%s',len(items),name)
+  return _book_response(tmp,name)
  body=json.dumps(join_recipes_export(items),ensure_ascii=False,indent=1)
- name='join-recipes-'+datetime.now().strftime('%Y%m%d_%H%M%S')+'.json'
+ name=f'join-recipes-{stamp}.json'
  r=app.make_response(body)
  r.headers['Content-Type']='application/json; charset=utf-8'
  r.headers['Content-Disposition']=f'attachment; filename="{name}"'
- log.info('JOIN_RECIPE_EXPORT count=%s file=%s',len(items),name)
+ log.info('JOIN_RECIPE_EXPORT format=json count=%s file=%s',len(items),name)
  return r
 
 @app.post('/api/join-recipes/import')
 def join_recipes_import_file():
- raw=request.get_data(as_text=True) or ''
- recipes,bad=join_recipes_import(raw)
+ """JSONでもEXCELでも受ける。読取マスタ側と同じ約束。"""
+ blob,fname=_uploaded()
+ if _is_xlsx(blob,fname):
+  tmp=_book_tmp('import.xlsx');tmp.write_bytes(blob)
+  ids={x['name']:x['id'] for x in load_text_layouts()}
+  try:
+   recipes,bad=navi_book.recipes_from_xlsx(tmp,label_to_join=_JOIN_FROM,
+                                           name_to_layout=lambda n:ids.get(str(n or '').strip(),''))
+  finally:
+   try:shutil.rmtree(tmp.parent,ignore_errors=True)
+   except Exception:pass
+  checked=[]
+  for r in recipes:
+   r=normalize_join_recipe(r);problems=validate_join_recipe(r)
+   if problems:bad.append(f'「{r["name"] or "名前なし"}」: '+'／'.join(problems));continue
+   checked.append(r)
+  recipes=checked
+ else:
+  recipes,bad=join_recipes_import(blob.decode('utf-8-sig',errors='replace'))
  if not recipes:return jsonify(ok=False,error='／'.join(bad) or '取り込める結合マスタがありません'),400
  have={x['name']:x['id'] for x in load_join_recipes()}
  added=[];replaced=[]

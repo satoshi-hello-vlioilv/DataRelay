@@ -23,7 +23,9 @@
 html,body{width:100%;height:100%;overflow:hidden}
 body{display:grid;grid-template-rows:auto minmax(0,1fr) auto;padding-bottom:0}
 .appbar{grid-row:1}
-main{grid-row:2;width:100%;min-height:0;overflow:hidden;display:grid;grid-template-rows:auto minmax(0,1fr)}
+main{grid-row:2;width:100%;min-height:0;overflow:hidden;display:flex;flex-direction:column}
+main>nav,main>.subnav{flex:0 0 auto}
+main>section.on{flex:1 1 auto;min-height:0}
 main>nav{margin:6px 0;min-height:40px}
 main>section.on{display:block;min-height:0;overflow:hidden}
 /* 面の中身は、その面が自分で送る決まり（外枠は画面の高さに固定されている）。
@@ -36,7 +38,7 @@ main>#layouts.on,main>#joins.on{align-self:stretch!important;min-height:0;overfl
 /* 一覧は左に残す。編集を下まで送っても、どのマスタを触っているかを見失わない。 */
 .lay-list-pane,.jn-list-pane{position:sticky;top:0}
 footer{grid-row:3;position:static;min-height:56px;padding-top:7px;padding-bottom:7px}
-#paths.on{height:100%;overflow:hidden;display:grid;grid-template-rows:minmax(0,1fr);align-items:stretch}
+#paths.on{overflow:hidden;display:grid;grid-template-rows:minmax(0,1fr);align-items:stretch}
 .settings-shell{min-height:0;height:100%}
 .api-diagnostic{margin-top:6px}
 .api-diagnostic button{padding:6px 10px}
@@ -82,7 +84,7 @@ footer{grid-row:3;position:static;min-height:56px;padding-top:7px;padding-bottom
 html body{align-content:stretch;justify-content:stretch}
 body>main{margin:0 auto;align-self:stretch;justify-self:center}
 main>nav,main>section.on{align-self:start}
-#jobs.on{height:100%;overflow:hidden;display:flex;flex-direction:column}
+#jobs.on{overflow:hidden;display:flex;flex-direction:column}
 #jobs.on>*{flex:0 0 auto}
 #jobs .tablebox{flex:1 1 auto;min-height:0;height:auto;margin-top:0}
 #jobs .jobs-table{vertical-align:top}
@@ -2397,3 +2399,43 @@ body>main{width:var(--app-shell);max-width:var(--app-shell);
  background:#fffaf1;border:1px solid #ecd9b4;border-radius:7px}
 .fb-why b{font-size:10.5px;color:#8a6114}
 .fb-why span{font-size:10px;color:#7a6a52;line-height:1.6}
+
+/* ---- 共通設定の下の段 -------------------------------------------------------
+   読取マスタと結合マスタは「一度決めて、いくつもの対象から使い回すもの」で、
+   共通設定と同じ性質のもの。上のタブに横並びで置くと、毎日開く「対象ファイル」と
+   同じ重さに見えてしまう。1段下げて、上のタブを7つから5つにした。
+
+   下の段は上のタブより控えめにする ―― 同じ強さで2段並ぶと、どちらが親なのかを
+   毎回読み解くことになる。 */
+.subnav{display:flex;align-items:center;gap:4px;margin:-4px 0 10px;padding:4px;
+ background:#eef4f5;border:1px solid #dfe8eb;border-radius:9px}
+.subnav[hidden]{display:none!important}
+.subnav button{padding:6px 14px;font-size:12px;font-weight:700;color:#5d7681;background:transparent;
+ border:0;border-radius:7px}
+.subnav button:hover{background:#e3edef;color:#31505d}
+.subnav button.on{background:#fff;color:#0b6570;box-shadow:0 1px 3px rgba(18,60,72,.14)}
+.subnav-note{margin-left:auto;padding-right:6px;font-size:10.5px;color:#8299a2}
+@media(max-width:900px){.subnav-note{display:none}}
+
+/* ---- マスタの出し入れ ------------------------------------------------------
+   書き出しと取り込みは一組の操作なので、ひとまとまりに置く。形式を選ぶのは
+   書き出すときだけ ―― 取り込みは中身を見れば分かるので、選ばせない。 */
+#layouts .commandbar,#joins .commandbar{grid-template-columns:minmax(260px,1fr) auto auto}
+.io-group{display:grid;grid-template-columns:auto auto auto;gap:0;align-items:stretch}
+.io-group>button,.io-format{white-space:nowrap}
+.io-group>button{border-radius:0}
+.io-group>button:first-child{border-radius:7px 0 0 7px}
+.io-group>button:last-child{border-radius:0 7px 7px 0;border-left:0}
+.io-format{width:auto;min-width:82px;height:auto;border-radius:0;border-left:0;border-right:0;
+ background:#f7fafb;color:#31505d;font-size:11.5px;font-weight:700;padding:0 6px}
+.io-format:focus{outline-offset:-2px}
+/* 落とし場所。受けていることが見えないと、そもそも落とせない。 */
+.drop-veil{position:fixed;inset:0;z-index:80;display:grid;place-items:center;
+ background:#0d2433b8;backdrop-filter:blur(2px)}
+.drop-veil[hidden]{display:none!important}
+.drop-card{display:grid;justify-items:center;gap:6px;padding:34px 54px;background:#fff;
+ border:3px dashed #38a3b4;border-radius:16px;box-shadow:0 24px 70px #0e253566;pointer-events:none}
+.drop-card i{font-style:normal;display:grid;place-items:center;width:52px;height:52px;border-radius:16px;
+ background:#eaf6f9;color:#0d8191;font-size:30px;font-weight:300;line-height:1}
+.drop-card b{font-size:17px;color:#17384e}
+.drop-card span{font-size:12px;color:#647581}
