@@ -24,7 +24,53 @@ from app import (
     BASE, LOCAL_LOGS, LOCAL_ROOT, LOCAL_RUNTIME, MASTER_SETTINGS_DB, SETTINGS_DB,
     creds, dll_search_roots, job_extra_formats, job_schedule_preview, last_run_info,
     load, load_job_runs, log, normalize_output_format, resolve_path, schedule_gap_minutes,
+    settings_connection,
 )
+
+# 予定を持たない対象にも「いつまでなら新しいと言えるか」の目安を持たせる。
+# 1.88.0まで、目安は予定からしか作っていなかった。そのため手動でしか実行しない対象は
+# 何日経っても ok のままで、19日前のファイルに緑の印が付いていた（実測: age 28052分
+# ／ state ok）。読み手が日付を引き算して初めて古さに気づく状態は、作ってはいけない。
+MANUAL_FRESH_DEFAULT=4320      # 3日。実績から間隔を測れないうちの目安。
+
+def observed_gap_minutes(job_id):
+ """これまで実際にどれくらいの間隔で実行されてきたか（分）。中央値を返す。
+
+ 予定が無くても、人はだいたい決まった頻度で回している。その実績を目安にする。
+ 間隔が2つ取れない（＝実行が3回に満たない）うちは決めつけず None を返す ――
+ 1回や2回の間隔をその対象の「ふつう」と見なすと、たまたま連続で実行しただけの
+ 対象が、少し空いただけで古い扱いになる。
+ """
+ try:
+  with settings_connection() as c:
+   rows=[r[0] for r in c.execute(
+     'SELECT finished_at FROM run_history WHERE job_id=? ORDER BY id DESC LIMIT 12',(job_id,))]
+ except Exception:
+  return None
+ ts=[]
+ for x in rows:
+  try:ts.append(datetime.fromisoformat(str(x)))
+  except Exception:pass
+ if len(ts)<3:return None
+ # 取り出した順ではなく時刻で並べ直す。追記の順と時刻の順は普段そろっているが、
+ # そろっている前提で引き算すると、ずれた1件で間隔が全部負になり、目安が消える。
+ ts.sort(reverse=True)
+ gaps=sorted(g for g in (int((ts[i]-ts[i+1]).total_seconds()//60) for i in range(len(ts)-1)) if g>0)
+ if len(gaps)<2:return None
+ return gaps[len(gaps)//2]
+
+def fresh_expectation(job):
+ """この対象が「これくらいで新しくなるはず」の分数と、その根拠を返す。
+
+ 根拠を一緒に返すのは、画面での言い方を変えるため。予定があるなら「予定より
+ 遅れています」でよいが、予定が無い対象に同じ言い方をすると、ありもしない予定に
+ 遅れたことになる。実際には「しばらく実行していません」でしかない。
+ """
+ gap=schedule_gap_minutes(job)
+ if gap:return gap,'schedule'
+ gap=observed_gap_minutes(job['id'])
+ if gap:return gap,'observed'
+ return MANUAL_FRESH_DEFAULT,'default'
 
 def freshness_view():
  """いまのデータが、いつのものか。
@@ -44,8 +90,9 @@ def freshness_view():
    except Exception:age=None
   prev=job_schedule_preview(j,now)
   nxt=prev.get('next_run')
-  # 予定を持っている対象は、その間隔を「これくらいで新しくなるはず」の目安に使う。
-  gap=schedule_gap_minutes(j)
+  # 予定があればその間隔を、無ければ実績の間隔を「これくらいで新しくなるはず」の
+  # 目安にする。どちらも取れないうちは既定の日数で見る（目安ゼロにはしない）。
+  gap,gap_from=fresh_expectation(j)
   overdue=bool(gap and age is not None and age>gap*2)
   # 実行できたことと、共有先が新しくなったことは別。公開先が使用中だと、成功したのに
   # 共有先は古いままになる。ここで「最新」と出すと、読み手はそれを信じてしまう。
@@ -57,6 +104,7 @@ def freshness_view():
   else:state='ok'
   items.append({'id':j['id'],'name':j['name'],'state':state,'last_run':last,'age_minutes':age,
                 'next_run':nxt,'hint':prev.get('hint',''),'expect_minutes':gap,
+                'expect_source':gap_from,
                 'status':info.get('last_status',''),'rows':(run.get('rows') if run else None),
                 'output':info.get('last_output',''),'held':bool(held),
                 'pending':str((run.get('metrics') or {}).get('pending') or ''),
@@ -75,7 +123,8 @@ def freshness_view():
  items.sort(key=lambda x:(order.get(x['state'],4),-(x['age_minutes'] or 0)))
  if held_n:summary=f'{held_n}件が共有先へ反映できていません'+(f'／ほか{len(bad)-held_n}件が確認待ち' if len(bad)>held_n else '')
  elif bad:summary=f'{len(bad)}件が確認待ちです'
- else:summary=f'{len(items)}件すべて予定どおり新しくなっています'
+ # 「予定どおり」とは言わない ―― 予定を持たない対象も同じ数に入っている。
+ else:summary=f'{len(items)}件すべて新しい状態です'
  return {'ok':not bad,'items':items,'attention':len(bad),'held':held_n,'summary':summary}
 
 def dll_diagnostic_issues(attempts,python_bits=None,exports=None,bound=None,requirement=None):

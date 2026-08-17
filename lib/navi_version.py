@@ -4,5 +4,5 @@
 navi_changelog.py にある ―― 800行の読みものなので、それを必要としない経路
 （抽出ワーカー）が読み込まずに済むように分けてある。
 """
-APP_VERSION='1.87.0'; APP_VERSION_TITLE='アプリの名前を DataRelay にした'; APP_RELEASED_AT='2026-09-24'
+APP_VERSION='1.88.0'; APP_VERSION_TITLE='いつのデータかを、一覧で先に言うようにした'; APP_RELEASED_AT='2026-09-30'
 BUILD_VERSION=f'{APP_VERSION}-web'

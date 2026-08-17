@@ -15,7 +15,13 @@
 .safety-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:12px 16px;margin-top:14px;align-items:start}.safety-grid label{min-width:0;display:grid;grid-template-columns:minmax(110px,1fr) minmax(80px,140px) auto;align-items:center;gap:8px;font-size:12px;font-weight:700;color:#425661}.safety-grid label select,.safety-grid label input{min-width:0}.safety-grid .switch{grid-column:1/-1;display:flex!important;align-items:center;gap:8px}.log-toolbar{display:flex;justify-content:flex-end;gap:7px;margin:10px 0}.log-tree{max-height:560px;overflow:auto;background:#101b23;border-radius:9px;padding:10px;color:#d6e6ed;font:12px/1.5 Consolas,monospace}.log-action,.log-job{border:1px solid #29404d;border-radius:7px;margin:6px 0;background:#14242e}.log-job{margin:7px 10px;background:#10202a}.log-action>summary,.log-job>summary{cursor:pointer;padding:9px 11px;font-family:"Yu Gothic UI",sans-serif;font-weight:800;color:#e8f5f8}.log-action>summary{display:flex;justify-content:space-between}.log-tree summary small{color:#83a5b5;font-weight:500}.log-lines{padding:4px 10px 10px}.log-line{white-space:pre-wrap;overflow-wrap:anywhere;padding:2px 5px;border-left:3px solid transparent}.log-line.warning{color:#ffd38a;border-left-color:#d89b31}.log-line.error{color:#ffaaa2;border-left-color:#db594e}.log-line.info{color:#cfe1e8}@media(max-width:800px){.safety-grid{grid-template-columns:1fr}.safety-grid label{grid-template-columns:1fr minmax(90px,140px) auto}}
 .engine-status{display:flex;align-items:center;gap:7px;min-width:0}.engine-status span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:700}.engine-status button{width:auto;white-space:nowrap}.engine-status .ok{color:var(--ok)}.engine-status .ng{color:var(--bad)}
 
-.unit-input{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:6px}.unit-input em{font-style:normal;white-space:nowrap;color:#596d77}.api-diagnostic{display:grid;grid-template-columns:minmax(80px,.65fr) minmax(0,1.35fr) auto;align-items:center;gap:8px;margin-top:4px}.api-diagnostic strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ok)}.api-diagnostic button{width:auto;white-space:nowrap}.safety-switch{display:flex;align-items:center;gap:8px;margin-top:2px;font-size:12px;font-weight:700}.safety-switch input{width:18px;height:18px}@media(max-width:760px){.api-diagnostic{grid-template-columns:1fr auto}.api-diagnostic .setting-label{grid-column:1/-1}}
+.unit-input{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:6px}.unit-input em{font-style:normal;white-space:nowrap;color:#596d77}.api-diagnostic{display:grid;grid-template-columns:minmax(80px,.65fr) minmax(0,1.35fr) auto;align-items:center;gap:8px;margin-top:4px}.api-diagnostic strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ok)}.api-diagnostic button{width:auto;white-space:nowrap}.safety-switch{display:flex;align-items:center;gap:8px;margin-top:2px;font-size:12px;font-weight:700}.safety-switch input{width:18px;height:18px}
+/* 見出し（何をするか）と補足（なぜ・何が起きるか）は別の行にする。同じ行へ流すと
+   「前回と中身が同じなら更新しない公開先への書き込みが無くなり…」のように繋がって
+   しまい、チェックボックスの意味そのものが読み取れない。1.88.0 まで、この形が効いて
+   いたのは .backup-master だけで、ほかの3か所は繋がったまま出ていた。 */
+.safety-switch>span{display:grid;gap:2px;min-width:0}
+.safety-switch>span>small{font-size:10.5px;color:#748790;font-weight:600;line-height:1.55;max-width:640px}@media(max-width:760px){.api-diagnostic{grid-template-columns:1fr auto}.api-diagnostic .setting-label{grid-column:1/-1}}
 
 .waiting-card{min-width:min(420px,88vw)!important;max-width:560px;text-align:center}.waiting-engine{font-size:10px;font-weight:900;letter-spacing:.12em;color:#0d8191;background:#e8f6f7;border-radius:999px;padding:4px 9px}.waiting-card strong{font-size:16px;color:#203a48}.waiting-card>span:not(.waiting-engine){color:#586f7b;line-height:1.55;overflow-wrap:anywhere}.waiting-card small{color:#7b8e97;font:11px Consolas,monospace}.progress-foot #p-engine{max-width:330px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
@@ -264,7 +270,6 @@ main>nav,main>section.on{align-self:stretch}
 .jobs-table td.c-progress{padding-top:5px;padding-bottom:5px}
 .rowprogress{display:grid;min-height:32px;align-content:center}
 .rp-schedule{display:grid;gap:1px}
-.rp-next{font-size:12px;font-weight:800;color:#203542}
 .rp-hint{font-size:10.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .rp-live{display:none}
 .rp-live-top{display:flex;align-items:center;justify-content:space-between;gap:6px}
@@ -307,14 +312,18 @@ tr:has(.rowprogress.is-running) td{background:#f6fcfd}tr:has(.rowprogress.is-err
 /* 予定と実績で1行、実行の中身で1行。2行に収めるため行間はぎりぎりまで詰める。 */
 .rp-schedule{min-width:0;max-width:100%;gap:2px;line-height:1.25}
 .rp-plan{display:flex;align-items:center;gap:5px;min-width:0;white-space:nowrap}
-.rp-chip{font-size:9px;font-weight:800;color:#7f8f9a;background:#eef3f5;border-radius:4px;padding:1px 5px;flex:none;letter-spacing:.02em}
-.rp-chip.alt{background:#f0eef5;color:#7a7391}
-.rp-next{font-size:12px;font-weight:800;color:#203542;flex:none;white-space:nowrap}
-.rp-last{font-size:11.5px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;color:#5d737d;font-variant-numeric:tabular-nums}
-.rp-last.ok{color:#0a7a54}
-.rp-last.ng{color:#b93b32}
-.rp-last.warn{color:#a76100}
-.rp-last.none{color:#95a3ac;font-weight:600}
+/* 1行目は「いつのデータか」。経過をいちばん大きく、いちばん左に置く。実施時刻は
+   その裏づけなので、後ろで小さく。色は鮮度が決める ―― 前回成功していても19日前なら
+   緑にしない（1.88.0）。 */
+.rp-age{font-size:13px;font-weight:800;flex:none;white-space:nowrap;font-variant-numeric:tabular-nums}
+.rp-age.ok{color:#0a7a54}
+.rp-age.warn{color:#a76100}
+.rp-age.ng{color:#b93b32}
+.rp-age.none{color:#8d9ba4;font-weight:700}
+.rp-when{font-size:11px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;color:#6f838d;font-variant-numeric:tabular-nums}
+.rp-flag{font-size:10.5px;font-weight:800;border-radius:4px;padding:1px 6px;flex:none;white-space:nowrap}
+.rp-flag.warn{background:#fbf1de;color:#8a5c10}
+.rp-flag.ng{background:#fce8e5;color:#a83a2f}
 .rp-metrics{display:flex;align-items:center;gap:5px;flex-wrap:nowrap;overflow:hidden;min-width:0;white-space:nowrap}
 .rp-metrics em{font-style:normal;font-size:10.5px;color:#5d737d;white-space:nowrap;font-variant-numeric:tabular-nums}
 .rp-metrics em.rp-m-sep{color:#c2ced5}
@@ -340,7 +349,7 @@ tr:has(.rowprogress.is-running) td{background:#f6fcfd}tr:has(.rowprogress.is-err
 .rp-elapsed{flex:none}
 .rp-track{width:100%}
 .rp-detail{max-width:100%}
-.name-var-badge{display:inline-block;font-size:9px;font-weight:800;color:#0a6c86;background:#dcf1f5;border:1px solid #b6e0e8;border-radius:4px;padding:0 4px;margin-right:5px;vertical-align:1px}
+.name-var-badge{display:inline-block;font-size:10.5px;font-weight:800;color:#0a6c86;background:#dcf1f5;border:1px solid #b6e0e8;border-radius:4px;padding:0 4px;margin-right:5px;vertical-align:1px}
 /* dynamic naming builder */
 .naming-box{border:1px solid #dbe4e9;border-radius:9px;background:#f8fbfc;padding:11px 12px;margin-bottom:10px}
 .naming-mode{display:inline-flex;background:#eaf1f4;border:1px solid #d3e0e6;border-radius:8px;padding:3px;gap:3px;margin-bottom:11px}
@@ -963,6 +972,16 @@ body > main{max-width:1620px;padding-left:12px;padding-right:12px}
 .rowactions button{height:28px;min-width:36px;width:auto;padding:5px 7px!important;font-size:11px!important;line-height:1;font-weight:700}
 .rowactions .icon-action{height:28px;min-width:36px;width:auto;padding:5px 7px!important;font-size:11px!important}
 .output-link{display:block;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* 全行が同じ出力先のとき、同じ文字列を人数ぶん読ませない。畳んだ側は目立たせず、
+   そこだけ違う対象のほうを目立たせる ―― 探してほしいのは例外のほうなので。 */
+.output-link.is-common{color:#8496a0;font-weight:600}
+.output-link.is-common:hover{color:#087c98}
+.output-link.is-different{color:#a76100}
+.lm-counts{display:block}
+.lm-common{display:flex;align-items:center;gap:6px;min-width:0;margin-top:2px}
+.lm-common i{font-style:normal;font-size:10.5px;font-weight:800;color:#6d818c;background:#eef3f5;border-radius:4px;padding:1px 6px;flex:none}
+.lm-common .output-link{font-size:11.5px}
+.listmeta #summary{min-width:0}
 /* Drag handle vertical centering: align the glyph and checkbox to the row's visual center. */
 .jobs-table td.c-check{vertical-align:middle;padding-top:0;padding-bottom:0}
 .jobs-table tr.reorderable .drag-handle{display:inline-flex;align-items:center;justify-content:center;width:12px;height:16px;margin-right:4px;vertical-align:middle;line-height:16px;transform:translateY(-1px)}
@@ -2099,7 +2118,7 @@ body>main{width:var(--app-shell);max-width:var(--app-shell);
 .fb-head b{font-size:12.5px;color:#7a5a18}
 .fb-head small{font-size:10.5px;color:#93a4ab}
 .fb-rows{display:grid;gap:5px}
-.fb-row{display:grid;grid-template-columns:88px minmax(120px,1fr) minmax(0,1.4fr) minmax(0,1fr);gap:10px;
+.fb-row{display:grid;grid-template-columns:102px minmax(120px,1fr) minmax(0,1.4fr) minmax(0,1fr);gap:10px;
  align-items:center;text-align:left;padding:7px 10px;border:1px solid #e2eaee;border-radius:8px;
  background:#fff;color:#3f5661;font-size:11.5px;font-weight:400;cursor:pointer}
 .fb-row:hover{border-color:#8fb6c2;background:#f6fbfc}
@@ -2109,6 +2128,10 @@ body>main{width:var(--app-shell);max-width:var(--app-shell);
 .fb-row b{font-size:12px;color:#22404d;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .fb-row span,.fb-row small{color:#7f929a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .fb-row small{font-size:10.5px}
+/* 経過は、この板でも一覧でも同じ役割 ―― 最初に読ませる値。言い方も色もそろえる。 */
+.fb-row b.fb-age{font-size:12.5px;font-weight:800;color:#8a5f19;margin-right:5px}
+.fb-row.fb-ng b.fb-age{color:#a4463d}
+.fb-more{font-size:11.5px;color:#7c6a45;padding:5px 3px 1px}
 @media(max-width:900px){.fb-row{grid-template-columns:80px minmax(0,1fr)}.fb-row span,.fb-row small{grid-column:2}}
 /* 実績の推移。並べてみないと「急に減った」「だんだん遅い」に気づけない。 */
 .trendbox{margin-top:12px}
