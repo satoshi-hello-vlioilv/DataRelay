@@ -1,7 +1,7 @@
 const UI_BUILD='1.72.0-web';
 // 固定長テキストの既定（本体の TEXT_TABLE_DEFAULT と同じ値。片方だけ変えない）。
 const TEXT_TABLE_DEFAULT='DATA';
-let cfg,editing=null,editingRule=null,sortDir=1,scheduleInfo={},rowLive={},rowQueue={},statusFailCount=0,serverLostShown=false;
+let cfg,editing=null,editingRule=null,sortDir=1,scheduleInfo={},freshInfo={},rowLive={},rowQueue={},statusFailCount=0,serverLostShown=false;
 // 読取マスタは一覧の描画（sourceCell）からも読むので、ここで先に用意する。
 let layoutCache=[],layoutMeta={encodings:[],units:[],trims:[],types:[],stamp_formats:[],max_scale:9,date_format_default:'YYYYMMDD',datetime_format_default:'YYYYMMDDHHMMSS',type_formats:{}},layEditing=null,laySearch='';
 let joinCache=[],joinMeta={types:[],formats:[],layouts:[],max_sources:8},jnEditing=null,jnSearch='',
@@ -323,7 +323,27 @@ if($('#bulk-apply'))$('#bulk-apply').onclick=async()=>{
  }catch(e){toast(e.message)}
  finally{hideWaiting()}
 };
-function render(){let a=filtered(),body=$('#jobs-body');let canReorder=(!$('#search').value.trim()&&$('#filter-enabled').value==='all'&&$('#filter-schedule').value==='all');body.innerHTML=a.map(j=>`<tr data-id="${j.id}" draggable="${canReorder}" class="${canReorder?'reorderable':''}"><td class="c-check"><span class="drag-handle" title="${canReorder?'ドラッグで並べ替え（ドロップ後は登録順表示へ戻ります）':'並べ替えは検索・絞り込み解除時に有効です'}">⋮⋮</span><input class="rowcheck" type="checkbox"></td><td><button type="button" class="state ${j.enabled?'on':'off'}" title="クリックで${j.enabled?'無効':'有効'}にします">${j.enabled?'有効':'無効'}</button></td><td><div class="primarytext" title="${E(j.name)}">${E(j.name)}</div><div class="subtext" title="${E(jobMetaCell(j,true))}">${E(jobMetaCell(j))}</div>${j.comment?`<div class="job-comment" title="${E(j.comment)}"><i class="jc-ic">用途</i><span>${E(j.comment)}</span></div>`:''}</td><td>${sourceCell(j)}</td><td>${outputFileCell(j)}</td><td><a class="output-link" href="#" data-path="${E(j.output_folder||cfg.default_output_folder)}" title="出力先を開く">${E(j.output_folder||cfg.default_output_folder)}</a></td><td class="c-progress">${rowProgressCell(j)}</td><td><div class="rowactions"><button class="run-one" title="実行">実行</button><button class="edit secondary" title="詳細">詳細</button><button class="copy secondary" title="複製">複製</button><button class="delete danger" title="削除">削除</button></div></td></tr>`).join('');paintRowProgress();applyScheduleCells();updateSelCount();$('#empty').hidden=a.length>0;$('#summary').textContent=`表示 ${a.length}件 / 登録 ${cfg.jobs.length}件 / 有効 ${cfg.jobs.filter(j=>j.enabled).length}件 / 自動実行ルール ${cfg.jobs.flatMap(j=>j.schedules||[]).filter(r=>r.enabled).length}件`;body.querySelectorAll('tr').forEach(tr=>{let j=cfg.jobs.find(x=>x.id===tr.dataset.id);tr.onclick=e=>{if(!e.target.closest('button,a,input')){tr.classList.toggle('selected');let cb=tr.querySelector('.rowcheck');if(cb)cb.checked=tr.classList.contains('selected');updateSelCount()}};tr.querySelector('.rowcheck').onchange=e=>{tr.classList.toggle('selected',e.target.checked);updateSelCount()};tr.ondblclick=e=>{if(!e.target.closest('button,input,select,a'))openEditor(j)};tr.querySelector('.edit').onclick=()=>openEditor(j);let st=tr.querySelector('.state');if(st)st.onclick=e=>{e.stopPropagation();setJobEnabled(j.id,!j.enabled)};tr.querySelector('.run-one').onclick=()=>runJobs([j.id]);tr.querySelector('.copy').onclick=()=>{let n=structuredClone(j);n.id=uid();n.name+=' コピー';n.schedules=(n.schedules||[]).map(r=>({...r,id:uid(),enabled:false}));cfg.jobs.splice(cfg.jobs.indexOf(j)+1,0,n);render();dirty()};tr.querySelector('.delete').onclick=()=>deleteJob(j);let l=tr.querySelector('.output-link');if(l)bindOutputLink(l,j);bindRowDnD(tr);tr.oncontextmenu=e=>{if(e.target.closest("a.output-link"))return;e.preventDefault();showJobContextMenu(e,j,tr)}})}
+/* ==== 出力先は、違うところだけ出す =========================================
+   1.88.0まで、6件すべてが同じ出力先でも、同じ文字列を6行ぶん全部書いていた。
+   244px×6行のうち情報を持っているのは1行ぶんだけで、残りは目を通させるだけの面積
+   だった。同じ値は一覧の上で一度だけ言い、行では「共通」と示す。逆に、そこだけ
+   違う対象は全文を出す ―― 見つけてほしいのはそちらなので。 */
+function commonOutputFolder(list){
+ let n={};
+ for(let j of list){let v=j.output_folder||cfg.default_output_folder||'';if(v)n[v]=(n[v]||0)+1}
+ let best=Object.entries(n).sort((a,b)=>b[1]-a[1])[0];
+ // 大半が同じときだけ畳む。半々では「共通」がどちらか分からず、隠すほうが害になる。
+ return best&&best[1]>=2&&best[1]/list.length>=.6?best[0]:'';
+}
+function outputFolderCell(j,common){
+ let v=j.output_folder||cfg.default_output_folder||'';
+ let a=(text,cls)=>`<a class="output-link ${cls}" href="#" data-path="${E(v)}" title="${E(v||'出力先')}">${E(text)}</a>`;
+ return common&&v===common?a('共通','is-common'):a(v,v&&common?'is-different':'');
+}
+function render(){let a=filtered(),body=$('#jobs-body');let canReorder=(!$('#search').value.trim()&&$('#filter-enabled').value==='all'&&$('#filter-schedule').value==='all');
+ let commonOut=commonOutputFolder(a);body.innerHTML=a.map(j=>`<tr data-id="${j.id}" draggable="${canReorder}" class="${canReorder?'reorderable':''}"><td class="c-check"><span class="drag-handle" title="${canReorder?'ドラッグで並べ替え（ドロップ後は登録順表示へ戻ります）':'並べ替えは検索・絞り込み解除時に有効です'}">⋮⋮</span><input class="rowcheck" type="checkbox"></td><td><button type="button" class="state ${j.enabled?'on':'off'}" title="クリックで${j.enabled?'無効':'有効'}にします">${j.enabled?'有効':'無効'}</button></td><td><div class="primarytext" title="${E(j.name)}">${E(j.name)}</div><div class="subtext" title="${E(jobMetaCell(j,true))}">${E(jobMetaCell(j))}</div>${j.comment?`<div class="job-comment" title="${E(j.comment)}"><i class="jc-ic">用途</i><span>${E(j.comment)}</span></div>`:''}</td><td>${sourceCell(j)}</td><td>${outputFileCell(j)}</td><td>${outputFolderCell(j,commonOut)}</td><td class="c-progress">${rowProgressCell(j)}</td><td><div class="rowactions"><button class="run-one" title="実行">実行</button><button class="edit secondary" title="詳細">詳細</button></div></td></tr>`).join('');paintRowProgress();applyScheduleCells();updateSelCount();$('#empty').hidden=a.length>0;$('#summary').innerHTML=`<span class="lm-counts">表示 ${a.length}件 / 登録 ${cfg.jobs.length}件 / 有効 ${cfg.jobs.filter(j=>j.enabled).length}件 / 自動実行ルール ${cfg.jobs.flatMap(j=>j.schedules||[]).filter(r=>r.enabled).length}件</span>`
+ +(commonOut?`<span class="lm-common"><i>出力先 共通</i><a class="output-link" href="#" data-path="${E(commonOut)}" title="${E(commonOut)}">${E(commonOut)}</a></span>`:'');
+ let lc=$('#summary .output-link');if(lc)lc.onclick=e=>{e.preventDefault();openOutputFolder(lc.dataset.path)};body.querySelectorAll('tr').forEach(tr=>{let j=cfg.jobs.find(x=>x.id===tr.dataset.id);tr.onclick=e=>{if(!e.target.closest('button,a,input')){tr.classList.toggle('selected');let cb=tr.querySelector('.rowcheck');if(cb)cb.checked=tr.classList.contains('selected');updateSelCount()}};tr.querySelector('.rowcheck').onchange=e=>{tr.classList.toggle('selected',e.target.checked);updateSelCount()};tr.ondblclick=e=>{if(!e.target.closest('button,input,select,a'))openEditor(j)};tr.querySelector('.edit').onclick=()=>openEditor(j);let st=tr.querySelector('.state');if(st)st.onclick=e=>{e.stopPropagation();setJobEnabled(j.id,!j.enabled)};tr.querySelector('.run-one').onclick=()=>runJobs([j.id]);let l=tr.querySelector('.output-link');if(l)bindOutputLink(l,j);bindRowDnD(tr);tr.oncontextmenu=e=>{if(e.target.closest("a.output-link"))return;e.preventDefault();showJobContextMenu(e,j,tr)}})}
 /* v1.9.0: 一覧のドラッグ&ドロップ並べ替え（問い合わせ順に反映）と管理単位の削除 */
 let dragSrcId=null,dragGhost=null,dragTargetId=null,dragAfter=false,dragImage=null;
 function clearDragVisuals(){
@@ -1188,6 +1208,48 @@ function lastRunTitle(info){
  return [lastRunLabel(info),trig,info.last_detail||''].filter(Boolean).join('\n');
 }
 function lastStatusClass(info){if(!info||!info.last_run)return 'none';return info.last_status==='ok'?'ok':info.last_status==='failed'?'ng':'warn'}
+/* ==== いつのデータか =========================================================
+   1.88.0まで、一覧が出していたのは「7/29 00:38 ✓」だけだった。読み手は今日の日付と
+   引き算して初めて19日前だと気づく ―― 推測させている。しかも ✓ は緑で、意味は
+   「前回は成功した」なのに「大丈夫」と読める。19日前のファイルに緑を出していた。
+   だから先に出すのは経過にし、色は前回の成否ではなく、いまの鮮度に割り当てる。 */
+function ageMinutesOf(info){
+ if(!info||!info.last_run)return null;
+ let d=new Date(info.last_run);if(isNaN(d))return null;
+ return Math.max(0,Math.floor((Date.now()-d.getTime())/60000));
+}
+function ageShort(m){
+ if(m==null)return '';
+ if(m<1)return 'たった今';
+ if(m<60)return `${m}分前`;
+ if(m<1440)return `${Math.floor(m/60)}時間前`;
+ return `${Math.floor(m/1440)}日前`;
+}
+// 予定があるなら「遅れ」でよいが、予定を持たない対象に同じ言い方はできない ――
+// ありもしない予定に遅れたことになる。根拠（expect_source）に合わせて言い分ける。
+function freshWord(f){
+ if(!f)return '';
+ if(f.state==='failed')return '前回失敗';
+ if(f.state==='held')return '共有先が古いまま';
+ if(f.state==='never')return '未実行';
+ if(f.state==='stale')return f.expect_source==='schedule'?'予定より遅れ':'しばらく実行なし';
+ return '';
+}
+function freshTone(f){
+ if(!f||!f.state)return 'none';
+ if(f.state==='failed'||f.state==='held')return 'ng';
+ if(f.state==='stale'||f.state==='never')return 'warn';
+ return 'ok';
+}
+// 2行目の頭。予定を持たない対象に毎行「予定なし」と出しても何も足さないので、
+// その対象が何で動くのか（手動のみ／次はいつ）だけを言う。
+function nextRunText(j,info){
+ if(!j.enabled)return '対象が無効';
+ if(info&&info.next_run)return `次は ${nextRunLabel(info.next_run)}`;
+ // 予定が出ない理由は2つある。ルールが無いのか、ルールはあるが次が決まらないのか。
+ // 同じ「予定なし」で片付けると、設定を見に行くまでどちらか分からない。
+ return (j.schedules||[]).some(r=>r.enabled)?'次の予定なし':'手動のみ';
+}
 function fmtBytes(n){n=Number(n||0);if(!n)return '';return n>=1048576?`${(n/1048576).toFixed(1)}MB`:`${Math.max(1,Math.round(n/1024))}KB`}
 function fmtSeconds(n){n=Number(n||0);if(!n)return '';return n>=60?`${Math.floor(n/60)}分${String(Math.round(n%60)).padStart(2,'0')}秒`:`${n.toFixed(1)}秒`}
 // 実行が終わってから実績が画面に載るまでには、ほんの少し間がある（結果を保存し、
@@ -1208,42 +1270,56 @@ function metricsIsPending(id){
 }
 // 直前の実行の実績。所要・転送量・転送速度・取り方（通常/N分割/競争）を1行で出す。
 // どれか欠けていても、あるものだけ並べる（古い実績には転送量が入っていない）。
-function lastMetricsRow(info,jobId){
+function lastMetricsRow(info,jobId,job){
  if(jobId&&metricsIsPending(jobId))
   return `<div class="rp-metrics is-pending"><span class="rp-mode calc">集計中</span><em>実行結果をまとめています…</em></div>`;
  let m=(info&&info.last_metrics)||{};
- if(!info||!info.last_run)return '';
+ // 「通常」は既定なので何も足さない。9pxの札を全行に置くと、目は毎行それを読み飛ばす
+ // 仕事をさせられるだけになる（1.88.0で撤去）。分割・競争のときだけ札を出す。
  let mode=m.engine==='dde'?['dde','DDE']
   :m.race_winner?['race',`競争→${m.race_winner==='split'?(m.split_how||(m.split_parts||2)+'分割'):'分割なし'}`]
-  :m.split_parts>1?[m.split_shape==='row'?'rowsplit':'split',m.split_how||`${m.split_parts}分割`]:['','通常'];
+  :m.split_parts>1?[m.split_shape==='row'?'rowsplit':'split',m.split_how||`${m.split_parts}分割`]:null;
  let bits=[];
  if(m.elapsed)bits.push(fmtSeconds(m.elapsed));
  if(m.rows)bits.push(`${Number(m.rows).toLocaleString()}件`);
  if(m.transfer_bytes)bits.push(fmtBytes(m.transfer_bytes));
  if(m.transfer_kbs)bits.push(`${Math.round(m.transfer_kbs).toLocaleString()}KB/s`);
- if(!bits.length&&!m.split_parts)return '';
  let title=[m.elapsed?`所要 ${fmtSeconds(m.elapsed)}`:'',m.execute_seconds?`問い合わせ ${m.execute_seconds}s`:'',
   m.save_seconds?`転送 ${m.save_seconds}s`:'',m.axis_seconds?`軸の読み直し ${m.axis_seconds}s`:'',
   m.merge_seconds?`結合 ${m.merge_seconds}s`:'',m.row_axis?`行の軸 ${m.row_axis}`:'',
   m.cols?`${m.cols}列`:''].filter(Boolean).join(' / ');
- return `<div class="rp-metrics" title="${E(title)}"><span class="rp-mode ${mode[0]}">${E(mode[1])}</span>`
-  +bits.map(b=>`<em>${E(b)}</em>`).join('<em class="rp-m-sep">·</em>')+`</div>`;
+ // 予定は2行目へ移した。1行目は「いつのデータか」だけに使う。どのルールで動くのか
+ // （毎日 06:00 など）は、これまでどおりマウスを乗せれば読める。
+ let nextHtml='';
+ if(job){let nt=nextRunText(job,info),nh=(info&&info.hint)||'';
+  nextHtml=`<em class="rp-next-bit" title="${E(nh||nt)}">${E(nt)}</em>`;}
+ if(!bits.length&&!mode&&!nextHtml)return '';
+ return `<div class="rp-metrics" title="${E(title)}">`
+  +(mode?`<span class="rp-mode ${mode[0]}">${E(mode[1])}</span>`:'')
+  +[nextHtml,...bits.map(b=>`<em>${E(b)}</em>`)].filter(Boolean).join('<em class="rp-m-sep">·</em>')
+  +`</div>`;
 }
 // 予定と実績で1行、実行の中身で1行。合わせて2行に収める。
 function scheduleRowHtml(j,info){
- let next=info&&info.next_run?nextRunLabel(info.next_run):(info&&info.hint==='対象が無効'?'対象が無効':'予定なし');
- let hint=info?(info.hint==='対象が無効'?'':info.hint):(j.enabled?'':'対象が無効');
- return `<span class="rp-chip">次回</span><b class="rp-next" title="${E(hint||next)}">${E(next)}</b>`
-  +`<span class="rp-chip alt">直前</span><span class="rp-last ${lastStatusClass(info)}" title="${E(lastRunTitle(info))}">${E(lastRunShort(info))}</span>`;
+ // いちばん大きく、いちばん先に読ませるのは「いつのデータか」。実施時刻はその裏づけ
+ // として後ろへ置く。色は鮮度が決める ―― 前回成功していても、19日前なら緑にしない。
+ let f=freshInfo[j.id]||null,mins=ageMinutesOf(info);
+ let tone=freshTone(f),word=freshWord(f);
+ if(mins==null)
+  return `<b class="rp-age none" title="実施履歴はまだありません">未実行</b>`
+   +(word?`<span class="rp-flag ${tone}">${E(word)}</span>`:'');
+ return `<b class="rp-age ${tone}" title="${E(lastRunTitle(info))}">${E(ageShort(mins))}</b>`
+  +`<span class="rp-when ${lastStatusClass(info)}" title="${E(lastRunTitle(info))}">${E(lastRunShort(info))}</span>`
+  +(word?`<span class="rp-flag ${tone}">${E(word)}</span>`:'');
 }
 function rowProgressCell(j){
  let info=scheduleInfo[j.id];
- return `<div class="rowprogress" data-jobid="${j.id}"><div class="rp-schedule"><div class="rp-plan">${scheduleRowHtml(j,info)}</div>${lastMetricsRow(info,j.id)}</div><div class="rp-live"><div class="rp-live-top"><span class="rp-state"></span><span class="rp-dots"></span><time class="rp-elapsed"></time></div><div class="rp-track"><i class="rp-bar"></i></div><div class="rp-detail"></div></div></div>`;
+ return `<div class="rowprogress" data-jobid="${j.id}"><div class="rp-schedule"><div class="rp-plan">${scheduleRowHtml(j,info)}</div>${lastMetricsRow(info,j.id,j)}</div><div class="rp-live"><div class="rp-live-top"><span class="rp-state"></span><span class="rp-dots"></span><time class="rp-elapsed"></time></div><div class="rp-track"><i class="rp-bar"></i></div><div class="rp-detail"></div></div></div>`;
 }
 async function loadSchedulePreview(){try{let d=await fetch('/api/schedule-preview').then(r=>r.json());scheduleInfo=Object.fromEntries((d.items||[]).map(x=>[x.id,x]));applyScheduleCells()}catch{}}
 function applyScheduleCells(){$$('.rowprogress').forEach(el=>{if(el.classList.contains('is-running')||el.classList.contains('is-wait')||el.classList.contains('is-done')||el.classList.contains('is-error'))return;let j=cfg?.jobs?.find(x=>x.id===el.dataset.jobid);if(!j)return;let info=scheduleInfo[j.id];
  let pl=el.querySelector('.rp-plan');if(pl)pl.innerHTML=scheduleRowHtml(j,info);
- let sc=el.querySelector('.rp-schedule'),mt=el.querySelector('.rp-metrics');if(sc){let html=lastMetricsRow(info,j.id);if(mt)mt.remove();if(html)sc.insertAdjacentHTML('beforeend',html)}})}
+ let sc=el.querySelector('.rp-schedule'),mt=el.querySelector('.rp-metrics');if(sc){let html=lastMetricsRow(info,j.id,j);if(mt)mt.remove();if(html)sc.insertAdjacentHTML('beforeend',html)}})}
 function jobStateClass(stateText){stateText=String(stateText||'');if(stateText.includes('失敗')||stateText.includes('中断'))return'is-error';if(stateText.includes('完了'))return'is-done';return'is-running'}
 const ROW_DONE_HOLD_MS=6000;
 /* 実行中の1バッチについて、対象(job_id)ごとの確定状態をクライアント側でも保持する。
@@ -1837,16 +1913,26 @@ async function loadFreshness(){
  let box=$('#fresh-board');if(!box)return;
  try{
   let d=await fetch('/api/freshness',{cache:'no-store'}).then(r=>r.json());
+  // 一覧の各行も、色と言い方をここの判定に合わせる（1.88.0）。同じ事実に画面の中で
+  // 2つの答えがあると、読み手はどちらを信じるか決めなければならなくなる。
+  freshInfo=Object.fromEntries((d.items||[]).map(x=>[x.id,x]));
+  applyScheduleCells();
   let bad=(d.items||[]).filter(x=>x.state!=='ok');
   box.hidden=!bad.length;
   if(box.hidden)return;
-  box.innerHTML=`<div class="fb-head"><b>${E(d.summary)}</b><small>予定どおりに新しくなっていない対象です。押すとその対象を開きます</small></div>`
-   +`<div class="fb-rows">`+bad.map(x=>{
-    let [word,tone]=FRESH_STATE[x.state]||FRESH_STATE.ok;
+  // 全部が同じ状態のときに全部並べると、下の一覧と同じものを二度読ませることになり、
+  // しかも「全部が印つき＝どれも目立たない」になる。重い順に数件だけ出し、残りは
+  // 数で言う（並びは重い順・古い順に整えてある）。
+  const FB_MAX=3,rest=Math.max(0,bad.length-FB_MAX);
+  box.innerHTML=`<div class="fb-head"><b>${E(d.summary)}</b><small>共有しているファイルが古くなっている対象です。押すとその対象を開きます</small></div>`
+   +`<div class="fb-rows">`+bad.slice(0,FB_MAX).map(x=>{
+    // 言い方は一覧の行と同じ関数から取る。同じ状態を2か所で別々に名づけない。
+    let [,tone]=FRESH_STATE[x.state]||FRESH_STATE.ok,word=freshWord(x);
     // 保留は「いつ取れたか」より「共有先がどうなっているか」を先に言う
+    // 経過を先に、日時を後に。ここも一覧の行と読む順をそろえる（1.88.0）。
     let when=x.state==='held'
      ? `${E(String(x.last_run||'').replace('T',' '))} に取れていますが、公開先が使用中で差し替えられませんでした`
-     : (x.last_run?`最終 ${E(String(x.last_run).replace('T',' '))}（${E(ageText(x.age_minutes))}）`:'まだ一度も実行していません');
+     : (x.last_run?`<b class="fb-age">${E(ageText(x.age_minutes))}</b> ${E(String(x.last_run).replace('T',' '))}`:'まだ一度も実行していません');
     let note=x.state==='held'
      ? '新しいデータは公開先の横に控えてあります。次の実行で自動的に反映します'
      : (x.next_run?`次の予定 ${E(String(x.next_run).replace('T',' '))}`:E(x.hint||''));
@@ -1861,6 +1947,7 @@ async function loadFreshness(){
     return `<button type="button" class="fb-row ${E(tone)}" data-id="${E(x.id)}">`
      +`<i>${E(word)}</i><b>${E(x.name)}</b>`
      +`<span>${when}</span><small>${note}</small>${why}</button>`}).join('')
+   +(rest?`<div class="fb-more">ほか ${rest}件 ―― 下の一覧で「経過」の色が付いている行が同じ状態です</div>`:'')
    +`</div>`;
   box.querySelectorAll('.fb-row').forEach(b=>b.onclick=()=>{
    let j=cfg?.jobs?.find(x=>x.id===b.dataset.id);

@@ -1,5 +1,10 @@
-NaviToSQLite Minimal
-====================
+DataRelay
+=========
+
+  1.87.0 でアプリ名を DataRelay にしました（旧: SymfoNavi Data Hub ／ その前: NaviToSQLite）。
+  ローカル領域も %LOCALAPPDATA%\DataRelay\ へ移ります（起動時に自動で引き継ぎます）。
+  この文書は1.66.x以降更新していません。以降の変更は、アプリ内の「バージョン情報 →
+  更新履歴」で読めます。過去の項目に出てくる旧名は、当時の記録としてそのままにしてあります。
 
 バージョン体系:
   1.0.0 を最初の安定リリースとし、以降はセマンティックバージョニング（MAJOR.MINOR.PATCH）で管理します。
@@ -153,11 +158,11 @@ NaviToSQLite Minimal
 起動できないときの調べ方（1.23.3）:
   - 起動画面に「起動確認がタイムアウトしました」とだけ出て原因が分からない場合、
     まず次のログを確認してください。
-      %LOCALAPPDATA%\SymfoNaviDataHub\logs\app.log
+      %LOCALAPPDATA%\DataRelay\logs\app.log
 
   - ポートが使用中だった場合は、次の行が記録されます（1.23.3以降）。
       APP_PORT_IN_USE host=127.0.0.1 port=5031 ...
-      APP_PORT_IN_USE_HINT 既にSymfoNavi Data Hubが起動しているか、前回のプロセスが残っています。
+      APP_PORT_IN_USE_HINT 既にDataRelayが起動しているか、前回のプロセスが残っています。
     このときの対処:
       ① stop_app.bat を実行する
       ② それでも直らなければ、タスクマネージャーで python.exe / pythonw.exe を終了する
