@@ -74,6 +74,11 @@ def job_wait_reasons(job,cfg=None,now=None,deps=None):
  snap=queue_snapshot()
  queued=set()
  for item in snap.get('items') or []:
+  # いま走っている実行のなかの順番は、ライン側（navi_lane）が見ている。ここで同じ実行の
+  # 対象まで「まだ順番待ち」と数えると、自分と同じ実行に入っている材料を待ち続け、
+  # 待ちきれなくなるまで（既定10分）画面が止まったように見える ―― v1.88.0まで実際に
+  # そうなっていた。材料と結合を一緒に選んで実行すると、必ずこれを踏んだ。
+  if str(item.get('state') or '')=='running':continue
   for i in (item.get('job_ids') or []):queued.add(i)
  running=set(status.get('queue_running_ids') or [])
  names={j['id']:j.get('name','') for j in (c.get('jobs') or [])}
@@ -139,11 +144,16 @@ def run_deferred_local(after_api,cfg,trigger,progress,total_all,seed_results):
 
 
 def split_batch(jobs,cfg):
- """実行する対象を、流す順に振り分ける。(並べ替えた全体, 先に走らせる手元のもの, RNE, あとに回すもの)
+ """実行する対象を、流す順に振り分ける。(並べ替えた全体, 材料が要らない手元のもの, RNE, 材料がRNEのもの)
 
- 手元のファイルから作る対象（固定長テキスト・結合）はNavigatorより先に片付けるが、
- 材料をRNE側が作る結合だけはそのあとへ回す ―― 先に走らせると、まだ作られていない
- ファイルを繋ぐことになる。出来上がりは正しい形をしているので、誰も気づかない。
+ 手元のファイルから作る対象（固定長テキスト・結合）はNavigatorへ問い合わせないので、
+ RNEと同時に流せる。ただし材料をRNE側が作る結合だけは、その材料ができるまで走れない
+ ―― 先に走らせると、まだ作られていないファイルを繋ぐことになる。出来上がりは正しい形を
+ しているので、中身が古いことに誰も気づかない。
+
+ どちらも「手元のもの」であることに変わりはないので、API方式では navi_lanerun が
+ まとめて受け取り、材料がそろった順に流す。DDE方式（1つの画面を操作する方式）だけが
+ 前半・後半の二段構えで走る。
  """
  ordered,deps=order_jobs_by_dependency(jobs,cfg)
  kind=lambda j:app.normalize_job_source(j.get('source'))
@@ -153,6 +163,6 @@ def split_batch(jobs,cfg):
  first=[j for j in local if not (deps.get(j['id']) or set())&api_ids]
  later=[j for j in local if (deps.get(j['id']) or set())&api_ids]
  if later:
-  log.info('LOCAL_AFTER_API jobs=%s（材料をNavigator側の対象が作るため、そのあとで実行します）',
+  log.info('LOCAL_AFTER_API jobs=%s（材料をNavigator側の対象が作るため、その材料ができてから実行します）',
            [j['name'] for j in later])
  return ordered,first,api,later

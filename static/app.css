@@ -298,15 +298,10 @@ tr:has(.rowprogress.is-running) td{background:#f6fcfd}tr:has(.rowprogress.is-err
 .server-lost-card button{margin-top:6px}
 
 /* V35: target-list progress polish + last-run + dynamic naming builder */
+/* 列の幅は <th> のstyleで入れる（幅の決め手は static/app.js の COLUMNS 1か所）。
+   1.88.0までは nth-child で当てていたので、列を隠したり並べ替えたりすると
+   別の列の幅が当たった。順番に依存する指定は、順番を変えられる画面には置けない。 */
 .jobs-table{min-width:1240px}
-.jobs-table .c-check{width:34px}
-.jobs-table .c-state{width:58px}
-.jobs-table th:nth-child(3){width:168px}
-.jobs-table th:nth-child(4){width:178px}
-.jobs-table th:nth-child(5){width:228px}   /* 出力ファイル名。日付入りの長い名前が切れないよう広げた */
-.jobs-table th:nth-child(6){width:auto}
-.jobs-table .c-progress{width:308px}   /* 実績（所要・転送量・速度・取り方）を1行で出すため広げた。出力先(auto)から取る */
-.jobs-table .c-action{width:150px}
 .jobs-table td.c-progress{padding:4px 8px}
 .rowprogress{min-width:0;max-width:100%;overflow:hidden}
 /* 予定と実績で1行、実行の中身で1行。2行に収めるため行間はぎりぎりまで詰める。 */
@@ -2490,3 +2485,42 @@ body>main{width:var(--app-shell);max-width:var(--app-shell);
 .jn-order-row span::before{content:"← ";color:#93a5ac}
 .jn-order>small{padding-left:26px;font-size:9.5px;color:#7d919a;line-height:1.6}
 .jn-order>small.is-ng{color:#a4463d}
+
+/* ==== 一覧の列を決める画面（1.89.0） =========================================
+   出す／出さない・並び順・その列だけの見せ方を1枚で決める。触った時点で後ろの一覧が
+   変わるので、この画面そのものが下見（プレビュー）を兼ねる ―― 別枠で小さな見本を
+   置くより、本物が変わるほうが確かで、覚えることも減る。 */
+.col-modal{width:min(860px,94vw)}
+.col-body{padding-top:10px}
+.col-list{display:grid;gap:6px;margin-top:10px}
+.col-row{display:grid;grid-template-columns:20px minmax(150px,190px) minmax(0,1fr) 74px;gap:10px;
+ align-items:start;padding:9px 10px;background:#fff;border:1px solid #dbe4e9;border-radius:8px}
+.col-row.is-off{background:#f4f7f8;border-style:dashed}
+.col-row.is-off .col-meta{opacity:.5}
+.col-row.dragging{opacity:.5}
+.col-row.col-over{border-color:#0d8191;box-shadow:inset 0 3px 0 -1px #0d8191}
+.col-grip{color:#9fb0b8;font-size:14px;line-height:1.7;cursor:grab;user-select:none}
+.col-row:active .col-grip{cursor:grabbing}
+.col-show{display:flex;align-items:center;gap:8px;font-size:13px;color:#22404d;min-width:0}
+.col-show input{width:16px;height:16px;flex:none}
+.col-show b{font-weight:800;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.col-meta{display:grid;gap:6px;min-width:0}
+.col-meta>small{font-size:10.5px;color:#748790;line-height:1.6}
+.col-opts{display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px}
+.col-opt{display:flex;align-items:center;gap:6px;font-size:11px;color:#3d5966;font-weight:700}
+.col-opt input[type=checkbox]{width:15px;height:15px}
+.col-opt-select select{width:auto;min-width:210px;height:29px;font-size:11.5px}
+.col-opt-multi{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.col-chip{padding:4px 10px;font-size:11px;font-weight:800;border-radius:13px;
+ background:#eef3f5;color:#5c727d;border:1px solid #d7e1e6}
+.col-chip.on{background:#e3f4f6;color:#0b6570;border-color:#a9d9e1}
+/* 削除を出すと、取り返しのつかない操作が全行に常設される。選んだ時点でその色にして、
+   何を足したのかが札のうえで分かるようにする。 */
+.col-chip[data-val="delete"].on{background:#fdecea;color:#a4463d;border-color:#eec6c0}
+.col-move{display:flex;gap:4px;justify-content:end}
+.col-move button{width:32px;padding:4px 0;font-size:11px}
+.col-note{margin-right:auto;align-self:center;font-size:11.5px;color:#6d818c}
+.rowactions-none{color:#a8b6bd;font-size:12px}
+/* いちばん下のフォルダー名だけ出しているときは、それが省略形だと分かるようにする。 */
+.output-link.is-tail{color:#3d5966;font-weight:700}
+.output-link.is-tail:hover{color:#087c98}

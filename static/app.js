@@ -25,6 +25,7 @@ function collectSettings(){if(!cfg||!cfg.settings)return;let s=cfg.settings,v=id
  if(v('#join-wait-max'))s.join_wait_max_seconds=Math.max(0,Math.min(86400,Number(v('#join-wait-max').value)||0));
  if(v('#worker-stagger'))s.api_worker_stagger_ms=Math.max(0,Math.min(5000,Number(v('#worker-stagger').value)||0));
  if(v('#api-lines'))s.api_parallel_lines=Math.max(1,Math.min(24,Number(v('#api-lines').value)||6));
+ if(v('#local-lines'))s.local_parallel_lines=Math.max(0,Math.min(12,Number(v('#local-lines').value)||0));
  if(v('#zero'))s.reject_zero_rows=v('#zero').checked;
  if(v('#retry-enabled'))s.retry_enabled=v('#retry-enabled').checked;
  if(v('#retry-delay'))s.retry_delay_minutes=Math.max(1,Math.min(180,Number(v('#retry-delay').value)||5));
@@ -182,16 +183,18 @@ function jobMetaCell(j,full){
  if(full&&src==='rne'&&j.type)bits.push('読込 '+j.type);
  return bits.join(' / ');
 }
-function outputFileCell(j){
+function outputFileCell(j,noSub){
  // 変数扱いはバックエンドが実トークンの有無で判定した output_is_variable のみ。単に変数欄へ入力しただけでは変数バッジを出さない。
  if(j.output_is_variable){
   let segs=j.output_file_segments||[];
   let body=segs.length?segmentHtml(segs):E(j.output_file_preview||'(実行時に決定)');
-  return `<div class="primarytext" title="${E(j.output_pattern||'')}"><span class="name-var-badge">変数</span>${body}</div><div class="subtext" title="${E(j.output_pattern||'')}">${E(j.output_pattern||'')} / ${E(formatName(j.output_format))}${alsoBadge(j)}</div>`;
+  return `<div class="primarytext" title="${E(j.output_pattern||'')}"><span class="name-var-badge">変数</span>${body}</div>`
+   +(noSub?'':`<div class="subtext" title="${E(j.output_pattern||'')}">${E(j.output_pattern||'')} / ${E(formatName(j.output_format))}${alsoBadge(j)}</div>`);
  }
  // 読込形式（詳細データ／集計表）はRNEの読み方。テキストや結合には無い区別なので出さない。
  let how=(j.source||'rne')==='rne'?` / ${E(j.type)}`:'';
- return `<div class="primarytext">${E(j.output_file)}</div><div class="subtext">${E(formatName(j.output_format))}${alsoBadge(j)}${how}</div>`;
+ return `<div class="primarytext" title="${E(j.output_file)}">${E(j.output_file)}</div>`
+  +(noSub?'':`<div class="subtext">${E(formatName(j.output_format))}${alsoBadge(j)}${how}</div>`);
 }
 function alsoBadge(j){
  // 1回の実行で複数の形式が出る対象は、一覧の時点で分かるようにする。
@@ -232,8 +235,16 @@ async function openOutputFolder(path){
 }
 // 「選択を実行」は、選んだ件数をボタン自身に出す。押してから「選択してください」と
 // 叱るのではなく、押せるかどうかが押す前に分かるようにする。
+/* 選択しているのは「行」であって、チェックの四角ではない。1.88.0までは
+   .rowcheck:checked を数えていたので、選択の列を隠した瞬間に「表示対象を選択」も
+   「まとめて変更」も黙って効かなくなる。数えるのは行の状態にし、四角はその写しにする。 */
+function setAllSelected(on){
+ $$('#jobs-body tr').forEach(tr=>{tr.classList.toggle('selected',on);
+  let cb=tr.querySelector('.rowcheck');if(cb)cb.checked=on});
+ updateSelCount();
+}
 function updateSelCount(){
- let n=$$('#jobs-body .rowcheck:checked').length,b=$('#run-selected'),c=$('#sel-count');
+ let n=$$('#jobs-body tr.selected').length,b=$('#run-selected'),c=$('#sel-count');
  if(c){c.textContent=n;c.hidden=!n}
  if(b){b.disabled=!n;b.title=n?`チェックした ${n}件 を実行します`:'実行したい対象にチェックを入れてください'}
  let e=$('#bulk-edit');
@@ -244,7 +255,7 @@ function updateSelCount(){
    1件ずつ開くのが苦痛になる。触った項目だけを、選んだ全部へ適用する。
    触っていない項目はそれぞれの設定のままにする（勝手に揃えない）。 */
 function selectedJobs(){
- return $$('#jobs-body .rowcheck:checked').map(x=>cfg.jobs.find(j=>j.id===x.closest('tr').dataset.id)).filter(Boolean);
+ return $$('#jobs-body tr.selected').map(tr=>cfg.jobs.find(j=>j.id===tr.dataset.id)).filter(Boolean);
 }
 let bulkAlso=[];
 function bulkFields(){
@@ -335,15 +346,204 @@ function commonOutputFolder(list){
  // 大半が同じときだけ畳む。半々では「共通」がどちらか分からず、隠すほうが害になる。
  return best&&best[1]>=2&&best[1]/list.length>=.6?best[0]:'';
 }
+function folderTail(v){let p=String(v||'').replace(/[\\/]+$/,'').split(/[\\/]/);return p[p.length-1]||v||''}
 function outputFolderCell(j,common){
  let v=j.output_folder||cfg.default_output_folder||'';
+ let mode=colOpt('folder','mode');
  let a=(text,cls)=>`<a class="output-link ${cls}" href="#" data-path="${E(v)}" title="${E(v||'出力先')}">${E(text)}</a>`;
+ if(mode==='full')return a(v,'');
+ if(mode==='tail')return a(folderTail(v),'is-tail');
  return common&&v===common?a('共通','is-common'):a(v,v&&common?'is-different':'');
 }
+/* ==== 一覧の列は、使う人が決める ===========================================
+   1.88.0まで、列は8つで固定だった。出力先をフルパスで出すか「共通」と省略するかは
+   画面が勝手に決め、行のボタンは実行と詳細の2つに絞っていた。どちらも「たいていの人
+   にはこれがよい」という当てずっぽうで、当てが外れた人には直す手段が無かった
+   （削除を消したのも、まさにその一例）。
+   ここで決められるのは3つ ―― 出すか出さないか、どの順で出すか、その列をどう見せるか。
+   決めた内容は設定として残るので、次に開いたときも同じ並びになる。 */
+const COLUMNS=[
+ {key:'check',name:'選択',w:34,cls:'c-check',head:'',
+  why:'まとめて実行・変更するための選択と、ドラッグで並べ替える取っ手'},
+ {key:'state',name:'状態',w:58,cls:'c-state',why:'有効か無効か。押すと切り替わります'},
+ {key:'name',name:'管理名称',w:168,sort:'name',lock:true,why:'この対象の呼び名。消せません',
+  opts:{meta:true,comment:true},
+  optUI:[{name:'meta',label:'表・シート名も出す',toggle:true},
+         {name:'comment',label:'用途も出す',toggle:true}]},
+ {key:'source',name:'入力データ',w:178,sort:'rne',why:'何から作るか（RNE・テキスト・結合）'},
+ {key:'file',name:'出力ファイル',w:228,why:'出来上がるファイルの名前と形式',
+  opts:{sub:true},optUI:[{name:'sub',label:'形式も出す',toggle:true}]},
+ {key:'folder',name:'出力先',w:0,sort:'output',why:'どこへ置くか',
+  opts:{mode:'smart'},
+  optUI:[{name:'mode',label:'見せ方',
+          choices:[['smart','同じ場所は「共通」と省略'],['full','いつもフルパス'],['tail','いちばん下のフォルダー名だけ']]}]},
+ {key:'progress',name:'進捗・次回実行',w:308,cls:'c-progress',
+  why:'いつのデータか、次はいつ動くか。実行中はここが進捗になります',
+  opts:{metrics:true},optUI:[{name:'metrics',label:'前回の実績も出す（所要・件数・速度）',toggle:true}]},
+ {key:'action',name:'操作',w:176,cls:'c-action',why:'行から直接押せるボタン',
+  opts:{buttons:['run','edit']},
+  optUI:[{name:'buttons',label:'出すボタン',
+          multi:[['run','実行'],['edit','詳細'],['copy','複製'],['delete','削除']]}]},
+];
+const ROW_BUTTONS={run:['run-one','','実行'],edit:['edit','secondary','詳細'],
+                   copy:['copy-one','secondary','複製'],delete:['delete','danger','削除']};
+let colPref={order:[],hidden:[],opt:{}};
+function colDef(k){return COLUMNS.find(c=>c.key===k)}
+function colOrder(){
+ let seen=new Set(),out=[];
+ for(let k of (colPref.order||[]))if(colDef(k)&&!seen.has(k)){seen.add(k);out.push(k)}
+ // あとから増えた列は末尾へ。古い設定を読んだだけで新しい列が消えると、直しようがない。
+ for(let c of COLUMNS)if(!seen.has(c.key))out.push(c.key);
+ return out;
+}
+function colVisible(){return colOrder().filter(k=>colDef(k).lock||!(colPref.hidden||[]).includes(k))}
+function colOpt(key,name){
+ let d=colDef(key)||{},v=((colPref.opt||{})[key]||{})[name];
+ return v===undefined?(d.opts||{})[name]:v;
+}
+function setColOpt(key,name,value){
+ colPref.opt=colPref.opt||{};colPref.opt[key]=Object.assign({},colPref.opt[key],{[name]:value});
+ saveColumns();
+}
+// 幅を決めない列（出力先）が、これ以上は狭くならない値。合計がこれを下回ると
+// 横スクロールが出るので、幅の合計はここまでしか詰めない。
+const COL_AUTO_MIN=90;
+function colMinWidth(cols){
+ // 隠した列のぶんは詰める。固定のまま残すと、列を減らしたのに横スクロールが残る。
+ return cols.reduce((a,k)=>a+(colDef(k).w||COL_AUTO_MIN),0);
+}
+function renderJobsHead(cols){
+ let head=$('#jobs-head');if(!head)return;
+ head.innerHTML='<tr>'+cols.map(k=>{
+  let d=colDef(k),label=d.head===undefined?d.name:d.head;
+  return `<th class="col-${k} ${d.cls||''} ${d.sort?'sortable':''}" ${d.sort?`data-sort="${d.sort}"`:''}`
+   +` style="width:${d.w?d.w+'px':'auto'}">${E(label)}</th>`;
+ }).join('')+'</tr>';
+ let t=head.closest('table');if(t)t.style.minWidth=colMinWidth(cols)+'px';
+ $$('#jobs-head .sortable').forEach(h=>h.onclick=()=>{$('#sort').value=h.dataset.sort;sortDir*=-1;render()});
+}
+function rowActionsHtml(){
+ let on=colOpt('action','buttons')||[];
+ let want=['run','edit','copy','delete'].filter(x=>on.includes(x));
+ if(!want.length)return '<span class="rowactions-none" title="この列に出すボタンは「列の表示」で選べます">—</span>';
+ return `<div class="rowactions">`+want.map(x=>{
+  let [cls,extra,label]=ROW_BUTTONS[x];
+  return `<button class="${cls} ${extra}" title="${E(label)}">${E(label)}</button>`;
+ }).join('')+`</div>`;
+}
+function cellHtml(k,j,ctx){
+ if(k==='check')return `<span class="drag-handle" title="${ctx.canReorder?'ドラッグで並べ替え（ドロップ後は登録順表示へ戻ります）':'並べ替えは検索・絞り込み解除時に有効です'}">⋮⋮</span><input class="rowcheck" type="checkbox">`;
+ if(k==='state')return `<button type="button" class="state ${j.enabled?'on':'off'}" title="クリックで${j.enabled?'無効':'有効'}にします">${j.enabled?'有効':'無効'}</button>`;
+ if(k==='name')return `<div class="primarytext" title="${E(j.name)}">${E(j.name)}</div>`
+  +(colOpt('name','meta')?`<div class="subtext" title="${E(jobMetaCell(j,true))}">${E(jobMetaCell(j))}</div>`:'')
+  +(colOpt('name','comment')&&j.comment?`<div class="job-comment" title="${E(j.comment)}"><i class="jc-ic">用途</i><span>${E(j.comment)}</span></div>`:'');
+ if(k==='source')return sourceCell(j);
+ if(k==='file')return outputFileCell(j,!colOpt('file','sub'));
+ if(k==='folder')return outputFolderCell(j,ctx.commonOut);
+ if(k==='progress')return rowProgressCell(j);
+ if(k==='action')return rowActionsHtml();
+ return '';
+}
+/* 決めた内容の保存。設定の一部なので、ほかの未保存の編集には触らない軽い受け口へ送る。
+   保存に失敗しても画面はそのまま使える（次に開くと既定へ戻る、とだけ言う）。 */
+let colSaveTimer=null;
+async function saveColumns(){
+ render();colDialogNote('この画面での変更は、すぐ一覧に出ます');
+ clearTimeout(colSaveTimer);
+ colSaveTimer=setTimeout(async()=>{
+  try{
+   let r=await fetch('/api/settings/columns',{method:'POST',headers:{'Content-Type':'application/json'},
+                                              body:JSON.stringify({layout:colPref})});
+   if(!r.ok)throw Error();
+   if(cfg&&cfg.settings)cfg.settings.column_layout=structuredClone(colPref);
+   colDialogNote('保存しました（次に開いたときも同じ並びです）');
+  }catch{colDialogNote('保存できませんでした。この画面を閉じるまでは、いまの並びのままです');}
+ },250);
+}
+function colDialogNote(text){let n=$('#col-note');if(n)n.textContent=text}
+function loadColumns(){
+ let v=(cfg&&cfg.settings&&cfg.settings.column_layout)||{};
+ colPref={order:Array.isArray(v.order)?v.order.slice():[],
+          hidden:Array.isArray(v.hidden)?v.hidden.slice():[],
+          opt:(v.opt&&typeof v.opt==='object')?structuredClone(v.opt):{}};
+}
+function moveColumn(key,step){
+ let o=colOrder(),i=o.indexOf(key),n=i+step;
+ if(i<0||n<0||n>=o.length)return;
+ o.splice(n,0,o.splice(i,1)[0]);colPref.order=o;saveColumns();renderColumnDialog();
+}
+function renderColumnDialog(){
+ let box=$('#col-list');if(!box)return;
+ let order=colOrder(),vis=colVisible();
+ box.innerHTML=order.map((k,i)=>{
+  let d=colDef(k),on=vis.includes(k);
+  let opts=(d.optUI||[]).map(o=>{
+   if(o.toggle)return `<label class="col-opt"><input type="checkbox" data-col="${k}" data-opt="${o.name}" ${colOpt(k,o.name)?'checked':''}><span>${E(o.label)}</span></label>`;
+   if(o.choices)return `<label class="col-opt col-opt-select"><span>${E(o.label)}</span><select data-col="${k}" data-opt="${o.name}">`
+    +o.choices.map(([v,t])=>`<option value="${E(v)}" ${colOpt(k,o.name)===v?'selected':''}>${E(t)}</option>`).join('')+`</select></label>`;
+   let picked=colOpt(k,o.name)||[];
+   return `<div class="col-opt col-opt-multi"><span>${E(o.label)}</span>`
+    +o.multi.map(([v,t])=>`<button type="button" class="col-chip ${picked.includes(v)?'on':''}" data-col="${k}" data-opt="${o.name}" data-val="${E(v)}" aria-pressed="${picked.includes(v)}">${E(t)}</button>`).join('')
+    +`</div>`;
+  }).join('');
+  return `<div class="col-row ${on?'':'is-off'}" draggable="true" data-key="${k}">`
+   +`<span class="col-grip" title="つかんで上下に動かすと並び順が変わります">⋮⋮</span>`
+   +`<label class="col-show"><input type="checkbox" data-show="${k}" ${on?'checked':''} ${d.lock?'disabled':''}><b>${E(d.name)}</b></label>`
+   +`<div class="col-meta"><small>${E(d.why||'')}</small>${opts?`<div class="col-opts">${opts}</div>`:''}</div>`
+   +`<div class="col-move"><button type="button" class="secondary" data-up="${k}" ${i===0?'disabled':''} title="1つ上へ">▲</button>`
+   +`<button type="button" class="secondary" data-down="${k}" ${i===order.length-1?'disabled':''} title="1つ下へ">▼</button></div>`
+   +`</div>`;
+ }).join('');
+ box.querySelectorAll('[data-show]').forEach(x=>x.onchange=()=>{
+  let k=x.dataset.show,h=new Set(colPref.hidden||[]);
+  x.checked?h.delete(k):h.add(k);colPref.hidden=[...h];saveColumns();renderColumnDialog();
+ });
+ box.querySelectorAll('[data-up]').forEach(b=>b.onclick=()=>moveColumn(b.dataset.up,-1));
+ box.querySelectorAll('[data-down]').forEach(b=>b.onclick=()=>moveColumn(b.dataset.down,1));
+ box.querySelectorAll('input[data-opt]').forEach(x=>x.onchange=()=>setColOpt(x.dataset.col,x.dataset.opt,x.checked));
+ box.querySelectorAll('select[data-opt]').forEach(x=>x.onchange=()=>setColOpt(x.dataset.col,x.dataset.opt,x.value));
+ box.querySelectorAll('.col-chip').forEach(b=>b.onclick=()=>{
+  let cur=(colOpt(b.dataset.col,b.dataset.opt)||[]).slice(),i=cur.indexOf(b.dataset.val);
+  if(i<0)cur.push(b.dataset.val);else cur.splice(i,1);
+  setColOpt(b.dataset.col,b.dataset.opt,cur);renderColumnDialog();
+ });
+ bindColumnDnD(box);
+}
+function bindColumnDnD(box){
+ let src=null;
+ box.querySelectorAll('.col-row').forEach(row=>{
+  row.ondragstart=e=>{src=row.dataset.key;row.classList.add('dragging');try{e.dataTransfer.setData('text/plain',src)}catch{}};
+  row.ondragend=()=>{src=null;box.querySelectorAll('.col-row').forEach(x=>x.classList.remove('dragging','col-over'))};
+  row.ondragover=e=>{e.preventDefault();if(row.dataset.key!==src)row.classList.add('col-over')};
+  row.ondragleave=()=>row.classList.remove('col-over');
+  row.ondrop=e=>{
+   e.preventDefault();row.classList.remove('col-over');
+   if(!src||row.dataset.key===src)return;
+   let o=colOrder(),from=o.indexOf(src),to=o.indexOf(row.dataset.key);
+   o.splice(to,0,o.splice(from,1)[0]);colPref.order=o;saveColumns();renderColumnDialog();
+  };
+ });
+}
+function openColumnDialog(){
+ renderColumnDialog();colDialogNote('');
+ let d=$('#col-dialog');if(d)d.showModal();
+}
+if($('#col-config'))$('#col-config').onclick=openColumnDialog;
+if($('#col-close'))$('#col-close').onclick=()=>$('#col-dialog').close();
+if($('#col-done'))$('#col-done').onclick=()=>$('#col-dialog').close();
+if($('#col-reset'))$('#col-reset').onclick=()=>{
+ colPref={order:[],hidden:[],opt:{}};saveColumns();renderColumnDialog();
+ colDialogNote('既定に戻しました');
+};
 function render(){let a=filtered(),body=$('#jobs-body');let canReorder=(!$('#search').value.trim()&&$('#filter-enabled').value==='all'&&$('#filter-schedule').value==='all');
- let commonOut=commonOutputFolder(a);body.innerHTML=a.map(j=>`<tr data-id="${j.id}" draggable="${canReorder}" class="${canReorder?'reorderable':''}"><td class="c-check"><span class="drag-handle" title="${canReorder?'ドラッグで並べ替え（ドロップ後は登録順表示へ戻ります）':'並べ替えは検索・絞り込み解除時に有効です'}">⋮⋮</span><input class="rowcheck" type="checkbox"></td><td><button type="button" class="state ${j.enabled?'on':'off'}" title="クリックで${j.enabled?'無効':'有効'}にします">${j.enabled?'有効':'無効'}</button></td><td><div class="primarytext" title="${E(j.name)}">${E(j.name)}</div><div class="subtext" title="${E(jobMetaCell(j,true))}">${E(jobMetaCell(j))}</div>${j.comment?`<div class="job-comment" title="${E(j.comment)}"><i class="jc-ic">用途</i><span>${E(j.comment)}</span></div>`:''}</td><td>${sourceCell(j)}</td><td>${outputFileCell(j)}</td><td>${outputFolderCell(j,commonOut)}</td><td class="c-progress">${rowProgressCell(j)}</td><td><div class="rowactions"><button class="run-one" title="実行">実行</button><button class="edit secondary" title="詳細">詳細</button></div></td></tr>`).join('');paintRowProgress();applyScheduleCells();updateSelCount();$('#empty').hidden=a.length>0;$('#summary').innerHTML=`<span class="lm-counts">表示 ${a.length}件 / 登録 ${cfg.jobs.length}件 / 有効 ${cfg.jobs.filter(j=>j.enabled).length}件 / 自動実行ルール ${cfg.jobs.flatMap(j=>j.schedules||[]).filter(r=>r.enabled).length}件</span>`
- +(commonOut?`<span class="lm-common"><i>出力先 共通</i><a class="output-link" href="#" data-path="${E(commonOut)}" title="${E(commonOut)}">${E(commonOut)}</a></span>`:'');
- let lc=$('#summary .output-link');if(lc)lc.onclick=e=>{e.preventDefault();openOutputFolder(lc.dataset.path)};body.querySelectorAll('tr').forEach(tr=>{let j=cfg.jobs.find(x=>x.id===tr.dataset.id);tr.onclick=e=>{if(!e.target.closest('button,a,input')){tr.classList.toggle('selected');let cb=tr.querySelector('.rowcheck');if(cb)cb.checked=tr.classList.contains('selected');updateSelCount()}};tr.querySelector('.rowcheck').onchange=e=>{tr.classList.toggle('selected',e.target.checked);updateSelCount()};tr.ondblclick=e=>{if(!e.target.closest('button,input,select,a'))openEditor(j)};tr.querySelector('.edit').onclick=()=>openEditor(j);let st=tr.querySelector('.state');if(st)st.onclick=e=>{e.stopPropagation();setJobEnabled(j.id,!j.enabled)};tr.querySelector('.run-one').onclick=()=>runJobs([j.id]);let l=tr.querySelector('.output-link');if(l)bindOutputLink(l,j);bindRowDnD(tr);tr.oncontextmenu=e=>{if(e.target.closest("a.output-link"))return;e.preventDefault();showJobContextMenu(e,j,tr)}})}
+ let cols=colVisible(),ctx={canReorder,commonOut:commonOutputFolder(a)};
+ renderJobsHead(cols);
+ body.innerHTML=a.map(j=>`<tr data-id="${j.id}" draggable="${canReorder}" class="${canReorder?'reorderable':''}">`
+  +cols.map(k=>`<td class="col-${k} ${colDef(k).cls||''}">${cellHtml(k,j,ctx)}</td>`).join('')
+  +`</tr>`).join('');
+ paintRowProgress();applyScheduleCells();updateSelCount();$('#empty').hidden=a.length>0;$('#summary').innerHTML=`<span class="lm-counts">表示 ${a.length}件 / 登録 ${cfg.jobs.length}件 / 有効 ${cfg.jobs.filter(j=>j.enabled).length}件 / 自動実行ルール ${cfg.jobs.flatMap(j=>j.schedules||[]).filter(r=>r.enabled).length}件</span>`
+ +(ctx.commonOut&&colOpt('folder','mode')==='smart'&&cols.includes('folder')?`<span class="lm-common"><i>出力先 共通</i><a class="output-link" href="#" data-path="${E(ctx.commonOut)}" title="${E(ctx.commonOut)}">${E(ctx.commonOut)}</a></span>`:'');
+ let lc=$('#summary .output-link');if(lc)lc.onclick=e=>{e.preventDefault();openOutputFolder(lc.dataset.path)};body.querySelectorAll('tr').forEach(tr=>{let j=cfg.jobs.find(x=>x.id===tr.dataset.id);tr.onclick=e=>{if(!e.target.closest('button,a,input')){tr.classList.toggle('selected');let cb=tr.querySelector('.rowcheck');if(cb)cb.checked=tr.classList.contains('selected');updateSelCount()}};let cb=tr.querySelector('.rowcheck');if(cb)cb.onchange=e=>{tr.classList.toggle('selected',e.target.checked);updateSelCount()};tr.ondblclick=e=>{if(!e.target.closest('button,input,select,a'))openEditor(j)};let ed=tr.querySelector('.edit');if(ed)ed.onclick=()=>openEditor(j);let st=tr.querySelector('.state');if(st)st.onclick=e=>{e.stopPropagation();setJobEnabled(j.id,!j.enabled)};let ro=tr.querySelector('.run-one');if(ro)ro.onclick=()=>runJobs([j.id]);let cp=tr.querySelector('.copy-one');if(cp)cp.onclick=()=>duplicateJob(j);let dl=tr.querySelector('.rowactions .delete');if(dl)dl.onclick=()=>deleteJob(j);let l=tr.querySelector('.output-link');if(l)bindOutputLink(l,j);bindRowDnD(tr);tr.oncontextmenu=e=>{if(e.target.closest("a.output-link"))return;e.preventDefault();showJobContextMenu(e,j,tr)}})}
 /* v1.9.0: 一覧のドラッグ&ドロップ並べ替え（問い合わせ順に反映）と管理単位の削除 */
 let dragSrcId=null,dragGhost=null,dragTargetId=null,dragAfter=false,dragImage=null;
 function clearDragVisuals(){
@@ -353,8 +553,8 @@ function clearDragVisuals(){
 }
 function makeDragGhost(source){
  let ghost=document.createElement('tr');ghost.className='drop-ghost';ghost.setAttribute('aria-hidden','true');
- let name=source.querySelector('td:nth-child(3) .primarytext')?.textContent||'選択した対象';
- ghost.innerHTML=`<td colspan="8"><div class="drop-ghost-inner"><i></i><span><b>${E(name)}</b> をここへ移動</span></div></td>`;
+ let name=source.querySelector('.col-name .primarytext')?.textContent||'選択した対象';
+ ghost.innerHTML=`<td colspan="${source.children.length||8}"><div class="drop-ghost-inner"><i></i><span><b>${E(name)}</b> をここへ移動</span></div></td>`;
  return ghost;
 }
 function makeDragImage(source,e){
@@ -417,7 +617,7 @@ function duplicateJob(j){let n=structuredClone(j);n.id=uid();n.name+=' コピー
    どの対象に対する操作なのかが分からないと押せないので、先頭に名前とRNEを出す。
    行を選んだ状態で右クリックしたときは、選択した全件が対象になる。 */
 function contextTargets(){
- let ids=$$('#jobs-body .rowcheck:checked').map(x=>x.closest('tr').dataset.id);
+ let ids=$$('#jobs-body tr.selected').map(tr=>tr.dataset.id);
  if(contextJob&&ids.includes(contextJob.id)&&ids.length>1)return ids;
  return contextJob?[contextJob.id]:[];
 }
@@ -689,9 +889,9 @@ function updateHideProfileUI(){let p=$('#hide-profile').value,custom=p==='custom
 // 参照ボタンは .pathpick で名指しする。data-k だけで拾うと、確認ボタンが先に居る4件で
 // 参照の代わりに確認へ結びついてしまい、参照が何も起きなくなる。
 Object.entries(paths).filter(([k])=>k!=='navigator_api_dll').forEach(([k,a])=>{$('#'+k).onchange=e=>{cfg[k]=e.target.value;dirty();refreshMachinePaths()};document.querySelector(`.pathpick[data-k="${k}"]`).onclick=async()=>{let p=await browse(a[1],cfg[k],a[2]);if(p){cfg[k]=p;$('#'+k).value=p;$('#'+k)._refreshPathControl?.();dirty();refreshMachinePaths()}}});
-$$('.pf-goto').forEach(b=>b.onclick=()=>document.querySelector(`#settings-nav .settings-navbtn[data-cat="${b.dataset.cat}"]`)?.click());$('#extract-engine').value=cfg.settings.extract_engine||'api';updateEngineUI();$('#dde').value=cfg.settings.dde_timeout_seconds;$('#wait').value=cfg.settings.output_wait_seconds;$('#gens').value=cfg.settings.backup_generations||3;if($('#backup-enabled'))$('#backup-enabled').checked=cfg.settings.backup_enabled!==false;if($('#backup-mode'))$('#backup-mode').value=cfg.settings.backup_mode||'generations';if($('#backup-retention-days'))$('#backup-retention-days').value=Number(cfg.settings.backup_retention_days||30);if($('#schedule-catchup'))$('#schedule-catchup').value=Number(cfg.settings.schedule_catchup_minutes??30);if($('#join-wait-enabled')){$('#join-wait-enabled').checked=cfg.settings.join_wait_enabled!==false;$('#join-wait-lookahead').value=Number(cfg.settings.join_wait_lookahead_seconds??60);$('#join-wait-max').value=Number(cfg.settings.join_wait_max_seconds??600);updateJoinWaitOptions()}if($('#worker-stagger'))$('#worker-stagger').value=Number(cfg.settings.api_worker_stagger_ms??700);updateBackupOptions();if($('#api-lines')){$('#api-lines').value=Math.max(1,Math.min(24,Number(cfg.settings.api_parallel_lines||6)));$('#api-lines').title='既定は6ライン、設定可能範囲は1～24ラインです。変更した時点で保存されます。'}$('#zero').checked=cfg.settings.reject_zero_rows;if($('#retry-enabled')){$('#retry-enabled').checked=cfg.settings.retry_enabled!==false;$('#retry-delay').value=Number(cfg.settings.retry_delay_minutes??5);$('#retry-max').value=Number(cfg.settings.retry_max??1);updateRetryOptions()}if($('#log-max-mb')){$('#log-max-mb').value=Number(cfg.settings.log_max_mb??10);$('#log-keep').value=Number(cfg.settings.log_keep??5)}let hp=cfg.settings.symnavi_hide_profile||'balanced';if(hp==='light')hp='action_only';$('#hide-profile').value=hp;$('#hide-action-duration').value=Number(cfg.settings.symnavi_hide_action_duration_seconds||0.5);updateHideProfileUI();Object.keys(paths).filter(k=>k!=='navigator_api_dll').forEach(k=>enhancePathInput($('#'+k),paths[k][1]));let dllInput=$('#navigator-api-dll');if(dllInput){dllInput.value=cfg.navigator_api_dll||'';dllInput.oninput=()=>{cfg.navigator_api_dll=dllInput.value;dirty();
-   let v=$('#api-readiness');if(v)v.className='api-readiness is-stale';};}let dllPick=$('#api-dll-pick');if(dllPick)dllPick.onclick=async()=>{let q=await browse('file',dllInput.value,paths.navigator_api_dll[2]);if(q){dllInput.value=q;cfg.navigator_api_dll=q;dirty();await testNavigatorApi()}};let dllCheck=$('#api-dll-check');if(dllCheck)dllCheck.onclick=()=>testNavigatorApi();if(!Array.isArray(cfg.navigator_api_search_roots))cfg.navigator_api_search_roots=DLL_DEFAULT_ROOTS.slice();renderDllRoots();loadDllRequirement();fillSuggestions();render();loadMachinePaths();loadFreshness();saveState('設定を読み込みました／変更はすべて自動で保存されます','');$$('.pathcheck').forEach(b=>b.onclick=()=>checkConfiguredPath(b.dataset.k))}
-['search','filter-enabled','filter-schedule','sort'].forEach(k=>$('#'+k).addEventListener(k==='search'?'input':'change',render));$$('.sortable').forEach(h=>h.onclick=()=>{$('#sort').value=h.dataset.sort;sortDir*=-1;render()});$('#add').onclick=()=>openEditor(null);$('#select-visible').onclick=()=>{$$('#jobs-body .rowcheck').forEach(x=>{x.checked=true;x.closest('tr').classList.add('selected')});updateSelCount()};$('#clear-selection').onclick=()=>{$$('#jobs-body .rowcheck').forEach(x=>{x.checked=false;x.closest('tr').classList.remove('selected')});updateSelCount()};function resetProgressView(){let q=$('#queue-summary');if(q){q.hidden=true;q.innerHTML=''}let pr=$('#p-results');if(pr){pr.hidden=true;pr.innerHTML=''}let b=$('#p-parallel-lines');if(b){b.hidden=true;b.innerHTML=''}document.querySelector('.current-box')?.classList.remove('parallel-hidden');$('#p-steps')?.classList.remove('parallel-hidden');$('#p-count').textContent='全体 0 / 0';$('#p-percent').textContent='0%';$('#p-bar').style.width='0%';$('#p-job').textContent='準備中';$('#p-output').textContent='';}async function runJobs(ids){resetProgressView();showWaiting(currentEngine()==='api'?'API処理を開始しています':'DDE処理を開始しています',currentEngine()==='api'?'APIセッションと実行対象を準備しています...':'SymfoNavi起動とDDE接続を準備しています...','engine');let r=await fetch('/api/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_ids:ids,parallel_lines:Math.max(1,Math.min(24,Number($('#api-lines')?.value||6)||6))})}),d=await r.json();hideWaiting();if(r.ok){toast(`実行キュー ${d.position}番へ追加しました`);await loadCommandQueue()}else toast(d.error)}$('#run-all').onclick=()=>runJobs(null);$('#run-selected').onclick=()=>{let ids=$$('#jobs-body .rowcheck:checked').map(x=>x.closest('tr').dataset.id);if(ids.length)runJobs(ids)};/* 保存ボタンの代わりに、値が変わったところで保存する。数値欄は打っている途中に
+$$('.pf-goto').forEach(b=>b.onclick=()=>document.querySelector(`#settings-nav .settings-navbtn[data-cat="${b.dataset.cat}"]`)?.click());$('#extract-engine').value=cfg.settings.extract_engine||'api';updateEngineUI();$('#dde').value=cfg.settings.dde_timeout_seconds;$('#wait').value=cfg.settings.output_wait_seconds;$('#gens').value=cfg.settings.backup_generations||3;if($('#backup-enabled'))$('#backup-enabled').checked=cfg.settings.backup_enabled!==false;if($('#backup-mode'))$('#backup-mode').value=cfg.settings.backup_mode||'generations';if($('#backup-retention-days'))$('#backup-retention-days').value=Number(cfg.settings.backup_retention_days||30);if($('#schedule-catchup'))$('#schedule-catchup').value=Number(cfg.settings.schedule_catchup_minutes??30);if($('#join-wait-enabled')){$('#join-wait-enabled').checked=cfg.settings.join_wait_enabled!==false;$('#join-wait-lookahead').value=Number(cfg.settings.join_wait_lookahead_seconds??60);$('#join-wait-max').value=Number(cfg.settings.join_wait_max_seconds??600);updateJoinWaitOptions()}if($('#worker-stagger'))$('#worker-stagger').value=Number(cfg.settings.api_worker_stagger_ms??700);if($('#local-lines')){$('#local-lines').value=Number(cfg.settings.local_parallel_lines??0);$('#local-lines').title='0なら自動（同時実行ラインに合わせて最大4ライン）。RNEとは別枠で、同時に流れます。'}updateBackupOptions();if($('#api-lines')){$('#api-lines').value=Math.max(1,Math.min(24,Number(cfg.settings.api_parallel_lines||6)));$('#api-lines').title='既定は6ライン、設定可能範囲は1～24ラインです。変更した時点で保存されます。'}$('#zero').checked=cfg.settings.reject_zero_rows;if($('#retry-enabled')){$('#retry-enabled').checked=cfg.settings.retry_enabled!==false;$('#retry-delay').value=Number(cfg.settings.retry_delay_minutes??5);$('#retry-max').value=Number(cfg.settings.retry_max??1);updateRetryOptions()}if($('#log-max-mb')){$('#log-max-mb').value=Number(cfg.settings.log_max_mb??10);$('#log-keep').value=Number(cfg.settings.log_keep??5)}let hp=cfg.settings.symnavi_hide_profile||'balanced';if(hp==='light')hp='action_only';$('#hide-profile').value=hp;$('#hide-action-duration').value=Number(cfg.settings.symnavi_hide_action_duration_seconds||0.5);updateHideProfileUI();Object.keys(paths).filter(k=>k!=='navigator_api_dll').forEach(k=>enhancePathInput($('#'+k),paths[k][1]));let dllInput=$('#navigator-api-dll');if(dllInput){dllInput.value=cfg.navigator_api_dll||'';dllInput.oninput=()=>{cfg.navigator_api_dll=dllInput.value;dirty();
+   let v=$('#api-readiness');if(v)v.className='api-readiness is-stale';};}let dllPick=$('#api-dll-pick');if(dllPick)dllPick.onclick=async()=>{let q=await browse('file',dllInput.value,paths.navigator_api_dll[2]);if(q){dllInput.value=q;cfg.navigator_api_dll=q;dirty();await testNavigatorApi()}};let dllCheck=$('#api-dll-check');if(dllCheck)dllCheck.onclick=()=>testNavigatorApi();if(!Array.isArray(cfg.navigator_api_search_roots))cfg.navigator_api_search_roots=DLL_DEFAULT_ROOTS.slice();renderDllRoots();loadDllRequirement();fillSuggestions();loadColumns();render();loadMachinePaths();loadFreshness();saveState('設定を読み込みました／変更はすべて自動で保存されます','');$$('.pathcheck').forEach(b=>b.onclick=()=>checkConfiguredPath(b.dataset.k))}
+['search','filter-enabled','filter-schedule','sort'].forEach(k=>$('#'+k).addEventListener(k==='search'?'input':'change',render));$$('.sortable').forEach(h=>h.onclick=()=>{$('#sort').value=h.dataset.sort;sortDir*=-1;render()});$('#add').onclick=()=>openEditor(null);$('#select-visible').onclick=()=>{setAllSelected(true)};$('#clear-selection').onclick=()=>{setAllSelected(false)};function resetProgressView(){let q=$('#queue-summary');if(q){q.hidden=true;q.innerHTML=''}let pr=$('#p-results');if(pr){pr.hidden=true;pr.innerHTML=''}let b=$('#p-parallel-lines');if(b){b.hidden=true;b.innerHTML=''}document.querySelector('.current-box')?.classList.remove('parallel-hidden');$('#p-steps')?.classList.remove('parallel-hidden');$('#p-count').textContent='全体 0 / 0';$('#p-percent').textContent='0%';$('#p-bar').style.width='0%';$('#p-job').textContent='準備中';$('#p-output').textContent='';}async function runJobs(ids){resetProgressView();showWaiting(currentEngine()==='api'?'API処理を開始しています':'DDE処理を開始しています',currentEngine()==='api'?'APIセッションと実行対象を準備しています...':'SymfoNavi起動とDDE接続を準備しています...','engine');let r=await fetch('/api/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_ids:ids,parallel_lines:Math.max(1,Math.min(24,Number($('#api-lines')?.value||6)||6))})}),d=await r.json();hideWaiting();if(r.ok){toast(`実行キュー ${d.position}番へ追加しました`);await loadCommandQueue()}else toast(d.error)}$('#run-all').onclick=()=>runJobs(null);$('#run-selected').onclick=()=>{let ids=$$('#jobs-body tr.selected').map(tr=>tr.dataset.id);if(ids.length)runJobs(ids)};/* 保存ボタンの代わりに、値が変わったところで保存する。数値欄は打っている途中に
    何度も飛ばさないよう、まとめて少し待ってから送る（scheduleSave）。 */
 ['dde','wait','schedule-catchup','worker-stagger','hide-action-duration','join-wait-lookahead','join-wait-max'].forEach(id=>{let e=$('#'+id);if(e){e.addEventListener('input',dirty);e.addEventListener('change',dirty)}});
 /* 待たない設定にしたときは、待ち方の欄も伏せる。効かない欄を出したままにすると、
@@ -1271,9 +1471,12 @@ function metricsIsPending(id){
 // 直前の実行の実績。所要・転送量・転送速度・取り方（通常/N分割/競争）を1行で出す。
 // どれか欠けていても、あるものだけ並べる（古い実績には転送量が入っていない）。
 function lastMetricsRow(info,jobId,job){
- if(jobId&&metricsIsPending(jobId))
+ // 実績（所要・件数・速度）を出すかは、その列の設定で決まる。ただし「次はいつ動くか」は
+ // 実績ではないので、切っても残す ―― これを一緒に消すと、次の行動が読めなくなる。
+ let showMetrics=typeof colOpt!=='function'||!!colOpt('progress','metrics');
+ if(showMetrics&&jobId&&metricsIsPending(jobId))
   return `<div class="rp-metrics is-pending"><span class="rp-mode calc">集計中</span><em>実行結果をまとめています…</em></div>`;
- let m=(info&&info.last_metrics)||{};
+ let m=showMetrics?((info&&info.last_metrics)||{}):{};
  // 「通常」は既定なので何も足さない。9pxの札を全行に置くと、目は毎行それを読み飛ばす
  // 仕事をさせられるだけになる（1.88.0で撤去）。分割・競争のときだけ札を出す。
  let mode=m.engine==='dde'?['dde','DDE']

@@ -131,6 +131,42 @@ def set_parallel_lines():
  log.info('設定保存 job=(共通) 並列ライン数を保存 api_parallel_lines=%s',lines)
  return jsonify(ok=True,api_parallel_lines=lines)
 
+def normalize_column_layout(v):
+ """一覧の列の決め方を、そのまま置いても安全な形に整える。
+
+ どんな列があるかを決めているのは画面の側（static/app.js の COLUMNS）。ここで列の名前を
+ 並べ直すと、列を1つ増やすたびに両方を直すことになり、片方だけ直した日から
+ 「保存はできるのに出てこない」が起きる。だから中身の当否は見ず、形と大きさだけ整える。
+ """
+ v=v if isinstance(v,dict) else {}
+ def keys(x):
+  out=[]
+  for k in (x if isinstance(x,list) else [])[:32]:
+   k=str(k)[:32]
+   if k and k not in out:out.append(k)
+  return out
+ opt={}
+ for k,o in list((v.get('opt') if isinstance(v.get('opt'),dict) else {}).items())[:32]:
+  if not isinstance(o,dict):continue
+  one={}
+  for name,value in list(o.items())[:16]:
+   if isinstance(value,bool) or value is None:one[str(name)[:32]]=value
+   elif isinstance(value,(int,float)):one[str(name)[:32]]=value
+   elif isinstance(value,str):one[str(name)[:32]]=value[:64]
+   elif isinstance(value,list):one[str(name)[:32]]=[str(x)[:32] for x in value[:16]]
+  opt[str(k)[:32]]=one
+ return {'order':keys(v.get('order')),'hidden':keys(v.get('hidden')),'opt':opt}
+
+@app.post('/api/settings/columns')
+def set_columns():
+ # 列の決め方だけを即時に保存する軽い受け口。ほかの未保存の編集には触らない
+ # （並列ライン数と同じ約束）。
+ data=request.get_json(silent=True) or {}
+ c=load();layout=normalize_column_layout(data.get('layout'));c['settings']['column_layout']=layout;save(c)
+ log.info('設定保存 job=(共通) 一覧の列 並び=%s 隠す=%s 見せ方=%s',
+          layout['order'],layout['hidden'],layout['opt'])
+ return jsonify(ok=True,column_layout=layout)
+
 @app.get('/api/schedule-preview')
 def schedule_preview():
  c=load(); now=datetime.now(); runs=load_job_runs()

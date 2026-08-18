@@ -2042,7 +2042,7 @@ def load():
   _prev_profile=cfg['settings'].get('stability_profile')
   if _prev_profile in (None,'stable_api_serial'):
    cfg['settings']['api_parallel_lines']=6; cfg['settings']['stability_profile']='balanced_api_parallel'
-  cfg['settings'].setdefault('api_parallel_lines',6); cfg['settings'].setdefault('stability_profile','balanced_api_parallel'); cfg['settings'].setdefault('backup_enabled',True); _backup_mode_missing='backup_mode' not in cfg['settings']; cfg['settings'].setdefault('backup_mode','generations'); cfg['settings'].setdefault('backup_retention_days',30); cfg['settings'].setdefault('backup_generation_limit_enabled',True); cfg['settings'].setdefault('backup_generations',3); cfg['settings'].setdefault('schedule_catchup_minutes',30); cfg['settings'].setdefault('api_worker_stagger_ms',700); cfg['settings'].setdefault('split_trial_timeout_seconds',1800); cfg['settings'].setdefault('split_anchor_limit',3); cfg['settings'].setdefault('split_min_part_mb',2.0); cfg['settings'].setdefault('split_min_gain_seconds',5.0); cfg['settings'].setdefault('split_min_speedup',1.05); cfg['settings'].setdefault('split_fixed_seconds',SPLIT_FIXED_SECONDS); cfg['settings'].setdefault('split_run_enabled',True); cfg['settings'].setdefault('retry_enabled',True); cfg['settings'].setdefault('retry_max',1); cfg['settings'].setdefault('retry_delay_minutes',5); cfg['settings'].setdefault('log_max_mb',10); cfg['settings'].setdefault('log_keep',5)
+  cfg['settings'].setdefault('api_parallel_lines',6); cfg['settings'].setdefault('stability_profile','balanced_api_parallel'); cfg['settings'].setdefault('backup_enabled',True); _backup_mode_missing='backup_mode' not in cfg['settings']; cfg['settings'].setdefault('backup_mode','generations'); cfg['settings'].setdefault('backup_retention_days',30); cfg['settings'].setdefault('backup_generation_limit_enabled',True); cfg['settings'].setdefault('backup_generations',3); cfg['settings'].setdefault('schedule_catchup_minutes',30); cfg['settings'].setdefault('api_worker_stagger_ms',700); cfg['settings'].setdefault('local_parallel_lines',0); cfg['settings'].setdefault('split_trial_timeout_seconds',1800); cfg['settings'].setdefault('split_anchor_limit',3); cfg['settings'].setdefault('split_min_part_mb',2.0); cfg['settings'].setdefault('split_min_gain_seconds',5.0); cfg['settings'].setdefault('split_min_speedup',1.05); cfg['settings'].setdefault('split_fixed_seconds',SPLIT_FIXED_SECONDS); cfg['settings'].setdefault('split_run_enabled',True); cfg['settings'].setdefault('retry_enabled',True); cfg['settings'].setdefault('retry_max',1); cfg['settings'].setdefault('retry_delay_minutes',5); cfg['settings'].setdefault('log_max_mb',10); cfg['settings'].setdefault('log_keep',5)
   # 結合の順番と待ち合わせ（判断は navi_order.py。既定値もあちらが持つ）。
   for _k,_v in navi_order.WAIT_DEFAULTS.items():cfg['settings'].setdefault(_k,_v)
   if _backup_mode_missing:cfg['settings']['backup_generations']=3
@@ -3768,155 +3768,6 @@ def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,
    except:pass
 
 
-def relay_worker_line(line,job,worker_status,elapsed,pid=0):
- """ワーカーが書いた状態を、そのまま画面のラインへ渡す。
-
- 決め打ちで項目を拾い直さないこと。以前ここで列挙していたため、あとから増えた項目
- （工程の点=phase、実測かどうか=measured）が画面まで届かず、点が光らなかった。
- 親が決めるのは所要時間と対象IDだけで、あとはワーカーの言うとおりにする。
- """
- relay={k:v for k,v in (worker_status or {}).items() if k not in ('line','elapsed','updated_at','job_id')}
- relay.setdefault('state','処理中');relay.setdefault('percent',0);relay.setdefault('detail','')
- relay['job']=relay.get('job') or (job or {}).get('name','')
- if pid:relay.setdefault('pid',pid)
- update_parallel_line(line,job_id=(job or {}).get('id',''),elapsed=elapsed,**relay)
- return relay
-
-def _read_worker_json(path,default=None):
- try:return json.loads(Path(path).read_text(encoding='utf-8'))
- except Exception:return default
-
-def run_api_process_batch(jobs,cfg,user,pw,server,dde_work,backup,max_lines,trigger,seed_results=None):
- """Run each Navigator API session in an isolated Python process.
- Finished lines immediately pull the next queued query until the reservation queue is empty.
- """
- batch_id=datetime.now().strftime('%Y%m%d_%H%M%S_')+uuid.uuid4().hex[:8]
- runtime=dde_work/'parallel_runtime'/('parallel_'+batch_id);runtime.mkdir(parents=True,exist_ok=True)
- # 重い対象から先に流す。バッチ全体の所要は一番重い対象で決まるため、それを最初に走らせないと
- # 後ろに回った分だけ全体が延びる。規模は前回実績の 行数×列数 を目安にする（実績が無い対象は
- # 大きさが読めないので先に始める）。並列実行では対象の順序自体に意味は無い。
- if len(jobs)>1:
-  runs=load_job_runs()
-  def _estimated_cells(job):
-   run=runs.get(job.get('id')) or {}
-   try:cells=int(run.get('rows') or 0)*int(run.get('cols') or 0)
-   except Exception:cells=0
-   return cells if cells>0 else float('inf')
-  jobs=sorted(jobs,key=_estimated_cells,reverse=True)
-  log.info('BATCH_ORDER strategy=heaviest_first order=%s',[(j['name'],'不明' if _estimated_cells(j)==float('inf') else int(_estimated_cells(j))) for j in jobs])
- queue=deque(enumerate(jobs,1));active={};results=[];failures=[];completed=0
- # 同じ実行で先に片付けたぶん（固定長テキスト）。一覧から消さないよう、先頭に置いておく。
- seed_results=list(seed_results or [])
- # 各対象(ジョブ)の実状態を job_id 単位で保持し、完了後に「待機」へ戻る不具合を防ぐ。
- completed_ids=[];failed_ids=[];all_job_ids=[j['id'] for j in jobs]
- with active_workers_lock:active_workers.clear()
- batch_started=time.perf_counter(); total=len(jobs); configured_lines=max(1,int(max_lines)); max_lines=max(1,min(int(max_lines),total)); batch_results=[]
- # 列分割は同時プロセスを増やす。設定した並列数を超えないよう、1対象あたりの持ち分を先に決める。
- # 対象がラインを埋め切っているときは持ち分が1になり、分割は行われない。
- split_budget=max(1,configured_lines//total)
- log.info('SPLIT_BUDGET configured_lines=%s jobs=%s per_job=%s',configured_lines,total,split_budget)
- for _j in jobs:_j['_split_budget']=split_budget
- set_status(parallel_lines=[{'line':f'ライン {n}','job':'','state':'待機','percent':0,'elapsed':0,'detail':'開始待ち','slot':n} for n in range(1,max_lines+1)],queue_total=total,queue_waiting=total,queue_active=0,queue_completed=0,queue_completed_ids=[],queue_failed_ids=[],queue_running_ids=[],queue_waiting_ids=list(all_job_ids),parallel_max_lines=max_lines,parallel_mode=True,symnavi_window=f'独立プロセス {max_lines}ライン')
- log.info('PARALLEL_BATCH_START model=process-isolated trigger=%s batch_id=%s runtime=%s jobs=%s max_lines=%s total_jobs=%s parent_pid=%s',trigger,batch_id,runtime,[j['rne'] for j in jobs],max_lines,total,os.getpid())
- def start_one(slot):
-  index,job=queue.popleft();line=f'ライン {slot}'
-  job_dir=runtime/f'line_{slot}_{index}';job_dir.mkdir(parents=True,exist_ok=True)
-  payload={'job':job,'job_index':index,'total_jobs':total,'cfg':cfg,'user':user,'password':pw,'server':server,'dde_work':str(job_dir/'work'),'backup':str(backup),'line':line}
-  Path(payload['dde_work']).mkdir(parents=True,exist_ok=True)
-  payload_path=job_dir/'payload.json';result_path=job_dir/'result.json';status_path=job_dir/'status.json'
-  payload_path.write_text(json.dumps(payload,ensure_ascii=False),encoding='utf-8')
-  env=os.environ.copy();env['NAVI_WORKER_LINE']=line;env['NAVI_WORKER_STATUS']=str(status_path);env['NAVI_WORKER_RESULT']=str(result_path);env['NAVI_WORKER_SPAWN_AT']=repr(time.time())
-  flags=getattr(subprocess,'CREATE_NO_WINDOW',0)
-  proc=subprocess.Popen([sys.executable,str(BASE/'lib'/'api_worker.py'),str(payload_path)],cwd=str(BASE),env=env,creationflags=flags)
-  active[slot]={'proc':proc,'job':job,'index':index,'line':line,'status':status_path,'result':result_path,'started':time.perf_counter()}
-  with active_workers_lock:active_workers[slot]=proc
-  update_parallel_line(line,job=job['name'],job_id=job['id'],state='起動',percent=2,detail=f'予約 {index}/{total} / PID {proc.pid}',queue_index=index,slot=slot,started_at=datetime.now().isoformat(timespec='seconds'))
-  log.info('WORKER_START batch_id=%s line=%s pid=%s job=%s queue_index=%s/%s',batch_id,line,proc.pid,job['name'],index,total)
- # ワーカーを一斉に起動すると、Navigator APIのセッション接続が競合して1本あたりの接続時間が
- # 数倍に伸びる（実測: 単独 約1.0秒 / 6本同時 2.3〜7.2秒）。少しずつずらして接続を重ねない。
- # 一番重い対象が先頭なので、遅れて起動する軽い対象は全体所要に影響しない。
- stagger=max(0,int(cfg['settings'].get('api_worker_stagger_ms',700) or 0))/1000.0
- for slot in range(1,max_lines+1):
-  if not queue:break
-  if slot>1 and stagger>0 and cancel_requested.wait(stagger):break
-  start_one(slot)
- while active:
-  if cancel_requested.is_set():
-   log.info('PARALLEL_BATCH_CANCELLED batch_id=%s active=%s queued=%s',batch_id,len(active),len(queue))
-   queue.clear()
-   for slot,item in list(active.items()):
-    try:item['proc'].terminate()
-    except Exception:pass
-   for slot,item in list(active.items()):
-    try:item['proc'].wait(timeout=5)
-    except Exception:
-     try:item['proc'].kill()
-     except Exception:pass
-    failures.append({'ok':False,'job':item['job']['name'],'error':'ユーザーにより中断されました','elapsed':time.perf_counter()-item['started']})
-    failed_ids.append(item['job']['id'])
-    record_job_run(item['job']['id'],item['job']['name'],'cancelled',trigger,detail='ユーザーにより中断されました')
-    update_parallel_line(item['line'],job=item['job']['name'],job_id=item['job']['id'],state='中断',percent=100,detail='ユーザーにより中断されました',elapsed=round(time.perf_counter()-item['started'],1))
-    with active_workers_lock:active_workers.pop(slot,None)
-    del active[slot]
-   break
-  for slot,item in list(active.items()):
-   worker_status=_read_worker_json(item['status'])
-   if worker_status:
-    relay_worker_line(item['line'],item['job'],worker_status,
-                      round(time.perf_counter()-item['started'],1),item['proc'].pid)
-   rc=item['proc'].poll()
-   if rc is None:continue
-   result=_read_worker_json(item['result'],{'ok':False,'job':item['job']['name'],'error':f'Worker終了コード {rc}','elapsed':time.perf_counter()-item['started']})
-   completed+=1
-   (results if result.get('ok') else failures).append(result)
-   (completed_ids if result.get('ok') else failed_ids).append(item['job']['id'])
-   log.info('WORKER_END batch_id=%s line=%s pid=%s job=%s returncode=%s ok=%s elapsed=%.2fs',batch_id,item['line'],item['proc'].pid,item['job']['name'],rc,result.get('ok'),result.get('elapsed',0))
-   batch_results.append({'job':item['job']['name'],'job_id':item['job']['id'],'status':'ok' if result.get('ok') else 'failed',
-                         'detail':str(result.get('result') or result.get('error') or ''),'rows':result.get('rows'),'cols':result.get('columns'),
-                         'elapsed':round(float(result.get('elapsed') or 0),1),'target':str(result.get('target') or ''),
-                         'published':bool(result.get('published',True)),'pending':str(result.get('pending') or '')})
-   set_status(job_results=seed_results+list(batch_results))
-   record_job_run(item['job']['id'],item['job']['name'],'ok' if result.get('ok') else 'failed',trigger,detail=(result.get('result') or result.get('error') or ''),rows=result.get('rows'),cols=result.get('columns'),output_file=Path(result.get('target') or '').name,
-                  metrics={**{k:result.get(k) for k in ('elapsed','execute_seconds','save_seconds','merge_seconds','transfer_bytes','transfer_kbs','split_parts','split_shape','split_how','row_axis','axis_seconds','race_winner','format') if result.get(k) is not None},
-                           # 公開できたか。鮮度の判定がこれを見る（実行できても差し替わっていない場合がある）
-                           'published':bool(result.get('published',True)),'pending':str(result.get('pending') or ''),
-                           # 差し替えられなかったなら、その理由と、粘った時間と、次にすること。
-                           # 「使用中でした」だけでは、画面を見た人は何をすればよいのか分からない。
-                           'hold_reason':str(result.get('hold_reason') or ''),
-                           'hold_waited':result.get('hold_waited'),'hold_attempts':result.get('hold_attempts'),
-                           'hold_advice':list(result.get('hold_advice') or [])})
-   # RNE単位の実績。時間帯・端末・分け方まで残し、あとから条件別に見比べられるようにする。
-   if result.get('rne_path'):
-    record_rne_run(result['rne_path'],item['job'],'ok' if result.get('ok') else 'failed',trigger,
-                   dict(result,rows=result.get('rows'),cols=result.get('columns'),lines=max_lines),engine='api')
-   # ワーカーが持ち帰った列名をここで保存する。設定DBへの書き込みを親1本に集約して競合を避ける。
-   if result.get('ok') and result.get('column_names'):
-    save_column_cache(result.get('rne_path') or '',result['column_names'],rows=result.get('rows'),source='run',job=item['job'])
-   # 所要時間の基準は「分割なし1本」の値でなければ意味がない。分割で取った回は記録しない。
-   if result.get('ok') and result.get('rne_path') and not result.get('split_parts'):
-    save_rne_timing(result['rne_path'],result.get('execute_seconds'),result.get('save_seconds'),
-                    result.get('total_seconds'),result.get('rows'),result.get('columns'))
-   if result.get('split_parts'):
-    log.info('SPLIT_RUN_USED batch_id=%s job=%s 形=%s 片数=%s 軸=%s winner=%s elapsed=%.2fs',batch_id,item['job']['name'],
-             result.get('split_how') or result.get('split_shape') or '-',result['split_parts'],
-             result.get('row_axis') or '-',result.get('race_winner') or '-',result.get('elapsed') or 0)
-   with active_workers_lock:active_workers.pop(slot,None)
-   del active[slot]
-   if queue and not cancel_requested.is_set():start_one(slot)
-  waiting=len(queue);running=len(active)
-  running_ids=[item['job']['id'] for item in active.values()]
-  waiting_ids=[job['id'] for _,job in queue]
-  set_status(completed_jobs=completed,current_index=min(completed+running,total),current_job_name=f'予約キュー処理中: 実行 {running} / 待機 {waiting}',step='save',step_label=f'API並列処理 実行 {running}・待機 {waiting}・完了 {completed}',step_percent=round(100*completed/max(1,total)),activity_detail=f'{max_lines}ラインで予約クエリを処理',activity_value=f'実行 {running} / 待機 {waiting} / 完了 {completed}/{total}',queue_total=total,queue_waiting=waiting,queue_active=running,queue_completed=completed,queue_completed_ids=list(completed_ids),queue_failed_ids=list(failed_ids),queue_running_ids=running_ids,queue_waiting_ids=waiting_ids,failed_jobs=len(failed_ids),job_errors=[{'job':x.get('job'),'error':str(x.get('error') or '')} for x in failures])
-  time.sleep(.25)
- elapsed=time.perf_counter()-batch_started
- sequential_sum=sum(float(r.get('elapsed',0)) for r in results+failures);speedup=sequential_sum/elapsed if elapsed else 0
- summary='; '.join(f"{r.get('job')}={float(r.get('elapsed',0)):.1f}s" for r in results)
- log.info('PARALLEL_BATCH_END model=process-isolated total_jobs=%s succeeded=%s failed=%s max_lines=%s elapsed=%.2fs sequential_sum=%.2fs speedup=%.2fx job_elapsed_summary=%s',total,len(results),len(failures),max_lines,elapsed,sequential_sum,speedup,summary)
- set_status(parallel_speedup=round(speedup,2),queue_waiting=0,queue_active=0,queue_completed=completed,queue_completed_ids=list(completed_ids),queue_failed_ids=list(failed_ids),queue_running_ids=[],queue_waiting_ids=[],parallel_mode=True)
- shutil.rmtree(runtime,ignore_errors=True)
- log.info('PARALLEL_RUNTIME_CLEANUP path=%s exists_after=%s',runtime,runtime.exists())
- return results,failures,elapsed
-
 def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=None):
  if not run_lock.acquire(False):raise RuntimeError('別の処理が実行中です')
  cancel_requested.clear()
@@ -3927,61 +3778,51 @@ def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=No
   selection_elapsed=time.perf_counter()-cfg_started;first_job=jobs[0]; first_fmt=normalize_output_format(first_job.get('output_format'),first_job.get('output_file')); first_target=resolve_path(first_job.get('output_folder') or cfg['default_output_folder'])/canonical_output_file(first_job.get('output_file'),first_fmt); progress.started=time.time(); requested_lines=max(1,min(int(parallel_lines_override or 1),len(jobs))); execution_mode='parallel' if str(cfg['settings'].get('extract_engine') or 'api').lower()=='api' else 'serial'; set_status(run_id=run_id or uuid.uuid4().hex,execution_mode=execution_mode,requested_lines=requested_lines,parallel_mode=(execution_mode=='parallel'),parallel_lines=[],queue_total=0,queue_waiting=0,queue_active=0,queue_completed=0,queue_completed_ids=[],queue_failed_ids=[],queue_running_ids=[],queue_waiting_ids=[j['id'] for j in jobs],job_results=[],parallel_max_lines=(requested_lines if execution_mode=='parallel' else 0),parallel_speedup=0,batch_job_ids=[j['id'] for j in jobs]); set_status(running=True,current='準備中',current_job_id=first_job['id'],current_job_name=first_job['name'],current_index=1,total_jobs=len(jobs),completed_jobs=0,failed_jobs=0,output_format=first_fmt,output_file=canonical_output_file(first_job.get('output_file'),first_fmt),output_target=str(first_target),started_at=datetime.now().isoformat(timespec='seconds'),elapsed_seconds=0,symnavi_window='起動待ち',step='prepare',step_label='設定を確認しています',step_percent=3,last_result='実行中',error_detail='',job_errors=[]); log.info('BUILD_VERSION=%s',BUILD_VERSION); log.info('処理開始 trigger=%s jobs=%s',trigger,[j['rne'] for j in jobs]);log.info('STARTUP_PHASE phase=config_and_job_selection elapsed=%.2fs',selection_elapsed)
   # 手元のファイルから作る対象（固定長テキスト・複数ファイルの結合）は、Navigatorへ
   # 問い合わせない。接続も資格情報も要らないので、その2つだけを選んだ実行は
-  # Navigatorの設定が1つも無くても走る ―― 先に片付けて、残りを従来の経路へ渡す。
-  # 材料を作る側が先に来るように並べ替え、どの順で流すかへ振り分ける。
+  # Navigatorの設定が1つも無くても走る。
+  # RNEと手元の処理は待つ相手が違う（片方はNavigatorの応答、片方は共有フォルダーの
+  # 読み書き）ので、同時に流す。結合だけは材料がそろってから ―― 先に走らせると、
+  # まだ作られていないファイルを繋ぎ、正しい形をした「1回ぶん古いファイル」になる。
+  # 順番の判断は navi_lane、流す係は navi_lanerun にある。
   jobs,text_jobs,api_jobs,after_api=split_batch(jobs,cfg)
-  total_all_jobs=len(jobs)
+  total_all_jobs=len(jobs); local_jobs=list(text_jobs)+list(after_api)
+  engine=str(cfg['settings'].get('extract_engine') or 'api').lower(); set_status(extract_engine=engine)
+  user=pw=server=''; backup=resolve_path(cfg['backup_folder']); dde_work=dde_staging_folder()
+  if api_jobs:
+   # 何が要るかの判断は path_setting_roles に1本化する。画面が「いまは不要」と出している
+   # ものを実行時にだけ必須にすると、直しようのない停止になる（v1.60.0〜v1.66.1は
+   # symnavim.def が無いだけでAPI方式でも止まっていた）。
+   _roles=path_setting_roles(cfg)
+   for k in ('symnavi_exe','symnavim_conf','symnavim_def'):
+    if _roles.get(k,('required',''))[0]!='required':continue
+    if not resolve_path(cfg[k]).is_file():raise FileNotFoundError(f'{PATH_SETTING_LABEL.get(k,k)}がありません: {cfg[k]}')
+   cred_started=time.perf_counter();user,pw,server,_=creds(resolve_path(cfg['symnavim_conf']));log.info('STARTUP_PHASE phase=credential_load elapsed=%.2fs',time.perf_counter()-cred_started);path_started=time.perf_counter();rne_root=resolve_path(cfg['rne_folder']);log.info('STARTUP_PHASE phase=path_prepare elapsed=%.2fs total=%.2fs',time.perf_counter()-path_started,time.perf_counter()-startup_started);log.info('共通一時保存先: %s',dde_work)
+   # rne_folder設定は使われていない場合がある（対象ごとのrne_pathが優先）。実際にRNEがある場所を測る。
+   try:probe_rne_dir=resolve_rne_path(api_jobs[0],cfg).parent
+   except Exception:probe_rne_dir=rne_root
+   log_run_environment(dde_work,probe_rne_dir)
+   log.info('抽出エンジン engine=%s stability_profile=%s',engine,cfg['settings'].get('stability_profile','stable_api_serial'))
+   if any(normalize_output_format(j.get('output_format'),j.get('output_file'))=='accdb' for j in api_jobs):
+    access_prewarm_thread=prewarm_access_async('process_contains_accdb')
+  api_parallel_lines=max(1,min(int(cfg['settings'].get('api_parallel_max_lines',24) or 24),int(parallel_lines_override if parallel_lines_override is not None else cfg['settings'].get('api_parallel_lines',1) or 1)))
+  # API方式は対象が1件でも独立プロセスで実行する。アプリ内で直接DLLを呼ぶとNaviSaveDataが
+  # 一桁遅くなる（実測 約45KB/s に対しワーカー経由は 0.5〜4MB/s）ため、重い抽出ほど差が開く。
+  # RNEが1件も無い実行は、方式によらずラインで流す（Navigatorには触らない）。
+  if engine!='dde' or not api_jobs:
+   log.info('PARALLEL_DECISION engine=%s selected_jobs=%s configured_lines=%s eligible=%s model=process-isolated',engine,len(api_jobs),api_parallel_lines,bool(api_jobs))
+   log.info('EXECUTION_MODE mode=lanes requested_lines=%s rne_jobs=%s local_jobs=%s',api_parallel_lines,len(api_jobs),len(local_jobs))
+   res=run_lanes(jobs,local_jobs,api_jobs,cfg,user,pw,server,dde_work,backup,api_parallel_lines,trigger,progress)
+   finish_batch(res,total_all_jobs,progress);return
+  jobs=api_jobs
   text_results=[];text_job_results=[]
   if text_jobs:
    log.info('LOCAL_BATCH jobs=%s（手元のファイルから作ります。Navigatorへは接続しません）',
             [(j['name'],normalize_job_source(j.get('source'))) for j in text_jobs])
-   _work=dde_staging_folder();_backup=resolve_path(cfg['backup_folder'])
-   text_results,text_failures,text_job_results=run_local_jobs(text_jobs,cfg,_work,_backup,trigger,progress,0,len(jobs))
+   text_results,text_failures,text_job_results=run_local_jobs(text_jobs,cfg,dde_work,backup,trigger,progress,0,total_all_jobs)
    if text_failures:
     set_status(job_errors=[{'job':r.get('job'),'error':str(r.get('error') or '')} for r in text_failures],failed_jobs=len(text_failures))
     raise RuntimeError('手元のファイルからの作成で%d件失敗しました\n'%len(text_failures)+'\n'.join('・%s: %s'%(r.get('job'),r.get('error')) for r in text_failures))
-   if cancel_requested.is_set():raise RunCancelled(f'{len(text_results)}/{len(jobs)}件完了後に中断されました')
-  if not api_jobs:
-   later,_later_results=run_deferred_local(after_api,cfg,trigger,progress,total_all_jobs,text_job_results)
-   text_results=list(text_results)+list(later)
-   msg='正常終了 | '+' | '.join(text_results)
-   progress('complete','すべての処理が完了しました',100)
-   set_status(last_result=msg,last_finished_at=datetime.now().isoformat(timespec='seconds'),elapsed_seconds=int(time.time()-progress.started))
-   log.info(msg);return
-  jobs=api_jobs
-  # 何が要るかの判断は path_setting_roles に1本化する。画面が「いまは不要」と出している
-  # ものを実行時にだけ必須にすると、直しようのない停止になる（v1.60.0〜v1.66.1は
-  # symnavim.def が無いだけでAPI方式でも止まっていた）。
-  _roles=path_setting_roles(cfg)
-  for k in ('symnavi_exe','symnavim_conf','symnavim_def'):
-   if _roles.get(k,('required',''))[0]!='required':continue
-   if not resolve_path(cfg[k]).is_file():raise FileNotFoundError(f'{PATH_SETTING_LABEL.get(k,k)}がありません: {cfg[k]}')
-  cred_started=time.perf_counter();user,pw,server,_=creds(resolve_path(cfg['symnavim_conf']));log.info('STARTUP_PHASE phase=credential_load elapsed=%.2fs',time.perf_counter()-cred_started);path_started=time.perf_counter();rne_root=resolve_path(cfg['rne_folder']);backup=resolve_path(cfg['backup_folder']);dde_work=dde_staging_folder();log.info('STARTUP_PHASE phase=path_prepare elapsed=%.2fs total=%.2fs',time.perf_counter()-path_started,time.perf_counter()-startup_started);log.info('共通一時保存先: %s',dde_work)
-  # rne_folder設定は使われていない場合がある（対象ごとのrne_pathが優先）。実際にRNEがある場所を測る。
-  try:probe_rne_dir=resolve_rne_path(jobs[0],cfg).parent
-  except Exception:probe_rne_dir=rne_root
-  log_run_environment(dde_work,probe_rne_dir)
-  engine=str(cfg['settings'].get('extract_engine') or 'api').lower(); set_status(extract_engine=engine); log.info('抽出エンジン engine=%s stability_profile=%s',engine,cfg['settings'].get('stability_profile','stable_api_serial'))
-  if any(normalize_output_format(j.get('output_format'),j.get('output_file'))=='accdb' for j in jobs):
-   access_prewarm_thread=prewarm_access_async('process_contains_accdb')
-  api_parallel_lines=max(1,min(int(cfg['settings'].get('api_parallel_max_lines',24) or 24),int(parallel_lines_override if parallel_lines_override is not None else cfg['settings'].get('api_parallel_lines',1) or 1)))
-  # API方式は対象が1件でも独立プロセスで実行する。アプリ内で直接DLLを呼ぶとNaviSaveDataが
-  # 一桁遅くなる（実測 約45KB/s に対しワーカー経由は 0.5〜4MB/s）ため、重い抽出ほど差が開く。
-  isolated=engine=='api'
-  log.info('PARALLEL_DECISION engine=%s selected_jobs=%s configured_lines=%s eligible=%s model=process-isolated',engine,len(jobs),api_parallel_lines,isolated)
-  log.info('EXECUTION_MODE mode=%s requested_lines=%s selected_jobs=%s',('parallel-process' if isolated else 'serial'),api_parallel_lines,len(jobs))
-  if isolated:
-   results,failures,batch_elapsed=run_api_process_batch(jobs,cfg,user,pw,server,dde_work,backup,api_parallel_lines,trigger,seed_results=text_job_results)
-   if cancel_requested.is_set():raise RunCancelled(f'{len(results)}/{len(jobs)}件完了後に中断されました')
-   if failures:
-    set_status(job_errors=[{'job':r.get('job'),'error':str(r.get('error') or '')} for r in failures],failed_jobs=len(failures))
-    raise RuntimeError('API実行で%d件失敗しました\n'%len(failures)+'\n'.join('・%s: %s'%(r.get('job'),r.get('error')) for r in failures))
-   later,_later_results=run_deferred_local(after_api,cfg,trigger,progress,total_all_jobs,text_job_results)
-   done=list(text_results)+[r['result'] for r in results]+list(later)
-   msg='正常終了 | '+(done[0] if len(done)==1 else '全件%sファイル / %.1f秒 | '%(len(done),batch_elapsed)+' | '.join(done))
-   progress('complete','すべての処理が完了しました',100);set_status(last_result=msg,last_finished_at=datetime.now().isoformat(timespec='seconds'),elapsed_seconds=int(time.time()-progress.started));log.info(msg)
-   return
-  # ここから下はDDE方式（engine='dde'）専用の直列経路。API方式は上のisolatedブロックで必ずreturnする。
+   if cancel_requested.is_set():raise RunCancelled(f'{len(text_results)}/{total_all_jobs}件完了後に中断されました')
+  # ここから下はDDE方式（engine='dde'）専用の直列経路。API方式は上のラインで必ずreturnする。
   # engine=='api'の分岐は、DLLを直接読み込む設定に戻せるよう残してあるが通常は通らない。
   if engine=='api':
    from navigator_api import NavigatorApi
@@ -5264,6 +5105,12 @@ import navi_orderrun
 from navi_orderrun import (job_output_paths,job_dependencies,order_jobs_by_dependency,
                           job_wait_reasons,wait_for_sources,run_deferred_local,split_batch)
 
+# RNEと手元の処理を同時に流す係。どれを先に流すかの判断は navi_lane.py（机の上で確かめられる）。
+import navi_lane
+import navi_lanerun
+from navi_lanerun import (LaneBoard,relay_worker_line,run_api_process_batch,run_lanes,
+                          finish_batch,_read_worker_json)
+
 import navi_joinrun
 from navi_joinrun import (_load_join_recipes,load_join_recipes,find_join_recipe,save_join_recipe,
                           join_recipe_usage,delete_join_recipe,resolve_join_path,join_reader,join_layouts,
@@ -5272,7 +5119,7 @@ from navi_joinrun import (_load_join_recipes,load_join_recipes,find_join_recipe,
 import navi_textrun
 from navi_textrun import (_json_rows,_layout_row,_load_text_layouts,load_text_layouts,
                           find_text_layout,save_text_layout,text_layout_usage,delete_text_layout,
-                          process_local_job,run_local_jobs)
+                          process_local_job,run_local_jobs,run_one_local,local_progress_say)
 
 import navi_split
 from navi_split import (_split_trial_run, column_weights, compare_csv_content, split_trial_options,

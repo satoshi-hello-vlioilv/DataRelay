@@ -195,11 +195,72 @@ def process_local_job(j,cfg,work,backup,trigger,job_index,total_jobs,say=None):
    except Exception:pass
  return fin,target,rows,cols,stat,fmt,extras
 
-def run_local_jobs(jobs,cfg,work,backup,trigger,progress_fn=None,offset=0,total_all=0):
- """固定長テキストの対象をまとめて片付ける。(結果の文, 失敗, 一覧用の結果) を返す。
+def local_progress_say(progress_fn,j):
+ """1件の進み具合を、実行中の画面へ言葉で出す係。どの工程にいるかを日本語で。"""
+ def say(stage,**kw):
+  if not progress_fn:return
+  if stage=='wait':
+   import navi_order
+   progress_fn('prepare',f'{j["name"]}: 材料がそろうのを待っています',20,current_job_id=j['id'],
+               activity_detail='材料の作成待ち',activity_value=navi_order.reason_text(kw.get('reasons') or []))
+  elif stage=='read':progress_fn('save',f'{j["name"]}: テキストを読み取っています',35,current_job_id=j['id'],activity_detail='固定長テキスト',activity_value=str(kw.get('source') or ''))
+  elif stage=='unchanged':progress_fn('publish',f'{j["name"]}: 前回と同じ内容のため更新しませんでした',95,activity_detail='変更なし')
+  elif stage=='convert':progress_fn('export',f'{j["name"]}: 形式を変換しています',70,activity_detail='形式別変換工程')
+  elif stage=='publish':progress_fn('publish',f'{j["name"]}: 検査済みファイルを公開しています',90,activity_detail='公開工程')
+  elif stage=='extras':progress_fn('publish',f'{j["name"]}: 同じデータからあと{len(kw.get("extras") or [])}形式を作成しています',95,activity_detail='同時出力')
+ return say
 
- 1件ずつ順に処理する。読むのは手元のファイルで、待たされるのは変換と公開だけなので、
- ラインを分けても得にならない（分けるほど公開先の取り合いが増える）。
+def run_one_local(j,cfg,work,backup,trigger,index,total_all,say=None):
+ """手元のファイルから作る対象を1件、最後まで通す。結果は辞書で返す（例外は投げない）。
+
+ 1件ずつ順に流すときも、ラインに分けて同時に流すときも、通す道はここ1本にする ――
+ 別々に書くと、片方にしか直しが入らない壊れ方をまた繰り返す。
+ 画面の状態（どれが実行中か・完了か）は呼ぶ側が持つ。ここで書くと、同時に流したとき
+ あとから書いたほうが前を消してしまう。
+ """
+ kind=normalize_job_source(j.get('source'))
+ try:
+  # 走り出す前に材料の様子を見る。作っている最中か、もうすぐ作り始めるなら待つ
+  # ―― 擦れ違うと、正しい形をした「1回ぶん古いファイル」が出来上がる。
+  held=wait_for_sources(j,cfg,say=say)
+  fin,target,rows,cols,stat,fmt,extras=process_local_job(j,cfg,work,backup,trigger,index,total_all,say)
+ except Exception as e:
+  log.exception('LOCAL_JOB_FAILED job=%s kind=%s',j.get('name'),kind)
+  record_job_run(j['id'],j['name'],'failed',trigger,detail=str(e))
+  return {'ok':False,'job':j.get('name',''),'error':str(e),'detail':str(e),
+          'job_result':{'job':j['name'],'job_id':j['id'],'status':'failed','detail':str(e)}}
+ total=fin['total']
+ if fin['unchanged']:
+  detail=f'前回と同じ内容のため更新しませんでした / {total:.1f}秒'
+ else:
+  detail=(f'{fin["rows"]}件/{fin["cols"]}列 / {total:.1f}秒'
+          +('' if fin['published'] else f' / 更新保留: {fin["pending"]}')+extra_format_note(fin['extra_results']))
+ metrics=serial_run_metrics(kind,fmt,total,fin['rows'],fin['cols'])
+ metrics.update(published=bool(fin['published']),pending=str(fin.get('pending') or ''))
+ # 内訳は入力の種類で違う。無いものを0として残すと、後から読むとき嘘になる。
+ if 'short_rows' in stat:
+  metrics.update(text_rows=stat['rows'],text_short_rows=stat['short_rows'],text_broken_cells=stat['broken_cells'])
+ elif 'joins' in stat:
+  metrics.update(join_sources=len(stat['sources']),
+                 join_matched=[x.get('both') for x in stat['joins']])
+ if held.get('waited'):metrics.update(wait_seconds=held['waited'])
+ record_job_run(j['id'],j['name'],'ok',trigger,detail=detail,rows=fin['rows'],cols=fin['cols'],
+                output_file=j['output_file'],metrics=metrics)
+ # 何で作ったかを、作った方法どおりに残す。1.88.0まで結合でも engine=text と書いていて、
+ # ログを読み返すと「テキストから作った」ようにしか見えなかった。
+ log.info('JOB_RESULT job=%s engine=%s format=%s rows=%s columns=%s elapsed=%.2fs target=%s',
+          j['name'],kind,fmt,fin['rows'],fin['cols'],total,target)
+ return {'ok':True,'job':j['name'],'result':f'{j["name"]}: '+detail,'detail':detail,'elapsed':total,
+         'job_result':{'job':j['name'],'job_id':j['id'],'status':'ok','detail':detail,'rows':fin['rows'],
+                       'cols':fin['cols'],'elapsed':round(total,1),'target':str(target),
+                       'published':bool(fin['published']),'pending':str(fin.get('pending') or ''),
+                       'unchanged':bool(fin['unchanged'])}}
+
+def run_local_jobs(jobs,cfg,work,backup,trigger,progress_fn=None,offset=0,total_all=0):
+ """手元のファイルから作る対象を、1件ずつ順に片付ける。(結果の文, 失敗, 一覧用の結果)。
+
+ DDE方式（1つの画面を操作する方式）だけが通る道。API方式は navi_lanerun が
+ ラインに分けて同時に流す ―― 通す中身（run_one_local）はどちらも同じ。
  """
  results=[];failures=[];job_results=[];completed_ids=[]
  total_all=total_all or len(jobs)
@@ -207,56 +268,15 @@ def run_local_jobs(jobs,cfg,work,backup,trigger,progress_fn=None,offset=0,total_
   index=offset+n
   set_status(current=j['name'],current_job_id=j['id'],current_job_name=j['name'],current_index=index,
              queue_running_ids=[j['id']])
-  def say(stage,**kw):
-   if not progress_fn:return
-   if stage=='wait':
-    import navi_order
-    progress_fn('prepare',f'{j["name"]}: 材料がそろうのを待っています',20,current_job_id=j['id'],
-                activity_detail='材料の作成待ち',activity_value=navi_order.reason_text(kw.get('reasons') or []))
-   elif stage=='read':progress_fn('save',f'{j["name"]}: テキストを読み取っています',35,current_job_id=j['id'],activity_detail='固定長テキスト',activity_value=str(kw.get('source') or ''))
-   elif stage=='unchanged':progress_fn('publish',f'{j["name"]}: 前回と同じ内容のため更新しませんでした',95,activity_detail='変更なし')
-   elif stage=='convert':progress_fn('export',f'{j["name"]}: 形式を変換しています',70,activity_detail='形式別変換工程')
-   elif stage=='publish':progress_fn('publish',f'{j["name"]}: 検査済みファイルを公開しています',90,activity_detail='公開工程')
-   elif stage=='extras':progress_fn('publish',f'{j["name"]}: 同じデータからあと{len(kw.get("extras") or [])}形式を作成しています',95,activity_detail='同時出力')
-  try:
-   # 走り出す前に材料の様子を見る。作っている最中か、もうすぐ作り始めるなら待つ
-   # ―― 擦れ違うと、正しい形をした「1回ぶん古いファイル」が出来上がる。
-   held=wait_for_sources(j,cfg,say=say)
-   if held.get('waited'):
-    set_status(activity_detail='材料の作成待ち',activity_value=f'{j["name"]}: {held["waited"]:.0f}秒待ちました')
-   fin,target,rows,cols,stat,fmt,extras=process_local_job(j,cfg,work,backup,trigger,index,total_all,say)
-  except Exception as e:
-   log.exception('LOCAL_JOB_FAILED job=%s kind=%s',j.get('name'),normalize_job_source(j.get('source')))
-   failures.append({'job':j.get('name'),'error':str(e)})
-   record_job_run(j['id'],j['name'],'failed',trigger,detail=str(e))
-   job_results.append({'job':j['name'],'job_id':j['id'],'status':'failed','detail':str(e)})
+  out=run_one_local(j,cfg,work,backup,trigger,index,total_all,say=local_progress_say(progress_fn,j))
+  job_results.append(out['job_result'])
+  if not out['ok']:
+   failures.append({'job':out['job'],'error':out['error']})
    set_status(queue_failed_ids=list(dict.fromkeys(list(app.status.get('queue_failed_ids') or [])+[j['id']])),
               queue_running_ids=[],job_results=list((app.status.get('job_results') or [])+job_results[-1:]))
    continue
-  total=fin['total']
-  if fin['unchanged']:
-   detail=f'前回と同じ内容のため更新しませんでした / {total:.1f}秒'
-  else:
-   detail=(f'{fin["rows"]}件/{fin["cols"]}列 / {total:.1f}秒'
-           +('' if fin['published'] else f' / 更新保留: {fin["pending"]}')+extra_format_note(fin['extra_results']))
-  results.append(f'{j["name"]}: '+detail);completed_ids.append(j['id'])
-  metrics=serial_run_metrics('text',fmt,total,fin['rows'],fin['cols'])
-  metrics.update(published=bool(fin['published']),pending=str(fin.get('pending') or ''))
-  # 内訳は入力の種類で違う。無いものを0として残すと、後から読むとき嘘になる。
-  if 'short_rows' in stat:
-   metrics.update(text_rows=stat['rows'],text_short_rows=stat['short_rows'],text_broken_cells=stat['broken_cells'])
-  elif 'joins' in stat:
-   metrics.update(join_sources=len(stat['sources']),
-                  join_matched=[x.get('both') for x in stat['joins']])
-  record_job_run(j['id'],j['name'],'ok',trigger,detail=detail,rows=fin['rows'],cols=fin['cols'],
-                 output_file=j['output_file'],metrics=metrics)
-  job_results.append({'job':j['name'],'job_id':j['id'],'status':'ok','detail':detail,'rows':fin['rows'],
-                      'cols':fin['cols'],'elapsed':round(total,1),'target':str(target),
-                      'published':bool(fin['published']),'pending':str(fin.get('pending') or ''),
-                      'unchanged':bool(fin['unchanged'])})
+  results.append(out['result']);completed_ids.append(j['id'])
   set_status(completed_jobs=index,queue_completed_ids=list(completed_ids),queue_running_ids=[],
              job_results=list((app.status.get('job_results') or [])[:offset]+job_results))
-  log.info('JOB_RESULT job=%s engine=text format=%s rows=%s columns=%s elapsed=%.2fs target=%s',
-           j['name'],fmt,fin['rows'],fin['cols'],total,target)
   if app.cancel_requested.is_set():break
  return results,failures,job_results
