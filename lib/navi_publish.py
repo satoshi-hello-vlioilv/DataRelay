@@ -143,17 +143,25 @@ def publish(src,dst,backup_root,generations,from_pending=False,backup_enabled=Tr
  """
  dst.parent.mkdir(parents=True,exist_ok=True)
  bdir=backup_root/dst.stem
- if backup_enabled:
+ # 控え置き場は、実際に控えを取る直前に作る。先に作っていたため、日付入りのファイル名
+ # （毎回名前が変わる＝公開先に同名の既存ファイルが決してできない）では、控えを1件も
+ # 取らないのに空フォルダーだけが実行のたびに増えていた。世代整理は中身しか見ないので
+ # 消えることもない。
+ def _ensure_bdir():
+  """控えを置く場所を用意する。使えなければローカルへ逃がし、それも駄目なら控えを諦める。"""
+  nonlocal bdir,backup_enabled
+  if not backup_enabled:return False
+  if bdir.is_dir():return True
   # 控えが取れないことは、公開そのものを止める理由にはならない。使えない場所を
   # 指していたら、このPCのローカルへ逃がして続ける（理由はログに残す）。
-  try:bdir.mkdir(parents=True,exist_ok=True)
+  try:bdir.mkdir(parents=True,exist_ok=True);return True
   except Exception as be:
    fallback=LOCAL_BACKUP/dst.stem
    log.warning('BACKUP_DIR_UNUSABLE path=%s error=%s → %s へ切り替えます',bdir,be,fallback)
    try:
-    fallback.mkdir(parents=True,exist_ok=True);bdir=fallback
+    fallback.mkdir(parents=True,exist_ok=True);bdir=fallback;return True
    except Exception as be2:
-    log.warning('BACKUP_DISABLED_THIS_RUN error=%s 控えを取らずに公開します',be2);backup_enabled=False
+    log.warning('BACKUP_DISABLED_THIS_RUN error=%s 控えを取らずに公開します',be2);backup_enabled=False;return False
  stamp=datetime.now().strftime('%Y%m%d_%H%M%S')
  incoming=dst.parent/f'.{dst.name}.{os.getpid()}.incoming'
  try:
@@ -170,14 +178,14 @@ def publish(src,dst,backup_root,generations,from_pending=False,backup_enabled=Tr
   while time.time()<deadline:
    attempts+=1
    try:
-    if dst.exists() and backup_enabled and not backed_up:
+    if dst.exists() and backup_enabled and not backed_up and _ensure_bdir():
      backup=bdir/f'{dst.stem}_{stamp}{dst.suffix}'
      try:
       # 成功したバックアップは取り直さない。公開先ロック時のリトライで同じコピーを繰り返さないため。
       backup_started=time.perf_counter();shutil.copy2(dst,backup);backed_up=True;log.info('PUBLISH_BACKUP_COPY src=%s backup=%s elapsed=%.2fs',dst,backup,time.perf_counter()-backup_started)
      except (PermissionError,OSError) as e:log.warning('PUBLISH_BACKUP_SKIP error=%s',e)
     replace_started=time.perf_counter();os.replace(incoming,dst);log.info('PUBLISH_ATOMIC_REPLACE target=%s elapsed=%.2fs',dst,time.perf_counter()-replace_started)
-    cleanup_started=time.perf_counter();old=sorted(bdir.glob(f'{dst.stem}_*{dst.suffix}'),key=lambda p:p.stat().st_mtime,reverse=True) if backup_enabled else [];removed=0
+    cleanup_started=time.perf_counter();old=sorted(bdir.glob(f'{dst.stem}_*{dst.suffix}'),key=lambda p:p.stat().st_mtime,reverse=True) if (backup_enabled and bdir.is_dir()) else [];removed=0
     cutoff=time.time()-max(1,int(retention_days))*86400
     for index,item in enumerate(old):
      keep_by_generation=index<int(generations)

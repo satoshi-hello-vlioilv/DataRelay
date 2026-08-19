@@ -93,7 +93,9 @@ async function checkConfiguredPath(item,jobId){showWaiting('ファイル存在�
 
 function expectedExt(f){return {sqlite3:'.sqlite3',txt:'.txt',csv:'.csv',xlsx:'.xlsx',accdb:'.accdb'}[normalizeFormat(f)]||'.sqlite3'}
 function normalizeFormat(f){f=String(f||'').trim().toLowerCase();return ({sqlite:'sqlite3',db:'sqlite3',access:'accdb',excel:'xlsx',xls:'xlsx'}[f]||f||'sqlite3')}
-function canonicalOutputFile(name,format){let ext=expectedExt(format),leaf=String(name||'output').trim(),dot=leaf.lastIndexOf('.');if(dot>0)leaf=leaf.slice(0,dot);leaf=leaf.replace(/(?:sqlite3|sqlite|accdb|xlsx|xls|csv|txt)$/i,'');return (leaf||'output')+ext}
+function canonicalOutputFile(name,format){let ext=expectedExt(format),leaf=String(name||'output').trim(),dot=leaf.lastIndexOf('.');if(dot>0)leaf=leaf.slice(0,dot);/* 語幹の末尾にある形式名は削らない（勤怠CSV.csv が 勤怠.csv になっていた）。
+   削るのは、本当に拡張子が二重のとき（勤怠.csv.csv）だけ。サーバー側と同じ決まり。 */
+leaf=leaf.replace(/\.(?:sqlite3|sqlite|accdb|xlsx|xls|csv|txt)$/i,'');return (leaf||'output')+ext}
 function outputStem(name){let leaf=String(name||'').trim(),dot=leaf.lastIndexOf('.');if(dot>0)leaf=leaf.slice(0,dot);leaf=leaf.replace(/(?:sqlite3|sqlite|accdb|xlsx|xls|csv|txt)$/i,'');return leaf}
 function updateFixedNameNote(){let f=normalizeFormat($('#m-format')?.value),ext=expectedExt(f),stem=(($('#m-output-file')?.value||'').trim()||'output');if($('#m-ext-suffix'))$('#m-ext-suffix').textContent=ext;if($('#m-format-note'))$('#m-format-note').textContent=`選択中: ${formatName(f)}（拡張子 ${ext}）／ 最終ファイル名 → ${outputStem(stem)||'output'}${ext}`}
 function syncOutputExtension(){let f=normalizeFormat($('#m-format')?.value),i=$('#m-output-file');if($('#m-format'))$('#m-format').value=f;if(i)i.value=outputStem(i.value);updateFixedNameNote();renderAlsoFormats()}

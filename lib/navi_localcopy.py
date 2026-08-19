@@ -76,13 +76,20 @@ def _trim_to_line(data):
   out=out[:cut+1]
  return out
 
-def plan_for(size,fmt):
- """その形式・大きさなら、どう写すか。('prefix'|'whole'|None, 写すバイト数, 理由)"""
+def plan_for(size,fmt,whole_limit=None):
+ """その形式・大きさなら、どう写すか。('prefix'|'whole'|None, 写すバイト数, 理由)
+
+ 上限は引数で受け取る。以前はモジュールのグローバルを一時的に書き換えて渡していたが、
+ 画面は threaded=True で動くので、ビュワーの読み込みと結合の下読みが重なると
+ 互いに相手の上限を見てしまい、写すはずのものを写さない（＝公開先を直接開いて、
+ 自分の公開を自分で邪魔する）ことがあった。重なったまま終わると上限が戻らないこともある。
+ """
+ limit=int(WHOLE_BYTES if whole_limit is None else whole_limit)
  fmt=str(fmt or '').lower()
  if fmt in PREFIX_FORMATS:
   return ('prefix',min(int(size),PREFIX_BYTES),'')
  if fmt in WHOLE_FORMATS:
-  if int(size)<=WHOLE_BYTES:return ('whole',int(size),'')
+  if int(size)<=limit:return ('whole',int(size),'')
   return (None,0,f'{size/1048576:.0f}MBあるので写していません（途中で切ると壊れる形式です）。元のファイルを読みます')
  return (None,0,'この形式は写しません')
 
@@ -101,7 +108,7 @@ def _prune(keep):
    log.info('JOIN_CACHE_PRUNE file=%s size=%s',p.name,s.st_size)
   except Exception:pass
 
-def sample(path,fmt):
+def sample(path,fmt,whole_limit=None):
  """1つのファイルをローカルへ写す。(写しの場所, 内訳) を返す。
 
  写さないと決めたときは (None, 内訳)。内訳には、なぜそうしたかが必ず入る ――
@@ -113,7 +120,7 @@ def sample(path,fmt):
  except Exception as e:
   info['note']=f'読めませんでした: {e}';return None,info
  info['total']=st.st_size
- mode,want,why=plan_for(st.st_size,fmt)
+ mode,want,why=plan_for(st.st_size,fmt,whole_limit)
  if not mode:
   info['note']=why;return None,info
  dst=cache_dir()/_key(src,st,want)
@@ -193,12 +200,7 @@ def whole(path,limit=None):
               '（写さずに直接開きます。この間、この公開先は差し替えられません）',src,size,cap)
   return src,{'ok':False,'mode':None,'total':size,
               'note':f'{_size(size)}あるので写していません。元のファイルを直接開きます'}
- keep=globals()['WHOLE_BYTES']
- try:
-  globals()['WHOLE_BYTES']=cap
-  local,info=sample(src,'sqlite3')      # 形式の別は見ない。丸ごとなら同じことをすればよい
- finally:
-  globals()['WHOLE_BYTES']=keep
+ local,info=sample(src,'sqlite3',whole_limit=cap)   # 形式の別は見ない。丸ごとなら同じことをすればよい
  return (local or src),info
 
 def read_copy(path):

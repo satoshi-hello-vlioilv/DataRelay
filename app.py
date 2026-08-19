@@ -2968,12 +2968,21 @@ def publish_extra_formats(j,cfg,intermediate,out_dir,work_dir,backup,stamp,line=
   made.append(row)
  return made
 
+def extra_format_held(extras):
+ """同時出力のうち、作れたのに公開先を差し替えられなかったもの。"""
+ return [x for x in (extras or []) if x.get('ok') and x.get('published') is False]
+
 def extra_format_note(extras):
  """結果の1行に足す、同時出力のまとめ。"""
  if not extras:return ''
  done=[x for x in extras if x['ok']];bad=[x for x in extras if not x['ok']]
  text=f' / 同時出力 {len(done)}/{len(extras)}形式（'+'・'.join(OUTPUT_FORMAT_LABEL.get(x['format'],x['format']) for x in done)+'）' if done else ''
  if bad:text+=f' / 失敗 '+'・'.join(OUTPUT_FORMAT_LABEL.get(x['format'],x['format']) for x in bad)
+ # 公開先が使用中で差し替えられなかったものは、作るところまでは成功している（ok=True）。
+ # ok だけを見ていたため、共有上のファイルが1バイトも変わっていないのに
+ # 「同時出力 2/2形式」とだけ出ていた。主形式には出る知らせが、ここだけ抜けていた。
+ held=extra_format_held(extras)
+ if held:text+=' / 更新保留 '+'・'.join(OUTPUT_FORMAT_LABEL.get(x['format'],x['format']) for x in held)
  return text
 
 def process_catalog_inspect(j,cfg,user,pw,server,want=None):
@@ -3654,7 +3663,10 @@ def finish_one_job(j,cfg,*,intermediate,db,target,backup,out_dir,local_export,st
   t=plog('format_conversion',job=j['name'],format=fmt);nr,nc=export_data(intermediate,db,j,bool(cfg['settings']['reject_zero_rows']),expected_rows,expected_cols,data=shared);plog('format_conversion',t,job=j['name'],format=fmt,rows=nr,columns=nc)
  say('publish')
  t=plog('publish',job=j['name']);pub=publish(db,target,backup,int(cfg['settings']['backup_generations']),backup_enabled=bool(cfg['settings'].get('backup_enabled',True)),retention_days=int(cfg['settings'].get('backup_retention_days',30)),generation_limit_enabled=bool(cfg['settings'].get('backup_generation_limit_enabled',True)),backup_mode=str(cfg['settings'].get('backup_mode','generations')));plog('publish',t,job=j['name'],published=pub['published'])
- if digest:remember_published(target,digest,nr,nc)
+ # 差し替えられなかった回の指紋を覚えると、次の実行が「前回と同じ内容」と判断して
+ # 変換も公開もせずに published=True で戻る ―― 共有先が古いままであることが、
+ # 画面からもDBからも見えなくなる。公開できた回だけ覚える。
+ if digest and pub.get('published'):remember_published(target,digest,nr,nc)
  if on_published:on_published()
  extra_results=[]
  if extras:

@@ -45,10 +45,18 @@ def job_extra_formats(job):
  return out[:4]
 
 def canonical_output_file(filename,fmt):
+ """出す形式に合わせて、ファイル名の拡張子だけを付け替える。
+
+ 以前は拡張子を落としたあと、語幹の末尾にある形式名まで削っていた。そのため
+ 「勤怠CSV.csv」は「勤怠.csv」、「人事マスタCSV.csv」は「人事マスタ.csv」として
+ 公開され、その名前でファイルを探しに来る取込バッチやBIから見つからなくなっていた
+ （末尾に形式名を付けるのは、日本語の業務ファイル名ではふつうの付け方）。
+ 削るのは、本当に拡張子が二重になっているとき（勤怠.csv.csv）だけにする。
+ """
  ext={'sqlite3':'.sqlite3','txt':'.txt','csv':'.csv','xlsx':'.xlsx','accdb':'.accdb'}[fmt]
  stem=Path(str(filename or 'output')).stem
- for suffix in ('sqlite3','sqlite','accdb','xlsx','xls','csv','txt'):
-  if stem.lower().endswith(suffix):stem=stem[:-len(suffix)]
+ if Path(stem).suffix.lower() in ('.sqlite3','.sqlite','.accdb','.xlsx','.xls','.csv','.txt'):
+  stem=Path(stem).stem
  return (stem or 'output')+ext
 
 def sqlite_column_limit():
