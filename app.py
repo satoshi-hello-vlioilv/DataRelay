@@ -2067,6 +2067,12 @@ def load():
    cfg['backup_folder']=pc_path('backup')
  return cfg
 
+def normalize_interval_minutes(v):
+ """一定間隔の「分」。0や空は毎分実行になってしまうので、ここで歯止めを置く。"""
+ if v in (None,''):return None
+ try:return max(1,int(v))
+ except (TypeError,ValueError):return 60
+
 def _save_local(v):
  init_settings_db(); now=datetime.now().isoformat(timespec='seconds'); jobs=v.get('jobs',[]); top={k:x for k,x in v.items() if k not in ('jobs','credential_status','text_layouts','join_recipes')}
  with settings_connection() as c:
@@ -2079,7 +2085,7 @@ def _save_local(v):
    fmt=normalize_output_format(j.get('output_format'),j.get('output_file')); output_file=canonical_output_file(j.get('output_file'),fmt); log.info('設定保存 job=%s requested_format=%s saved_format=%s requested_file=%s saved_file=%s',j.get('name'),j.get('output_format'),fmt,j.get('output_file'),output_file); c.execute('INSERT OR REPLACE INTO jobs (id,display_order,enabled,name,rne,rne_path,output_folder,output_format,output_file,table_name,sheet_name,read_type,naming_mode,output_pattern,comment,split_mode,split_shape,row_axis_mode,row_axis_index,row_axis_name,extra_formats,index_columns,skip_if_unchanged,period_json,source,text_path,layout_id,recipe_id,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',(jid,order,int(bool(j.get('enabled',True))),j.get('name',''),j.get('rne',''),j.get('rne_path',''),j.get('output_folder',''),fmt,output_file,job_table_name(j),j.get('sheet','Page1'),j.get('type','詳細データ'),str(j.get('naming_mode') or 'fixed'),str(j.get('output_pattern') or ''),str(j.get('comment') or ''),normalize_split_mode(j.get('split_mode')),normalize_split_shape(j.get('split_shape')),normalize_row_axis_mode(j.get('row_axis_mode')),max(1,min(200,int(j.get('row_axis_index') or 1))),str(j.get('row_axis_name') or ''),json.dumps(job_extra_formats({**j,'output_format':fmt}),ensure_ascii=False),json.dumps([str(x).strip() for x in (j.get('index_columns') or []) if str(x).strip()][:4],ensure_ascii=False),int(bool(j.get('skip_if_unchanged'))),json.dumps(_decode_period(json.dumps(j.get('period') or {},ensure_ascii=False)),ensure_ascii=False),normalize_job_source(j.get('source')),str(j.get('text_path') or ''),str(j.get('layout_id') or ''),str(j.get('recipe_id') or ''),now))
    c.execute('DELETE FROM schedules WHERE job_id=?',(jid,))
    for ro,q in enumerate(j.get('schedules',[])):
-    c.execute('INSERT INTO schedules VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',(q.get('id') or str(uuid.uuid4()),jid,ro,int(bool(q.get('enabled',True))),q.get('name','実行ルール'),q.get('type','daily'),q.get('time','06:00'),q.get('interval_minutes'),json.dumps(q.get('weekdays'),ensure_ascii=False) if 'weekdays' in q else None,json.dumps(q.get('month_days'),ensure_ascii=False) if 'month_days' in q else None,json.dumps(q.get('dates'),ensure_ascii=False) if 'dates' in q else None,now))
+    c.execute('INSERT INTO schedules VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',(q.get('id') or str(uuid.uuid4()),jid,ro,int(bool(q.get('enabled',True))),q.get('name','実行ルール'),q.get('type','daily'),q.get('time','06:00'),normalize_interval_minutes(q.get('interval_minutes')),json.dumps(q.get('weekdays'),ensure_ascii=False) if 'weekdays' in q else None,json.dumps(q.get('month_days'),ensure_ascii=False) if 'month_days' in q else None,json.dumps(q.get('dates'),ensure_ascii=False) if 'dates' in q else None,now))
   if keep:c.execute('DELETE FROM jobs WHERE id NOT IN ('+','.join('?' for _ in keep)+')',keep);c.execute('DELETE FROM job_runs WHERE job_id NOT IN ('+','.join('?' for _ in keep)+')',keep)
   else:c.execute('DELETE FROM jobs');c.execute('DELETE FROM job_runs')
 
@@ -4465,12 +4471,45 @@ def _heartbeat_next_label(silence):
  want=next((x for x in HEARTBEAT_NOTICE_STEPS if silence<x*2),HEARTBEAT_NOTICE_STEPS[-1])
  return f'{want//60}分' if want>=60 else f'{want}秒'
 
+def missed_schedules(cfg,st,since,now,catchup):
+ """実行中に時刻が過ぎ、猶予も切れてしまった予定を洗い出す。
+
+ 実行中はスケジュール判定を飛ばす（設定画面にもそう書いてある）。ただし飛ばした結果
+ その日ぶんが消えたことは、ログにも知らせにも残っていなかった ―― 画面の「次回実行」は
+ 翌日を指すだけなので、古いままのデータに誰も気づけない。せめて記録に残す。
+ """
+ out=[];limit=max(60,int(catchup or 0)*60)
+ for j in cfg['jobs']:
+  if not j.get('enabled'):continue
+  for r in j.get('schedules',[]):
+   if not r.get('enabled') or r.get('type')=='interval':continue
+   tm=str(r.get('time') or '06:00');state_key=f'{j["id"]}:{r["id"]}'
+   try:points,_=expand_rule_occurrences(r,since,now,limit=50)
+   except Exception:continue
+   for pt in points:
+    if (now-pt).total_seconds()<limit:continue
+    if st.get(state_key)==pt.strftime('%Y-%m-%d')+tm:continue
+    out.append((j['name'],r.get('name',r['type']),pt.strftime('%Y-%m-%d %H:%M')))
+ return out
+
 def scheduler():
  time.sleep(3)
+ busy_since=None
  while not stop_event.wait(15):
   try:
-   if status['running']:continue
+   if status['running']:
+    if busy_since is None:busy_since=datetime.now()
+    continue
    cfg=load(); now=datetime.now(); st=load_scheduler_state()
+   if busy_since is not None:
+    # 手が空いた。直前の実行中に時刻が過ぎ、猶予も切れた予定があれば知らせる。
+    gone=missed_schedules(cfg,st,busy_since,now,int(cfg['settings'].get('schedule_catchup_minutes',30) or 0));busy_since=None
+    if gone:
+     for name,rule,when in gone:log.warning('SCHEDULE_MISSED job=%s rule=%s scheduled=%s reason=実行中に猶予切れ',name,rule,when)
+     add_alert('warn',f'{len(gone)}件の予定を実行できませんでした',
+               '・'.join(f'{n}（{w}）' for n,_r,w in gone[:5])
+               +'（別の処理が実行中のまま猶予時間を過ぎました。必要なら手で実行してください）',
+               [n for n,_r,_w in gone])
    rotate_log_if_needed(cfg)
    # 取り直しは予定より先に流す。待たせるほどデータが古いままになる。
    for r in due_retries():
@@ -4486,7 +4525,18 @@ def scheduler():
      if not r.get('enabled'):continue
      key=schedule_key(j,r,now,catchup); state_key=f'{j["id"]}:{r["id"]}'
      if key and st.get(state_key)!=key:
-      st[state_key]=key; save_scheduler_state(state_key,key); due_ids.append(j['id']); due_rules.append(r.get('name',r['type'])); break
+      first_seen=state_key not in st
+      st[state_key]=key; save_scheduler_state(state_key,key)
+      if first_seen and r.get('type')=='interval':
+       # 一定間隔は「区切り番号」を鍵にしている。初めて見る規則は、いまの区切りを
+       # 済んだことにして次の境界から動かす ―― でないと登録した直後や、区切りを
+       # またいだ起動の直後に、画面が予告している時刻を待たずに走り出す。
+       log.info('SCHEDULE_INTERVAL_ARMED job=%s rule=%s（次の区切りから動きます）',j['name'],r.get('name',r['type']));continue
+      # ここで break すると、同じ対象の残りの規則は鍵が保存されないまま残る。
+      # 実行が終わった次の巡回で「まだ実行していない」と判定され、もう一度走ってしまう
+      # （「毎日06:00」と「1時間ごと」を併用すると毎朝かならず二重実行になっていた）。
+      # 対象を入れるのは1回だけにして、鍵は当たった規則ぶん全部を保存する。
+      if j['id'] not in due_ids:due_ids.append(j['id']); due_rules.append(r.get('name',r['type']))
    if due_ids:
     # 自動実行も手動実行と同じ並列ライン設定で動かす。ここを1固定にすると、
     # 対象がまとまって走る夜間バッチほど並列化の効果を受けられない。

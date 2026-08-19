@@ -256,6 +256,12 @@ def schedule_quick_add():
  # カレンダーから特定日の1回実行ルールを素早く追加する。既存の対象へspecific_datesルールを1件加える。
  d=request.get_json(force=True) or {}; job_id=d.get('job_id'); date=str(d.get('date') or '').strip(); tm=str(d.get('time') or '06:00').strip()
  if not job_id or not date:return jsonify(error='対象と日付を指定してください'),400
+ # 形も、これから来る日時かも確かめる。過ぎた日時で登録すると、規則は残るのに一度も
+ # 発火せず（schedule_key は当日その時刻の猶予内しか鍵を返さない）、有効な予定がある
+ # 扱いになるためアプリが自動で終わらなくなる。
+ try:_when=datetime.strptime(date+' '+(tm or '06:00'),'%Y-%m-%d %H:%M')
+ except ValueError:return jsonify(error='日付は YYYY-MM-DD、時刻は HH:MM で指定してください'),400
+ if _when<=datetime.now():return jsonify(error=f'{date} {tm} はすでに過ぎています。これから来る日時を指定してください'),400
  c=load(); j=next((x for x in c['jobs'] if x['id']==job_id),None)
  if not j:return jsonify(error='対象が見つかりません'),404
  rule={'id':uuid.uuid4().hex,'enabled':True,'name':d.get('name') or f'{date} 単発実行','type':'specific_dates','time':tm,'dates':[date]}
