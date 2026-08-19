@@ -2042,7 +2042,7 @@ def load():
   _prev_profile=cfg['settings'].get('stability_profile')
   if _prev_profile in (None,'stable_api_serial'):
    cfg['settings']['api_parallel_lines']=6; cfg['settings']['stability_profile']='balanced_api_parallel'
-  cfg['settings'].setdefault('api_parallel_lines',6); cfg['settings'].setdefault('stability_profile','balanced_api_parallel'); cfg['settings'].setdefault('backup_enabled',True); _backup_mode_missing='backup_mode' not in cfg['settings']; cfg['settings'].setdefault('backup_mode','generations'); cfg['settings'].setdefault('backup_retention_days',30); cfg['settings'].setdefault('backup_generation_limit_enabled',True); cfg['settings'].setdefault('backup_generations',3); cfg['settings'].setdefault('schedule_catchup_minutes',30); cfg['settings'].setdefault('api_worker_stagger_ms',700); cfg['settings'].setdefault('local_parallel_lines',0); cfg['settings'].setdefault('split_trial_timeout_seconds',1800); cfg['settings'].setdefault('split_anchor_limit',3); cfg['settings'].setdefault('split_min_part_mb',2.0); cfg['settings'].setdefault('split_min_gain_seconds',5.0); cfg['settings'].setdefault('split_min_speedup',1.05); cfg['settings'].setdefault('split_fixed_seconds',SPLIT_FIXED_SECONDS); cfg['settings'].setdefault('split_run_enabled',True); cfg['settings'].setdefault('retry_enabled',True); cfg['settings'].setdefault('retry_max',1); cfg['settings'].setdefault('retry_delay_minutes',5); cfg['settings'].setdefault('log_max_mb',10); cfg['settings'].setdefault('log_keep',5)
+  cfg['settings'].setdefault('api_parallel_lines',6); cfg['settings'].setdefault('stability_profile','balanced_api_parallel'); cfg['settings'].setdefault('backup_enabled',True); _backup_mode_missing='backup_mode' not in cfg['settings']; cfg['settings'].setdefault('backup_mode','generations'); cfg['settings'].setdefault('backup_retention_days',30); cfg['settings'].setdefault('backup_generation_limit_enabled',True); cfg['settings'].setdefault('backup_generations',3); cfg['settings'].setdefault('schedule_catchup_minutes',30); cfg['settings'].setdefault('api_worker_stagger_ms',700); cfg['settings'].setdefault('api_worker_timeout_minutes',120); cfg['settings'].setdefault('local_parallel_lines',0); cfg['settings'].setdefault('split_trial_timeout_seconds',1800); cfg['settings'].setdefault('split_anchor_limit',3); cfg['settings'].setdefault('split_min_part_mb',2.0); cfg['settings'].setdefault('split_min_gain_seconds',5.0); cfg['settings'].setdefault('split_min_speedup',1.05); cfg['settings'].setdefault('split_fixed_seconds',SPLIT_FIXED_SECONDS); cfg['settings'].setdefault('split_run_enabled',True); cfg['settings'].setdefault('retry_enabled',True); cfg['settings'].setdefault('retry_max',1); cfg['settings'].setdefault('retry_delay_minutes',5); cfg['settings'].setdefault('log_max_mb',10); cfg['settings'].setdefault('log_keep',5)
   # 結合の順番と待ち合わせ（判断は navi_order.py。既定値もあちらが持つ）。
   for _k,_v in navi_order.WAIT_DEFAULTS.items():cfg['settings'].setdefault(_k,_v)
   if _backup_mode_missing:cfg['settings']['backup_generations']=3
@@ -4355,17 +4355,20 @@ def open_app_window():
  except Exception:log.exception('TRAY_OPEN_FAILED')
 def request_shutdown_from_tray():
  # 通知領域からの終了も「アプリを終了」と同じ扱いにする。実行中なら先に中断してから終える。
+ # 順番が肝。process() は終わりぎわに中断の札を下ろすので、キューを先に空にしておかないと
+ # 中断した1本が終わった瞬間に次のバッチが始まり、そのワーカーは誰にも止められない
+ # （終了を押したのに新しい抽出が始まる）。予定の投入も止めてから中断する。
+ with command_queue_lock:command_queue.clear()
+ stop_event.set()
  if status.get('running'):
   log.info('TRAY_EXIT_REQUESTED running=1 action=cancel_then_exit')
-  cancel_requested.set()
-  with active_workers_lock:workers=list(active_workers.values())
-  for p in workers:
-   try:p.terminate()
-   except Exception:pass
+  cancel_requested.set(); stop_all_workers('tray-exit')
   deadline=time.time()+30
   while status.get('running') and time.time()<deadline:time.sleep(0.3)
  else:
   log.info('TRAY_EXIT_REQUESTED running=0 action=exit')
+ # 待っているあいだに起き直したワーカーが居ないか、最後にもう一度見る。
+ stop_all_workers('tray-exit-final')
  with command_queue_lock:command_queue.clear()
  flush_log()
  _flush_settings_on_exit('tray-exit');stop_event.set()
@@ -4605,11 +4608,25 @@ def _spawn_racers(job,cfg,user,pw,server,work,jobs_spec,timeout=1800,stop_when=N
   env['NAVI_WORKER_STATUS']=str(d/'status.json')
   env['NAVI_WORKER_SPAWN_AT']=repr(time.time())
   flags=getattr(subprocess,'CREATE_NO_WINDOW',0)
-  procs.append({'spec':spec,'proc':subprocess.Popen([sys.executable,str(BASE/'lib'/'api_worker.py'),str(pp)],cwd=str(BASE),env=env,creationflags=flags),
+  _p=subprocess.Popen([sys.executable,str(BASE/'lib'/'api_worker.py'),str(pp)],cwd=str(BASE),env=env,creationflags=flags)
+  # 起こしたら必ず管理下へ置く。ここを飛ばしていたため、中止でもアプリ終了でも
+  # 誰にも止められず、親が消えたあとも時間制限まで動き続けるワーカーが残っていた。
+  _key=f'split:{id(procs)}:{spec["index"]}';register_worker(_key,_p)
+  procs.append({'spec':spec,'proc':_p,'key':_key,
                 'result':d/'result.json','status':d/'status.json','done':False})
  done={};order=0
+ def _finish(p):
+  p['done']=True;unregister_worker(p.get('key'))
  while any(not p['done'] for p in procs):
   now=time.perf_counter()
+  if cancel_requested.is_set():
+   # 中止を一度も見ていなかったので、押しても分割のワーカーだけ走り続けていた。
+   for p in procs:
+    if p['done']:continue
+    _kill_proc(p['proc']);_finish(p)
+    done[p['spec']['label']]=dict(ok=False,aborted=True,part=p['spec']['label'],group=p['spec'].get('group',''),
+                                  error='ユーザーにより中断されました',finished_at=round(time.perf_counter()-started,2))
+   break
   for p in procs:
    if p['done']:continue
    rc=p['proc'].poll()
@@ -4617,18 +4634,18 @@ def _spawn_racers(job,cfg,user,pw,server,work,jobs_spec,timeout=1800,stop_when=N
     if now>deadline:
      _kill_proc(p['proc'])
      log.warning('SPLIT_PART_TIMEOUT part=%s timeout=%ss',p['spec']['label'],timeout)
-     p['done']=True;order+=1
+     _finish(p);order+=1
      done[p['spec']['label']]=dict(ok=False,part=p['spec']['label'],group=p['spec'].get('group',''),
                                    error=f'{timeout}秒を超えたため中止しました',order=order,finished_at=round(now-started,2))
     continue
-   p['done']=True;order+=1
+   _finish(p);order+=1
    r=_read_worker_json(p['result'],{'ok':False,'part':p['spec']['label'],'error':f'Worker終了コード {rc}'})
    r['group']=p['spec'].get('group','');r['order']=order;r['finished_at']=round(now-started,2)
    done[p['spec']['label']]=r
   if stop_when and done and stop_when(list(done.values())):
    for p in procs:
     if p['done']:continue
-    _kill_proc(p['proc']);p['done']=True
+    _kill_proc(p['proc']);_finish(p)
     done[p['spec']['label']]=dict(ok=False,aborted=True,part=p['spec']['label'],group=p['spec'].get('group',''),
                                   error='先に決着がついたため中断しました',finished_at=round(time.perf_counter()-started,2))
    break
@@ -4642,13 +4659,43 @@ def _spawn_racers(job,cfg,user,pw,server,work,jobs_spec,timeout=1800,stop_when=N
    time.sleep(0.2)
  return [done[s['label']] for s in jobs_spec]
 
-def _kill_proc(proc):
+def kill_process_tree(proc,wait_seconds=10):
+ """ワーカーを、その子ごと落とす。
+
+ Windowsの TerminateProcess はプロセスツリーを殺さない。分割・競争の実行では
+ ラインのワーカーがさらにワーカーを起こすので、親だけ止めると孫がNavigatorの
+ セッションを掴んだまま残る（作業フォルダーは親がもう消している）。
+ まず taskkill /T で木ごと頼み、駄目なら従来どおり terminate→kill する。
+ """
+ pid=getattr(proc,'pid',0)
+ if os.name=='nt' and pid:
+  try:subprocess.run(['taskkill','/PID',str(pid),'/T','/F'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=10)
+  except Exception:pass
  try:proc.terminate()
  except Exception:pass
- try:proc.wait(timeout=10)
+ try:proc.wait(timeout=wait_seconds)
  except Exception:
   try:proc.kill()
   except Exception:pass
+
+def _kill_proc(proc):kill_process_tree(proc)
+
+def register_worker(key,proc):
+ with active_workers_lock:active_workers[key]=proc
+
+def unregister_worker(key):
+ with active_workers_lock:active_workers.pop(key,None)
+
+def stop_all_workers(reason=''):
+ """いま走っているワーカーを、子ごと全部止める。終了と中止の共通の後始末。"""
+ with active_workers_lock:workers=list(active_workers.items())
+ if not workers:return 0
+ log.info('WORKERS_STOPPING reason=%s count=%s',reason,len(workers))
+ for key,p in workers:
+  try:kill_process_tree(p,wait_seconds=5)
+  except Exception:log.warning('WORKER_STOP_FAILED key=%s',key)
+ with active_workers_lock:active_workers.clear()
+ return len(workers)
 
 
 
@@ -5127,8 +5174,17 @@ def shutdown_app():
  def stop():
   time.sleep(.4)
   with command_queue_lock:command_queue.clear()
-  log.info('APP_EXIT_REQUESTED source=ui resident=%s',residency_state['active'])
-  _flush_settings_on_exit('shutdown-app'); stop_event.set()
+  log.info('APP_EXIT_REQUESTED source=ui running=%s resident=%s',status.get('running'),residency_state['active'])
+  # os._exit は finally も atexit も走らせない。ここで止めておかないと、抽出のワーカーと
+  # （DDE方式なら）非表示のSymfoNaviが親を失って残り、次の起動でもう1本増える。
+  # 停止バッチもこの受け口を先に叩くため、そちらから止めたときも同じ取り残しが起きていた。
+  stop_event.set()
+  if status.get('running'):
+   cancel_requested.set(); stop_all_workers('shutdown-app')
+   deadline=time.time()+15
+   while status.get('running') and time.time()<deadline:time.sleep(0.3)
+  stop_all_workers('shutdown-app-final')
+  _flush_settings_on_exit('shutdown-app')
   if tray:
    try:tray.stop()
    except Exception:pass

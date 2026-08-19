@@ -35,6 +35,7 @@ def _borrow(name):
 
 for _n in ('dde_staging_folder',
            'job_dependencies',
+           'kill_process_tree',
            'load_job_runs',
            'normalize_job_source',
            'record_job_run',
@@ -282,6 +283,13 @@ def run_api_process_batch(jobs,cfg,user,pw,server,dde_work,backup,max_lines,trig
  # 数倍に伸びる（実測: 単独 約1.0秒 / 6本同時 2.3〜7.2秒）。少しずつずらして接続を重ねない。
  # 一番重い対象が先頭なので、遅れて起動する軽い対象は全体所要に影響しない。
  stagger=max(0,int(cfg['settings'].get('api_worker_stagger_ms',700) or 0))/1000.0
+ # 応答が返らないワーカーが1本あると、この輪から永久に抜けられない。抜けられない間は
+ # 実行中の札が立ったままなので、自動実行も実行キューも一切進まなくなる ―― 夜間なら
+ # 誰も中止を押さないので、翌朝まで（気づかなければ何日でも）全部が古いまま止まる。
+ # 分割の競争には最初から時間制限があるのに、本番のライン1本ぶんだけ無制限だった。
+ # 0 を設定すると従来どおり無制限（逃がし道として残す）。
+ try:worker_limit=max(0.0,float(cfg['settings'].get('api_worker_timeout_minutes',120) or 0))*60
+ except (TypeError,ValueError):worker_limit=120*60
  for slot in range(1,max_lines+1):
   if not queue:break
   if slot>1 and stagger>0 and cancel_requested.wait(stagger):break
@@ -291,13 +299,9 @@ def run_api_process_batch(jobs,cfg,user,pw,server,dde_work,backup,max_lines,trig
    log.info('PARALLEL_BATCH_CANCELLED batch_id=%s active=%s queued=%s',batch_id,len(active),len(queue))
    queue.clear()
    for slot,item in list(active.items()):
-    try:item['proc'].terminate()
+    # 親だけ止めても、分割で起こした子はNavigatorを掴んだまま残る（Windows）。木ごと落とす。
+    try:kill_process_tree(item['proc'],wait_seconds=5)
     except Exception:pass
-   for slot,item in list(active.items()):
-    try:item['proc'].wait(timeout=5)
-    except Exception:
-     try:item['proc'].kill()
-     except Exception:pass
     failures.append({'ok':False,'job':item['job']['name'],'error':'ユーザーにより中断されました','elapsed':time.perf_counter()-item['started']})
     failed_ids.append(item['job']['id'])
     record_job_run(item['job']['id'],item['job']['name'],'cancelled',trigger,detail='ユーザーにより中断されました')
@@ -311,9 +315,18 @@ def run_api_process_batch(jobs,cfg,user,pw,server,dde_work,backup,max_lines,trig
    if worker_status:
     relay_worker_line(item['line'],item['job'],worker_status,
                       round(time.perf_counter()-item['started'],1),item['proc'].pid)
-   rc=item['proc'].poll()
-   if rc is None:continue
-   result=_read_worker_json(item['result'],{'ok':False,'job':item['job']['name'],'error':f'Worker終了コード {rc}','elapsed':time.perf_counter()-item['started']})
+   rc=item['proc'].poll();timed_out=False
+   if rc is None:
+    if not (worker_limit and time.perf_counter()-item['started']>worker_limit):continue
+    timed_out=True
+    log.error('WORKER_TIMEOUT batch_id=%s line=%s pid=%s job=%s elapsed=%.0fs limit=%ss',
+              batch_id,item['line'],item['proc'].pid,item['job']['name'],time.perf_counter()-item['started'],worker_limit)
+    kill_process_tree(item['proc'],wait_seconds=5);rc=item['proc'].poll()
+   fallback={'ok':False,'job':item['job']['name'],
+             'error':(f'応答が返らないため{worker_limit/60:g}分で打ち切りました' if timed_out else f'Worker終了コード {rc}'),
+             'elapsed':time.perf_counter()-item['started']}
+   # 打ち切った側の result.json は書きかけのことがある。信じずに、打ち切りとして締める。
+   result=fallback if timed_out else _read_worker_json(item['result'],fallback)
    completed+=1
    (results if result.get('ok') else failures).append(result)
    (completed_ids if result.get('ok') else failed_ids).append(item['job']['id'])
