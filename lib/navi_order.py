@@ -19,6 +19,7 @@
 判断はここに閉じてある（本体の状態は見ない）。実行中かどうかも予定も、呼ぶ側が
 渡す ―― そうしておくと、実際に走らせずに、机の上で全部確かめられる。
 """
+import time
 from datetime import datetime,timedelta
 from pathlib import Path
 from navi_log import log
@@ -32,6 +33,10 @@ LOOKAHEAD_SECONDS_DEFAULT=60
 MAX_WAIT_SECONDS_DEFAULT=600
 # 様子を見に行く間隔。
 POLL_SECONDS_DEFAULT=5
+# 書きかけの印（.名前.pid.incoming）の賞味期限。強制終了で残ることがあり、そのままだと
+# 「誰かが書いている最中」と読み続けて、それを材料にする結合が以後ずっと待たされる。
+# 実際の書き込みは長くても数十秒なので、それより十分に長く取る。
+INCOMING_STALE_SECONDS=900
 
 # 設定の既定。決める場所と読む場所を分けると、片方だけ直したときに食い違う。
 WAIT_DEFAULTS={'join_wait_enabled':True,
@@ -131,7 +136,16 @@ def publishing_now(path):
  p=Path(str(path or ''))
  if not str(p).strip():return False
  try:
-  return any(p.parent.glob(f'.{p.name}.*.incoming'))
+  # 書きかけの印には賞味期限を置く。強制終了（中止・アプリ終了・停止バッチ）で
+  # 隠しファイルが残ることがあり、そのままだと「誰かが書いている最中」と読み続けて、
+  # それを材料にする結合が以後ずっと（既定10分）待たされることになる。
+  # 実際の書き込みは長くても数十秒なので、それより十分に長い時間で切る。
+  limit=time.time()-INCOMING_STALE_SECONDS
+  for x in p.parent.glob(f'.{p.name}.*.incoming'):
+   try:
+    if x.stat().st_mtime>=limit:return True
+   except OSError:continue
+  return False
  except Exception:
   return False
 

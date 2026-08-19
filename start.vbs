@@ -116,7 +116,11 @@ missingList = MissingPackages()
 requiredMissing = ""
 If InStr(missingList, "flask") > 0 Then requiredMissing = "flask"
 rc = 0
-If missingList <> "" Then rc = 1
+' Only a missing *required* package is a reason to run pip. The optional ones
+' (xlrd / win32ui / dde / openpyxl) report at the point of use, and treating them
+' as failures meant pip ran on every single startup and the cache was never
+' written - so the ten hidden import probes ran again the next time too.
+If requiredMissing <> "" Then rc = 1
 WriteLog "TIMING dependency_check_seconds=" & FormatNumber(Timer() - tPhase, 2) & " rc=" & rc
 If rc <> 0 Then
     WriteLog "DEPENDENCY_CHECK failed rc=" & rc & " missing=" & missingList & " required=" & requiredMissing
@@ -172,8 +176,10 @@ If WaitForApplication(STARTUP_TIMEOUT_SECONDS) Then
     WriteLog "TIMING launch_to_server_ready_seconds=" & FormatNumber(Timer() - tPhase, 2)
     WriteLog "TIMING total_startup_seconds=" & FormatNumber(Timer() - tStart, 2)
     WriteLog "SERVER_READY url=" & APP_URL
-    ' Cache only a fully satisfied environment, so a later manual install is noticed.
-    If missingList = "" Then WriteStartupCache pythonCmd
+    ' Cache once the required package is present. The optional ones are reported at
+    ' the point of use; blocking the cache on them made every startup pay for the
+    ' import probes and for a pip run that can never succeed offline.
+    If requiredMissing = "" Then WriteStartupCache pythonCmd
     EnsureBrowser
     WScript.Quit 0
 End If

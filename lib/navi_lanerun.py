@@ -336,6 +336,13 @@ def run_api_process_batch(jobs,cfg,user,pw,server,dde_work,backup,max_lines,trig
         'elapsed':round(float(result.get('elapsed') or 0),1),'target':str(result.get('target') or ''),
         'published':bool(result.get('published',True)),'pending':str(result.get('pending') or '')}
    batch_results.append(one)
+   # 親が最後の状態を必ず上書きする。ワーカーが result.json を書く前に落ちた場合、
+   # ラインの表示はワーカーが最後に書いた途中経過（例: 受信 60%）のまま残り、
+   # 実行が失敗として締まったあとも、そのレーンだけ回り続けているように見えていた。
+   update_parallel_line(item['line'],job=item['job']['name'],job_id=item['job']['id'],
+                        state='完了' if result.get('ok') else '失敗',percent=100,
+                        detail=str(result.get('result') or result.get('error') or ''),
+                        elapsed=round(time.perf_counter()-item['started'],1))
    if board:
     # 材料をこの対象が作る結合は、この1件が済んだ時点で走り出してよい。
     # バッチ全部の終わりまで待たせると、そのぶんラインが空く。
@@ -403,14 +410,15 @@ def _local_lane(slot,board,cfg,work,backup,trigger,progress_fn):
   update_parallel_line(line,job=j.get('name',''),job_id=j.get('id',''),state='開始',percent=2,
                        slot=slot,detail='手元のファイルから作ります',
                        started_at=datetime.now().isoformat(timespec='seconds'))
-  base=app.local_progress_say(progress_fn,j)
+  # 全体の工程・進捗率・実行中の対象は黒板（LaneBoard）が持つ。ここから global の
+  # progress() も呼んでいたため、ラインごとの値で全体の表示を上書きし合い、進捗が
+  # 行ったり来たりしていた。ここが触るのは自分のラインの帯だけにする。
   def say(stage,**kw):
    pct,label=LOCAL_STAGE.get(stage,(50,'処理中'))
    detail=str(kw.get('activity') or kw.get('source') or '')
    if stage=='wait':detail=navi_order.reason_text(kw.get('reasons') or [])
    update_parallel_line(line,job=j.get('name',''),job_id=j.get('id',''),state=label,percent=pct,
                         slot=slot,detail=detail,elapsed=round(time.perf_counter()-started,1))
-   base(stage,**kw)
   # 同じ実行のなかの順番は黒板が見ている。ここでの待ち合わせは、別の実行や別のPCが
   # 同じファイルを触っているときのためのもの ―― 二重に待たせない。
   try:

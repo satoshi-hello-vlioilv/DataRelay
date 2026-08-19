@@ -132,23 +132,30 @@ def resolve_path(value,base=None):
  return (Path(base)/p).resolve()
 
 # ==== このPCのローカル領域の後始末 =====================================
-def clean_work_folder():
+def clean_work_folder(work=None):
  """前回の作業フォルダーを片付ける。消し終わるのを待たずに起動する。
 
  中身は影実行のCSVで数百MBになることがあり、消すだけで数秒かかる。その数秒は
  そのまま起動時間になっていた。名前を変えるのは一瞬なので、空の work をすぐ作り、
  古いほうは裏で消す。前回の起動が消し終える前に落ちていた取り残しも一緒に片付ける。
+
+ 片付ける場所は、実際に使う作業場所を渡してもらう。ここで LOCAL_ROOT/work と決め打ち
+ していたため、アカウント名が日本語のPC（%LOCALAPPDATA% も %TEMP% も非ASCIIになる）では
+ 実際の作業場所が C:\DataRelayWork になるのに、掃除だけは誰も居ない場所を見ていた。
+ 数百MBの中間ファイルが起動のたびに積み上がる。
  (経過秒, やり方) を返す。
  """
- t=time.perf_counter();work=LOCAL_ROOT/'work';mode='none'
+ t=time.perf_counter();work=Path(work) if work else (LOCAL_ROOT/'work');root=work.parent;mode='none'
  if work.exists():
   try:
-   work.rename(LOCAL_ROOT/f'work_old_{datetime.now().strftime("%Y%m%d_%H%M%S_%f")}');mode='rename'
+   work.rename(root/f'{work.name}_old_{datetime.now().strftime("%Y%m%d_%H%M%S_%f")}');mode='rename'
   except Exception:
    # 名前を変えられない（前のプロセスが掴んだままなど）。そのときは従来どおり消す。
    shutil.rmtree(work,ignore_errors=True);mode='delete'
  work.mkdir(parents=True,exist_ok=True)
  def sweep():
+  for d in sorted(root.glob(f'{work.name}_old_*')):shutil.rmtree(d,ignore_errors=True)
+  # 旧い綴りの取り残しも一緒に片付ける（片付ける場所を渡すようにする前のもの）。
   for d in sorted(LOCAL_ROOT.glob('work_old_*')):shutil.rmtree(d,ignore_errors=True)
  threading.Thread(target=sweep,daemon=True,name='work-clean').start()
  return round(time.perf_counter()-t,2),mode

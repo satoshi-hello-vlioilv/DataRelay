@@ -3282,6 +3282,17 @@ def process_split_part(j,cfg,user,pw,server,out_csv,drop_columns,part_label='',r
   # 軸で絞ったつもりが全件返っていないか。データ欄への条件が空振りした前例があるので必ず確かめる。
   if row_axis and not row_condition:
    full=int(row_axis.get('total_rows') or 0)
+   if not full:
+    # 全体の行数が分からないと「絞り込みが効いたか」を確かめられない。実績のないRNEでは
+    # ここが素通しになり、全パートが全件を取ってきても気づけないまま結合され、
+    # 同じ行が並列数ぶん重なった出力になる。確かめられないなら、分割は採らない。
+    log.warning('SPLIT_ROW_GUARD_UNAVAILABLE part=%s reason=総行数の実績が無いため絞り込みを検証できません',part_label)
+    return {'ok':False,'part':part_label,'row_condition_ineffective':True,
+            'rows':expected_rows,'expected_rows':0,
+            'row_column':applied_row.get('column',''),'row_locate':row_axis.get('location',''),
+            'row_form':applied_row.get('form',''),
+            'error':'全体の行数がまだ分かっていないため、行で分ける前の確認ができません。'
+                    '一度そのまま実行して実績を作ってから、分割をお試しください'}
    if full and int(expected_rows)>=full*0.95:
     return {'ok':False,'part':part_label,'row_condition_ineffective':True,
             'rows':expected_rows,'expected_rows':int(row_axis.get('expect_rows') or full/max(1,int(row_axis.get('parts') or 2))),
@@ -4454,6 +4465,10 @@ def residency_reason():
  queued=pending_queue_count()
  if queued:return f'実行キュー {queued}件が待機中'
  if any_enabled_schedule_exists():return '自動実行の予定あり'
+ # 影実行（分け方を探す・まとめて試す）は数分かかるのに status['running'] を触らない。
+ # 見ていなかったので、タブを閉じただけで os._exit され、走っていたワーカーと作業
+ # フォルダーだけが残っていた。
+ if split_batch_state.get('running') or split_trial_state.get('running'):return '分け方を試しています'
  # 頼まれた常駐は最後に見る。ほかに理由があるなら、そちらのほうが役に立つ。
  if residency_hold['on']:return RESIDENCY_HOLD_REASON
  return ''
@@ -4465,6 +4480,22 @@ def tray_status_text():
 def open_app_window():
  try:webbrowser.open(f'http://{HOST}:{PORT}')
  except Exception:log.exception('TRAY_OPEN_FAILED')
+def stop_tray_and_wait(seconds=1.0):
+ """通知領域のアイコンを片付けてもらい、消えるのを少しだけ待つ。
+
+ stop() は片付けの依頼を投げるだけ（PostMessage）で、実際に消すのはトレイ側の
+ スレッド。待たずに os._exit すると依頼が処理される前にプロセスごと消えるため、
+ 押しても何も起きないアイコンが通知領域に残る。
+ """
+ if not tray:return False
+ try:tray.stop()
+ except Exception:return False
+ deadline=time.time()+max(0.0,float(seconds))
+ while time.time()<deadline:
+  if not getattr(tray,'hwnd',None):return True
+  time.sleep(0.05)
+ return not getattr(tray,'hwnd',None)
+
 def request_shutdown_from_tray():
  # 通知領域からの終了も「アプリを終了」と同じ扱いにする。実行中なら先に中断してから終える。
  # 順番が肝。process() は終わりぎわに中断の札を下ろすので、キューを先に空にしておかないと
@@ -4484,9 +4515,7 @@ def request_shutdown_from_tray():
  with command_queue_lock:command_queue.clear()
  flush_log()
  _flush_settings_on_exit('tray-exit');stop_event.set()
- if tray:
-  try:tray.stop()
-  except Exception:pass
+ stop_tray_and_wait()
  os._exit(0)
 def start_tray():
  global tray
@@ -4569,9 +4598,7 @@ def heartbeat_watchdog():
    if residency_state['active'] and not active and not residency_reason():
     log.info('APP_RESIDENCY_ENDED reason=用事が済み画面も戻りませんでした action=python_exit')
     flush_log();_flush_settings_on_exit('residency-ended');stop_event.set()
-    if tray:
-     try:tray.stop()
-     except Exception:pass
+    stop_tray_and_wait()
     os._exit(0)
    if closing and not active:
     ids=','.join(cid for cid,_ in closing)
@@ -4583,7 +4610,11 @@ def heartbeat_watchdog():
      enter_residency(reason,ids);continue
     log.info('APP_TABS_EMPTY_CONFIRMED closing_clients=%s active_app_tabs=0 grace=%ss action=python_exit',ids,CLOSE_GRACE_SECONDS)
     flush_log()
-    _flush_settings_on_exit('app-tabs-empty');stop_event.set();os._exit(0)
+    _flush_settings_on_exit('app-tabs-empty');stop_event.set()
+    # ここだけアイコンの片付けを頼んでいなかった。頼まないまま終わると、通知領域に
+    # 押しても何も起きないアイコンが残る（マウスを乗せるまで消えない）。
+    stop_tray_and_wait()
+    os._exit(0)
    elif active and (residency_state['active'] or residency_hold['on']):
     leave_residency()
    # ハートビート途絶だけでは終了しない。ネットワーク断、スリープ、ブラウザー破棄との誤判定を避ける。
@@ -5328,9 +5359,7 @@ def shutdown_app():
    while status.get('running') and time.time()<deadline:time.sleep(0.3)
   stop_all_workers('shutdown-app-final')
   _flush_settings_on_exit('shutdown-app')
-  if tray:
-   try:tray.stop()
-   except Exception:pass
+  stop_tray_and_wait()
   os._exit(0)
  threading.Thread(target=stop,daemon=True).start(); return jsonify(ok=True)
 
@@ -5417,7 +5446,13 @@ if __name__=='__main__':
  if _spawn_at:log.info('APP_IMPORT_ELAPSED spawn_to_import=%.2fs note=interpreter_init+module_import+source_compile(BOX)',_APP_IMPORT_DONE_AT-_spawn_at)
  # どの版が動いているのかは、後からログだけを見て分かる必要がある。起動のいちばん最初に出す。
  startup_clock=time.perf_counter();log.info('APP_START version=%s build=%s released=%s source=%s local_root=%s pycache=%s',APP_VERSION,BUILD_VERSION,APP_RELEASED_AT,BASE,LOCAL_ROOT,os.environ.get('PYTHONPYCACHEPREFIX',''))
- log.info('APP_START_WORKCLEAN elapsed=%.2fs mode=%s',*clean_work_folder())
+ # 掃除するのは、実際に使う作業場所。決め打ちにしていたため、アカウント名が日本語の
+ # PCでは作業場所（C:\DataRelayWork）と掃除する場所が食い違い、中間ファイルが
+ # 起動のたびに積み上がっていた。
+ try:_workdir=dde_staging_folder()
+ except Exception:_workdir=None
+ log.info('APP_START_WORKCLEAN elapsed=%.2fs mode=%s',*clean_work_folder(_workdir))
+ log.info('APP_START_WORKDIR path=%s',_workdir)
  # 起動待ちモーダル(loading.html)は file:// から開くので、サーバーが立つまで版が分からない。
  # ここに置いておけば、ランチャーが次回の起動時に画面へ差し込める。
  # 中身はASCIIだけにする。ランチャー(VBScript)は既定でANSIとして読むので、

@@ -254,7 +254,9 @@ def calendar_view():
     scheduled.append({'date':p.strftime('%Y-%m-%d'),'time':p.strftime('%H:%M'),'datetime':p.isoformat(timespec='minutes'),'job_id':j['id'],'job_name':j['name'],'rule_id':r.get('id'),'rule_name':r.get('name',''),'rule_type':r.get('type',''),'past':p<now})
    for d in interval_days:
     key=d['date']; entry=interval_summary.setdefault(key,{'date':key,'jobs':{},'total':0})
-    entry['jobs'].setdefault(j['id'],{'job_id':j['id'],'job_name':j['name'],'rule_name':r.get('name',''),'minutes':d['minutes'],'count':d['count']})
+    # 対象IDだけを鍵にしていたため、1つの対象に間隔ルールが2本あると2本目が捨てられ、
+    # 日セルの合計回数（全ルールぶん）と内訳が食い違っていた。規則ごとに持つ。
+    entry['jobs'].setdefault((j['id'],r.get('id') or ''),{'job_id':j['id'],'job_name':j['name'],'rule_name':r.get('name',''),'minutes':d['minutes'],'count':d['count']})
     entry['total']+=d['count']
  interval_list=[{'date':v['date'],'total':v['total'],'items':list(v['jobs'].values())} for v in interval_summary.values()]
  # 実施履歴（追記式run_history）から当月分を取得。
@@ -1393,7 +1395,10 @@ def validate():
  # 出続けて、直しようのない赤が並ぶ。入力の種類で分けて、それぞれの入口を確かめる。
  job_results=[]
  for j in c.get('jobs',[]):
-  if normalize_job_source(j.get('source'))=='text':continue
+  # 結合(join)も手元のファイルから作るので、RNEは持たない。text だけを外していたため、
+  # 結合対象が1件でもあると既定の .\rne が「ありません」として error で積まれ、診断は
+  # 永久に「修正が必要な項目があります」になっていた（しかも利用者には直しようがない）。
+  if normalize_job_source(j.get('source')) in ('text','join'):continue
   rp=resolve_rne_path(j,c);exists=rp.is_file();job_results.append((j,rp,exists))
  all_jobs_ok=all(x[2] for x in job_results) if job_results else True
  root_ok=bool(existing_roots) or all_jobs_ok

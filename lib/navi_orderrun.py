@@ -73,12 +73,18 @@ def job_wait_reasons(job,cfg=None,now=None,deps=None):
  deps=deps if deps is not None else job_dependencies(c.get('jobs') or [],c)
  snap=queue_snapshot()
  queued=set()
+ snap_running=any(str(x.get('state') or '')=='running' for x in (snap.get('items') or []))
  for item in snap.get('items') or []:
   # いま走っている実行のなかの順番は、ライン側（navi_lane）が見ている。ここで同じ実行の
   # 対象まで「まだ順番待ち」と数えると、自分と同じ実行に入っている材料を待ち続け、
   # 待ちきれなくなるまで（既定10分）画面が止まったように見える ―― v1.88.0まで実際に
   # そうなっていた。材料と結合を一緒に選んで実行すると、必ずこれを踏んだ。
   if str(item.get('state') or '')=='running':continue
+  # 実行は1件ずつしか走らない。すでに1件走っている＝いま材料を待っているのがその
+  # 実行なのだから、キューに積まれた指令はこちらが終わるまで絶対に始まらない。
+  # それを「順番待ち」と数えると、来ない材料を既定10分待ち、結局そのまま実行する
+  # ことになる（その間アプリ全体が止まる）。走っているものがあるなら後ろは待たない。
+  if snap_running:continue
   for i in (item.get('job_ids') or []):queued.add(i)
  running=set(status.get('queue_running_ids') or [])
  names={j['id']:j.get('name','') for j in (c.get('jobs') or [])}
