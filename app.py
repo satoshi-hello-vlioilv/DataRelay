@@ -179,7 +179,11 @@ def flush_local_to_master(reason=''):
    # 別のPCが後から入れた変更を、こちらの丸ごとコピーで黙って消さない。
    mrev=settings_revision(MASTER_SETTINGS_DB) if MASTER_SETTINGS_DB.is_file() else 0
    lrev=settings_revision(SETTINGS_DB)
-   if mrev>_settings_pulled_revision and mrev>=lrev:
+   # 相手のほうが先へ進んでいるときだけ書き戻さない。同じ版なら、こちらが書いた内容が
+   # すでに入っている状態なので、運用データ（実績・予定の記録）を運ぶために書いてよい。
+   # 取り込んだ時点の版と比べていたころは、自分で書き戻した直後の版まで「他PCのもの」と
+   # 見なして、終了時の書き戻しを毎回断っていた。
+   if mrev>lrev:
     log.warning('SETTINGS_FLUSH_SKIPPED reason=%s detail=別のPCの変更のほうが新しいため書き戻しません master_rev=%s local_rev=%s pulled_rev=%s',
                 reason,mrev,lrev,_settings_pulled_revision);return False
    _t=time.perf_counter()
