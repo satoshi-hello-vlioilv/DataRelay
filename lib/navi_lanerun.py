@@ -326,8 +326,11 @@ def run_api_process_batch(jobs,cfg,user,pw,server,dde_work,backup,max_lines,trig
    if board:
     # 材料をこの対象が作る結合は、この1件が済んだ時点で走り出してよい。
     # バッチ全部の終わりまで待たせると、そのぶんラインが空く。
+    # one を渡さないと job_results に何も入らない。画面の「できあがったファイル」欄が
+    # RNEの分だけ空になり、published=false を見る「共有先へ反映できていません」の知らせも
+    # 出なくなる（手元の処理側は最初から渡している。渡し忘れていたのはこちらだけ）。
     board.note(item['job']['id'],item['job']['name'],bool(result.get('ok')),
-               result_text=str(result.get('result') or ''),error=str(result.get('error') or ''))
+               result_text=str(result.get('result') or ''),job_result=one,error=str(result.get('error') or ''))
    else:
     set_status(job_results=seed(batch_results))
    record_job_run(item['job']['id'],item['job']['name'],'ok' if result.get('ok') else 'failed',trigger,detail=(result.get('result') or result.get('error') or ''),rows=result.get('rows'),cols=result.get('columns'),output_file=Path(result.get('target') or '').name,

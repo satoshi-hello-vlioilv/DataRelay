@@ -520,7 +520,10 @@ function bindColumnDnD(box){
    e.preventDefault();row.classList.remove('col-over');
    if(!src||row.dataset.key===src)return;
    let o=colOrder(),from=o.indexOf(src),to=o.indexOf(row.dataset.key);
-   o.splice(to,0,o.splice(from,1)[0]);colPref.order=o;saveColumns();renderColumnDialog();
+   /* 先に抜くと、下方向(from<to)では添字が1つ詰まって「相手の後ろ」に入る。目印の線は
+      相手の上端にしか出ないので、同じ操作なのに向きで結果が変わっていた。常に線のとおり
+      「相手の前」へ入れる。 */
+   let moved=o.splice(from,1)[0];o.splice(from<to?to-1:to,0,moved);colPref.order=o;saveColumns();renderColumnDialog();
   };
  });
 }

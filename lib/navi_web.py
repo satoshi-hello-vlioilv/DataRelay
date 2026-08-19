@@ -120,7 +120,14 @@ def get_config():
  return jsonify(c)
 
 @app.put('/api/config')
-def put_config():save(request.get_json(force=True));return jsonify(ok=True)
+def put_config():
+ # 中身を確かめずに save() へ渡すと、jobs が無いだけで _save_local が
+ # 「DELETE FROM jobs」と「DELETE FROM job_runs」まで走らせ、全対象と実績が消える。
+ # 画面は必ず全量（jobs を含む）を送るので、形が違う要求は保存せずに断る。
+ data=request.get_json(silent=True)
+ if not isinstance(data,dict) or not isinstance(data.get('jobs'),list):
+  return jsonify(ok=False,error='設定の形が正しくありません（対象の一覧が含まれていません）'),400
+ save(data);return jsonify(ok=True)
 
 @app.post('/api/settings/parallel-lines')
 def set_parallel_lines():
@@ -162,6 +169,9 @@ def set_columns():
  # 列の決め方だけを即時に保存する軽い受け口。ほかの未保存の編集には触らない
  # （並列ライン数と同じ約束）。
  data=request.get_json(silent=True) or {}
+ # layout が無い body をそのまま通すと、normalize が空の3キーを作って保存済みの並びを消す。
+ # 「全部既定に戻す」は画面が空の layout を明示して送ってくるので、鍵の有無で分けられる。
+ if not isinstance(data.get('layout'),dict):return jsonify(ok=False,error='列の決め方(layout)がありません'),400
  c=load();layout=normalize_column_layout(data.get('layout'));c['settings']['column_layout']=layout;save(c)
  log.info('設定保存 job=(共通) 一覧の列 並び=%s 隠す=%s 見せ方=%s',
           layout['order'],layout['hidden'],layout['opt'])

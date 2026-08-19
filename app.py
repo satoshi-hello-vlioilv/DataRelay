@@ -2046,7 +2046,6 @@ def load():
   # 結合の順番と待ち合わせ（判断は navi_order.py。既定値もあちらが持つ）。
   for _k,_v in navi_order.WAIT_DEFAULTS.items():cfg['settings'].setdefault(_k,_v)
   if _backup_mode_missing:cfg['settings']['backup_generations']=3
-  if int(cfg['settings'].get('api_parallel_lines',6) or 6)==2:cfg['settings']['api_parallel_lines']=6
   cfg.setdefault('navigator_api_dll',r'.\Config\NAVIAP\debugdllVC14x64\SymNaviA.dll'); cfg.setdefault('accdb_template','.\\assets\\empty.accdb');
   # 固定長テキストと結合の基本フォルダー。ファイル名だけで登録したときの基準。
   cfg.setdefault('text_folder',TEXT_FOLDER_DEFAULT)
@@ -4193,7 +4192,12 @@ def schedule_key(job,rule,now,grace_minutes=0):
  if delay<0 or delay>=max(60,int(grace_minutes or 0)*60):return None
  if kind=='daily':return now.strftime('%Y-%m-%d')+tm
  if kind=='weekdays' and now.weekday() in rule.get('weekdays',[]):return now.strftime('%Y-%m-%d')+tm
- if kind=='monthly' and now.day in rule.get('month_days',[1]):return now.strftime('%Y-%m-%d')+tm
+ if kind=='monthly':
+  # 月末は -1 で持つ（画面の「月末」チップ）。next_occurrence と expand_rule_occurrences は
+  # 最終日へ読み替えているのに、ここだけ -1 のまま日付と比べていた ―― 一覧もカレンダーも
+  # 次回実行を予告するのに、一度も発火しない対象になっていた。読み替えを同じにする。
+  _last=calendar.monthrange(now.year,now.month)[1]
+  if now.day in {(_last if x==-1 else x) for x in (rule.get('month_days') or [1])}:return now.strftime('%Y-%m-%d')+tm
  if kind=='specific_dates' and now.strftime('%Y-%m-%d') in rule.get('dates',[]):return now.strftime('%Y-%m-%d')+tm
  return None
 
