@@ -38,7 +38,7 @@ function collectSettings(){if(!cfg||!cfg.settings)return;let s=cfg.settings,v=id
 function settingsPayload(){collectSettings();let payload=structuredClone(cfg||{});delete payload.credential_status;return payload}
 function scheduleSave(delay=450){clearTimeout(saveTimer);saveTimer=setTimeout(()=>saveSettingsNow(),delay)}
 function saveFailed(why){if(saveRetry<3){saveRetry++;saveState(`保存できません（${why}）／${saveRetry}回目の再試行をします`,'is-ng');scheduleSave(3000)}else saveState(`保存できません（${why}）／画面を再読込してやり直してください`,'is-ng');return false}
-async function saveSettingsNow(){clearTimeout(saveTimer);saveTimer=null;if(!cfg)return false;let payload=settingsPayload(),seq=++saveSeq;saveState('保存しています','is-saving');try{let r=await fetch('/api/config',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});if(seq!==saveSeq)return true;if(!r.ok){let d=await r.json().catch(()=>({}));return saveFailed(d.error||('HTTP '+r.status))}saveRetry=0;saveState('自動保存しました '+new Date().toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit',second:'2-digit'}),'is-ok');return true}catch(e){if(seq!==saveSeq)return true;return saveFailed('サーバーへ届きませんでした')}}
+async function saveSettingsNow(){clearTimeout(saveTimer);saveTimer=null;if(!cfg)return false;let payload=settingsPayload(),seq=++saveSeq;saveState('保存しています','is-saving');try{let r=await putConfig(payload);if(seq!==saveSeq)return true;if(!r.ok){let d=await r.json().catch(()=>({}));return saveFailed(d.error||('HTTP '+r.status))}saveRetry=0;saveState('自動保存しました '+new Date().toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit',second:'2-digit'}),'is-ok');return true}catch(e){if(seq!==saveSeq)return true;return saveFailed('サーバーへ届きませんでした')}}
 /* 対象の編集画面は下書き（editing）を触っているので、閉じるまで保存しない。 */
 function dirty(){if($('#editor')?.open||$('#rule-editor')?.open)return;saveRetry=0;saveState('変更を保存しています','is-saving');scheduleSave()}
 /* 有効・無効は「設定」ではなく「状態」。一覧のバッジ・右クリック・編集画面の
@@ -328,7 +328,7 @@ if($('#bulk-apply'))$('#bulk-apply').onclick=async()=>{
  showWaiting('まとめて変更中',`${jobs.length}件へ適用しています...`);
  try{
   let payload=structuredClone(cfg);delete payload.credential_status;
-  let r=await fetch('/api/config',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+  let r=await putConfig(payload);
   if(!r.ok)throw Error('保存できませんでした');
   await init();toast(`${jobs.length}件へ変更を適用しました`);
  }catch(e){toast(e.message)}
@@ -591,14 +591,14 @@ async function reorderJobs(srcId,targetId,after){
  if($('#sort'))$('#sort').value='order';sortDir=1;
  render();
  let payload=structuredClone(cfg);delete payload.credential_status;
- try{let rp=await fetch('/api/config',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});if(rp.ok){saveState('並び順を保存しました','is-ok');toast('問い合わせ順を更新しました')}else{dirty();toast('並び順を保存できませんでした。自動で再試行します')}}catch{dirty();toast('並び順を保存できませんでした。自動で再試行します')}
+ try{let rp=await putConfig(payload);if(rp.ok){saveState('並び順を保存しました','is-ok');toast('問い合わせ順を更新しました')}else{dirty();toast('並び順を保存できませんでした。自動で再試行します')}}catch{dirty();toast('並び順を保存できませんでした。自動で再試行します')}
 }
 async function deleteJob(j){
  if(!confirm(`管理単位「${j.name}」を削除します。よろしいですか？\n登録内容と自動実行ルールが削除されます（この操作は元に戻せません）。`))return;
  let i=cfg.jobs.findIndex(x=>x.id===j.id);if(i<0)return;
  cfg.jobs.splice(i,1);render();
  let payload=structuredClone(cfg);delete payload.credential_status;
- try{let r=await fetch('/api/config',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});if(r.ok){saveState('管理単位を削除しました','is-ok');await init();toast(`「${j.name}」を削除しました`)}else{dirty();toast('削除を保存できませんでした。自動で再試行します')}}catch{dirty();toast('削除を保存できませんでした。自動で再試行します')}
+ try{let r=await putConfig(payload);if(r.ok){saveState('管理単位を削除しました','is-ok');await init();toast(`「${j.name}」を削除しました`)}else{dirty();toast('削除を保存できませんでした。自動で再試行します')}}catch{dirty();toast('削除を保存できませんでした。自動で再試行します')}
 }
 function fillSuggestions(){let sets={names:cfg.jobs.map(j=>j.name),rne:cfg.jobs.map(j=>j.rne_path),output:[cfg.default_output_folder,...cfg.jobs.map(j=>j.output_folder)],'output-file':cfg.jobs.map(j=>j.output_file),table:cfg.jobs.map(j=>j.table),sheet:cfg.jobs.map(j=>j.sheet)};Object.entries(sets).forEach(([k,v])=>$('#suggest-'+k).innerHTML=[...new Set(v.filter(Boolean))].map(x=>`<option value="${E(x)}">`).join(''))}
 function rulesRender(){let box=$('#m-rules');box.innerHTML=editing.schedules.length?editing.schedules.map(r=>`<div class="rule-row" data-id="${r.id}"><input class="rule-toggle" type="checkbox" ${r.enabled?'checked':''}><b>${E(r.name)}</b><span class="rule-type">${typeName(r.type)}</span><span class="rule-summary">${E(scheduleSummary(r))}</span><button class="rule-edit secondary" type="button">編集</button><button class="rule-delete danger" type="button">削除</button></div>`).join(''):'<div class="empty">自動実行ルールはありません。手動実行のみです。</div>';box.querySelectorAll('.rule-row').forEach(el=>{let r=editing.schedules.find(x=>x.id===el.dataset.id);el.querySelector('.rule-toggle').onchange=e=>{r.enabled=e.target.checked;dirty()};el.querySelector('.rule-edit').onclick=()=>openRule(r);el.querySelector('.rule-delete').onclick=()=>{editing.schedules=editing.schedules.filter(x=>x.id!==r.id);rulesRender()}});updateRuleCount()}
@@ -718,7 +718,7 @@ async function applyJob(close=true,quiet=false){
  let payload=structuredClone(cfg);delete payload.credential_status;
  if(!quiet)showWaiting('設定を保存中',`${formatName(updated.output_format)} / ${updated.output_file}`);
  try{
-  let r=await fetch('/api/config',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),d=await r.json();
+  let r=await putConfig(payload),d=await r.json();
   if(!r.ok)throw Error(d.error||'設定保存失敗');
   if(close){$('#editor').close();await init();toast(`保存完了: ${formatName(updated.output_format)} / ${updated.output_file}`)}
   else{render();saveState('対象の設定を保存しました','is-ok');
@@ -887,7 +887,19 @@ function refreshMachinePaths(delay){clearTimeout(mpTimer);mpTimer=setTimeout(loa
 if($('#mp-reload'))$('#mp-reload').onclick=()=>{clearTimeout(mpTimer);loadMachinePaths()};
 /* 「定期監視（3秒/2秒/1秒）」はもう動いていない。動かない設定を並べ続けると、
    触っても何も変わらない設定を探し続けることになる。実際に効く1つだけを出す。 */
-function updateHideProfileUI(){let p=$('#hide-profile').value,custom=p==='custom';$('#hide-action-duration-wrap').style.display=custom?'grid':'none';let descriptions={action_only:'0.35秒だけ試す。いちばん軽い',balanced:'0.5秒。ふつうはこれで隠しきれる',standard:'0.6秒。隠れ残るときに',custom:'0.2〜3秒で指定する'};$('#hide-profile').title=descriptions[p]||''}async function init(){cfg=await fetch('/api/config').then(r=>r.json());cfg.jobs.forEach(j=>{j.id=j.id||uid();j.name=j.name||j.rne.replace(/\.RNE$/i,'');j.schedules=j.schedules||[]});$('#pathform').innerHTML=Object.entries(paths).map(([k,a])=>k==='navigator_api_dll'
+function updateHideProfileUI(){let p=$('#hide-profile').value,custom=p==='custom';$('#hide-action-duration-wrap').style.display=custom?'grid':'none';let descriptions={action_only:'0.35秒だけ試す。いちばん軽い',balanced:'0.5秒。ふつうはこれで隠しきれる',standard:'0.6秒。隠れ残るときに',custom:'0.2〜3秒で指定する'};$('#hide-profile').title=descriptions[p]||''}/* 設定の全量保存は、送った内容で対象も実績も置き換える。画面を2つ開いていると、
+   古い写しを持ったタブが相手の追加した対象を消していた。版を持ち回り、サーバーに
+   食い違いを断ってもらう（409）。断られたら黙って読み直す。 */
+async function putConfig(body){
+ let r=await fetch('/api/config',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+ try{
+  let d=await r.clone().json();
+  if(d&&d.settings_revision!=null&&cfg)cfg.settings_revision=d.settings_revision;
+  if(r.status===409){await init();toast('ほかの画面で設定が変わっていたため、最新の内容を読み直しました');}
+ }catch{}
+ return r;
+}
+async function init(){cfg=await fetch('/api/config').then(r=>r.json());cfg.jobs.forEach(j=>{j.id=j.id||uid();j.name=j.name||j.rne.replace(/\.RNE$/i,'');j.schedules=j.schedules||[]});$('#pathform').innerHTML=Object.entries(paths).map(([k,a])=>k==='navigator_api_dll'
   ?`<div class="pf-row pf-ro" id="pf-${k}"><div class="pf-top"><b>${a[0]}</b><i class="pf-badge">確認中</i></div><p class="pf-ro-note">この設定は「抽出方式」の中で指定します<button type="button" class="ghost pf-goto" data-cat="engine">抽出方式を開く</button></p><div class="pf-note"></div></div>`
   :`<label class="pf-row" id="pf-${k}"><div class="pf-top"><b>${a[0]}</b><i class="pf-badge">確認中</i></div><div class="browse"><input id="${k}" value="${E(cfg[k]||'')}"><div class="path-actions">${['symnavim_conf','symnavim_def','accdb_template'].includes(k)?`<button class="pathcheck verify-btn" data-k="${k}" type="button">確認</button>`:''}<button class="pathpick browse-btn" data-k="${k}" type="button">参照</button></div></div><div class="pf-note"></div></label>`).join('')
  +'<p class="pf-divider" id="pf-divider" hidden>いまの抽出方式では使わない設定</p>';
@@ -1095,7 +1107,7 @@ if($('#dll-depth'))$('#dll-depth').onchange=()=>saveDllRoots();
 async function testNavigatorApi(){
  let b=$('#api-test'),box=$('#api-attempts'),inp=$('#navigator-api-dll');
  if(inp&&cfg){cfg.navigator_api_dll=inp.value.trim();let payload=structuredClone(cfg);delete payload.credential_status;
-  await fetch('/api/config',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});}
+  await putConfig(payload);}
  if(b)b.disabled=true;
  renderApiReadiness(null);
  showWaiting('Navigator APIを確認中','探す範囲の候補・bit数・依存ランタイムを順に確かめています...','api');

@@ -38,6 +38,7 @@ from app import (
     _read_api_diag_cache, _run_inspect_endpoint, _split_stage_logged, _split_trial_run,
     _viewer_output_path, _write_api_diag_cache, active_workers, active_workers_lock, alerts,
     alerts_lock, api_readiness, axis_balance_scores, blocked_row_axes, calendar,
+    settings_sync_lock, settings_revision, SETTINGS_DB,
     cancel_requested, check_path_item, clamp_parallel_lines, clear_row_axis_blocks,
     column_cache_state, column_weights, command_queue, command_queue_lock, compute_period,
     creds, csv, datetime, dll_diagnostic_issues, dll_search_roots, docs_dir, duplicate_columns,
@@ -127,14 +128,31 @@ def put_config():
  data=request.get_json(silent=True)
  if not isinstance(data,dict) or not isinstance(data.get('jobs'),list):
   return jsonify(ok=False,error='設定の形が正しくありません（対象の一覧が含まれていません）'),400
- save(data);return jsonify(ok=True)
+ # 保存は全量の置き換え（対象も実績も、送られてきたものに合わせて消す）。画面を2つ開いて
+ # いると、片方が持っている古い写しで上書きされ、もう片方が追加した対象が黙って消える。
+ # 版が食い違うときは断り、画面に読み直してもらう。版を載せない相手（古い画面）は従来どおり。
+ want=data.get('settings_revision')
+ with settings_sync_lock:
+  if want is not None:
+   try:want=int(want)
+   except (TypeError,ValueError):want=None
+  now=settings_revision(SETTINGS_DB)
+  if want is not None and want!=now:
+   log.warning('CONFIG_PUT_CONFLICT client_rev=%s server_rev=%s（ほかの画面の変更を上書きしません）',want,now)
+   return jsonify(ok=False,conflict=True,settings_revision=now,
+                  error='ほかの画面で設定が変わっています。最新の内容を読み直してから、もう一度保存してください'),409
+  rev=save(data)
+ return jsonify(ok=True,settings_revision=rev)
 
 @app.post('/api/settings/parallel-lines')
 def set_parallel_lines():
  # 並列ライン数だけを即時に保存する軽量エンドポイント。ユーザーが変更したら他の未保存編集に触れずその値を確定し、次回起動以降も保持する。
  data=request.get_json(silent=True) or {}
- c=load(); lines=clamp_parallel_lines(data.get('lines',2),c,default=2)
- c['settings']['api_parallel_lines']=lines; c['settings']['stability_profile']='balanced_api_parallel'; save(c)
+ # 読む→1つ変える→書く、のあいだに全量保存が割り込むと、その内容ごと読んだ時点へ戻る。
+ # ひとつながりにして、割り込む余地をなくす。
+ with settings_sync_lock:
+  c=load(); lines=clamp_parallel_lines(data.get('lines',2),c,default=2)
+  c['settings']['api_parallel_lines']=lines; c['settings']['stability_profile']='balanced_api_parallel'; save(c,quiet=True)
  log.info('設定保存 job=(共通) 並列ライン数を保存 api_parallel_lines=%s',lines)
  return jsonify(ok=True,api_parallel_lines=lines)
 
@@ -172,7 +190,8 @@ def set_columns():
  # layout が無い body をそのまま通すと、normalize が空の3キーを作って保存済みの並びを消す。
  # 「全部既定に戻す」は画面が空の layout を明示して送ってくるので、鍵の有無で分けられる。
  if not isinstance(data.get('layout'),dict):return jsonify(ok=False,error='列の決め方(layout)がありません'),400
- c=load();layout=normalize_column_layout(data.get('layout'));c['settings']['column_layout']=layout;save(c)
+ with settings_sync_lock:
+  c=load();layout=normalize_column_layout(data.get('layout'));c['settings']['column_layout']=layout;save(c,quiet=True)
  log.info('設定保存 job=(共通) 一覧の列 並び=%s 隠す=%s 見せ方=%s',
           layout['order'],layout['hidden'],layout['opt'])
  return jsonify(ok=True,column_layout=layout)
@@ -262,10 +281,11 @@ def schedule_quick_add():
  try:_when=datetime.strptime(date+' '+(tm or '06:00'),'%Y-%m-%d %H:%M')
  except ValueError:return jsonify(error='日付は YYYY-MM-DD、時刻は HH:MM で指定してください'),400
  if _when<=datetime.now():return jsonify(error=f'{date} {tm} はすでに過ぎています。これから来る日時を指定してください'),400
- c=load(); j=next((x for x in c['jobs'] if x['id']==job_id),None)
- if not j:return jsonify(error='対象が見つかりません'),404
- rule={'id':uuid.uuid4().hex,'enabled':True,'name':d.get('name') or f'{date} 単発実行','type':'specific_dates','time':tm,'dates':[date]}
- j.setdefault('schedules',[]).append(rule); save(c)
+ with settings_sync_lock:
+  c=load(); j=next((x for x in c['jobs'] if x['id']==job_id),None)
+  if not j:return jsonify(error='対象が見つかりません'),404
+  rule={'id':uuid.uuid4().hex,'enabled':True,'name':d.get('name') or f'{date} 単発実行','type':'specific_dates','time':tm,'dates':[date]}
+  j.setdefault('schedules',[]).append(rule); save(c,quiet=True)
  log.info('CALENDAR_QUICK_ADD job=%s date=%s time=%s',j['name'],date,tm)
  return jsonify(ok=True,rule=rule)
 
@@ -1245,17 +1265,19 @@ def path_check():
 def apply_path_suggestion():
  d=request.get_json(force=True); item=d.get('item'); candidate=d.get('candidate'); job_id=d.get('job_id')
  if not candidate or not Path(candidate).is_file():return jsonify(error='修正候補が存在しません'),400
- c=load()
- try:stored=str(Path(candidate).resolve().relative_to(BASE.resolve()))
- except ValueError:stored=str(Path(candidate).resolve())
- if not stored.startswith('.') and not Path(stored).is_absolute():stored='.\\'+stored.replace('/','\\')
- if item in ('symnavim_conf','symnavim_def','accdb_template'):c[item]=stored
- elif item=='rne':
-  j=next((x for x in c['jobs'] if x['id']==job_id),None)
-  if not j:return jsonify(error='対象が見つかりません'),404
-  j['rne_path']=stored; j['rne']=Path(candidate).name
- else:return jsonify(error='修正対象が不正です'),400
- save(c); return jsonify(ok=True,path=stored)
+ with settings_sync_lock:
+  c=load()
+  try:stored=str(Path(candidate).resolve().relative_to(BASE.resolve()))
+  except ValueError:stored=str(Path(candidate).resolve())
+  if not stored.startswith('.') and not Path(stored).is_absolute():stored='.\\'+stored.replace('/','\\')
+  if item in ('symnavim_conf','symnavim_def','accdb_template'):c[item]=stored
+  elif item=='rne':
+   j=next((x for x in c['jobs'] if x['id']==job_id),None)
+   if not j:return jsonify(error='対象が見つかりません'),404
+   j['rne_path']=stored; j['rne']=Path(candidate).name
+  else:return jsonify(error='修正対象が不正です'),400
+  save(c,quiet=True)
+ return jsonify(ok=True,path=stored)
 
 @app.get('/api/data-viewer/jobs')
 def data_viewer_jobs():

@@ -2127,7 +2127,11 @@ def load():
     if x['dates_json']:q['dates']=json.loads(x['dates_json'])
     rules.append(q)
    fmt=normalize_output_format(r['output_format'],r['output_file']); jobs.append({'id':r['id'],'enabled':bool(r['enabled']),'name':r['name'],'rne':r['rne'],'rne_path':r['rne_path'],'output_folder':r['output_folder'],'output_format':fmt,'output_file':canonical_output_file(r['output_file'],fmt),'table':r['table_name'],'sheet':r['sheet_name'],'type':r['read_type'],'naming_mode':(r['naming_mode'] if 'naming_mode' in r.keys() else 'fixed'),'output_pattern':(r['output_pattern'] if 'output_pattern' in r.keys() else ''),'comment':(r['comment'] if 'comment' in r.keys() else ''),'split_mode':normalize_split_mode(r['split_mode'] if 'split_mode' in r.keys() else ''),'split_shape':normalize_split_shape(r['split_shape'] if 'split_shape' in r.keys() else ''),'row_axis_mode':normalize_row_axis_mode(r['row_axis_mode'] if 'row_axis_mode' in r.keys() else ''),'row_axis_index':int((r['row_axis_index'] if 'row_axis_index' in r.keys() else 1) or 1),'row_axis_name':str((r['row_axis_name'] if 'row_axis_name' in r.keys() else '') or ''),'extra_formats':job_extra_formats({'output_format':fmt,'output_file':r['output_file'],'extra_formats':(r['extra_formats'] if 'extra_formats' in r.keys() else '')}),'index_columns':_json_list(r['index_columns'] if 'index_columns' in r.keys() else ''),'skip_if_unchanged':bool(r['skip_if_unchanged'] if 'skip_if_unchanged' in r.keys() else 0),'source':normalize_job_source(r['source'] if 'source' in r.keys() else ''),'text_path':str((r['text_path'] if 'text_path' in r.keys() else '') or ''),'layout_id':str((r['layout_id'] if 'layout_id' in r.keys() else '') or ''),'recipe_id':str((r['recipe_id'] if 'recipe_id' in r.keys() else '') or ''),'period':_decode_period(r['period_json'] if 'period_json' in r.keys() else ''),'schedules':rules})
-  cfg['jobs']=jobs; cfg['text_layouts']=_load_text_layouts(c); cfg['join_recipes']=_load_join_recipes(c); cfg.setdefault('settings',{}); cfg['settings'].setdefault('extract_engine','api'); cfg['settings'].setdefault('api_parallel_max_lines',PARALLEL_LINES_SUPPORTED_MAX); cfg['settings'].setdefault('api_parallel_model','process')
+  cfg['jobs']=jobs; cfg['text_layouts']=_load_text_layouts(c); cfg['join_recipes']=_load_join_recipes(c); cfg.setdefault('settings',{});
+  # 設定の版。画面はこれをそのまま送り返し、ほかで変わっていたら保存を断れるようにする
+  # （画面を2つ開いていると、あとから保存したほうが相手の追加した対象を消していた）。
+  _rev=c.execute("SELECT value FROM schema_info WHERE key='settings_revision'").fetchone()
+  cfg['settings_revision']=int(_rev[0]) if _rev and str(_rev[0]).strip().lstrip('-').isdigit() else 0; cfg['settings'].setdefault('extract_engine','api'); cfg['settings'].setdefault('api_parallel_max_lines',PARALLEL_LINES_SUPPORTED_MAX); cfg['settings'].setdefault('api_parallel_model','process')
   # 既定の並列ラインは6。旧テスト実装では stability_profile='stable_api_serial' の環境で読込のたびに api_parallel_lines を1へ強制していた（毎回1ラインへ戻る不具合の原因）。
   # その名残マーカーが残る環境（または初期状態）だけ一度2へ引き上げ、以降はユーザーが保存した値をそのまま尊重する。
   _prev_profile=cfg['settings'].get('stability_profile')
@@ -2164,8 +2168,8 @@ def normalize_interval_minutes(v):
  try:return max(1,int(v))
  except (TypeError,ValueError):return 60
 
-def _save_local(v):
- init_settings_db(); now=datetime.now().isoformat(timespec='seconds'); jobs=v.get('jobs',[]); top={k:x for k,x in v.items() if k not in ('jobs','credential_status','text_layouts','join_recipes')}
+def _save_local(v,quiet=False):
+ init_settings_db(); now=datetime.now().isoformat(timespec='seconds'); jobs=v.get('jobs',[]); top={k:x for k,x in v.items() if k not in ('jobs','credential_status','text_layouts','join_recipes','settings_revision')}
  with settings_connection() as c:
   c.execute('BEGIN IMMEDIATE'); c.execute('DELETE FROM app_settings')
   for key,value in top.items():
@@ -2173,7 +2177,7 @@ def _save_local(v):
   keep=[]
   for order,j in enumerate(jobs):
    jid=j.get('id') or str(uuid.uuid4()); keep.append(jid)
-   fmt=normalize_output_format(j.get('output_format'),j.get('output_file')); output_file=canonical_output_file(j.get('output_file'),fmt); log.info('設定保存 job=%s requested_format=%s saved_format=%s requested_file=%s saved_file=%s',j.get('name'),j.get('output_format'),fmt,j.get('output_file'),output_file); c.execute('INSERT OR REPLACE INTO jobs (id,display_order,enabled,name,rne,rne_path,output_folder,output_format,output_file,table_name,sheet_name,read_type,naming_mode,output_pattern,comment,split_mode,split_shape,row_axis_mode,row_axis_index,row_axis_name,extra_formats,index_columns,skip_if_unchanged,period_json,source,text_path,layout_id,recipe_id,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',(jid,order,int(bool(j.get('enabled',True))),j.get('name',''),j.get('rne',''),j.get('rne_path',''),j.get('output_folder',''),fmt,output_file,job_table_name(j),j.get('sheet','Page1'),j.get('type','詳細データ'),str(j.get('naming_mode') or 'fixed'),str(j.get('output_pattern') or ''),str(j.get('comment') or ''),normalize_split_mode(j.get('split_mode')),normalize_split_shape(j.get('split_shape')),normalize_row_axis_mode(j.get('row_axis_mode')),max(1,min(200,int(j.get('row_axis_index') or 1))),str(j.get('row_axis_name') or ''),json.dumps(job_extra_formats({**j,'output_format':fmt}),ensure_ascii=False),json.dumps([str(x).strip() for x in (j.get('index_columns') or []) if str(x).strip()][:4],ensure_ascii=False),int(bool(j.get('skip_if_unchanged'))),json.dumps(_decode_period(json.dumps(j.get('period') or {},ensure_ascii=False)),ensure_ascii=False),normalize_job_source(j.get('source')),str(j.get('text_path') or ''),str(j.get('layout_id') or ''),str(j.get('recipe_id') or ''),now))
+   fmt=normalize_output_format(j.get('output_format'),j.get('output_file')); output_file=canonical_output_file(j.get('output_file'),fmt); (None if quiet else log.info('設定保存 job=%s requested_format=%s saved_format=%s requested_file=%s saved_file=%s',j.get('name'),j.get('output_format'),fmt,j.get('output_file'),output_file)); c.execute('INSERT OR REPLACE INTO jobs (id,display_order,enabled,name,rne,rne_path,output_folder,output_format,output_file,table_name,sheet_name,read_type,naming_mode,output_pattern,comment,split_mode,split_shape,row_axis_mode,row_axis_index,row_axis_name,extra_formats,index_columns,skip_if_unchanged,period_json,source,text_path,layout_id,recipe_id,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',(jid,order,int(bool(j.get('enabled',True))),j.get('name',''),j.get('rne',''),j.get('rne_path',''),j.get('output_folder',''),fmt,output_file,job_table_name(j),j.get('sheet','Page1'),j.get('type','詳細データ'),str(j.get('naming_mode') or 'fixed'),str(j.get('output_pattern') or ''),str(j.get('comment') or ''),normalize_split_mode(j.get('split_mode')),normalize_split_shape(j.get('split_shape')),normalize_row_axis_mode(j.get('row_axis_mode')),max(1,min(200,int(j.get('row_axis_index') or 1))),str(j.get('row_axis_name') or ''),json.dumps(job_extra_formats({**j,'output_format':fmt}),ensure_ascii=False),json.dumps([str(x).strip() for x in (j.get('index_columns') or []) if str(x).strip()][:4],ensure_ascii=False),int(bool(j.get('skip_if_unchanged'))),json.dumps(_decode_period(json.dumps(j.get('period') or {},ensure_ascii=False)),ensure_ascii=False),normalize_job_source(j.get('source')),str(j.get('text_path') or ''),str(j.get('layout_id') or ''),str(j.get('recipe_id') or ''),now))
    c.execute('DELETE FROM schedules WHERE job_id=?',(jid,))
    for ro,q in enumerate(j.get('schedules',[])):
     c.execute('INSERT INTO schedules VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',(q.get('id') or str(uuid.uuid4()),jid,ro,int(bool(q.get('enabled',True))),q.get('name','実行ルール'),q.get('type','daily'),q.get('time','06:00'),normalize_interval_minutes(q.get('interval_minutes')),json.dumps(q.get('weekdays'),ensure_ascii=False) if 'weekdays' in q else None,json.dumps(q.get('month_days'),ensure_ascii=False) if 'month_days' in q else None,json.dumps(q.get('dates'),ensure_ascii=False) if 'dates' in q else None,now))
@@ -2184,11 +2188,12 @@ def _save_local(v):
   _rev=int(_row[0])+1 if _row and str(_row[0]).strip().lstrip('-').isdigit() else 1
   c.execute("INSERT OR REPLACE INTO schema_info(key,value) VALUES('settings_revision',?)",(str(_rev),))
 
-def save(v):
+def save(v,quiet=False):
  # ローカル作業DBへ保存し、設定変更時のみBOX上マスターへバックグラウンドで書き戻す。
  with settings_sync_lock:
-  _save_local(v)
+  _save_local(v,quiet=quiet)
  _mark_settings_dirty(); flush_local_to_master_async('config-save')
+ return settings_revision(SETTINGS_DB)
 
 def migrate_legacy_settings():
  init_settings_db()
