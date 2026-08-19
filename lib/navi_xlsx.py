@@ -96,13 +96,31 @@ def write_xlsx_direct(dst,sheet_name,headers,body,types=None):
     f.write(row_xml(r,row).encode('utf-8')); rows_written+=1
    f.write(b'</sheetData></worksheet>')
  return {'sheet':sheet_name,'rows':rows_written,'columns':len(headers),'cells':cell_count,'elapsed':time.perf_counter()-started}
+def _header_columns(z,limit_bytes=8<<20):
+ """見出し行（1行目）の列数を数える。
+
+ 先頭65,536バイトだけを読んで正規表現をかけていたので、見出しのXMLがそこを超えると
+ </row> が範囲の外に出て「0列」と数えられていた。中身は正しく書けているのに列数検査で
+ 落ち、出来上がったファイルは削除され、対象は失敗になる（列名が日本語で長いと
+ 880列あたりから踏む。出せる上限は16,384列と決めてあるのに、その手前で落ちていた）。
+ 終わりの目印が出るまで読み進める ―― 見出し1行ぶんなので、全体を読むわけではない。
+ """
+ buf=b'';end=-1
+ with z.open('xl/worksheets/sheet1.xml') as f:
+  while end<0 and len(buf)<limit_bytes:
+   chunk=f.read(65536)
+   if not chunk:break
+   buf+=chunk;end=buf.find(b'</row>')
+ head=(buf[:end+6] if end>=0 else buf).decode('utf-8',errors='ignore')
+ m=re.search(r'<row[^>]*r="1"[^>]*>(.*?)</row>',head,re.S)
+ return len(re.findall(r'<c\b',m.group(1))) if m else 0
+
 def verify_xlsx_direct(dst,expected_columns):
  started=time.perf_counter()
  with zipfile.ZipFile(dst,'r') as z:
   bad=z.testzip();names=set(z.namelist());required={'[Content_Types].xml','xl/workbook.xml','xl/worksheets/sheet1.xml'};missing=sorted(required-names)
-  head=z.read('xl/worksheets/sheet1.xml')[:65536].decode('utf-8',errors='ignore')
+  header_columns=0 if missing else _header_columns(z)
  if bad or missing:raise RuntimeError(f'XLSX ZIP構造検査失敗 bad={bad} missing={missing}')
- m=re.search(r'<row[^>]*r="1"[^>]*>(.*?)</row>',head,re.S); header_columns=len(re.findall(r'<c\b',m.group(1))) if m else 0
  log.info('XLSX_LIGHT_VERIFY_DIRECT header_columns=%s expected_columns=%s elapsed=%.2fs',header_columns,expected_columns,time.perf_counter()-started)
  if header_columns!=expected_columns:raise RuntimeError(f'XLSX列数検査失敗 expected={expected_columns} actual={header_columns}')
  log.info('XLSX_ZIP_TEST bad_entry=%s missing_required=%s entries=%s elapsed=%.2fs',bad,missing,len(names),time.perf_counter()-started)
@@ -112,8 +130,7 @@ def verify_xlsx_fast(dst,expected_columns):
  with zipfile.ZipFile(dst,'r') as z:
   names=set(z.namelist());required={'[Content_Types].xml','xl/workbook.xml','xl/worksheets/sheet1.xml'};missing=sorted(required-names)
   if missing:raise RuntimeError(f'XLSX必須XML不足 missing={missing}')
-  head=z.read('xl/worksheets/sheet1.xml')[:65536].decode('utf-8',errors='ignore')
- m=re.search(r'<row[^>]*r="1"[^>]*>(.*?)</row>',head,re.S); header_columns=len(re.findall(r'<c\b',m.group(1))) if m else 0
+  header_columns=_header_columns(z)
  log.info('XLSX_FAST_VERIFY header_columns=%s expected_columns=%s elapsed=%.2fs',header_columns,expected_columns,time.perf_counter()-started)
  if header_columns!=expected_columns:raise RuntimeError(f'XLSX列数検査失敗 expected={expected_columns} actual={header_columns}')
  return header_columns
