@@ -3771,6 +3771,10 @@ def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=No
  if not run_lock.acquire(False):raise RuntimeError('別の処理が実行中です')
  cancel_requested.clear()
  proc=srv=api_client=None; access_prewarm_thread=None
+ # ラインで流したかどうか。失敗の後始末（下の except）は直列実行のために書いてあり、
+ # 「いま走っていた1件」を status から拾って失敗として確定させる。ラインではその1件が
+ # 最後に進捗を出した“成功済みの”対象なので、そのまま通すと実績を名前ごと潰す。
+ lanes_used=False
  try:
   startup_started=time.perf_counter();cfg_started=time.perf_counter();cfg=load();log.info('STARTUP_PHASE phase=config_load elapsed=%.2fs',time.perf_counter()-cfg_started);jobs=[j for j in cfg['jobs'] if j.get('enabled') and (not job_ids or j['id'] in job_ids)]
   if not jobs:raise ValueError('実行対象がありません')
@@ -3809,6 +3813,7 @@ def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=No
   if engine!='dde' or not api_jobs:
    log.info('PARALLEL_DECISION engine=%s selected_jobs=%s configured_lines=%s eligible=%s model=process-isolated',engine,len(api_jobs),api_parallel_lines,bool(api_jobs))
    log.info('EXECUTION_MODE mode=lanes requested_lines=%s rne_jobs=%s local_jobs=%s',api_parallel_lines,len(api_jobs),len(local_jobs))
+   lanes_used=True
    res=run_lanes(jobs,local_jobs,api_jobs,cfg,user,pw,server,dde_work,backup,api_parallel_lines,trigger,progress)
    finish_batch(res,total_all_jobs,progress);return
   jobs=api_jobs
@@ -3979,19 +3984,22 @@ def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=No
   msg='正常終了 | '+' | '.join(text_results+results+list(later)); progress('complete','すべての処理が完了しました',100); set_status(last_result=msg,last_finished_at=datetime.now().isoformat(timespec='seconds'),elapsed_seconds=int(time.time()-progress.started)); log.info(msg)
  except RunCancelled as e:
   msg='中断されました: '+str(e); set_status(step='cancelled',step_label='ユーザーの操作により中断しました',step_percent=100,last_result=msg,error_detail='',last_finished_at=datetime.now().isoformat(timespec='seconds'),elapsed_seconds=int(time.time()-getattr(progress,'started',time.time()))); log.info('RUN_CANCELLED %s',msg)
-  if status.get('running') and status.get('current_job_id'):
+  if status.get('running') and status.get('current_job_id') and not lanes_used:
    record_job_run(status['current_job_id'],status.get('current_job_name',''),'cancelled',trigger,detail=msg)
    set_status(queue_running_ids=[])
+  elif lanes_used:set_status(queue_running_ids=[])
  except Exception as e:
-  msg='異常終了: '+str(e); set_status(step='error',step_label='処理を完了できませんでした',failed_jobs=1,step_percent=100,last_result=msg,error_detail=str(e),last_finished_at=datetime.now().isoformat(timespec='seconds'),elapsed_seconds=int(time.time()-getattr(progress,'started',time.time()))); log.error('%s\n%s',msg,traceback.format_exc())
-  if status.get('current_job_id'):
+  msg='異常終了: '+str(e); set_status(step='error',step_label='処理を完了できませんでした',failed_jobs=(status.get('failed_jobs') or 0) if lanes_used else 1,step_percent=100,last_result=msg,error_detail=str(e),last_finished_at=datetime.now().isoformat(timespec='seconds'),elapsed_seconds=int(time.time()-getattr(progress,'started',time.time()))); log.error('%s\n%s',msg,traceback.format_exc())
+  # ラインでは、どの対象が失敗したかを黒板がすでに1件ずつ確定させている。
+  # ここで status の「いま走っていた1件」を足すと、その正しい記録を上書きしてしまう。
+  if status.get('current_job_id') and not lanes_used:
    record_job_run(status['current_job_id'],status.get('current_job_name',''),'failed',trigger,detail=str(e))
    # 直列実行では失敗を確定させるのがここしかない。入れておかないと一覧の行が
    # 「処理中」のまま止まり、どの対象で落ちたのかが画面から分からない。
    failed_ids=[x for x in (status.get('queue_failed_ids') or [])]+[status['current_job_id']]
    set_status(queue_failed_ids=list(dict.fromkeys(failed_ids)),queue_running_ids=[],
               job_results=list(status.get('job_results') or [])+[{'job':status.get('current_job_name','') or '実行対象','job_id':status['current_job_id'],'status':'failed','detail':str(e)}])
-  if not status.get('job_errors'):set_status(job_errors=[{'job':status.get('current_job_name','') or '実行対象','error':str(e)}])
+  if not status.get('job_errors'):set_status(job_errors=[{'job':(status.get('current_job_name','') if not lanes_used else '') or '実行対象','error':str(e)}])
   raise
  finally:
   cancel_requested.clear()
@@ -4117,7 +4125,7 @@ def retry_view():
   return [{'jobs':r['names'],'attempt':r['attempt'],
            'due_at':datetime.fromtimestamp(r['due_at']).isoformat(timespec='seconds')} for r in retry_waiting]
 
-def after_command(item,error=''):
+def after_command(item,error='',cancelled=False):
  """1つの実行が終わったところ。失敗と「更新保留」を知らせ、必要なら取り直しを予約する。"""
  try:
   # 保留は失敗ではないので、成功した実行でも必ず見る。ここを失敗と同じ枝に置くと、
@@ -4129,6 +4137,11 @@ def after_command(item,error=''):
              +'（公開先が使用中でした。新しいデータは横に控えてあり、次の実行で自動的に反映します）',
              [x['job'] for x in held])
    for x in held:log.warning('PUBLISH_HELD job=%s target=%s pending=%s',x['job'],x['target'],x['pending'])
+  if cancelled:
+   # 中止は人が選んだこと。失敗として知らせない ―― 知らせると、押した本人へ
+   # 「失敗しました」と出したうえ、自動実行なら5分後に勝手にもう一度走らせることになる。
+   log.info('AFTER_COMMAND_CANCELLED id=%s jobs=%s（中止は失敗として扱いません）',item.get('id'),item.get('job_names'))
+   return
   ids,names,why=failed_jobs_of_run()
   if not ids and not error:
    # 前の失敗が解消したことも伝える。取り直しで直ったのか分からないと落ち着かない。
@@ -4174,7 +4187,8 @@ def command_dispatcher():
   try:process(item['job_ids'],item['trigger'],item['parallel_lines'],item['id'])
   except Exception as e:err=str(e);log.error('COMMAND_QUEUE_FAILED id=%s error=%s',item['id'],e)
   finally:
-   after_command(item,err)
+   # process() は中止を握って正常に戻る。判別できるのは残った工程名だけなので、ここで見る。
+   after_command(item,err,cancelled=(status.get('step')=='cancelled'))
    with command_queue_lock:active_command=None
    log.info('COMMAND_QUEUE_END id=%s remaining=%s',item['id'],len(command_queue))
    command_queue_event.set()
