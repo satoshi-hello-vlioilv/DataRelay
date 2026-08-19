@@ -4385,12 +4385,18 @@ def start_tray():
   try:
    from tray_icon import TrayIcon
    icon=BASE/'static'/'favicon.ico'
-   tray=TrayIcon(APP_NAME,f'http://{HOST}:{PORT}',str(icon) if icon.is_file() else None,
+   # 先に global へ入れてから start() していたため、アイコンを作れなくても入れ物だけが
+   # 残り、tray が真のまま扱われていた。「アイコンを出せない環境では常駐を引き受けない」
+   # という歯止め（/api/stay-resident）が素通しになり、画面には「タスクバーに入りました」
+   # と出るのにアイコンは無い、という状態になる。作れたときだけ受け取る。
+   made=TrayIcon(APP_NAME,f'http://{HOST}:{PORT}',str(icon) if icon.is_file() else None,
                  on_open=open_app_window,on_exit=request_shutdown_from_tray,status_text=tray_status_text,logger=log)
-   return tray if tray.start() else None
+   if not made.start():
+    log.warning('TRAY_UNAVAILABLE note=通知領域にアイコンを出せませんでした（常駐は引き受けません）');return None
+   tray=made;return tray
   except Exception:
    # 常駐アイコンを作れなくてもアプリ本体は動かし続ける（自動実行を止めない）。
-   log.exception('TRAY_INIT_FAILED');return None
+   log.exception('TRAY_INIT_FAILED');tray=None;return None
  finally:
   tray_ready.set()
 def enter_residency(reason,client_ids=''):
@@ -4426,10 +4432,35 @@ def heartbeat_watchdog():
     silence=now-last_heartbeat_at
     clients={k:dict(v) for k,v in heartbeat_clients.items()}
    # pagehide通知後も同じclient_idのハートビートが猶予時間内に戻れば、再読込・戻る/進む・BFCache復帰として終了を取り消す。
-   closing=[(cid,v) for cid,v in clients.items() if v.get('closing_at') and now-float(v.get('closing_at') or 0)>=CLOSE_GRACE_SECONDS]
+   # 閉じた側にだけ期限が無かった。client_idは読込のたびに作り直されるので、F5を1回押すか
+   # 2枚目のタブを閉じるだけで「閉じた記録」が1件は必ず残る。それが永久に効き続けるため、
+   # タブを開いたままでも心拍が200秒途切れた瞬間（PCのスリープ、タブの凍結）に
+   # 「閉じたタブがあって生きたタブが無い」と判定され、サーバーが自分で落ちていた。
+   # 生きている側と同じ期限を置き、過ぎた記録は数えない。
+   closing=[(cid,v) for cid,v in clients.items()
+            if v.get('closing_at') and CLOSE_GRACE_SECONDS<=now-float(v.get('closing_at') or 0)<HEARTBEAT_TIMEOUT_SECONDS]
    # 明示的な終了通知が無いまま消えたタブ(ブラウザー強制終了・通信断など)を「常時接続中」と誤認すると、
    # 二度と自動終了できなくなる。最後の受信からの経過でも生存を判定する。
    active=[(cid,v) for cid,v in clients.items() if not v.get('closing_at') and now-float(v.get('last_seen') or 0)<HEARTBEAT_TIMEOUT_SECONDS]
+   # 期限切れの記録を落とす。掃除は心拍を受け取ったときにしか走っていなかったので、
+   # 最後のタブが閉じたあとは誰も片付けず、記録が残ったままになっていた。
+   expired=[cid for cid,v in clients.items()
+            if (v.get('closing_at') and now-float(v.get('closing_at') or 0)>=HEARTBEAT_TIMEOUT_SECONDS)
+            or (not v.get('closing_at') and now-float(v.get('last_seen') or 0)>=HEARTBEAT_TIMEOUT_SECONDS*3)]
+   if expired:
+    with heartbeat_lock:
+     for cid in expired:heartbeat_clients.pop(cid,None)
+     remaining=len(heartbeat_clients)
+    log.info('HEARTBEAT_CLIENTS_PRUNED source=watchdog count=%s remaining=%s',len(expired),remaining)
+   # 常駐に入った理由が消え、画面も戻ってこないなら終わる。閉じた記録に期限を付けた
+   # ぶん、この道が無いと「用事は済んだのに、誰にも見えないまま残る」ことになる。
+   if residency_state['active'] and not active and not residency_reason():
+    log.info('APP_RESIDENCY_ENDED reason=用事が済み画面も戻りませんでした action=python_exit')
+    flush_log();_flush_settings_on_exit('residency-ended');stop_event.set()
+    if tray:
+     try:tray.stop()
+     except Exception:pass
+    os._exit(0)
    if closing and not active:
     ids=','.join(cid for cid,_ in closing)
     # 実行中・実行キューあり・自動実行の予定ありの場合は終了しない。ここで落とすと処理が中途半端に打ち切られ、
