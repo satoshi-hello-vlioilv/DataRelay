@@ -1,9 +1,14 @@
 __pycache__/
 *.pyc
 
-# Linuxでの検証時だけできる複製。Windowsでは config/ と同じ場所なので、
-# 追跡済みの config/app_settings.sqlite3 には影響しない。
-/Config/app_settings.sqlite3
+# 設定の実体（登録した対象・予定・共通設定・実績）。これは各環境のものなので持たない。
+# 以前はこれを配布物として持っていたため、更新でファイルを置いた時点で全PCが
+# 「マスターのほうが新しい」と判定し、現場で登録した対象が配布時点へ戻っていた。
+# 初期値は app_settings.template.sqlite3 として配り、マスターが無いときだけ複製する。
+# Windowsでは config/ と Config/ が同じ場所を指すため、両方の綴りを書く。
+app_settings.sqlite3
+config/app_settings.sqlite3
+Config/app_settings.sqlite3
 
 # 接続先と認証情報（SymNaviUSERID／SymNaviPASSWD／SymNaviServer）が入る。
 # 中身はPC・環境ごとに違うので、リポジトリでは持たない。

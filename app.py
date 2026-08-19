@@ -130,6 +130,41 @@ def defer_com_reference(label,obj,limit=20):
 # 設定変更(save)時のみローカル→マスターへ書き戻す（バックグラウンド、非ブロッキング）。
 # 運用データ(実行履歴・スケジュール状態)は都度BOXへ書かず、変更時と終了時にまとめて反映する。
 settings_sync_lock=threading.RLock(); _settings_initialized=False; _settings_dirty=False
+# 起動時に取り込んだマスターの版。書き戻すときに「自分が見ていたより先へ進んでいないか」を見る。
+_settings_pulled_revision=0
+
+def sqlite_readable(path):
+ """設定DBとして開けるか。中身の当否ではなく、壊れていないかだけを見る。
+
+ 二重構成（BOXのマスターと手元の控え）は、片方が壊れてももう片方から立て直せることが
+ 目的だったのに、どちらも検査せずに使っていた。控えが壊れていれば無傷のマスターが
+ あっても起動できず、マスターが0バイトなら無検証で取り込んで設定を全部消していた。
+ """
+ try:
+  if not path.is_file() or path.stat().st_size<=0:return False
+  c=sqlite3.connect(str(path),timeout=5)
+  try:
+   if str((c.execute('PRAGMA quick_check').fetchone() or [''])[0]).lower()!='ok':return False
+   c.execute('SELECT count(*) FROM sqlite_master').fetchone();return True
+  finally:c.close()
+ except Exception:return False
+
+def settings_revision(path):
+ """設定の版。設定を保存したときだけ上がる。
+
+ これまでは「DBファイルの更新時刻」で新旧を決めていた。ところが手元の控えは設定と
+ 関係のない書き込み（実行履歴・スケジュール状態）でも時刻が進むので、設定を一度も
+ 触っていないPCが「自分のほうが新しい」側になり、他のPCの変更を永久に取り込まないまま、
+ 終了時の書き戻しでマスターごと巻き戻していた。設定の保存でしか動かない数を持つ。
+ """
+ try:
+  c=sqlite3.connect(str(path),timeout=5)
+  try:
+   row=c.execute("SELECT value FROM schema_info WHERE key='settings_revision'").fetchone()
+   return int(row[0]) if row and str(row[0]).strip().lstrip('-').isdigit() else 0
+  finally:c.close()
+ except Exception:return 0
+
 def _mark_settings_dirty():
  global _settings_dirty; _settings_dirty=True
 def flush_local_to_master(reason=''):
@@ -138,9 +173,25 @@ def flush_local_to_master(reason=''):
  with settings_sync_lock:
   try:
    if not SETTINGS_DB.is_file():return False
+   if not sqlite_readable(SETTINGS_DB):
+    log.error('SETTINGS_FLUSH_ABORTED reason=%s detail=手元の控えが壊れているため書き戻しません',reason);return False
    MASTER_SETTINGS_DB.parent.mkdir(parents=True,exist_ok=True)
-   _t=time.perf_counter(); tmp=MASTER_SETTINGS_DB.with_suffix('.wb.tmp'); shutil.copy2(SETTINGS_DB,tmp); os.replace(tmp,MASTER_SETTINGS_DB)
-   _settings_dirty=False; log.info('SETTINGS_FLUSH local->master reason=%s elapsed=%.2fs size=%s',reason,time.perf_counter()-_t,MASTER_SETTINGS_DB.stat().st_size); return True
+   # 別のPCが後から入れた変更を、こちらの丸ごとコピーで黙って消さない。
+   mrev=settings_revision(MASTER_SETTINGS_DB) if MASTER_SETTINGS_DB.is_file() else 0
+   lrev=settings_revision(SETTINGS_DB)
+   if mrev>_settings_pulled_revision and mrev>=lrev:
+    log.warning('SETTINGS_FLUSH_SKIPPED reason=%s detail=別のPCの変更のほうが新しいため書き戻しません master_rev=%s local_rev=%s pulled_rev=%s',
+                reason,mrev,lrev,_settings_pulled_revision);return False
+   _t=time.perf_counter()
+   # 共有フォルダー上に固定名の下書きを置くと、2台が同時に保存したとき同じ1ファイルへ
+   # 両方が書き、先に置き換えた側が成功扱いになるのに中身は相手のもの、という状態になる。
+   tmp=MASTER_SETTINGS_DB.with_name(f'{MASTER_SETTINGS_DB.stem}.{socket.gethostname()}.{os.getpid()}.wb.tmp')
+   try:
+    shutil.copy2(SETTINGS_DB,tmp); os.replace(tmp,MASTER_SETTINGS_DB)
+   finally:
+    try:tmp.unlink()
+    except OSError:pass
+   _settings_dirty=False; log.info('SETTINGS_FLUSH local->master reason=%s elapsed=%.2fs size=%s rev=%s',reason,time.perf_counter()-_t,MASTER_SETTINGS_DB.stat().st_size,lrev); return True
   except Exception:
    log.exception('SETTINGS_FLUSH_FAILED reason=%s',reason); return False
 def flush_local_to_master_async(reason=''):
@@ -168,16 +219,61 @@ def init_settings_db():
   if not MASTER_SETTINGS_DB.exists() and OLD_SETTINGS_DB.is_file():
    try:shutil.copy2(OLD_SETTINGS_DB,MASTER_SETTINGS_DB);log.info('設定DBを移行しました old=%s master=%s',OLD_SETTINGS_DB,MASTER_SETTINGS_DB)
    except Exception:log.exception('SETTINGS_MASTER_SEED_FAILED')
-  # BOXマスター → ローカル作業DB（マスターが新しい、またはローカルが無いときだけ取り込む）。
+  # マスターがまだ無いときだけ、同梱の雛形から作る。設定の実体は配布物に含めない
+  # ―― 含めていたころは、更新でファイルを置くだけで全PCの設定が配布時点へ戻っていた。
+  if not MASTER_SETTINGS_DB.exists():
+   for _tpl in (CONFIG_DIR/'app_settings.template.sqlite3',BASE/'config'/'app_settings.template.sqlite3'):
+    if not _tpl.is_file() or not sqlite_readable(_tpl):continue
+    try:shutil.copy2(_tpl,MASTER_SETTINGS_DB);log.info('設定DBを雛形から作りました template=%s master=%s',_tpl,MASTER_SETTINGS_DB);break
+    except Exception:log.exception('SETTINGS_TEMPLATE_SEED_FAILED')
+  # BOXマスター → ローカル作業DB。開けるかどうかを両側で確かめてから、版で新旧を決める。
+  global _settings_pulled_revision
   _t=time.perf_counter()
   try:
-   need=(not SETTINGS_DB.is_file()) or (MASTER_SETTINGS_DB.is_file() and MASTER_SETTINGS_DB.stat().st_mtime_ns>SETTINGS_DB.stat().st_mtime_ns)
-   if MASTER_SETTINGS_DB.is_file() and need:
-    tmp=SETTINGS_DB.with_suffix('.pull.tmp'); shutil.copy2(MASTER_SETTINGS_DB,tmp); os.replace(tmp,SETTINGS_DB); log.info('SETTINGS_PULL master->local elapsed=%.2fs size=%s',time.perf_counter()-_t,SETTINGS_DB.stat().st_size)
+   local_ok=sqlite_readable(SETTINGS_DB); master_ok=sqlite_readable(MASTER_SETTINGS_DB)
+   if MASTER_SETTINGS_DB.is_file() and not master_ok:
+    log.error('SETTINGS_MASTER_BROKEN path=%s size=%s detail=読めないので取り込みません（手元の控えをそのまま使います）',
+              MASTER_SETTINGS_DB,MASTER_SETTINGS_DB.stat().st_size if MASTER_SETTINGS_DB.exists() else 0)
+   if SETTINGS_DB.is_file() and not local_ok:
+    # 壊れた控えは退避する。残したままだと、次に開いたところで必ず落ちる。
+    broken=SETTINGS_DB.with_name(SETTINGS_DB.stem+'.broken'+SETTINGS_DB.suffix)
+    try:os.replace(SETTINGS_DB,broken);log.error('SETTINGS_LOCAL_BROKEN moved_to=%s（マスターから取り直します）',broken)
+    except OSError:log.exception('SETTINGS_LOCAL_BROKEN_MOVE_FAILED')
+   if master_ok and not sqlite_readable(SETTINGS_DB):need=True
+   elif master_ok:
+    mrev=settings_revision(MASTER_SETTINGS_DB); lrev=settings_revision(SETTINGS_DB)
+    # 版が両側とも無いのは、この仕組みを入れる前のDB。そのときだけ従来どおり時刻で決める。
+    need=(mrev>lrev) if (mrev or lrev) else (MASTER_SETTINGS_DB.stat().st_mtime_ns>SETTINGS_DB.stat().st_mtime_ns)
+   else:need=False
+   if need:
+    if SETTINGS_DB.is_file():
+     try:shutil.copy2(SETTINGS_DB,SETTINGS_DB.with_suffix('.bak'))
+     except Exception:pass
+    tmp=SETTINGS_DB.with_suffix('.pull.tmp'); shutil.copy2(MASTER_SETTINGS_DB,tmp); os.replace(tmp,SETTINGS_DB)
+    log.info('SETTINGS_PULL master->local elapsed=%.2fs size=%s rev=%s',time.perf_counter()-_t,SETTINGS_DB.stat().st_size,settings_revision(SETTINGS_DB))
    else:
     log.info('SETTINGS_PULL skip(local up-to-date) elapsed=%.2fs',time.perf_counter()-_t)
+   _settings_pulled_revision=settings_revision(SETTINGS_DB) if SETTINGS_DB.is_file() else 0
   except Exception:log.exception('SETTINGS_PULL_FAILED')
-  with settings_connection() as c:
+  try:
+   _settings_schema()
+  except Exception:
+   # 控えが開けない形で残っていると、ここで落ちて画面が二度と出ない（サーバーが
+   # 立つ前なので、利用者からは「起動確認がタイムアウト」としか見えない）。
+   # 退避して作り直す ―― 設定は失うが、起動できないよりは直しようがある。
+   log.exception('SETTINGS_SCHEMA_FAILED（控えを退避して作り直します）')
+   try:os.replace(SETTINGS_DB,SETTINGS_DB.with_name(SETTINGS_DB.stem+'.broken'+SETTINGS_DB.suffix))
+   except OSError:pass
+   _settings_schema()
+  ensure_schema_upgrades()
+  ensure_settings_migrations()
+  # マスターがまだ無ければ、初期状態のローカルをBOXへ書き戻して作成する。
+  if not MASTER_SETTINGS_DB.exists():flush_local_to_master('initial-seed')
+  _settings_initialized=True
+
+
+def _settings_schema():
+ with settings_connection() as c:
    c.executescript("""
   CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY,value TEXT NOT NULL,value_type TEXT NOT NULL DEFAULT 'text',updated_at TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY,display_order INTEGER NOT NULL DEFAULT 0,enabled INTEGER NOT NULL DEFAULT 1,name TEXT NOT NULL,rne TEXT NOT NULL,rne_path TEXT NOT NULL,output_folder TEXT NOT NULL,output_format TEXT NOT NULL,output_file TEXT NOT NULL,table_name TEXT NOT NULL,sheet_name TEXT NOT NULL,read_type TEXT NOT NULL,updated_at TEXT NOT NULL);
@@ -199,11 +295,6 @@ def init_settings_db():
   CREATE INDEX IF NOT EXISTS idx_rne_runs_key ON rne_runs(rne_key,finished_at);
   """)
    c.execute("INSERT OR REPLACE INTO schema_info(key,value) VALUES('schema_version','2')")
-  ensure_schema_upgrades()
-  ensure_settings_migrations()
-  # マスターがまだ無ければ、初期状態のローカルをBOXへ書き戻して作成する。
-  if not MASTER_SETTINGS_DB.exists():flush_local_to_master('initial-seed')
-  _settings_initialized=True
 
 
 def ensure_settings_migrations():
@@ -2088,6 +2179,10 @@ def _save_local(v):
     c.execute('INSERT INTO schedules VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',(q.get('id') or str(uuid.uuid4()),jid,ro,int(bool(q.get('enabled',True))),q.get('name','実行ルール'),q.get('type','daily'),q.get('time','06:00'),normalize_interval_minutes(q.get('interval_minutes')),json.dumps(q.get('weekdays'),ensure_ascii=False) if 'weekdays' in q else None,json.dumps(q.get('month_days'),ensure_ascii=False) if 'month_days' in q else None,json.dumps(q.get('dates'),ensure_ascii=False) if 'dates' in q else None,now))
   if keep:c.execute('DELETE FROM jobs WHERE id NOT IN ('+','.join('?' for _ in keep)+')',keep);c.execute('DELETE FROM job_runs WHERE job_id NOT IN ('+','.join('?' for _ in keep)+')',keep)
   else:c.execute('DELETE FROM jobs');c.execute('DELETE FROM job_runs')
+  # 設定の版を1つ進める。どちらが新しいかの判断はこの数だけを見る。
+  _row=c.execute("SELECT value FROM schema_info WHERE key='settings_revision'").fetchone()
+  _rev=int(_row[0])+1 if _row and str(_row[0]).strip().lstrip('-').isdigit() else 1
+  c.execute("INSERT OR REPLACE INTO schema_info(key,value) VALUES('settings_revision',?)",(str(_rev),))
 
 def save(v):
  # ローカル作業DBへ保存し、設定変更時のみBOX上マスターへバックグラウンドで書き戻す。
