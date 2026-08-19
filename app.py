@@ -5426,6 +5426,18 @@ if __name__=='__main__':
  # ポートが空いているかを先に確かめる。Flask(werkzeug)は束縛失敗を自前で処理して
  # 標準出力にだけ出して終了するため、そのままではログに何も残らず、
  # ランチャー側からは「起動確認がタイムアウト」としか見えない。
+ # まず「誰かが応答するか」を見る。束縛の試しだけだと、Windowsの SO_REUSEADDR は
+ # 使用中のポートへの束縛を許すことがあり、動いているインスタンスがいても「空き」と
+ # 判定されうる。つながるなら、それは間違いなく使用中。
+ _live=socket.socket(socket.AF_INET,socket.SOCK_STREAM); _live.settimeout(0.6)
+ try:_in_use=_live.connect_ex((HOST,PORT))==0
+ except OSError:_in_use=False
+ finally:_live.close()
+ if _in_use:
+  log.error('APP_PORT_IN_USE host=%s port=%s detail=すでに応答があります',HOST,PORT)
+  log.error('APP_PORT_IN_USE_HINT 既に%sが起動しています。画面はそのまま使えます。'%APP_NAME+
+            '止めたい場合は stop_app.bat を実行してください。')
+  raise SystemExit(1)
  _probe=socket.socket(socket.AF_INET,socket.SOCK_STREAM)
  try:
   # Flask(werkzeug)と同じ条件で試す。これを付けないと、直前に終了したプロセスの

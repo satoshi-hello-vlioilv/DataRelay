@@ -112,6 +112,7 @@ def main() -> int:
         raise ctypes.WinError()
     already = kernel32.GetLastError() == ERROR_ALREADY_EXISTS
     server_ready = False
+    spawned = False
     proc: subprocess.Popen | None = None
     try:
         if already:
@@ -132,7 +133,7 @@ def main() -> int:
             return 0
         write_info(os.getpid(), None)
         log(f'新規インスタンス起動 launcher_pid={os.getpid()}')
-        proc = spawn_app()
+        proc = spawn_app(); spawned = True
         write_info(os.getpid(), proc.pid)
         log(f'アプリサーバープロセス起動 python_pid={proc.pid}')
         spawn_started = time.perf_counter()
@@ -151,10 +152,25 @@ def main() -> int:
                 log(f'アプリサーバーが起動前に終了 returncode={proc.returncode}')
                 break
             time.sleep(0.05 if time.perf_counter() - spawn_started < 4 else 0.25)
+        # 起動を確認できないまま諦めるときは、起こしたサーバーも片付ける。置き去りにすると、
+        # ポートを掴んだまま誰も知らないプロセスが残る（次の起動もできなくなる）。
+        if proc is not None and proc.poll() is None:
+            log('起動確認できないまま制限時間に達しました。起こしたサーバーを停止します。')
+            try:
+                proc.terminate(); proc.wait(timeout=5)
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
         print('アプリサーバーの起動を確認できませんでした。%LOCALAPPDATA%\\'+APP_NAME+'\\logs\\launcher.log と app.log を確認してください。')
         return 2
     finally:
-        if not server_ready:
+        # 消してよいのは「自分が起こして、しかも起動を確認できなかった」ときだけ。
+        # 既存インスタンスを見つけて戻る道でも消していたため、動いているアプリの
+        # app_instance.json が失われ、停止バッチがPIDを見つけられなくなっていた
+        # （それでも「停止処理が完了しました」とだけ出る）。
+        if spawned and not server_ready:
             try:
                 INFO.unlink()
             except OSError:
