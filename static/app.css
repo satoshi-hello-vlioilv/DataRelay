@@ -2524,3 +2524,40 @@ body>main{width:var(--app-shell);max-width:var(--app-shell);
 /* いちばん下のフォルダー名だけ出しているときは、それが省略形だと分かるようにする。 */
 .output-link.is-tail{color:#3d5966;font-weight:700}
 .output-link.is-tail:hover{color:#087c98}
+
+
+/* ==== 登録内容の持ち出し・持ち込み ==========================================
+   選ぶ・押す・結果を見る、の3つだけ。件数を札に出しておくと、何が入るのかを
+   開く前に確かめられる（開いてから「空だった」と気づくのがいちばん困る）。 */
+.settings-badge.cat-bundle{background:#e6f3f5;color:#0a6a7d}
+.bundle-parts{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:8px;margin-top:9px}
+.bundle-part{display:flex;align-items:flex-start;gap:9px;padding:10px 12px;border:1px solid var(--line);
+ border-radius:8px;background:var(--surface);cursor:pointer}
+.bundle-part:hover{border-color:var(--blue)}
+/* 汎用の input,select{width:100%;height:35px} が効くので、ここで戻す。
+   戻さないと、チェックの四角が札いっぱいに広がって文字を押し出す。 */
+.bundle-part input[type=checkbox]{width:16px;height:16px;min-width:16px;flex:none;margin:2px 0 0;padding:0}
+.bundle-part span{display:grid;gap:2px;min-width:0}
+.bundle-part b{font-size:12.5px;font-weight:700;color:#2b4250}
+.bundle-part small{font-size:11px;color:var(--muted)}
+.bundle-part.is-empty{opacity:.55;cursor:default}
+.bundle-part.is-empty:hover{border-color:var(--line)}
+.bundle-actions{display:flex;align-items:center;gap:12px;margin-top:12px;flex-wrap:wrap}
+.bundle-note{font-size:11.5px;color:var(--muted)}
+.bundle-drop{margin-top:9px;padding:18px;border:2px dashed #c3d5dd;border-radius:10px;background:var(--soft);
+ display:grid;justify-items:center;gap:7px;text-align:center}
+.bundle-drop.is-over{border-color:var(--blue);background:#e9f4f7}
+.bundle-drop b{font-size:12.5px;color:#2b4250}
+.bundle-drop small{font-size:11px;color:var(--muted);overflow-wrap:anywhere}
+.bundle-result{margin-top:12px;padding:12px 14px;border:1px solid #bfe0d8;border-radius:9px;background:#f1f9f6}
+.bundle-sum{margin:0 0 8px;display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.bundle-sum b{font-size:13px;color:#0a6b4d}
+.bundle-sum small{font-size:11px;color:var(--muted)}
+.bundle-table{width:100%;border-collapse:collapse;font-size:12px}
+.bundle-table th{text-align:left;font-weight:700;color:#2b4250;padding:3px 10px 3px 0;white-space:nowrap}
+.bundle-table td{padding:3px 10px 3px 0;color:#41616f;white-space:nowrap}
+.bundle-table td.bundle-warn{color:var(--amber);font-weight:700}
+.bundle-notes{margin-top:9px}
+.bundle-notes summary{cursor:pointer;font-size:11.5px;color:var(--amber);font-weight:700}
+.bundle-notes ul{margin:6px 0 0;padding-left:1.2em;font-size:11.5px;color:#41616f;line-height:1.7}
+.bundle-notes li{margin-bottom:3px}

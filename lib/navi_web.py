@@ -20,11 +20,12 @@ app.py 側に残してある。あれは受け口の形をした本体の状態�
 """
 # send_file だけは本体が使っていないので、ここで直接受け取る。
 # jsonify / render_template / request は本体経由で来る（下の import）。
-import contextlib,shutil
+import contextlib,io,shutil
 from flask import send_file
 
 import app
 app=app.app          # 受け口を足す先（Flask本体）。以降 @app.get(...) は分ける前と同じ書き方
+import navi_bundle   # 登録内容の持ち出し・持ち込みの決まり（DBも画面も触らない）
 import navi_join     # キーの見当を付けるところだけ、直接呼ぶ（本体を経由する用が無い）
 import navi_order    # 結合の順番と待ち合わせの判断
 import navi_book     # マスタをEXCELで出し入れする
@@ -1768,6 +1769,159 @@ def join_recipes_import_file():
   save_join_recipe(r)
  log.info('JOIN_RECIPE_IMPORT 追加=%s 置き換え=%s 読めなかったもの=%s',added,replaced,len(bad))
  return jsonify(ok=True,added=added,replaced=replaced,skipped=bad)
+
+
+# ---- 登録内容の持ち出し・持ち込み（一式／部分） -------------------------------
+# 別のPCへ移すとき、新しく組むとき、控えを取っておくとき。画面を見ながら打ち直すのは
+# 時間がかかるうえに必ず取りこぼす。決まり（どういう形で持ち出すか）は navi_bundle に
+# あり、ここはDBとの出し入れだけを受け持つ。
+
+def _layout_names():
+ return {x['id']:x['name'] for x in load_text_layouts()}
+
+def _recipe_names():
+ return {x['id']:x['name'] for x in load_join_recipes()}
+
+def _bundle_payloads(parts,c=None):
+ """選ばれた部分ぶんの中身を作る。"""
+ c=c if c is not None else load()
+ out={}
+ if 'jobs' in parts:
+  ln=_layout_names();rn=_recipe_names()
+  out['jobs']=navi_bundle.jobs_export(c['jobs'],lambda i:ln.get(i,''),lambda i:rn.get(i,''))
+ if 'schedules' in parts:out['schedules']=navi_bundle.schedules_export(c['jobs'])
+ if 'layouts' in parts:out['layouts']=text_layouts_export(load_text_layouts())
+ if 'recipes' in parts:out['recipes']=join_recipes_export(load_join_recipes())
+ return out
+
+@app.get('/api/bundle/info')
+def bundle_info():
+ """いま持ち出せるものと、その件数。画面が選ばせるために使う。"""
+ c=load()
+ counts={'jobs':len(c['jobs']),
+         'schedules':sum(len(j.get('schedules') or []) for j in c['jobs']),
+         'layouts':len(load_text_layouts()),'recipes':len(load_join_recipes())}
+ return jsonify(ok=True,parts=[{'part':p,'label':navi_bundle.PART_LABEL[p],'file':navi_bundle.PART_FILE[p],
+                                'count':counts.get(p,0)} for p in navi_bundle.PARTS],counts=counts)
+
+@app.get('/api/bundle/export')
+def bundle_export():
+ """選んだものをZIPで持ち出す。1つだけ選べば、それが個別の持ち出しになる。"""
+ parts=navi_bundle.wanted_parts(request.args.get('parts'))
+ if not parts:return jsonify(ok=False,error='持ち出すものを1つ以上選んでください'),400
+ payloads=_bundle_payloads(parts)
+ blob,manifest=navi_bundle.build_zip(payloads,app_version=APP_VERSION)
+ stamp=datetime.now().strftime('%Y%m%d_%H%M%S')
+ # 1つだけなら、その名前で。中身が名前から分かるほうが、あとで探しやすい。
+ label=navi_bundle.PART_LABEL[parts[0]] if len(parts)==1 else '登録内容'
+ name=f'DataRelay_{label}_{stamp}.zip'
+ log.info('BUNDLE_EXPORT parts=%s counts=%s size=%s file=%s',parts,manifest.get('counts'),len(blob),name)
+ r=send_file(io.BytesIO(blob),as_attachment=True,download_name=name,mimetype='application/zip')
+ r.headers['Cache-Control']='no-store'
+ return r
+
+def _import_layouts(payload):
+ layouts,bad=text_layouts_import(payload)
+ have={x['name']:x['id'] for x in load_text_layouts()}
+ added=[];replaced=[]
+ for l in layouts:
+  if l['name'] in have:l['id']=have[l['name']];replaced.append(l['name'])
+  else:added.append(l['name'])
+  save_text_layout(l)
+ return {'added':added,'replaced':replaced,'skipped':bad}
+
+def _import_recipes(payload):
+ recipes,bad=join_recipes_import(payload)
+ have={x['name']:x['id'] for x in load_join_recipes()}
+ added=[];replaced=[]
+ for r in recipes:
+  if r['name'] in have:r['id']=have[r['name']];replaced.append(r['name'])
+  else:added.append(r['name'])
+  save_join_recipe(r)
+ return {'added':added,'replaced':replaced,'skipped':bad}
+
+def _merge_jobs(c,items):
+ """名前で突き合わせて、対象を足す・置き換える。ここに無い対象は消さない。"""
+ lay={x['name']:x['id'] for x in load_text_layouts()}
+ rec={x['name']:x['id'] for x in load_join_recipes()}
+ added=[];replaced=[];notes=[]
+ for x in items:
+  j=dict(x);name=str(j.get('name') or '')
+  # 読取マスタ・結合マスタは名前で結び直す（idは環境ごとに違う）。
+  ln=str(j.pop('layout_name','') or '');rn=str(j.pop('recipe_name','') or '')
+  if ln:
+   j['layout_id']=lay.get(ln,'')
+   if ln not in lay:notes.append(f'「{name}」が使う読取マスタ「{ln}」がこのPCにありません')
+  if rn:
+   j['recipe_id']=rec.get(rn,'')
+   if rn not in rec:notes.append(f'「{name}」が使う結合マスタ「{rn}」がこのPCにありません')
+  old=next((y for y in c['jobs'] if y.get('name')==name),None)
+  if old:
+   # 予定は別に持ち込むもの。対象だけを入れ替えるときに消さない。
+   j['id']=old.get('id');j['schedules']=old.get('schedules') or []
+   c['jobs'][c['jobs'].index(old)]=j;replaced.append(name)
+  else:
+   j['id']=uuid.uuid4().hex;j.setdefault('schedules',[])
+   c['jobs'].append(j);added.append(name)
+ return {'added':added,'replaced':replaced,'notes':notes}
+
+def _merge_schedules(c,items):
+ """対象の名前で結び直して、予定を入れ替える。"""
+ applied=[];missing=[]
+ for x in items:
+  name=x['job_name'];j=next((y for y in c['jobs'] if y.get('name')==name),None)
+  if not j:missing.append(name);continue
+  j['schedules']=[dict(r,id=uuid.uuid4().hex) for r in x['schedules']]
+  applied.append(name)
+ return {'added':[],'replaced':applied,
+         'skipped':[f'「{n}」という対象がこのPCにありません（先に対象を持ち込んでください）' for n in missing]}
+
+@app.post('/api/bundle/import')
+def bundle_import():
+ """一式のZIPでも、部分のJSONでも受ける。持ち込む側に形式を選ばせない。
+
+ 同じ名前のものは置き換え、無いものは追加する。ここに入っていない登録は消さない
+ ―― 持ち込みで既にあるものが黙って消えるのが、いちばん困る壊れ方なので。
+ """
+ blob,fname=_uploaded()
+ if not blob:return jsonify(ok=False,error='ファイルが届いていません'),400
+ want=navi_bundle.wanted_parts(request.args.get('parts'))
+ if navi_bundle.looks_like_bundle(blob):
+  bodies,manifest,bad=navi_bundle.read_zip(blob)
+ else:
+  # 部分のJSONが単体で来た。印を見て、どの部分かを決める。
+  try:one=json.loads(blob.decode('utf-8-sig'))
+  except Exception as e:
+   return jsonify(ok=False,error=f'ZIPでもJSONでもありません: {e}'),400
+  part=navi_bundle.part_of_kind(one.get('kind') if isinstance(one,dict) else '')
+  if not part:
+   return jsonify(ok=False,error='DataRelay の持ち出しファイルではありません'),400
+  bodies={part:one};manifest={};bad=[]
+ bodies={p:v for p,v in bodies.items() if p in want}
+ if not bodies:
+  return jsonify(ok=False,error='／'.join(bad) or '取り込めるものが入っていません'),400
+ result={};notes=list(bad)
+ # 順番が要る。対象は読取マスタ・結合マスタを名前で引き、予定は対象を名前で引く。
+ with settings_sync_lock:
+  if 'layouts' in bodies:result['layouts']=_import_layouts(bodies['layouts'])
+  if 'recipes' in bodies:result['recipes']=_import_recipes(bodies['recipes'])
+  if 'jobs' in bodies or 'schedules' in bodies:
+   c=load()
+   if 'jobs' in bodies:
+    items,jbad=navi_bundle.jobs_import(bodies['jobs'])
+    r=_merge_jobs(c,items);r['skipped']=jbad;notes+=r.pop('notes')
+    result['jobs']=r
+   if 'schedules' in bodies:
+    items,sbad=navi_bundle.schedules_import(bodies['schedules'])
+    r=_merge_schedules(c,items);r['skipped']=(r.get('skipped') or [])+sbad
+    result['schedules']=r
+   save(c)
+ log.info('BUNDLE_IMPORT parts=%s 結果=%s 覚書=%s',list(bodies),
+          {p:{'added':len(v.get('added') or []),'replaced':len(v.get('replaced') or [])} for p,v in result.items()},len(notes))
+ return jsonify(ok=True,parts=list(bodies),result=result,notes=notes,
+                summary=navi_bundle.summary_text(result),
+                exported_at=(manifest or {}).get('exported_at',''),
+                app_version=(manifest or {}).get('app_version',''))
 
 @app.post('/api/join-source')
 def join_source_probe():

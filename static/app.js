@@ -1271,7 +1271,7 @@ function bindV29LogWorkspace(){['log-filter-text','log-filter-kind','log-filter-
 bindV29LogWorkspace();
 
 /* V30: categorized settings navigation and in-app version management */
-function bindSettingsNav(){$$('#settings-nav .settings-navbtn').forEach(b=>b.onclick=()=>{$$('#settings-nav .settings-navbtn').forEach(x=>x.classList.remove('on'));b.classList.add('on');$$('.settings-pane').forEach(x=>x.classList.remove('on'));document.querySelector(`.settings-pane[data-cat="${b.dataset.cat}"]`)?.classList.add('on');if(b.dataset.cat==='docs')loadDocs();if(b.dataset.cat==='conn')refreshMachinePaths(0)})}
+function bindSettingsNav(){$$('#settings-nav .settings-navbtn').forEach(b=>b.onclick=()=>{$$('#settings-nav .settings-navbtn').forEach(x=>x.classList.remove('on'));b.classList.add('on');$$('.settings-pane').forEach(x=>x.classList.remove('on'));document.querySelector(`.settings-pane[data-cat="${b.dataset.cat}"]`)?.classList.add('on');if(b.dataset.cat==='docs')loadDocs();if(b.dataset.cat==='conn')refreshMachinePaths(0);if(b.dataset.cat==='bundle')loadBundleInfo()})}
 /* ============================================================
    仕様書ビュー。同梱のMarkdownをアプリの中で読む。
    外部ライブラリは使えないので、この文書に実際に出てくる記法だけを自前で描く
@@ -3714,6 +3714,89 @@ function bindMasterIO(kind,ids){
  };
 }
 bindMasterIO('layout',{export:'lay-export',import:'lay-import',file:'lay-file',format:'lay-format'});
+
+/* ---- 登録内容の持ち出し・持ち込み（一式／部分） -----------------------------
+   別のPCへ移すとき、新しく組むとき、控えを取っておくとき。画面を見ながら打ち直すのは
+   時間がかかるうえに必ず取りこぼす。どれを入れるかは選べる ―― 1つだけ選べば、それが
+   個別の書き出しになる。取り込む側では形式を選ばせない（中身を見れば分かる）。 */
+const BUNDLE_PARTS=['jobs','schedules','layouts','recipes'];
+let bundleInfo=null;
+async function loadBundleInfo(){
+ try{bundleInfo=await fetch('/api/bundle/info',{cache:'no-store'}).then(r=>r.json())}catch{bundleInfo=null}
+ renderBundle();
+}
+function bundleChosen(){
+ return BUNDLE_PARTS.filter(p=>$('#bundle-part-'+p)?.checked);
+}
+function renderBundle(){
+ let box=$('#bundle-parts');if(!box)return;
+ let parts=bundleInfo?.parts||[];
+ if(!parts.length){box.innerHTML='<p class="hint">持ち出せるものを読み込めませんでした</p>';return}
+ /* 既に選ばれているものは覚えておく。描き直しで選択が飛ぶと、選び直しになる。 */
+ let had=new Set(bundleChosen());
+ let first=!box.dataset.ready;
+ box.innerHTML=parts.map(p=>`<label class="bundle-part${p.count?'':' is-empty'}">`
+  +`<input type="checkbox" id="bundle-part-${p.part}" data-part="${p.part}"`
+  +`${(first?p.count>0:had.has(p.part))?' checked':''}${p.count?'':' disabled'}>`
+  +`<span><b>${E(p.label)}</b><small>${p.count}件 / ${E(p.file)}</small></span></label>`).join('');
+ box.dataset.ready='1';
+ box.querySelectorAll('input[type=checkbox]').forEach(x=>x.onchange=updateBundleNote);
+ updateBundleNote();
+}
+function updateBundleNote(){
+ let chosen=bundleChosen(),n=$('#bundle-export-note'),b=$('#bundle-export');
+ let total=chosen.reduce((a,p)=>a+((bundleInfo?.counts||{})[p]||0),0);
+ if(b)b.disabled=!chosen.length;
+ if(n)n.textContent=chosen.length?`${chosen.length}種類 / 合計${total}件`:'出すものを選んでください';
+ /* 右上の札は「このPCに何が登録されているか」。選んだ数ではなく、あるものの数を出す。 */
+ let all=$('#bundle-total');
+ if(all){
+  let c=bundleInfo?.counts||{};
+  all.textContent=bundleInfo?`対象${c.jobs||0} / 予定${c.schedules||0} / 読取${c.layouts||0} / 結合${c.recipes||0}`:'読み込めません';
+ }
+}
+function bundleResult(d){
+ let box=$('#bundle-result');if(!box)return;
+ const LABEL={jobs:'対象の登録',schedules:'自動実行の予定',layouts:'読取マスタ',recipes:'結合マスタ'};
+ let rows=BUNDLE_PARTS.filter(p=>d.result&&d.result[p]).map(p=>{
+  let r=d.result[p],add=(r.added||[]).length,rep=(r.replaced||[]).length,skip=(r.skipped||[]).length;
+  return `<tr><th>${E(LABEL[p])}</th><td>追加 ${add}</td><td>置き換え ${rep}</td>`
+   +`<td class="${skip?'bundle-warn':''}">${skip?'読めなかったもの '+skip:'—'}</td></tr>`;
+ }).join('');
+ let notes=[...(d.notes||[]),...BUNDLE_PARTS.flatMap(p=>((d.result||{})[p]||{}).skipped||[])];
+ box.innerHTML=`<p class="bundle-sum"><b>取り込みました</b>${d.exported_at?`<small>書き出し ${E(d.exported_at)}${d.app_version?' / 版 '+E(d.app_version):''}</small>`:''}</p>`
+  +`<table class="bundle-table">${rows}</table>`
+  +(notes.length?`<details class="bundle-notes"><summary>気をつけること ${notes.length}件</summary><ul>${notes.map(x=>`<li>${E(x)}</li>`).join('')}</ul></details>`:'');
+ box.hidden=false;
+}
+async function importBundle(file){
+ if(!file)return;
+ let body=await file.arrayBuffer();
+ let d=null;
+ try{d=await fetch('/api/bundle/import',{method:'POST',headers:{'Content-Type':'application/octet-stream'},body}).then(r=>r.json())}catch{}
+ if(!d||!d.ok)return toast(d?.error||'取り込めませんでした');
+ /* 取り込んだものは、画面のどこからでもすぐ見えるようにする。 */
+ layoutCache=[];joinCache=[];
+ await init();await loadBundleInfo();
+ bundleResult(d);
+ toast('取り込みました: '+(d.summary||''));
+}
+function bindBundleIO(){
+ let ex=$('#bundle-export'),im=$('#bundle-import'),fi=$('#bundle-file'),drop=$('#bundle-drop');
+ if(ex)ex.onclick=()=>{
+  let chosen=bundleChosen();
+  if(!chosen.length)return toast('出すものを選んでください');
+  location.href='/api/bundle/export?parts='+encodeURIComponent(chosen.join(','));
+ };
+ if(im)im.onclick=()=>fi?.click();
+ if(fi)fi.onchange=async e=>{let f=e.target.files&&e.target.files[0];e.target.value='';await importBundle(f)};
+ if(drop){
+  ['dragenter','dragover'].forEach(t=>drop.addEventListener(t,e=>{e.preventDefault();drop.classList.add('is-over')}));
+  ['dragleave','drop'].forEach(t=>drop.addEventListener(t,e=>{e.preventDefault();drop.classList.remove('is-over')}));
+  drop.addEventListener('drop',async e=>{await importBundle(e.dataTransfer?.files?.[0])});
+ }
+}
+bindBundleIO();
 
 /* 一覧の「入力」欄。RNEはRNE名、固定長テキストはファイル名と読取マスタを出す。
    ここを1つの書き方で済ませると、テキストの行にだけ空欄が並ぶ。 */
