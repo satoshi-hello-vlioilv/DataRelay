@@ -3,7 +3,9 @@ from pathlib import Path
 BASE=Path(__file__).resolve().parent.parent; LOCAL_ROOT=Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'DataRelay'; INFO=LOCAL_ROOT/'runtime'/'app_instance.json'; URL='http://127.0.0.1:5031'
 def req(path,method='GET'):
  try:
-  with urllib.request.urlopen(urllib.request.Request(URL+path,method=method),timeout=1.2) as r:return r.status,r.read().decode()
+  # 自分自身への問い合わせはプロキシを通さない（通すと、動いていても応答なしになる）。
+  op=urllib.request.build_opener(urllib.request.ProxyHandler({}))
+  with op.open(urllib.request.Request(URL+path,method=method),timeout=1.2) as r:return r.status,r.read().decode()
  except:return 0,''
 def cmdline(pid):
  try:return subprocess.check_output(['powershell','-NoProfile','-Command',f"(Get-CimInstance Win32_Process -Filter 'ProcessId={int(pid)}').CommandLine"],text=True,encoding='utf-8',errors='replace',timeout=5).strip()

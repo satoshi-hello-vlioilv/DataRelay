@@ -10,7 +10,9 @@ import urllib.request
 from pathlib import Path
 
 BASE = Path(__file__).resolve().parent.parent
-URL = 'http://127.0.0.1:5031'
+HOST = '127.0.0.1'
+PORT = 5031
+URL = f'http://{HOST}:{PORT}'
 # VBSランチャーが起動待ちモーダル(loading.html)を開き、準備完了で自動的にアプリへ遷移する。
 # その場合はサーバー側でブラウザーを二重に開かない（NAVI_BROWSER_BY_VBS=1 で抑止）。
 BROWSER_BY_VBS = os.environ.get('NAVI_BROWSER_BY_VBS') == '1'
@@ -38,12 +40,50 @@ def log(message: str) -> None:
     with LOG.open('a', encoding='utf-8') as f:
         f.write(time.strftime('%Y-%m-%d %H:%M:%S ') + message + '\n')
 
+APP_NAMES = ('DataRelay', 'SymfoNaviDataHub', 'NaviToSQLite')
+_OPENER = None
+probe_error = ''
+
+def direct_opener():
+    """自分自身への問い合わせを、社内プロキシへ回させないための口。
+
+    urllib は Windows のインターネットオプション（レジストリ）のプロキシ設定を読む。
+    例外一覧に 127.0.0.1 が入っていない端末では、自分自身への問い合わせまでプロキシへ
+    送られ、必ず失敗する。VBS 側の確認は MSXML2.ServerXMLHTTP を使っていてこの設定を
+    読まないので、同じPCの同じ瞬間に「VBSは応答あり／Pythonは応答なし」という食い違いが
+    起きる（実測: vbs_launcher.log は SERVER_READY、launcher.log は確認できず）。
+    ProxyHandler({}) を明示して、この経路だけは必ず直に出す。
+    """
+    global _OPENER
+    if _OPENER is None:
+        _OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    return _OPENER
+
 def probe(timeout: float = 0.8) -> bool:
+    global probe_error
     try:
-        with urllib.request.urlopen(URL + '/api/instance', timeout=timeout) as r:
+        with direct_opener().open(URL + '/api/instance', timeout=timeout) as r:
             data = json.loads(r.read().decode('utf-8'))
-            return r.status == 200 and data.get('app') in ('DataRelay','SymfoNaviDataHub','NaviToSQLite')
-    except Exception:
+            if r.status == 200 and data.get('app') in APP_NAMES:
+                probe_error = ''
+                return True
+            probe_error = f'status={r.status} app={data.get("app")!r}'
+            return False
+    except Exception as e:
+        # 理由を握りつぶすと「なぜ確認できないのか」が二度と分からない。最後の1件だけ残す。
+        probe_error = f'{type(e).__name__}: {e}'
+        return False
+
+def port_listening(timeout: float = 0.5) -> bool:
+    """5031番で誰かが待ち受けているか。HTTPクライアントの設定に一切左右されない。
+
+    「応答を確認できない」と「動いていない」は別物。止めてよいかを決めるのはこちら。
+    """
+    import socket
+    try:
+        with socket.create_connection((HOST, PORT), timeout):
+            return True
+    except OSError:
         return False
 
 def open_browser_best_effort() -> bool:
@@ -136,7 +176,14 @@ def main() -> int:
                         open_browser_best_effort()
                     return 0
                 time.sleep(0.25)
-            log('多重起動ロックは存在しますが既存サーバーが応答しません。起動を中止します。')
+            if port_listening():
+                log('既存サーバーはHTTPで確認できませんが ' + URL + ' で待ち受けています。'
+                    f'既存インスタンスとして扱います。 last_probe_error={probe_error}')
+                if not BROWSER_BY_VBS:
+                    open_browser_best_effort()
+                return 0
+            log('多重起動ロックは存在しますが既存サーバーが応答しません。起動を中止します。'
+                f' last_probe_error={probe_error}')
             print('既存の起動処理が残っています。タスクマネージャーでこのアプリのPythonを終了するか、停止バッチを実行してください。')
             return 2
         if probe():
@@ -165,10 +212,23 @@ def main() -> int:
                 log(f'アプリサーバーが起動前に終了 returncode={proc.returncode}')
                 break
             time.sleep(0.05 if time.perf_counter() - spawn_started < 4 else 0.25)
-        # 起動を確認できないまま諦めるときは、起こしたサーバーも片付ける。置き去りにすると、
-        # ポートを掴んだまま誰も知らないプロセスが残る（次の起動もできなくなる）。
+        # ここで無条件に停止していた（1.90.0〜1.92.0）。そのため、実際には動いている
+        # サーバーを起動40秒後に必ず殺していた ―― 画面には「サーバーとの接続が切れました」
+        # とだけ出るので、アプリが突然落ちたようにしか見えない。
+        # 「応答を確認できない」と「動いていない」は別物。止める前に待ち受けを直接見る。
+        if proc is not None and proc.poll() is None and port_listening():
+            server_ready = True
+            log('HTTPでの起動確認はできませんでしたが、' + URL + ' で待ち受けています。'
+                'サーバーは動いているので停止しません。'
+                f' last_probe_error={probe_error}')
+            if not BROWSER_BY_VBS:
+                open_browser_best_effort()
+            return 0
+        # 待ち受けも無い＝本当に立ち上がっていない。置き去りにすると、誰も知らないプロセスが
+        # ポートを掴んだまま残る（次の起動もできなくなる）ので、ここでだけ片付ける。
         if proc is not None and proc.poll() is None:
-            log('起動確認できないまま制限時間に達しました。起こしたサーバーを停止します。')
+            log('起動確認できないまま制限時間に達しました（待ち受けもありません）。'
+                f'起こしたサーバーを停止します。 last_probe_error={probe_error}')
             try:
                 proc.terminate(); proc.wait(timeout=5)
             except Exception:

@@ -4676,10 +4676,14 @@ def self_probe():
  分かると、消えた時刻を挟み込める）。
  """
  import urllib.request
+ # 自分自身への問い合わせをプロキシへ回させない。urllib は Windows の
+ # インターネットオプションのプロキシ設定を読むので、例外一覧に 127.0.0.1 が
+ # 入っていない端末では、生きているのに「答えない」と判定してしまう。
+ opener=urllib.request.build_opener(urllib.request.ProxyHandler({}))
  time.sleep(30); miss=0; last_alive=0.0
  while not stop_event.wait(30):
   try:
-   with urllib.request.urlopen(f'http://{HOST}:{PORT}/api/instance',timeout=5) as r:r.read(200)
+   with opener.open(f'http://{HOST}:{PORT}/api/instance',timeout=5) as r:r.read(200)
    if miss:log.info('APP_SELF_PROBE_RECOVERED after_miss=%s',miss)
    miss=0
    if time.time()-last_alive>=600:
