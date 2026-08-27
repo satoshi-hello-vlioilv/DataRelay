@@ -4587,23 +4587,25 @@ def heartbeat_watchdog():
    # 明示的な終了通知が無いまま消えたタブ(ブラウザー強制終了・通信断など)を「常時接続中」と誤認すると、
    # 二度と自動終了できなくなる。最後の受信からの経過でも生存を判定する。
    active=[(cid,v) for cid,v in clients.items() if not v.get('closing_at') and now-float(v.get('last_seen') or 0)<HEARTBEAT_TIMEOUT_SECONDS]
-   # 期限切れの記録を落とす。掃除は心拍を受け取ったときにしか走っていなかったので、
-   # 最後のタブが閉じたあとは誰も片付けず、記録が残ったままになっていた。
+   # 期限切れになった「閉じた記録」を落とす。掃除は心拍を受け取ったときにしか走って
+   # いなかったので、最後のタブが閉じたあとは誰も片付けず、記録が残ったままになっていた。
+   # 片付けるのは閉じた記録だけにする ―― 心拍が途切れているだけのタブは、生きている
+   # かもしれない（スリープ・タブの凍結・通信の瞬断）。消すと「1枚も無い」と誤って
+   # 数えることになる。そちらの掃除は、これまでどおり心拍を受け取ったときに行う。
    expired=[cid for cid,v in clients.items()
-            if (v.get('closing_at') and now-float(v.get('closing_at') or 0)>=HEARTBEAT_TIMEOUT_SECONDS)
-            or (not v.get('closing_at') and now-float(v.get('last_seen') or 0)>=HEARTBEAT_TIMEOUT_SECONDS*3)]
+            if v.get('closing_at') and now-float(v.get('closing_at') or 0)>=HEARTBEAT_TIMEOUT_SECONDS]
    if expired:
     with heartbeat_lock:
      for cid in expired:heartbeat_clients.pop(cid,None)
      remaining=len(heartbeat_clients)
     log.info('HEARTBEAT_CLIENTS_PRUNED source=watchdog count=%s remaining=%s',len(expired),remaining)
-   # 常駐に入った理由が消え、画面も戻ってこないなら終わる。閉じた記録に期限を付けた
-   # ぶん、この道が無いと「用事は済んだのに、誰にも見えないまま残る」ことになる。
-   if residency_state['active'] and not active and not residency_reason():
-    log.info('APP_RESIDENCY_ENDED reason=用事が済み画面も戻りませんでした action=python_exit')
-    flush_log();_flush_settings_on_exit('residency-ended');stop_event.set()
-    stop_tray_and_wait()
-    os._exit(0)
+   # 終わってよいと決めてよいのは、「閉じた」という明示の知らせが届いているときだけ。
+   # 1.90.0 では、常駐に入ったあと理由が消えた場合に、心拍が途切れているだけで
+   # 終了する道を足してしまった。スリープ・タブの凍結・通信の瞬断と見分けが付かない
+   # ので、タブを開いたまま待機しているだけでサーバーが落ちる（実際に落ちた）。
+   # 「心拍途絶だけでは終了しない」という下の約束と食い違っていたので、その道は外す。
+   # 常駐したまま残ることはあるが、そのときは通知領域にアイコンが出ていて、
+   # そこから開くことも終わらせることもできる（見えない常駐にはならない）。
    if closing and not active:
     ids=','.join(cid for cid,_ in closing)
     # 実行中・実行キューあり・自動実行の予定ありの場合は終了しない。ここで落とすと処理が中途半端に打ち切られ、
