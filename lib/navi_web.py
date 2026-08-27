@@ -20,7 +20,7 @@ app.py 側に残してある。あれは受け口の形をした本体の状態�
 """
 # send_file だけは本体が使っていないので、ここで直接受け取る。
 # jsonify / render_template / request は本体経由で来る（下の import）。
-import contextlib,io,shutil
+import contextlib,io,re,shutil
 from flask import send_file
 
 import app
@@ -1776,6 +1776,18 @@ def join_recipes_import_file():
 # 時間がかかるうえに必ず取りこぼす。決まり（どういう形で持ち出すか）は navi_bundle に
 # あり、ここはDBとの出し入れだけを受け持つ。
 
+def _safe_file_label(v,limit=60):
+ """対象の名前を、ファイル名に使える形へ。
+
+ 名前は人が付けるので、区切り記号も引用符も改行も入りうる。そのまま
+ Content-Disposition へ載せると、改行1つで書き出しが500になる（実測）。
+ 長さも押さえる ―― 名前が長いと、ヘッダーだけで数千文字になる。
+ """
+ t=re.sub(r'[\x00-\x1f\x7f]',' ',str(v or ''))
+ t=re.sub(r'[\\/:*?"<>|]','_',t)
+ t=' '.join(t.split())
+ return t[:limit] or '登録内容'
+
 def _layout_names():
  return {x['id']:x['name'] for x in load_text_layouts()}
 
@@ -1837,7 +1849,7 @@ def bundle_export():
   # 1件だけ選んだなら、その対象の名前で出す（フォルダーに並んだとき、開かずに分かる）。
   picked=[j['name'] for j in c['jobs'] if j['id'] in set(job_ids)]
   label=(picked[0] if len(picked)==1 else f'選んだ{len(picked)}件')
- name=f'DataRelay_{label}_{stamp}.zip'
+ name=f'DataRelay_{_safe_file_label(label)}_{stamp}.zip'
  log.info('BUNDLE_EXPORT parts=%s job_ids=%s counts=%s size=%s file=%s',parts,len(job_ids) or 'all',manifest.get('counts'),len(blob),name)
  r=send_file(io.BytesIO(blob),as_attachment=True,download_name=name,mimetype='application/zip')
  r.headers['Cache-Control']='no-store'
@@ -1864,10 +1876,20 @@ def _import_recipes(payload):
  return {'added':added,'replaced':replaced,'skipped':bad}
 
 def _merge_jobs(c,items):
- """名前で突き合わせて、対象を足す・置き換える。ここに無い対象は消さない。"""
+ """名前で突き合わせて、対象を足す・置き換える。ここに無い対象は消さない。
+
+ 同じ名前の対象は1つとは限らない（アプリは名前の重なりを止めていない）。
+ 名前で引くたびに先頭の1件を選んでいると、2件目も同じ相手に当たり、1件目の内容が
+ 上書きされて消える ―― 実測でも、同名2件を持ち出して戻すと片方の登録が失われた。
+ 一度当てた相手は使い切りにして、同じ名前のぶんは登録順に1件ずつ当てていく。
+ """
  lay={x['name']:x['id'] for x in load_text_layouts()}
  rec={x['name']:x['id'] for x in load_join_recipes()}
+ spare={}
+ for i,y in enumerate(c['jobs']):spare.setdefault(str(y.get('name') or ''),[]).append(i)
+ dup=sorted({n for n,v in spare.items() if len(v)>1})
  added=[];replaced=[];notes=[]
+ if dup:notes.append('同じ名前の対象が複数あります（'+'・'.join(dup[:5])+'）。名前で結び直すので、登録順に上から当てました')
  for x in items:
   j=dict(x);name=str(j.get('name') or '')
   # 読取マスタ・結合マスタは名前で結び直す（idは環境ごとに違う）。
@@ -1878,22 +1900,30 @@ def _merge_jobs(c,items):
   if rn:
    j['recipe_id']=rec.get(rn,'')
    if rn not in rec:notes.append(f'「{name}」が使う結合マスタ「{rn}」がこのPCにありません')
-  old=next((y for y in c['jobs'] if y.get('name')==name),None)
-  if old:
+  seats=spare.get(name) or []
+  if seats:
+   at=seats.pop(0);old=c['jobs'][at]
    # 予定は別に持ち込むもの。対象だけを入れ替えるときに消さない。
    j['id']=old.get('id');j['schedules']=old.get('schedules') or []
-   c['jobs'][c['jobs'].index(old)]=j;replaced.append(name)
+   c['jobs'][at]=j;replaced.append(name)
   else:
    j['id']=uuid.uuid4().hex;j.setdefault('schedules',[])
    c['jobs'].append(j);added.append(name)
  return {'added':added,'replaced':replaced,'notes':notes}
 
 def _merge_schedules(c,items):
- """対象の名前で結び直して、予定を入れ替える。"""
+ """対象の名前で結び直して、予定を入れ替える。
+
+ 対象と同じで、同じ名前が複数あることがある。名前で引くたびに先頭を選ぶと、
+ 2件目の予定も1件目へ入り、片方の予定が消える。使い切りで1件ずつ当てる。
+ """
+ spare={}
+ for i,y in enumerate(c['jobs']):spare.setdefault(str(y.get('name') or ''),[]).append(i)
  applied=[];missing=[]
  for x in items:
-  name=x['job_name'];j=next((y for y in c['jobs'] if y.get('name')==name),None)
-  if not j:missing.append(name);continue
+  name=x['job_name'];seats=spare.get(name) or []
+  if not seats:missing.append(name);continue
+  j=c['jobs'][seats.pop(0)]
   j['schedules']=[dict(r,id=uuid.uuid4().hex) for r in x['schedules']]
   applied.append(name)
  return {'added':[],'replaced':applied,
