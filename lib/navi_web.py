@@ -40,6 +40,7 @@ from app import (
     _viewer_output_path, _write_api_diag_cache, active_workers, active_workers_lock, alerts,
     alerts_lock, api_readiness, axis_balance_scores, blocked_row_axes, calendar,
     settings_sync_lock, settings_revision, SETTINGS_DB,
+    run_api_diag_worker,
     cancel_requested, check_path_item, clamp_parallel_lines, clear_row_axis_blocks,
     column_cache_state, column_weights, command_queue, command_queue_lock, compute_period,
     creds, csv, datetime, dll_diagnostic_issues, dll_search_roots, docs_dir, duplicate_columns,
@@ -993,8 +994,13 @@ def navigator_api_status():
    log.info('API_DIAG cache_hit=1 ok=%s age=%ss dll=%s dll_bits=%s',cached.get('ok'),cached.get('cache_age_seconds','-'),cached.get('dll'),cached.get('dll_bits'));_log_api_exports(cached.get('dll'),cached.get('exports'),cached.get('exports_bound'))
    cached=dict(cached);cached['cached']=True;cached['requirement']=_dll_requirement(c);cached['search_roots']=[str(x) for x in dll_search_roots(c)];cached['issues']=dll_diagnostic_issues(cached.get('attempts') or [],cached.get('python_bits'),cached.get('exports'),cached.get('exports_bound'),cached['requirement']);cached['readiness']=api_readiness(cached);return jsonify(cached)
  try:
-  from navigator_api import NavigatorApi
-  started=time.perf_counter();api=NavigatorApi(resolve_path(c.get('symnavi_exe','')),log,resolve_path(c.get('navigator_api_dll')) if c.get('navigator_api_dll') else None,base_dir=BASE,search_roots=dll_search_roots(c));info=api.info();api.close();info['elapsed']=round(time.perf_counter()-started,3);info['cached']=False;info['issues']=dll_diagnostic_issues(info.get('attempts') or [],info.get('python_bits'),info.get('exports'),info.get('exports_bound'),info.get('requirement'));info['readiness']=api_readiness(info);log.info('API_DIAG cache_hit=0 elapsed=%.3fs dll=%s dll_bits=%s attempts=%s selection=%s',info.get('elapsed'),info.get('dll'),info.get('dll_bits'),len(info.get('attempts') or []),info.get('selection_reason'));_log_api_exports(info.get('dll'),info.get('exports'),info.get('exports_bound'));_write_api_diag_cache(info,c);return jsonify(info)
+  # DLLの読み込みは本体プロセスでは行わない。WinDLL(SymNaviA.dll)は
+  # 読み込み中にアクセス違反で落ちることがあり、そのときPythonの例外は発生せず、
+  # Flaskごとプロセスが消える（画面には「サーバーとの接続が切れました」だけが出る）。
+  # 独立プロセスに任せれば、落ちても本体は生き残り、理由も残せる。
+  info=run_api_diag_worker(c)
+  if not info.get('ok'):raise RuntimeError(info.get('error') or 'SymNaviA.dllを読み込めません')
+  info['cached']=False;info['issues']=dll_diagnostic_issues(info.get('attempts') or [],info.get('python_bits'),info.get('exports'),info.get('exports_bound'),info.get('requirement'));info['readiness']=api_readiness(info);log.info('API_DIAG cache_hit=0 elapsed=%.3fs dll=%s dll_bits=%s attempts=%s selection=%s',info.get('elapsed'),info.get('dll'),info.get('dll_bits'),len(info.get('attempts') or []),info.get('selection_reason'));_log_api_exports(info.get('dll'),info.get('exports'),info.get('exports_bound'));_write_api_diag_cache(info,c);return jsonify(info)
  except Exception as e:
   exports=[];exports_dll=''
   try:
