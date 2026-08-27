@@ -3113,6 +3113,67 @@ def run_inspect_worker(job,cfg,user,pw,server,want,timeout=180):
   try:shutil.rmtree(work,ignore_errors=True)
   except Exception:pass
 
+def process_api_diag(cfg):
+ """DLLを読み込んで診断結果だけを返す。ワーカープロセスから呼ばれる。
+
+ SymNaviA.dllの読み込み(WinDLL/LoadLibrary)そのものが異常終了することがある。
+ 実測: 待機中に画面の設定を触っただけで、LoadLibrary中のアクセス違反により
+ Flask本体ごとプロセスが即死した（crash.log: Windows fatal exception: access violation /
+ ctypes _load_library / process_request_thread）。ネイティブ側の異常はPythonの例外に
+ ならないため、本体プロセスで読み込むかぎり防ぎようがない。診断のためのDLL読み込みは
+ ここに閉じ込め、本体プロセスでは決して読み込まない。
+ """
+ from navigator_api import NavigatorApi
+ started=time.perf_counter();api=None
+ try:
+  api=NavigatorApi(resolve_path(cfg.get('symnavi_exe','')),log,
+                   resolve_path(cfg.get('navigator_api_dll')) if cfg.get('navigator_api_dll') else None,
+                   base_dir=BASE,search_roots=dll_search_roots(cfg))
+  info=api.info();info['ok']=True
+ except Exception as e:
+  info={'ok':False,'error':str(e)}
+ finally:
+  if api:
+   try:api.close()
+   except Exception:pass
+ info['elapsed']=round(time.perf_counter()-started,3)
+ return info
+
+def run_api_diag_worker(cfg,timeout=90):
+ """DLL診断を独立プロセスで行う。DLLの読み込みで落ちても本体は生き残る。
+
+ 落ちたことは returncode で分かる。結果が書かれていなければ「読み込めない」と同じ扱いにする。
+ """
+ work=LOCAL_RUNTIME/('apidiag_'+uuid.uuid4().hex[:8]);work.mkdir(parents=True,exist_ok=True)
+ try:
+  pp=work/'payload.json';pp.write_text(json.dumps({'diag':True,'cfg':cfg},ensure_ascii=False),encoding='utf-8')
+  rp=work/'result.json'
+  env=os.environ.copy();env['NAVI_WORKER_RESULT']=str(rp);env['NAVI_WORKER_LINE']='API診断'
+  env['NAVI_WORKER_SPAWN_AT']=repr(time.time())
+  flags=getattr(subprocess,'CREATE_NO_WINDOW',0)
+  t=time.perf_counter()
+  try:proc=subprocess.Popen([sys.executable,str(BASE/'lib'/'api_worker.py'),str(pp)],cwd=str(BASE),env=env,creationflags=flags)
+  except Exception as e:
+   log.warning('API_DIAG_WORKER_SPAWN_FAILED error=%s',e)
+   return {'ok':False,'error':f'診断プロセスを起動できませんでした: {e}'}
+  try:rc=proc.wait(timeout=timeout)
+  except subprocess.TimeoutExpired:
+   proc.kill();log.warning('API_DIAG_WORKER_TIMEOUT timeout=%ss',timeout)
+   return {'ok':False,'error':f'DLLの診断が{timeout}秒を超えたため中止しました'}
+  res=_read_worker_json(rp,None)
+  log.info('API_DIAG_WORKER returncode=%s ok=%s elapsed=%.2fs',rc,bool(res and res.get('ok')),time.perf_counter()-t)
+  if res is None:
+   # 結果を書く前に落ちた＝DLL側での異常終了。本体はここで生き残る。
+   log.warning('API_DIAG_WORKER_CRASHED returncode=%s note=DLLの読み込みでプロセスが落ちました',rc)
+   return {'ok':False,'crashed':True,'returncode':rc,
+           'error':f'SymNaviA.dllの読み込み中に診断プロセスが異常終了しました（終了コード {rc}）。'
+                   'DLL本体か、同じフォルダーの依存DLL／Visual C++ ランタイムが壊れている可能性があります。'
+                   'アプリの動作には影響しません。'}
+  return res
+ finally:
+  try:shutil.rmtree(work,ignore_errors=True)
+  except Exception:pass
+
 # ---- 実行中のラインを動かし続ける ----------------------------------------
 # 問い合わせ実行(NaviExecuteCatalog)と保存(NaviSaveData)は、DLLの中で数十秒止まる。
 # その間、呼び出した側は1行も進めないので、画面は固まって見える。

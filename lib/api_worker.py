@@ -21,6 +21,12 @@ def atomic_json(path,data):
 
 def main():
     payload=json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
+    if payload.get('diag'):
+        # DLLの診断。読み込み(LoadLibrary)そのものが落ちることがあるので、ここに閉じ込める。
+        from app import process_api_diag
+        result=process_api_diag(payload['cfg'])
+        atomic_json(os.environ['NAVI_WORKER_RESULT'],result)
+        return 0 if result.get('ok') else 2
     if payload.get('inspect'):
         # RNEの読み取り。DLL側で落ちても本体プロセスを巻き込まないよう、ここに閉じ込める。
         from app import process_catalog_inspect

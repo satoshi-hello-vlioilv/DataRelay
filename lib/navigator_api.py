@@ -365,7 +365,13 @@ class NavigatorApi:
             try:
                 if cp.is_absolute() and cp.parent.is_dir() and hasattr(os,'add_dll_directory'):
                     self.dll_dirs.append(os.add_dll_directory(str(cp.parent)))
-                self.dll=ctypes.WinDLL(str(cp));self.dll_path=str(cp);self.attempts.append({'path':str(cp),'exists':cp.is_file(),'dll_bits':bits,'python_bits':pybits,'result':'loaded'});break
+                # ネイティブの読み込みは、落ちても例外にならずプロセスごと消える。
+                # 始めたことを先に残しておけば、BEGINだけあってOKが無い＝LoadLibrary中に
+                # 落ちた、と後から必ず分かる。crash.logが採れない端末でもここで足が付く。
+                self._trace('API_DLL_LOAD_BEGIN path=%s pid=%s worker=%s',cp,os.getpid(),os.environ.get('NAVI_WORKER_MODE') or '0')
+                self.dll=ctypes.WinDLL(str(cp));self.dll_path=str(cp);self.attempts.append({'path':str(cp),'exists':cp.is_file(),'dll_bits':bits,'python_bits':pybits,'result':'loaded'})
+                self._trace('API_DLL_LOAD_OK path=%s',cp)
+                break
             except OSError as e:
                 detail=str(e)
                 if cp.is_file():
@@ -380,6 +386,11 @@ class NavigatorApi:
             if req['runtime_missing']:hint+=' / Visual C++ ランタイム不足: '+', '.join(req['runtime_missing'])
             raise RuntimeError('SymNaviA.dllを読み込めません。'+hint+' | '+' | '.join(errors))
         self._bind();self.opened=False;self.catalog=0
+    def _trace(self,fmt,*args):
+        """読み込みの足跡。logger が無いときは黙る（診断のためにここで落ちては本末転倒）。"""
+        try:
+            if self.log:self.log.info(fmt,*args)
+        except Exception:pass
     def _bind(self):
         # Navigator APIのInteger/Longは32bit。Windowsではc_longも32bitだが、幅の前提を残さないため
         # c_int32を明示する（仕様書の推奨に合わせた）。
