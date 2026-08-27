@@ -130,6 +130,10 @@ def defer_com_reference(label,obj,limit=20):
 # 設定変更(save)時のみローカル→マスターへ書き戻す（バックグラウンド、非ブロッキング）。
 # 運用データ(実行履歴・スケジュール状態)は都度BOXへ書かず、変更時と終了時にまとめて反映する。
 settings_sync_lock=threading.RLock(); _settings_initialized=False; _settings_dirty=False
+# BOX上のマスターへの読み書きは、こちらの錠で直列化する。設定の錠（settings_sync_lock）で
+# 囲ってしまうと、クラウド同期がつかえている間じゅう画面からの保存が全部待たされる
+# ―― 共有の置き場所は、待たされる時間の見当が付かない。手元だけで済む仕事と分ける。
+master_write_lock=threading.Lock()
 # 起動時に取り込んだマスターの版。書き戻すときに「自分が見ていたより先へ進んでいないか」を見る。
 _settings_pulled_revision=0
 
@@ -168,36 +172,55 @@ def settings_revision(path):
 def _mark_settings_dirty():
  global _settings_dirty; _settings_dirty=True
 def flush_local_to_master(reason=''):
- # ローカル作業DB → BOX上マスター へ原子的に書き戻す。書き込み中のコピー破損を避けるためロックで保護する。
+ """ローカル作業DB → BOX上マスター へ原子的に書き戻す。
+
+ 二段に分ける。手元の写しを取るところだけ設定の錠を持ち、共有の置き場所（BOX）への
+ 読み書きは錠を放してから行う。以前はマスターを開いて版を読むところまで設定の錠の
+ 中でやっていたので、クラウド同期がつかえていると、その間じゅう画面からの保存が
+ すべて待たされた（共有の置き場所は、待たされる時間の見当が付かない）。
+ """
  global _settings_dirty
- with settings_sync_lock:
-  try:
+ stage=None
+ try:
+  # ---- 手元だけで済む仕事。錠は短く持つ。 ----
+  with settings_sync_lock:
    if not SETTINGS_DB.is_file():return False
    if not sqlite_readable(SETTINGS_DB):
     log.error('SETTINGS_FLUSH_ABORTED reason=%s detail=手元の控えが壊れているため書き戻しません',reason);return False
+   lrev=settings_revision(SETTINGS_DB)
+   stage=SETTINGS_DB.with_name(f'{SETTINGS_DB.stem}.flush.{os.getpid()}.{threading.get_ident()}.tmp')
+   shutil.copy2(SETTINGS_DB,stage)
+  # ---- ここから先は共有の置き場所。設定の錠は持たない。 ----
+  with master_write_lock:
+   _t=time.perf_counter()
    MASTER_SETTINGS_DB.parent.mkdir(parents=True,exist_ok=True)
    # 別のPCが後から入れた変更を、こちらの丸ごとコピーで黙って消さない。
-   mrev=settings_revision(MASTER_SETTINGS_DB) if MASTER_SETTINGS_DB.is_file() else 0
-   lrev=settings_revision(SETTINGS_DB)
    # 相手のほうが先へ進んでいるときだけ書き戻さない。同じ版なら、こちらが書いた内容が
    # すでに入っている状態なので、運用データ（実績・予定の記録）を運ぶために書いてよい。
-   # 取り込んだ時点の版と比べていたころは、自分で書き戻した直後の版まで「他PCのもの」と
-   # 見なして、終了時の書き戻しを毎回断っていた。
+   mrev=settings_revision(MASTER_SETTINGS_DB) if MASTER_SETTINGS_DB.is_file() else 0
    if mrev>lrev:
     log.warning('SETTINGS_FLUSH_SKIPPED reason=%s detail=別のPCの変更のほうが新しいため書き戻しません master_rev=%s local_rev=%s pulled_rev=%s',
                 reason,mrev,lrev,_settings_pulled_revision);return False
-   _t=time.perf_counter()
    # 共有フォルダー上に固定名の下書きを置くと、2台が同時に保存したとき同じ1ファイルへ
    # 両方が書き、先に置き換えた側が成功扱いになるのに中身は相手のもの、という状態になる。
    tmp=MASTER_SETTINGS_DB.with_name(f'{MASTER_SETTINGS_DB.stem}.{socket.gethostname()}.{os.getpid()}.wb.tmp')
    try:
-    shutil.copy2(SETTINGS_DB,tmp); os.replace(tmp,MASTER_SETTINGS_DB)
+    shutil.copy2(stage,tmp); os.replace(tmp,MASTER_SETTINGS_DB)
    finally:
     try:tmp.unlink()
     except OSError:pass
-   _settings_dirty=False; log.info('SETTINGS_FLUSH local->master reason=%s elapsed=%.2fs size=%s rev=%s',reason,time.perf_counter()-_t,MASTER_SETTINGS_DB.stat().st_size,lrev); return True
-  except Exception:
-   log.exception('SETTINGS_FLUSH_FAILED reason=%s',reason); return False
+   elapsed=time.perf_counter()-_t
+   _settings_dirty=False
+   log.info('SETTINGS_FLUSH local->master reason=%s elapsed=%.2fs size=%s rev=%s',reason,elapsed,MASTER_SETTINGS_DB.stat().st_size,lrev)
+   # 共有が遅いことは、それ自体が知らせる価値のある事実（画面が固まる理由になる）。
+   if elapsed>5:log.warning('SETTINGS_FLUSH_SLOW reason=%s elapsed=%.1fs path=%s（共有フォルダーの応答が遅くなっています）',reason,elapsed,MASTER_SETTINGS_DB)
+   return True
+ except Exception:
+  log.exception('SETTINGS_FLUSH_FAILED reason=%s',reason); return False
+ finally:
+  if stage is not None:
+   try:stage.unlink()
+   except OSError:pass
 def flush_local_to_master_async(reason=''):
  threading.Thread(target=flush_local_to_master,args=(reason,),daemon=True,name='settings-flush').start()
 def _flush_settings_on_exit(reason=''):
@@ -4568,6 +4591,46 @@ def leave_residency():
  if tray:tray.refresh_tooltip()
 # =====================================================================
 
+# ---- 生きているかを、自分で確かめる ------------------------------------------
+# 「突然落ちた」と言われても、記録のある終了経路を通っていなければ理由が何も残らない。
+# 落ちたのか、答えられなくなっただけなのかで、直す場所がまるで違う。区別できるようにする。
+def dump_threads(tag):
+ """いま全部のスレッドがどこに居るか。止まったときは、これが唯一の手がかりになる。"""
+ try:
+  names={t.ident:t.name for t in threading.enumerate()}
+  lines=[]
+  for tid,frame in sys._current_frames().items():
+   lines.append(f'--- {names.get(tid,tid)} (tid={tid}) ---')
+   lines.extend(x.rstrip() for x in traceback.format_stack(frame)[-8:])
+  log.error('%s thread_dump\n%s',tag,'\n'.join(lines))
+ except Exception:
+  log.exception('THREAD_DUMP_FAILED tag=%s',tag)
+
+def self_probe():
+ """自分のHTTPが答えるかを、自分で確かめ続ける。
+
+ 答えなくなった状態＝画面に「サーバーとの接続が切れました」と出ている状態。
+ そのときプロセスはまだ生きているので、どのスレッドが握ったまま止まっているのかを
+ 書き残せる。生きているあいだも、時々そのことだけを残す（いつまで動いていたかが
+ 分かると、消えた時刻を挟み込める）。
+ """
+ import urllib.request
+ time.sleep(30); miss=0; last_alive=0.0
+ while not stop_event.wait(30):
+  try:
+   with urllib.request.urlopen(f'http://{HOST}:{PORT}/api/instance',timeout=5) as r:r.read(200)
+   if miss:log.info('APP_SELF_PROBE_RECOVERED after_miss=%s',miss)
+   miss=0
+   if time.time()-last_alive>=600:
+    last_alive=time.time()
+    log.info('APP_ALIVE threads=%s tabs=%s running=%s queued=%s',
+             threading.active_count(),len(heartbeat_clients),status.get('running'),pending_queue_count())
+  except Exception as e:
+   miss+=1
+   log.error('APP_SELF_PROBE_FAILED miss=%s error=%s（画面には「接続が切れました」と出ています）',miss,e)
+   if miss in (1,3,10):dump_threads('APP_SELF_PROBE_FAILED')
+   flush_log()
+
 def heartbeat_watchdog():
  time.sleep(10)
  while not stop_event.wait(2):
@@ -5383,6 +5446,14 @@ def _log_first_request():
 
 @atexit.register
 def shutdown():
+ # ここを黙って通ると、あとから見て「気づいたら消えていた」としか分からない。
+ # 記録のある終了経路（画面・通知領域・タブ空）はどれも os._exit なので、ここへ来るのは
+ # 「HTTPサーバーが自分で止まった」「主のスレッドが終わった」など、別の理由のとき。
+ try:log.info('APP_ATEXIT running=%s resident=%s note=インタプリタが終了します',
+              status.get('running'),residency_state['active'])
+ except Exception:pass
+ try:flush_log()
+ except Exception:pass
  _flush_settings_on_exit('atexit'); stop_event.set()
 
 # 画面からの求めに応える口（ルート）は navi_web.py にある。取り込みはここ ―― この行より
@@ -5466,7 +5537,15 @@ if __name__=='__main__':
  try:(LOCAL_RUNTIME/'version.txt').write_text(f'{APP_VERSION}\t{BUILD_VERSION}',encoding='ascii')
  except Exception:log.exception('VERSION_STAMP_FAILED')
  _t=time.perf_counter(); migrate_legacy_settings(); log.info('APP_START_MIGRATION elapsed=%.2fs',time.perf_counter()-_t)
- _t=time.perf_counter(); threading.Thread(target=scheduler,daemon=True,name='scheduler').start(); threading.Thread(target=command_dispatcher,daemon=True,name='command-dispatcher').start(); threading.Thread(target=heartbeat_watchdog,daemon=True,name='heartbeat-watchdog').start(); log.info('APP_START_THREADS elapsed=%.2fs',time.perf_counter()-_t)
+ # 落ち方が荒い（DLLの異常終了など）ときは、Pythonの例外すら残らない。
+ # faulthandler に書かせておくと、そのときだけ crash.log に足跡が残る。
+ try:
+  import faulthandler
+  _crash_file=open(LOCAL_LOGS/'crash.log','a',buffering=1,encoding='utf-8',errors='replace')
+  faulthandler.enable(file=_crash_file,all_threads=True)
+  log.info('APP_START_FAULTHANDLER path=%s',LOCAL_LOGS/'crash.log')
+ except Exception:log.exception('FAULTHANDLER_UNAVAILABLE')
+ _t=time.perf_counter(); threading.Thread(target=scheduler,daemon=True,name='scheduler').start(); threading.Thread(target=command_dispatcher,daemon=True,name='command-dispatcher').start(); threading.Thread(target=heartbeat_watchdog,daemon=True,name='heartbeat-watchdog').start(); threading.Thread(target=self_probe,daemon=True,name='self-probe').start(); log.info('APP_START_THREADS elapsed=%.2fs',time.perf_counter()-_t)
  # 通知領域のアイコンは、出来上がるまで待たされる（Explorerが混んでいると最大5秒）。
  # その待ちを画面が立つ前に払う理由は無い。裏で用意して、サーバーは先に立てる。
  # 出来上がったかどうかを待ちたい側は tray_ready を見る。
@@ -5507,5 +5586,9 @@ if __name__=='__main__':
   _probe.close()
  try:
   app.run(host=HOST,port=PORT,debug=False,threaded=True)
+  # app.run は普通は戻ってこない。戻ったということは、HTTPサーバーが自分で
+  # 止まったということ ―― この後プロセスは終わるので、必ず理由を残す。
+  log.error('APP_RUN_RETURNED note=HTTPサーバーが自分で止まりました。この後プロセスは終了します')
+  dump_threads('APP_RUN_RETURNED');flush_log()
  except Exception:
-  log.exception('APP_RUN_FAILED host=%s port=%s',HOST,PORT);raise
+  log.exception('APP_RUN_FAILED host=%s port=%s',HOST,PORT);flush_log();raise

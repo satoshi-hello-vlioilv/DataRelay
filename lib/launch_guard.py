@@ -82,6 +82,19 @@ def write_info(launcher_pid: int, python_pid: int | None = None) -> None:
     }
     INFO.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding='utf-8')
 
+def crash_log_handle():
+    """サーバープロセスの標準エラーの行き先。
+
+    これまで DEVNULL へ捨てていた。落ちた理由（Pythonの例外・DLLの異常終了）が
+    そこにしか出ないことがあり、捨てていると「消えた」としか分からなくなる。
+    追記で開いて残す ―― 落ちなければ何も書かれないので、増え続けることはない。
+    """
+    try:
+        LOG.parent.mkdir(parents=True, exist_ok=True)
+        return open(LOG.parent / 'stderr.log', 'ab')
+    except Exception:
+        return subprocess.DEVNULL
+
 def spawn_app() -> subprocess.Popen:
     env = os.environ.copy()
     env['NAVI_LAUNCHED_BY_GUARD'] = '1'
@@ -97,7 +110,7 @@ def spawn_app() -> subprocess.Popen:
         env=env,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stderr=crash_log_handle(),
         close_fds=False,
         creationflags=flags,
     )
