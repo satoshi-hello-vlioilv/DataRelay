@@ -1782,16 +1782,30 @@ def _layout_names():
 def _recipe_names():
  return {x['id']:x['name'] for x in load_join_recipes()}
 
-def _bundle_payloads(parts,c=None):
- """選ばれた部分ぶんの中身を作る。"""
+def _bundle_payloads(parts,c=None,job_ids=None):
+ """選ばれた部分ぶんの中身を作る。対象は、選ばれたものだけに絞れる。"""
  c=c if c is not None else load()
+ # 一覧で選んだものだけを渡したいことがある（1件の登録だけを別のPCへ移す、など）。
+ # 指定が無ければ全部。読取マスタと結合マスタは、その対象が使うものだけに絞る。
+ want=[x for x in (job_ids or []) if x]
+ jobs=[j for j in c['jobs'] if not want or j['id'] in want]
  out={}
  if 'jobs' in parts:
   ln=_layout_names();rn=_recipe_names()
-  out['jobs']=navi_bundle.jobs_export(c['jobs'],lambda i:ln.get(i,''),lambda i:rn.get(i,''))
- if 'schedules' in parts:out['schedules']=navi_bundle.schedules_export(c['jobs'])
- if 'layouts' in parts:out['layouts']=text_layouts_export(load_text_layouts())
- if 'recipes' in parts:out['recipes']=join_recipes_export(load_join_recipes())
+  out['jobs']=navi_bundle.jobs_export(jobs,lambda i:ln.get(i,''),lambda i:rn.get(i,''))
+ if 'schedules' in parts:out['schedules']=navi_bundle.schedules_export(jobs)
+ if 'layouts' in parts:
+  lays=load_text_layouts()
+  if want:
+   used={j.get('layout_id') for j in jobs}|{s.get('layout_id') for r in load_join_recipes()
+                                            for s in (r.get('sources') or [])
+                                            if r['id'] in {j.get('recipe_id') for j in jobs}}
+   lays=[x for x in lays if x['id'] in used]
+  out['layouts']=text_layouts_export(lays)
+ if 'recipes' in parts:
+  recs=load_join_recipes()
+  if want:recs=[x for x in recs if x['id'] in {j.get('recipe_id') for j in jobs}]
+  out['recipes']=join_recipes_export(recs)
  return out
 
 @app.get('/api/bundle/info')
@@ -1809,13 +1823,22 @@ def bundle_export():
  """選んだものをZIPで持ち出す。1つだけ選べば、それが個別の持ち出しになる。"""
  parts=navi_bundle.wanted_parts(request.args.get('parts'))
  if not parts:return jsonify(ok=False,error='持ち出すものを1つ以上選んでください'),400
- payloads=_bundle_payloads(parts)
+ job_ids=[x.strip() for x in (request.args.get('job_ids') or '').split(',') if x.strip()]
+ c=load()
+ if job_ids:
+  known={j['id'] for j in c['jobs']}
+  if not (set(job_ids)&known):return jsonify(ok=False,error='選ばれた対象が見つかりません'),404
+ payloads=_bundle_payloads(parts,c,job_ids)
  blob,manifest=navi_bundle.build_zip(payloads,app_version=APP_VERSION)
  stamp=datetime.now().strftime('%Y%m%d_%H%M%S')
  # 1つだけなら、その名前で。中身が名前から分かるほうが、あとで探しやすい。
  label=navi_bundle.PART_LABEL[parts[0]] if len(parts)==1 else '登録内容'
+ if job_ids:
+  # 1件だけ選んだなら、その対象の名前で出す（フォルダーに並んだとき、開かずに分かる）。
+  picked=[j['name'] for j in c['jobs'] if j['id'] in set(job_ids)]
+  label=(picked[0] if len(picked)==1 else f'選んだ{len(picked)}件')
  name=f'DataRelay_{label}_{stamp}.zip'
- log.info('BUNDLE_EXPORT parts=%s counts=%s size=%s file=%s',parts,manifest.get('counts'),len(blob),name)
+ log.info('BUNDLE_EXPORT parts=%s job_ids=%s counts=%s size=%s file=%s',parts,len(job_ids) or 'all',manifest.get('counts'),len(blob),name)
  r=send_file(io.BytesIO(blob),as_attachment=True,download_name=name,mimetype='application/zip')
  r.headers['Cache-Control']='no-store'
  return r
