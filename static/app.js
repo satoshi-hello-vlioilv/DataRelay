@@ -729,7 +729,8 @@ function refreshTypeHint(){
   let ex=(d.example||[]).map(x=>`<code>${E(x)}</code>`).join(' ');
   box.className='type-hint'+(d.detail_only?'':' warn');
   box.innerHTML=`<b>集計表として読みます</b>（表頭: ${E((d.head||[]).join('／'))}・表側${(d.side||[]).length}・データ${(d.data||[]).length}）。`
-   +`データ項目は表頭の並びごとに #1, #2 … を付けた列になり、1行1件で出力します。例: ${ex} …`
+   +`データ項目は表頭の値ごとの列（例: ${ex} …）になり、1行1件で出力します。`
+   +`〈 〉には ${E((d.head||[]).join('／'))} の値がそのまま入ります。同じ値が重なったときは 2つ目から _2, _3 … を付けます。`
    +(d.detail_only?'':'<br>集計するデータ項目が含まれています。付帯情報（集計しない）のときと列の並びが違う場合があります。');
   box.hidden=false;
  },250);

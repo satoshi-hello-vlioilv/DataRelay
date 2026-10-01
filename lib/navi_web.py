@@ -363,7 +363,8 @@ def rne_shape():
  if not Path(rp).is_file():return jsonify(ok=False,error=f'RNEが見つかりません: {rp}'),200
  lay=navi_crosstab.read_rne_layout(rp)
  if not lay:return jsonify(ok=False,error='RNEの配置を読み取れませんでした（明細として読みます）'),200
- example=[f'{d}#{k}' for k in (1,2) for d in lay['data'][:2]] if lay['crosstab'] else []
+ # 表頭の値は実行するまで分からないので、例は「名前#〈表頭名〉」の形で見せる。
+ example=[f'{d}#〈{"／".join(lay["head"])}〉' for d in lay['data'][:2]] if lay['crosstab'] else []
  return jsonify(ok=True,crosstab=lay['crosstab'],detail_only=lay['detail_only'],head=lay['head'],
                 side=lay['side'],data=lay['data'],summary=navi_crosstab.describe(lay),example=example)
 

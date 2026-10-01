@@ -7,8 +7,9 @@ RNEの「表の種類」が集計表で、表頭に管理ポイントを置く�
     （空）      …（空）   | 1             1            … | 2             2            …
     倉入完了_年月日 … 用途名 | BOX実績_設備名 BOX実績_板厚 … | BOX実績_設備名 BOX実績_板厚 …
 
-これを1段の見出しに畳む。表側の列は名前のまま、データ項目の列は「名前#ブロック番号」
-（左から1, 2, …）にする。データの並びは1マスも動かさないので、値の位置は変わらない。
+これを1段の見出しに畳む。表側の列は名前のまま、データ項目の列は「名前#表頭の値」
+（BOX番号が 1, 2, 5 なら #1, #2, #5。並び順の番号ではない）にする。同じ値が重なったら
+2つ目から _2, _3 … を付ける。データの並びは1マスも動かさないので、値の位置は変わらない。
 
 何段あるか・どこまでが表側かは、RNEに書いてある配置（表側／表頭／データ項目）で決める。
 RNEは実行のたびに同じものを開くので、推測ではなく、その問い合わせの定義そのものである。
@@ -122,8 +123,34 @@ def header_shape(read_type,layout):
  return HeaderShape('plain')
 
 
+# 表頭の値が空（NULLのカテゴリなど）のときに、列名へ入れる言葉。
+BLANK_LABEL='空欄'
+
 def _cell(row,i):
- return str(row[i]).replace('\r','').replace('\n','').strip() if i<len(row) and row[i] is not None else ''
+ """セルを文字にする。中間XLSでは数値が 1.0 の形で来るので、整数なら 1 にする。"""
+ if i>=len(row) or row[i] is None:return ''
+ v=row[i]
+ if isinstance(v,float) and v.is_integer():v=int(v)
+ return str(v).replace('\r','').replace('\n','').strip()
+
+def block_suffixes(labels):
+ """ブロックごとの表頭の値から、列名の後ろに付ける文字を決める。
+
+ 値をそのまま使う（BOX番号が 1, 2, 5 なら #1, #2, #5）。空の値は「空欄」。
+ 同じ値が2度以上出たら、2つ目から _2, _3 … を付ける。そのとき作った名前が
+ 本物の値と重なるなら、本物の値に譲って番号を進める（本物の値の列名は、
+ ほかのブロックの有無で変わらないようにするため）。
+ """
+ bases=[x or BLANK_LABEL for x in labels]
+ real=set(bases);used=set();out=[]
+ for b in bases:
+  name=b
+  if name in used:
+   n=2
+   while f'{b}_{n}' in used or f'{b}_{n}' in real:n+=1
+   name=f'{b}_{n}'
+  used.add(name);out.append(name)
+ return out
 
 def _names_row(rows,S,data):
  """データ項目の名前が並ぶ段を探す。表側より右が、データ項目の名前の繰り返しになっている行。"""
@@ -138,9 +165,10 @@ def flatten_header(rows,layout):
  """段になった見出しを1段に畳む。戻り値は (列名, 見出しの行数, 情報)。
 
  表側の列 … 見出しの段のうち、いちばん下の空でない文字（ふつうは表側の名前）
- データの列 … データ項目の名前＋'#'＋ブロック番号。ブロックは表頭の値が変わるところで
-              切り替わる（表頭の値が先頭の列にしか書かれていない形でも、右へ持ち越して読む）。
-              表頭の値が読めないときも、同じ名前が2度目に出たところで次のブロックとみなす。
+ データの列 … データ項目の名前＋'#'＋そのブロックの表頭の値（BOX番号なら #1, #2, #5 …）。
+              表頭が2段以上なら上から「／」でつなぐ。値が重なったときの決まりは block_suffixes。
+              ブロックは同じ項目名が2度目に出たところで切り替わる。値はブロックの列の中で
+              最初に書かれているものを使う（先頭の列にしか書かれていない形でも、全列に書かれた形でも同じ）。
  """
  S=len(layout['side']);data=list(layout['data']);H=len(layout['head'])
  r=_names_row(rows,S,data)
@@ -152,25 +180,29 @@ def flatten_header(rows,layout):
  for c in range(min(S,width)):
   cells=[_cell(x,c) for x in rows[:depth]]
   names.append(next((x for x in reversed(cells) if x),layout['side'][c]))
- # 表頭の値。空欄は左の値を持ち越す（表側の範囲から持ち越さないよう、データの範囲だけで行う）。
- carried=[]
- for hr in head_rows:
-  line=[];last=''
-  for c in range(S,width):
-   v=_cell(hr,c);last=v or last;line.append(last)
-  carried.append(line)
- block=0;prev_key=None;seen=set();labels=[]
+ # ブロックの境目は項目名の並びで決める（同じ項目名が2度目に出たら次のブロック）。表頭の値では決めない。
+ # 値で決めると、隣り合うブロックが同じ値のときや、空のカテゴリのときに境目を見失う。
+ blocks=[];seen=set();cols=[]
  for k,c in enumerate(range(S,width)):
   item=_cell(names_row,c) or (data[k%len(data)] if data else f'Column{c+1}')
-  key=tuple(line[k] for line in carried)
-  if block==0 or key!=prev_key or item in seen:
-   block+=1;seen=set();labels.append('／'.join(x for x in key if x))
-  seen.add(item);prev_key=key
-  names.append(f'{item}#{block}')
- D=len(data)
+  if not blocks or item in seen:blocks.append([]);seen=set()
+  seen.add(item);blocks[-1].append(c);cols.append((item,len(blocks)-1))
+ # ブロックの値。各段とも、そのブロックの列の中で最初に書かれている値を使う。
+ #   いちばん下の段 … そのブロック自身の値。空なら空のカテゴリ（左から持ち越さない）。
+ #                    値を全列に書く形（NAVI_REPEAT）では、空の列は本当に空のカテゴリだから。
+ #   それより上の段 … 1つの値が下の段の複数のブロックにまたがるので、空なら左から持ち越す。
+ labels=[];above=['']*max(0,len(head_rows)-1)
+ for cs in blocks:
+  vals=[next((v for v in (_cell(hr,c) for c in cs) if v),'') for hr in head_rows]
+  for i in range(len(above)):
+   above[i]=vals[i] or above[i];vals[i]=above[i]
+  labels.append('／'.join(x for x in vals if x))
+ suffixes=block_suffixes(labels)
+ names+=[f'{item}#{suffixes[b]}' for item,b in cols]
+ block=len(blocks);D=len(data)
  structure_ok=found and D>0 and (width-S)%D==0
  return names,depth,{'kind':'crosstab','depth':depth,'side':S,'data':D,'blocks':block,
-                     'labels':labels,'names_row_found':found,'structure_ok':structure_ok}
+                     'labels':labels,'suffixes':suffixes,'names_row_found':found,'structure_ok':structure_ok}
 
 def columns_consistent(info,actual_cols,expected_cols):
  """列数の検査を、集計表の形に合わせて行う。
