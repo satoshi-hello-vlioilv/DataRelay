@@ -701,8 +701,41 @@ async function openFolderPath(path,label){
   toast(d.ok?`${label}を開きました`:(d.error||`${label}を開けませんでした`))}
  catch{toast(`${label}を開けませんでした`)}
 }
-function openEditor(job){editing=structuredClone(job||{id:uid(),name:'新しい対象',enabled:true,rne:'NEW.RNE',rne_path:cfg.rne_folder+'\\NEW.RNE',output_folder:cfg.default_output_folder,output_format:'sqlite3',output_file:'NEW.sqlite3',extra_formats:[],table:'仕掛',sheet:'Page1',type:'詳細データ',naming_mode:'fixed',output_pattern:'',comment:'',split_mode:'auto',split_shape:'auto',source:'rne',text_path:'',layout_id:'',recipe_id:'',period:{enabled:false,control_point:'',unit:'month',from_offset:-1,to_offset:0},schedules:[]});$('#modal-title').textContent=job?'対象を編集':'対象を追加';$('#m-id').value=editing.id;$('#m-name').value=editing.name;$('#m-enabled').checked=editing.enabled;$('#m-rne-path').value=editing.rne_path||'';$('#m-output').value=editing.output_folder||cfg.default_output_folder;editing.output_format=normalizeFormat(editing.output_format);editing.extra_formats=(editing.extra_formats||[]).map(normalizeFormat);editing.index_columns=(editing.index_columns||[]).map(String);if($('#m-skip-unchanged'))$('#m-skip-unchanged').checked=!!editing.skip_if_unchanged;if($('#m-index-columns'))$('#m-index-columns').value=(editing.index_columns||[]).join(', ');$('#m-format').value=editing.output_format;$('#m-output-file').value=editing.output_file;$('#m-table').value=editing.table;$('#m-sheet').value=editing.sheet;$('#m-type').value=editing.type;if($('#m-comment'))$('#m-comment').value=editing.comment||'';if($('#m-split-mode'))$('#m-split-mode').value=editing.split_mode||'auto';if($('#m-split-shape'))$('#m-split-shape').value=editing.split_shape||'auto';if($('#m-axis-mode'))$('#m-axis-mode').value=editing.row_axis_mode||'first';if($('#m-axis-index'))$('#m-axis-index').value=editing.row_axis_index||1;AXIS_PICK.forEach(g=>{if($(g.n))$(g.n).innerHTML=`<option value="${E(editing.row_axis_name||'')}">${E(editing.row_axis_name||'（先に「RNEを調査」）')}</option>`;if($(g.m))$(g.m).value=editing.row_axis_mode||'first';if($(g.i))$(g.i).value=editing.row_axis_index||1});syncAxisPick();setSource(editing.source||'rne');if($('#m-text-path'))$('#m-text-path').value=editing.text_path||'';fillLayoutPicker(editing.layout_id||'');fillRecipePicker(editing.recipe_id||'');syncOutputExtension();initNaming(editing);setPeriodUI(editing.period);renderRuntimeSplit(null);inspReset();loadMaster(false);splitTrialPoll();rulesRender();updatePeriodBadge();loadJobTrend(editing.id);setEditorTab('basic');$('#editor').showModal()}
-$('#m-format').onchange=()=>{syncOutputExtension();if(currentNamingMode()==='template')refreshNamePreview();if($('#m-layout'))fillLayoutPicker($('#m-layout').value)};$('#m-rne-check').onclick=async()=>{showWaiting('RNEファイル確認中','設定場所と周辺フォルダーを検索しています...');try{let temp={item:'rne',job_id:editing.id,label:editing.rne,configured:$('#m-rne-path').value,resolved:$('#m-rne-path').value,candidates:[],ok:false};let r=await fetch('/api/path-check',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({item:'rne',job_id:editing.id,value:$('#m-rne-path').value,expected_name:$('#m-rne-path').value.split(/[\\/]/).pop()})}),d=await r.json();if(r.ok)showPathResult(d);else toast(d.error)}finally{hideWaiting()}};$('#m-rne-pick').onclick=async()=>{let p=await browse('file',$('#m-rne-path').value,[['RNEファイル','*.RNE'],['すべて','*.*']]);if(p){let i=$('#m-rne-path'),wasRel=i.value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(i.value);i.value=p;if(wasRel)await convertPath(i,'relative');updatePathBadge(i);i._refreshPathControl?.()}};$('#m-output-pick').onclick=async()=>{let p=await browse('folder',$('#m-output').value);if(p){let i=$('#m-output'),wasRel=i.value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(i.value);i.value=p;if(wasRel)await convertPath(i,'relative');updatePathBadge(i)}};enhancePathInput($('#m-rne-path'),'file');enhancePathInput($('#m-output'),'folder');$('#m-rne-path').addEventListener('input',()=>renderInspTarget());$('#m-name').addEventListener('input',()=>renderInspTarget());
+// 読込形式の見通し。RNEが集計表（表頭あり）なら、読込形式の指定に関わらず見出しの段を畳んで
+// 1行1件のリストにする。それを保存前に、出来上がる列名の例つきで見せる（実行してから驚かせない）。
+let typeHintTimer=null,typeHintSeq=0;
+// 集計表のRNEで「集計表」に固定した選択を、明細のRNEへ差し替えたときに元へ戻す。
+// 固定したままだと、明細のRNEで先頭1行を読み飛ばす従来の「集計表」指定になり、列がずれる。
+function releaseTypeHint(restore){
+ let box=$('#m-type-hint'),sel=$('#m-type');if(!box||!sel)return;
+ box.hidden=true;sel.disabled=false;
+ if(restore&&sel.dataset.prev!==undefined){sel.value=sel.dataset.prev;if(editing)editing.type=sel.value}
+ delete sel.dataset.prev;
+}
+function refreshTypeHint(){
+ let box=$('#m-type-hint'),sel=$('#m-type');if(!box||!sel)return;
+ clearTimeout(typeHintTimer);
+ let path=($('#m-rne-path')?.value||'').trim(),src=$('.src-btn.on')?.dataset.src||'rne';
+ if(!path||src!=='rne'){releaseTypeHint(true);return}
+ let seq=++typeHintSeq;
+ typeHintTimer=setTimeout(async()=>{
+  let d={};
+  try{let r=await fetch('/api/rne-shape',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({rne_path:path})});d=await r.json()}catch{d={}}
+  if(seq!==typeHintSeq)return;
+  if(!d.ok||!d.crosstab){releaseTypeHint(true);return}
+  // 集計表は読み方がRNEで決まる。選択肢を選べる形のまま残すと、選んだ値が効くと誤解させる。
+  if(sel.dataset.prev===undefined)sel.dataset.prev=sel.value;
+  sel.value='集計表';sel.disabled=true;if(editing)editing.type='集計表';
+  let ex=(d.example||[]).map(x=>`<code>${E(x)}</code>`).join(' ');
+  box.className='type-hint'+(d.detail_only?'':' warn');
+  box.innerHTML=`<b>集計表として読みます</b>（表頭: ${E((d.head||[]).join('／'))}・表側${(d.side||[]).length}・データ${(d.data||[]).length}）。`
+   +`データ項目は表頭の並びごとに #1, #2 … を付けた列になり、1行1件で出力します。例: ${ex} …`
+   +(d.detail_only?'':'<br>集計するデータ項目が含まれています。付帯情報（集計しない）のときと列の並びが違う場合があります。');
+  box.hidden=false;
+ },250);
+}
+function openEditor(job){editing=structuredClone(job||{id:uid(),name:'新しい対象',enabled:true,rne:'NEW.RNE',rne_path:cfg.rne_folder+'\\NEW.RNE',output_folder:cfg.default_output_folder,output_format:'sqlite3',output_file:'NEW.sqlite3',extra_formats:[],table:'仕掛',sheet:'Page1',type:'詳細データ',naming_mode:'fixed',output_pattern:'',comment:'',split_mode:'auto',split_shape:'auto',source:'rne',text_path:'',layout_id:'',recipe_id:'',period:{enabled:false,control_point:'',unit:'month',from_offset:-1,to_offset:0},schedules:[]});$('#modal-title').textContent=job?'対象を編集':'対象を追加';$('#m-id').value=editing.id;$('#m-name').value=editing.name;$('#m-enabled').checked=editing.enabled;$('#m-rne-path').value=editing.rne_path||'';$('#m-output').value=editing.output_folder||cfg.default_output_folder;editing.output_format=normalizeFormat(editing.output_format);editing.extra_formats=(editing.extra_formats||[]).map(normalizeFormat);editing.index_columns=(editing.index_columns||[]).map(String);if($('#m-skip-unchanged'))$('#m-skip-unchanged').checked=!!editing.skip_if_unchanged;if($('#m-index-columns'))$('#m-index-columns').value=(editing.index_columns||[]).join(', ');$('#m-format').value=editing.output_format;$('#m-output-file').value=editing.output_file;$('#m-table').value=editing.table;$('#m-sheet').value=editing.sheet;releaseTypeHint(false);$('#m-type').value=editing.type;if($('#m-comment'))$('#m-comment').value=editing.comment||'';if($('#m-split-mode'))$('#m-split-mode').value=editing.split_mode||'auto';if($('#m-split-shape'))$('#m-split-shape').value=editing.split_shape||'auto';if($('#m-axis-mode'))$('#m-axis-mode').value=editing.row_axis_mode||'first';if($('#m-axis-index'))$('#m-axis-index').value=editing.row_axis_index||1;AXIS_PICK.forEach(g=>{if($(g.n))$(g.n).innerHTML=`<option value="${E(editing.row_axis_name||'')}">${E(editing.row_axis_name||'（先に「RNEを調査」）')}</option>`;if($(g.m))$(g.m).value=editing.row_axis_mode||'first';if($(g.i))$(g.i).value=editing.row_axis_index||1});syncAxisPick();setSource(editing.source||'rne');if($('#m-text-path'))$('#m-text-path').value=editing.text_path||'';fillLayoutPicker(editing.layout_id||'');fillRecipePicker(editing.recipe_id||'');syncOutputExtension();initNaming(editing);setPeriodUI(editing.period);renderRuntimeSplit(null);inspReset();refreshTypeHint();loadMaster(false);splitTrialPoll();rulesRender();updatePeriodBadge();loadJobTrend(editing.id);setEditorTab('basic');$('#editor').showModal()}
+$('#m-format').onchange=()=>{syncOutputExtension();if(currentNamingMode()==='template')refreshNamePreview();if($('#m-layout'))fillLayoutPicker($('#m-layout').value)};$('#m-rne-check').onclick=async()=>{showWaiting('RNEファイル確認中','設定場所と周辺フォルダーを検索しています...');try{let temp={item:'rne',job_id:editing.id,label:editing.rne,configured:$('#m-rne-path').value,resolved:$('#m-rne-path').value,candidates:[],ok:false};let r=await fetch('/api/path-check',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({item:'rne',job_id:editing.id,value:$('#m-rne-path').value,expected_name:$('#m-rne-path').value.split(/[\\/]/).pop()})}),d=await r.json();if(r.ok)showPathResult(d);else toast(d.error)}finally{hideWaiting()}};$('#m-rne-pick').onclick=async()=>{let p=await browse('file',$('#m-rne-path').value,[['RNEファイル','*.RNE'],['すべて','*.*']]);if(p){let i=$('#m-rne-path'),wasRel=i.value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(i.value);i.value=p;if(wasRel)await convertPath(i,'relative');updatePathBadge(i);i._refreshPathControl?.();refreshTypeHint()}};$('#m-output-pick').onclick=async()=>{let p=await browse('folder',$('#m-output').value);if(p){let i=$('#m-output'),wasRel=i.value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(i.value);i.value=p;if(wasRel)await convertPath(i,'relative');updatePathBadge(i)}};enhancePathInput($('#m-rne-path'),'file');enhancePathInput($('#m-output'),'folder');$('#m-rne-path').addEventListener('input',()=>{renderInspTarget();refreshTypeHint()});$('#m-name').addEventListener('input',()=>renderInspTarget());
 /* 有効・無効は押した瞬間に効かせる。「設定を反映」を押し忘れて閉じると
    黙って元へ戻る、という切れ目を作らない。まだ保存していない新規の対象だけは
    一覧に行がないので、下書きに持たせて「設定を反映」で確定する。 */
@@ -3449,6 +3482,7 @@ function setSource(src){
   if(t.hidden||!badge)return;
   badge.textContent=String(++n);
  });
+ refreshTypeHint();
 }
 $$('.src-btn').forEach(b=>b.onclick=()=>{setSource(b.dataset.src);dirty()});
 async function loadLayouts(force){

@@ -13,6 +13,7 @@ NAVI_XLSX=5
 NAVI_XLS=9
 NAVI_NOCHANGE=16
 NAVI_NONREPEAT=8
+NAVI_REPEAT=4      # 表側・表頭とも、同じ値を省かずに繰り返して書く
 NAVI_DBMS_ANYDB=8
 # 期間指定の方法（時間型管理ポイントの変更で使用）
 NAVI_MONTH=0   # 月度の期間指定 (fromTime/toTime は YYYYMM00)
@@ -613,8 +614,11 @@ class NavigatorApi:
         return int(rows.value),int(cols.value)
     def save_data(self,h,path,ftype,repeat=NAVI_NONREPEAT):
         rc=ctypes.c_long();t=time.perf_counter();self.dll.NaviSaveData(h,ctypes.byref(rc),_ansi(path),int(ftype),int(repeat));self._check('NaviSaveData',rc,str(path));return time.perf_counter()-t
-    def save_csv(self,h,path):
-        return self.save_data(h,path,NAVI_CSV,NAVI_NONREPEAT)
+    def save_csv(self,h,path,repeat_labels=False):
+        """repeat_labels … 表側・表頭の同じ値を省かず、毎行・毎列に書く（NAVI_REPEAT）。
+        集計表をリストとして読むときに要る。省く書き方（NAVI_NONREPEAT）では、
+        上の行と同じ表側の値が空欄になり、その行が何の行か分からなくなる。"""
+        return self.save_data(h,path,NAVI_CSV,NAVI_REPEAT if repeat_labels else NAVI_NONREPEAT)
     def save_txt(self,h,path):
         return self.save_data(h,path,NAVI_TXT,NAVI_NONREPEAT)
     def save_xlsx(self,h,path):
