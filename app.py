@@ -1,5 +1,5 @@
 from __future__ import annotations
-import atexit, calendar, configparser, contextlib, copy, csv, gc, json, logging, os, re, shutil, socket, sqlite3, struct, subprocess, sys, tempfile, threading, time, traceback, uuid, webbrowser
+import atexit, calendar, configparser, contextlib, copy, csv, gc, itertools, json, logging, os, re, shutil, socket, sqlite3, struct, subprocess, sys, tempfile, threading, time, traceback, uuid, webbrowser
 from collections import deque
 from datetime import datetime, timedelta, date
 from pathlib import Path
@@ -2273,6 +2273,36 @@ def resolve_rne_path(job,cfg):
  # Bare filename is relative to configured RNE base folder.
  return resolve_path(raw,resolve_path(cfg.get('rne_folder','.\\rne')))
 
+def attach_rne_layout(job,rp,line=''):
+ """RNEの配置（表側・表頭・データ項目）を読み、実行中の対象に添える。
+
+ これで3つが決まる。中間ファイルの見出しの読み方（集計表なら段を畳む）、
+ 保存のしかた（集計表は表側・表頭の値を省かずに書かせる）、使える取り方
+ （集計表は見出しが段になるので、XLSXの直接受信と分割は使わない）。
+ 読めなければ None ―― これまでどおり明細として扱う。"""
+ try:lay=navi_crosstab.read_rne_layout(rp)
+ except Exception as e:
+  lay=None;log.warning('RNE_LAYOUT_FAILED line=%s job=%s rne=%s error=%s',line,job.get('name'),rp,e)
+ job['_rne_layout']=lay
+ log.info('RNE_LAYOUT line=%s job=%s rne=%s shape=%s',line,job.get('name'),Path(rp).name,navi_crosstab.describe(lay))
+ return lay
+
+def job_is_crosstab(job):
+ """表頭のある集計表として読む対象か（attach_rne_layout のあとで有効）。"""
+ return bool((job.get('_rne_layout') or {}).get('crosstab'))
+
+def crosstab_split_reason(rne_path=None,job=None):
+ """分割を使えない理由（集計表のとき）。使えるなら空文字。
+
+ 分割は「見出し1行のCSV」を列名で突き合わせたり縦に積んだりする仕組みで、見出しが段になる
+ 集計表では前提が崩れる。しかも表頭のカテゴリは片ごとに違いうる（ある片にだけ無いBOX番号が
+ あれば、列の数そのものが揃わない）。本番・影実行・選択肢の3か所で同じ理由を返す。"""
+ # 実行中の対象は読み済みの配置を使う。画面からの問い合わせではRNEをその場で読む。
+ lay=job['_rne_layout'] if job and '_rne_layout' in job else (navi_crosstab.read_rne_layout(rne_path) if rne_path else None)
+ if not (lay or {}).get('crosstab'):return ''
+ return (f'集計表（表頭: {"／".join(lay["head"])}）は見出しが段になり、表頭のカテゴリも片ごとに揃う保証が無いため、'
+         '分割しません')
+
 def dde_staging_folder():
  """Use the per-user local work folder for all temporary extraction files."""
  candidates=[LOCAL_ROOT/'work',Path(tempfile.gettempdir())/APP_NAME/'work',Path('C:/DataRelayWork')]
@@ -2639,7 +2669,7 @@ def unique_headers(values):
   name=str(x or '').replace('\r','').replace('\n','').strip() or f'Column{i}'; used[name]=used.get(name,0)+1; out.append(name if used[name]==1 else f'{name}_{used[name]}')
  return out
 def qi(s): return '"'+str(s).replace('"','""')+'"'
-def _stream_csv_extract(source,encoding,skip_first):
+def _stream_csv_extract(source,encoding,shape):
  """中間CSVを1行ずつ読み、見出しと本体だけを残す。
 
  以前は list(csv.reader(f)) で生の行をすべて抱えたうえで、1セルずつ str() を通して
@@ -2653,23 +2683,29 @@ def _stream_csv_extract(source,encoding,skip_first):
  メモリの減りが1割ほどなのは、重いのは文字列そのもので、それは元から共有されて
  いたため。減るのは生の行のリストぶん。ワーカーは対象ごとに別プロセスなので、
  大きい対象が並列で重なるとこの差もライン数ぶん効く。
+
+ 見出しが何行あり、どう名前にするかは shape（navi_crosstab.HeaderShape）が決める。
+ 明細は1行目、集計表（表頭あり）は段になった見出しを畳む。先読みするのは数行だけで、
+ 本体は従来どおり1行ずつ流す。
  """
- hs=None;n=0;body=[]
+ hs=None;n=0;body=[];info={}
  with source.open('r',encoding=encoding,errors='strict',newline='') as f:
   reader=csv.reader(f)
-  if skip_first:next(reader,None)
-  for row in reader:
-   if hs is None:
-    hs=unique_headers(row);n=len(hs);continue
+  head=list(itertools.islice(reader,shape.lookahead))
+  names,used,info=shape.resolve(head)
+  if names is None:return None,[],info
+  hs=unique_headers(names);n=len(hs)
+  for row in itertools.chain(head[used:],reader):
    c=len(row)
    if c==n:body.append(row)
    elif c<n:body.append(row+['']*(n-c))
    else:body.append(row[:n])
- return hs,body
+ return hs,body,info
 
 def read_extract(source,job,reject,expected_rows=None,expected_cols=None):
  source=Path(source); started=time.perf_counter()
- skip_first=(job.get('type')=='集計表')
+ # 見出しの読み方。RNEに表頭があれば（集計表）、読込形式の指定に関わらず段を畳む。
+ shape=navi_crosstab.header_shape(job.get('type'),job.get('_rne_layout'));shape_info={}
  if source.suffix.lower()=='.csv':
   hs=None;body=None;encoding_used=''
   last_error=None
@@ -2678,7 +2714,7 @@ def read_extract(source,job,reject,expected_rows=None,expected_cols=None):
   order=[x for x in (str(job.get('_intermediate_encoding') or ''),) if x]+['cp932','utf-8-sig','utf-8']
   for encoding in dict.fromkeys(order):
    try:
-    hs,body=_stream_csv_extract(source,encoding,skip_first);encoding_used=encoding;break
+    hs,body,shape_info=_stream_csv_extract(source,encoding,shape);encoding_used=encoding;break
    except UnicodeDecodeError as e:last_error=e;hs=None;body=None
   if body is None:raise UnicodeError(f'API中間CSVの文字コードを判定できません: {source}: {last_error}')
   source_kind='api_csv'
@@ -2688,20 +2724,31 @@ def read_extract(source,job,reject,expected_rows=None,expected_cols=None):
   try: sh=b.sheet_by_name(job.get('sheet','Page1')); rows=[sh.row_values(i) for i in range(sh.nrows)]
   finally:b.release_resources()
   encoding_used='binary';source_kind='dde_xls'
-  if skip_first and rows:rows=rows[1:]
-  hs=unique_headers(rows[0]) if rows else None
+  names,used,shape_info=shape.resolve(rows[:shape.lookahead])
+  hs=unique_headers(names) if names is not None else None
   body=[]
   if hs is not None:
-   for row in rows[1:]:body.append([str(x) if x is not None else '' for x in list(row[:len(hs)])+['']*max(0,len(hs)-len(row))])
+   for row in rows[used:]:body.append([str(x) if x is not None else '' for x in list(row[:len(hs)])+['']*max(0,len(hs)-len(row))])
   rows=None
  if hs is None:raise ValueError(f'{source.suffix}にデータがありません')
  if reject and not body:raise ValueError('抽出0件のため出力を中止しました')
  row_match=expected_rows is None or len(body)==int(expected_rows)
- col_match=expected_cols is None or len(hs)==int(expected_cols)
- log.info('INTERMEDIATE_VALIDATION kind=%s file=%s encoding=%s size=%s rows=%s columns=%s expected_rows=%s expected_columns=%s row_match=%s column_match=%s elapsed=%.2fs',source_kind,source,encoding_used,source.stat().st_size,len(body),len(hs),expected_rows,expected_cols,row_match,col_match,time.perf_counter()-started)
+ col_match=navi_crosstab.columns_consistent(shape_info,len(hs),expected_cols)
+ if shape_info.get('kind')=='crosstab':
+  # 段を畳んだ記録。表頭の値（ブロックごと）と#番号の対応はここにしか残らない。
+  log.info('CROSSTAB_HEADER file=%s depth=%s side=%s data=%s blocks=%s names_row_found=%s structure_ok=%s labels=%s',
+           source.name,shape_info.get('depth'),shape_info.get('side'),shape_info.get('data'),shape_info.get('blocks'),
+           shape_info.get('names_row_found'),shape_info.get('structure_ok'),
+           ' '.join(f'#{i}={x or "?"}' for i,x in enumerate(shape_info.get('labels') or [],1))[:400])
+  if not shape_info.get('names_row_found'):
+   log.warning('CROSSTAB_HEADER_UNMATCHED file=%s note=データ項目の名前が並ぶ段を見つけられず、RNEの段数(%s行)どおりに読みました',source.name,shape_info.get('depth'))
+ log.info('INTERMEDIATE_VALIDATION kind=%s file=%s encoding=%s size=%s rows=%s columns=%s expected_rows=%s expected_columns=%s row_match=%s column_match=%s header=%s elapsed=%.2fs',source_kind,source,encoding_used,source.stat().st_size,len(body),len(hs),expected_rows,expected_cols,row_match,col_match,shape.kind,time.perf_counter()-started)
  if not row_match or not col_match:raise RuntimeError(f'中間データ件数検査に失敗 expected={expected_rows}x{expected_cols} actual={len(body)}x{len(hs)}')
  return hs,body
 
+
+# 集計表（表頭あり）の見出しの畳み方と、RNEの配置の読み取りは navi_crosstab.py。
+import navi_crosstab
 
 # XLSXの組み立てと検査は navi_xlsx.py。ZIP/XMLを直接書く話なので、本体から切り離してある。
 import navi_xlsx
@@ -3434,6 +3481,8 @@ def plan_run_split(rne_path,job,cfg,fmt,budget_lines,line=''):
  """
  mode=normalize_split_mode(job.get('split_mode'))
  shape=normalize_split_shape(job.get('split_shape'))
+ why=crosstab_split_reason(rne_path,job)
+ if why:return None,why
  if not bool((cfg.get('settings') or {}).get('split_run_enabled',True)):return None,'共通設定で分割を使わない設定です'
  if mode=='off':return None,'この対象は分割を使わない設定です'
  need=3 if mode=='race' else 2                 # 競争は「分割なし1本 ＋ パート2本」が最小
@@ -3800,6 +3849,7 @@ def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,
   apply_pending(target,backup,int(cfg['settings']['backup_generations']),backup_enabled=bool(cfg['settings'].get('backup_enabled',True)),retention_days=int(cfg['settings'].get('backup_retention_days',30)),generation_limit_enabled=bool(cfg['settings'].get('backup_generation_limit_enabled',True)),backup_mode=str(cfg['settings'].get('backup_mode','generations')))
   _pending_elapsed=time.perf_counter()-_pending_started;phase_profile_add('pending_apply',_pending_elapsed)
   if not rp.is_file():raise FileNotFoundError('RNEがありません: '+str(rp))
+  attach_rne_layout(j,rp,line_name);crosstab=job_is_crosstab(j)
   stamp=datetime.now().strftime('%Y%m%d_%H%M%S_%f')+f'_L{job_index}'
   xls=dde_work/f'navi_{job_index}_{stamp}.xls';local_export=dde_work/'export';local_export.mkdir(parents=True,exist_ok=True)
   db=local_export/f'{Path(j["output_file"]).stem}_{stamp}{Path(j["output_file"]).suffix}'
@@ -3810,7 +3860,8 @@ def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,
   # 抽出（十数秒）と同時に温めておけば、変換に入るころには終わっている。
   # 直列の経路では以前からやっていたが、並列ワーカーでは抜けていた。
   accdb_prewarm=prewarm_access_async('parallel_worker_accdb') if (fmt=='accdb' or 'accdb' in extras) else None
-  allow_direct_xlsx=(fmt=='xlsx' and not extras)
+  # 集計表は見出しが段になる。直接受け取ったXLSXは段のまま公開されてしまうので、CSVを通して畳む。
+  allow_direct_xlsx=(fmt=='xlsx' and not extras and not crosstab)
   common_intermediate='API_DIRECT_XLSX' if allow_direct_xlsx else 'CSV'
   planned=db if allow_direct_xlsx else dde_work/f'navi_{job_index}_{stamp}.csv'
   if extras:
@@ -3896,9 +3947,9 @@ def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,
    if not api_direct_output:
     update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='受信・保存',percent=line_percent('transfer',0),detail='受信待ち',phase='transfer')
     api_csv=dde_work/f'navi_{job_index}_{stamp}.csv'
-    t=phase_log('api_save_csv',job=j['name'],line=line_name)
+    t=phase_log('api_save_csv',job=j['name'],line=line_name,repeat='NAVI_REPEAT' if crosstab else 'NAVI_NONREPEAT')
     with line_ticker(line_name,j,'transfer',growing_file_tick(api_csv,_expect_bytes)):
-     save_elapsed=api_client.save_csv(handle,api_csv)
+     save_elapsed=api_client.save_csv(handle,api_csv,repeat_labels=crosstab)
     phase_log('api_save_csv',t,job=j['name'],line=line_name,api_elapsed=f'{save_elapsed:.2f}s',**save_metrics(api_csv,save_elapsed,expected_rows))
     if not api_csv.is_file() or api_csv.stat().st_size<=0:raise RuntimeError(f'API中間CSVが作成されませんでした: {api_csv}')
     intermediate=api_csv
@@ -4077,10 +4128,11 @@ def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=No
    set_status(current_index=job_index,current_job_id=j['id'],current_job_name=j['name'],queue_running_ids=[j['id']],queue_waiting_ids=[x['id'] for x in jobs[job_index:]],output_format=normalize_output_format(j.get('output_format'),j.get('output_file')),output_file=canonical_output_file(j.get('output_file'),normalize_output_format(j.get('output_format'),j.get('output_file'))))
    phase_profile_reset(); preflight_started=phase_log('job_preflight',job=j['name']); progress('open',f'{j["name"]}: 入出力先を確認しています',22,activity_detail='事前確認',activity_value='出力先・保留ファイル・RNEを確認'); rp=resolve_rne_path(j,cfg); out_dir=resolve_path(j.get('output_folder') or cfg['default_output_folder']); fmt=validate_output_contract(j,'before-extraction'); j['_accdb_template']=str(resolve_path(cfg.get('accdb_template','.\\assets\\empty.accdb'))); target=out_dir/j['output_file']; set_status(output_target=str(target)); log.info('実行設定 job=%s format=%s output_file=%s target=%s',j['name'],fmt,j['output_file'],target); apply_pending(target,backup,int(cfg['settings']['backup_generations']),backup_enabled=bool(cfg['settings'].get('backup_enabled',True)),retention_days=int(cfg['settings'].get('backup_retention_days',30)),generation_limit_enabled=bool(cfg['settings'].get('backup_generation_limit_enabled',True)),backup_mode=str(cfg['settings'].get('backup_mode','generations'))); phase_log('job_preflight',preflight_started,job=j['name'],rne=rp,target=target)
    if not rp.is_file():raise FileNotFoundError('RNEがありません: '+str(rp))
+   attach_rne_layout(j,rp);crosstab=job_is_crosstab(j)
    stamp=datetime.now().strftime('%Y%m%d_%H%M%S_%f'); xls=dde_work/f'navi_{job_index}_{stamp}.xls'; local_export=dde_work/'export'; local_export.mkdir(parents=True,exist_ok=True); db=local_export/f'{Path(j["output_file"]).stem}_{stamp}{Path(j["output_file"]).suffix}'; log.info('変換作業先 local=%s',db); esc=lambda x:str(x).replace('"','""')
    # 同時に出す形式があるなら、共通の中間データを必ず通す（XLSXの直接受信からは他形式へ作り直せない）
    extras=job_extra_formats(j)
-   allow_direct_xlsx=(engine=='api' and fmt=='xlsx' and not extras)
+   allow_direct_xlsx=(engine=='api' and fmt=='xlsx' and not extras and not crosstab)
    api_planned=(db if allow_direct_xlsx else (dde_work/f'navi_{job_index}_{stamp}.csv' if engine=='api' else xls));common_intermediate=('API_DIRECT_XLSX' if allow_direct_xlsx else ('CSV' if engine=='api' else 'XLS'))
    if extras:log.info('MULTI_FORMAT job=%s primary=%s extras=%s note=抽出は1回のまま変換と公開だけを繰り返します',j['name'],fmt,','.join(extras))
    job_started=time.perf_counter(); log.info('PIPELINE job=%s engine=%s common_intermediate=%s format=%s planned_intermediate=%s converted=%s target=%s',j['name'],engine,common_intermediate,fmt,api_planned,db,target)
@@ -4128,7 +4180,7 @@ def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=No
     if not api_direct_output:
      api_csv=dde_work/f'navi_{job_index}_{stamp}.csv'
      progress('wait',f'{j["name"]}: API結果を高速CSVへ保存しています',50,activity_detail='Navigator API 3/3',activity_value=str(api_csv))
-     t=phase_log('api_save_csv',job=j['name']);save_elapsed=api_client.save_csv(handle,api_csv);phase_log('api_save_csv',t,job=j['name'],api_elapsed=f'{save_elapsed:.2f}s',**save_metrics(api_csv,save_elapsed,expected_rows))
+     t=phase_log('api_save_csv',job=j['name'],repeat='NAVI_REPEAT' if crosstab else 'NAVI_NONREPEAT');save_elapsed=api_client.save_csv(handle,api_csv,repeat_labels=crosstab);phase_log('api_save_csv',t,job=j['name'],api_elapsed=f'{save_elapsed:.2f}s',**save_metrics(api_csv,save_elapsed,expected_rows))
      if not api_csv.is_file() or api_csv.stat().st_size<=0:raise RuntimeError(f'API中間CSVが作成されませんでした: {api_csv}')
      intermediate=api_csv
     progress('close',f'{j["name"]}: APIカタログを解放しています',62,activity_detail='API抽出完了',activity_value=f'期待値 {expected_rows}行 x {expected_cols}列');t=phase_log('api_close_catalog',job=j['name']);api_client.close_catalog();phase_log('api_close_catalog',t,job=j['name'])

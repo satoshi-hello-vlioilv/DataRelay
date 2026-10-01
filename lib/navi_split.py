@@ -49,6 +49,7 @@ for _n in ('_mark_settings_dirty',
            'block_row_axis',
            'blocked_row_axes',
            'creds',
+           'crosstab_split_reason',
            'duplicate_columns',
            'load_column_cache',
            'load_rne_timing',
@@ -618,6 +619,11 @@ def split_trial_options(job,cfg,row_parts=2):
   out['error']=why
   for k in ('column','row','grid'):out[k]['why']=why
   return out
+ why=crosstab_split_reason(rp)
+ if why:
+  out['error']=why
+  for k in ('column','row','grid'):out[k]['why']=why
+  return out
  # 列と行は別々の控えから決める。列分割は列の一覧が要るが、行分割は管理ポイントの
  # 一覧しか要らない。まとめて「列を調べてください」と断っていたため、手順1が
  # 「行 2分割可」と出しているのに行分割へチェックを入れられなかった（利用者からの指摘）。
@@ -752,6 +758,8 @@ def _split_trial_run(data,c,job):
  def stop(reason,**kw):
   log.warning('SPLIT_TRIAL_ABORT rne=%s job=%s mode=%s 理由=%s',rp,job.get('name'),mode,reason)
   return dict(ok=False,error=reason,**kw)
+ why=crosstab_split_reason(rp)
+ if why:return stop(why)
  cached=load_column_cache(rp)
  if not cached or cached['stale'] or not cached['columns']:
   return stop('先に「列の分割可否を調べる」を実行してください（列定義が未取得か、RNEが更新されています）')

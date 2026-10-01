@@ -241,8 +241,13 @@ DataRelay/
 ├─ templates/ static/        画面（index.html / app.css / app.js）
 ├─ config/ Config/           設定と接続情報
 ├─ assets/                   付属ファイル（空のACCESSひな形など）
-└─ lib/                      アプリの中身
+├─ lib/                      アプリの中身
+├─ samples/                  検証用の見本（RNEなど）。実行では読みません
+└─ tests/                    検証（python -m unittest discover -s tests -t .）
 ```
+
+`samples/` は本番のRNE置き場（`config/rne/`）とは分けてあります。混ぜると、見本が本番の対象として
+一覧や「RNEを選ぶ」に出てしまうためです。
 
 `app.py` と `start_app.py` が起動時に `lib/` を探し先へ足すので、コードの `import` は分ける前と同じです。
 
@@ -261,6 +266,7 @@ DataRelay/
 | `navi_split.py` | 列分割・行分割の試し打ちと設計（本番の実行経路には入りません） |
 | `navi_output.py` | 出力形式の読み替え・拡張子・食い違い検査 |
 | `navi_xlsx.py` | XLSX の書き出しと検査（ZIP/XML として直接組み立て） |
+| `navi_crosstab.py` | RNEの配置（表側・表頭・データ項目）を読み、集計表の段になった見出しを1段に畳む |
 | `navi_publish.py` | 公開 ―― 安全な差し替えと保留の適用 |
 | `navi_localcopy.py` | 共有のファイルをローカルへ写してから読む |
 | `navi_book.py` | マスタを EXCEL で出し入れする |

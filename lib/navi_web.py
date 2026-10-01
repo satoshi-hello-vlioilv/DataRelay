@@ -29,6 +29,7 @@ import navi_bundle   # 登録内容の持ち出し・持ち込みの決まり（
 import navi_join     # キーの見当を付けるところだけ、直接呼ぶ（本体を経由する用が無い）
 import navi_order    # 結合の順番と待ち合わせの判断
 import navi_book     # マスタをEXCELで出し入れする
+import navi_crosstab # RNEの配置（表側・表頭・データ項目）を読む。ファイルを読むだけでAPIは使わない
 
 from app import (
     APP_ID, APP_NAME, APP_RELEASED_AT, APP_VERSION, APP_VERSION_TITLE, BASE, BUILD_VERSION, CHANGELOG,
@@ -347,6 +348,24 @@ def period_preview():
  spec=compute_period(period,datetime.now())
  if not spec:return jsonify(ok=False,error='期間を計算できません'),400
  return jsonify(ok=True,now=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),control_point=period['control_point'],**spec)
+
+@app.post('/api/rne-shape')
+def rne_shape():
+ """RNEが明細か集計表（表頭あり）かを、ファイルを読むだけで答える。
+
+ 集計表は読込形式の指定に関わらず、見出しの段を畳んでリストにする。それを編集画面で
+ 先に見せるための口。サーバーにもDLLにも触らないので、入力のたびに呼んでよい。"""
+ data=request.get_json(force=True) or {};c=load()
+ value=str(data.get('rne_path') or '').strip()
+ if not value:return jsonify(ok=False,error='RNEファイルを指定してください'),200
+ try:rp=resolve_rne_path({'rne_path':value,'rne':Path(value).name},c)
+ except Exception as e:return jsonify(ok=False,error=f'RNEパスの解決に失敗しました: {e}'),200
+ if not Path(rp).is_file():return jsonify(ok=False,error=f'RNEが見つかりません: {rp}'),200
+ lay=navi_crosstab.read_rne_layout(rp)
+ if not lay:return jsonify(ok=False,error='RNEの配置を読み取れませんでした（明細として読みます）'),200
+ example=[f'{d}#{k}' for k in (1,2) for d in lay['data'][:2]] if lay['crosstab'] else []
+ return jsonify(ok=True,crosstab=lay['crosstab'],detail_only=lay['detail_only'],head=lay['head'],
+                side=lay['side'],data=lay['data'],summary=navi_crosstab.describe(lay),example=example)
 
 @app.post('/api/period-control-points')
 def period_control_points():
