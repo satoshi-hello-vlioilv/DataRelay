@@ -29,25 +29,26 @@ ORACLE={
 
 # 正解のデータ。ロットごとに、通ったBOX（工程）の実績を持つ。
 # A と B は倉入日が同じ ―― 表側を繰り返さない書き方だと、Bの倉入日が空欄になる。
-# B は BOX3 を通っていない ―― その列は空欄が正しい。
+# B は BOX5 を通っていない ―― その列は空欄が正しい。
+# BOX番号は連番とは限らない（1, 2, 5）。列名には並び順ではなく、この値そのものを使う。
 LOTS=[
  {'side':['2026/09/01','L001','C01','O01','A1100','H14','1.00','1000','2000','U1','缶材'],
   'boxes':{1:['CRM1','1.2','1010','2010','950','10','2026/08/20','2026/08/21'],
            2:['SLT1','1.0','1000','2000','900','10','2026/08/25','2026/08/26'],
-           3:['PKG1','1.0','1000','2000','890','10','2026/08/28','2026/08/28']}},
+           5:['PKG1','1.0','1000','2000','890','10','2026/08/28','2026/08/28']}},
  {'side':['2026/09/01','L002','C01','O02','A1100','H14','1.00','1000','2000','U1','缶材'],
   'boxes':{1:['CRM1','1.2','1010','2010','800','8','2026/08/20','2026/08/21'],
            2:['SLT2','1.0','1000','2000','780','8','2026/08/26','2026/08/27']}},
  {'side':['2026/09/02','L003','C02','O03','A5052','O','2.00','1200','2400','U2','建材'],
   'boxes':{1:['CRM2','2.2','1210','2410','1500','5','2026/08/22','2026/08/23'],
            2:['SLT1','2.0','1200','2400','1450','5','2026/08/29','2026/08/30'],
-           3:['PKG2','2.0','1200','2400','1440','5','2026/08/31','2026/08/31']}},
+           5:['PKG2','2.0','1200','2400','1440','5','2026/08/31','2026/08/31']}},
 ]
-CATEGORIES=[1,2,3]   # 表頭 BOX番号 のカテゴリ（サーバーが返す並び）
+CATEGORIES=[1,2,5]   # 表頭 BOX番号 のカテゴリ（サーバーが返す並び）
 
 def truth_list():
- """正解のリスト形式。見出しは 表側 ＋ データ項目#BOXの並び番号。"""
- hs=list(ORACLE['side'])+[f'{d}#{k}' for k in range(1,len(CATEGORIES)+1) for d in ORACLE['data']]
+ """正解のリスト形式。見出しは 表側 ＋ データ項目#BOX番号の値。"""
+ hs=list(ORACLE['side'])+[f'{d}#{cat}' for cat in CATEGORIES for d in ORACLE['data']]
  body=[]
  for lot in LOTS:
   row=list(lot['side'])
@@ -96,7 +97,7 @@ def evaluate(hs,body):
  out['列名が重複しない']=len(set(hs))==len(hs)
  out['列数が正しい']=len(hs)==len(ths)
  out['表側の列名が正しい']=hs[:S]==ths[:S]
- out['データ列に#番号が付く']=hs[S:]==ths[S:]
+ out['データ列に表頭の値が付く']=hs[S:]==ths[S:]
  out['件数が正しい（見出しが本体に混ざらない）']=len(body)==len(tbody)
  out['表側の値が欠けない']=len(body)==len(tbody) and all(b[:S]==t[:S] for b,t in zip(body,tbody))
  out['値の位置がずれない']=len(body)==len(tbody) and all(b==t for b,t in zip(body,tbody))
@@ -198,6 +199,60 @@ class CrosstabReadTest(unittest.TestCase):
   shape=navi_crosstab.header_shape('詳細データ',self.layout)
   names,used,info=shape.resolve(rows[:shape.lookahead])
   self.assertEqual(used,2);self.assertEqual(names,truth_list()[0]);self.assertTrue(info['structure_ok'])
+
+class CrosstabNamingTest(unittest.TestCase):
+ """データ列の名前の付け方。表頭の値を使い、重なったら連番で分ける。"""
+ LAY={'side':['K'],'head':['H'],'data':['a','b'],'cond':[],'crosstab':True,'detail_only':True}
+
+ def names(self,top,lay=None,extra_top=None):
+  import navi_crosstab
+  lay=lay or self.LAY;D=len(lay['data'])
+  rows=([extra_top] if extra_top else [])+[top,['K']+lay['data']*((len(top)-1)//D),['k1']+['v']*(len(top)-1)]
+  names,used,info=navi_crosstab.flatten_header(rows,lay)
+  self.assertEqual(used,len(rows)-1)
+  return names
+
+ def test_values_not_order(self):
+  """並び順ではなく値。1, 2, 5 なら #1, #2, #5（#3 にはならない）。"""
+  self.assertEqual(self.names(['','1','1','2','2','5','5']),
+                   ['K','a#1','b#1','a#2','b#2','a#5','b#5'])
+
+ def test_text_values(self):
+  self.assertEqual(self.names(['','CRM','','SLT','']),['K','a#CRM','b#CRM','a#SLT','b#SLT'])
+
+ def test_duplicate_values_get_serial(self):
+  """同じ値のブロックが重なったら、2つ目から _2, _3 … を付ける（1つ目はそのまま）。"""
+  # 値を全列に書く形（隣り合う同じ値は、同じ名前の2度目で次のブロックと分かる）
+  self.assertEqual(self.names(['','3','3','3','3','4','4','3','3']),
+                   ['K','a#3','b#3','a#3_2','b#3_2','a#4','b#4','a#3_3','b#3_3'])
+  # 値を先頭の列だけに書く形
+  self.assertEqual(self.names(['','3','','3','','4','']),
+                   ['K','a#3','b#3','a#3_2','b#3_2','a#4','b#4'])
+
+ def test_serial_does_not_collide_with_real_value(self):
+  """連番で作る名前が本物の値と重なるときは、本物の値が名前を持ち、連番の側がずれる。
+
+  値「3」が2回と値「3_2」がある。2つ目の「3」を 3_2 にすると本物の 3_2 と区別できなくなるので、
+  3_3 にする。本物の値の列名は、ほかのブロックの有無で変わらない。"""
+  got=self.names(['','3','','3','','3_2',''])
+  self.assertEqual(got,['K','a#3','b#3','a#3_3','b#3_3','a#3_2','b#3_2'])
+
+ def test_blank_value(self):
+  """表頭の値が空（NULLのカテゴリなど）は「空欄」。重なれば同じく連番。"""
+  self.assertEqual(self.names(['','','','1','']),['K','a#空欄','b#空欄','a#1','b#1'])
+  self.assertEqual(self.names(['','','','','']),['K','a#空欄','b#空欄','a#空欄_2','b#空欄_2'])
+  # 値を全列に書く形（NAVI_REPEAT）で、途中のカテゴリが空。左の「3」を持ち越して 3_2 にしてはいけない
+  self.assertEqual(self.names(['','3','3','','','4','4']),['K','a#3','b#3','a#空欄','b#空欄','a#4','b#4'])
+
+ def test_xls_numbers(self):
+  """中間XLSでは数値が 1.0 で来る。列名は 1 にする。"""
+  self.assertEqual(self.names(['',1.0,1.0,2.0,2.0]),['K','a#1','b#1','a#2','b#2'])
+
+ def test_two_head_levels(self):
+  """表頭が2段なら、上から順に「／」でつなぐ。"""
+  lay=dict(self.LAY,head=['H1','H2'])
+  self.assertEqual(self.names(['','1','','1','','2',''],lay,extra_top=['','A','','','','','']),
+                   ['K','a#A／1','b#A／1','a#A／1_2','b#A／1_2','a#A／2','b#A／2'])
 
 class CrosstabExportTest(unittest.TestCase):
  """中間CSV → 出力ファイル（CSV・TXT・EXCEL・SQLite3）まで通し、読み戻して正解と比べる。"""

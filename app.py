@@ -2735,11 +2735,13 @@ def read_extract(source,job,reject,expected_rows=None,expected_cols=None):
  row_match=expected_rows is None or len(body)==int(expected_rows)
  col_match=navi_crosstab.columns_consistent(shape_info,len(hs),expected_cols)
  if shape_info.get('kind')=='crosstab':
-  # 段を畳んだ記録。表頭の値（ブロックごと）と#番号の対応はここにしか残らない。
-  log.info('CROSSTAB_HEADER file=%s depth=%s side=%s data=%s blocks=%s names_row_found=%s structure_ok=%s labels=%s',
+  # 段を畳んだ記録。列名の後ろに付けた文字（表頭の値）と、重なって連番にしたものを残す。
+  _sfx=shape_info.get('suffixes') or [];_lab=shape_info.get('labels') or []
+  _dup=[f'#{x}(値={y or navi_crosstab.BLANK_LABEL})' for x,y in zip(_sfx,_lab) if x!=(y or navi_crosstab.BLANK_LABEL)]
+  log.info('CROSSTAB_HEADER file=%s depth=%s side=%s data=%s blocks=%s names_row_found=%s structure_ok=%s suffixes=%s',
            source.name,shape_info.get('depth'),shape_info.get('side'),shape_info.get('data'),shape_info.get('blocks'),
-           shape_info.get('names_row_found'),shape_info.get('structure_ok'),
-           ' '.join(f'#{i}={x or "?"}' for i,x in enumerate(shape_info.get('labels') or [],1))[:400])
+           shape_info.get('names_row_found'),shape_info.get('structure_ok'),' '.join(f'#{x}' for x in _sfx)[:400])
+  if _dup:log.info('CROSSTAB_HEADER_SERIAL file=%s note=表頭の値が重なったため連番を付けました %s',source.name,' '.join(_dup)[:400])
   if not shape_info.get('names_row_found'):
    log.warning('CROSSTAB_HEADER_UNMATCHED file=%s note=データ項目の名前が並ぶ段を見つけられず、RNEの段数(%s行)どおりに読みました',source.name,shape_info.get('depth'))
  log.info('INTERMEDIATE_VALIDATION kind=%s file=%s encoding=%s size=%s rows=%s columns=%s expected_rows=%s expected_columns=%s row_match=%s column_match=%s header=%s elapsed=%.2fs',source_kind,source,encoding_used,source.stat().st_size,len(body),len(hs),expected_rows,expected_cols,row_match,col_match,shape.kind,time.perf_counter()-started)
