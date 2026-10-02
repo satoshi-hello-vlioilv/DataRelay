@@ -216,8 +216,20 @@ def flush_local_to_master(reason=''):
   if stage is not None:
    try:stage.unlink()
    except OSError:pass
+# 裏で書き戻している最中の件数。/api/background-tasks の settings_flush で答える（画面の一覧には出さない）。
+# 書き戻しは答えを返したあとに走り、終わるとログに1行残す。「裏が落ち着いたか」を見る側が待てるようにしておく。
+_settings_flush_pending=0; _settings_flush_pending_lock=threading.Lock()
+def settings_flush_pending():
+ with _settings_flush_pending_lock:return _settings_flush_pending
 def flush_local_to_master_async(reason=''):
- threading.Thread(target=flush_local_to_master,args=(reason,),daemon=True,name='settings-flush').start()
+ global _settings_flush_pending
+ def run():
+  global _settings_flush_pending
+  try:flush_local_to_master(reason)
+  finally:
+   with _settings_flush_pending_lock:_settings_flush_pending-=1
+ with _settings_flush_pending_lock:_settings_flush_pending+=1
+ threading.Thread(target=run,daemon=True,name='settings-flush').start()
 def _flush_settings_on_exit(reason=''):
  # 終了直前に、未反映の変更があるときだけBOXへ書き戻す（不要なBOX書き込みを避ける）。
  try:

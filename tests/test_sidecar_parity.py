@@ -36,7 +36,7 @@ DATETIME=re.compile(r'\d{4}[-/]\d{2}[-/]\d{2}[ T]\d{2}:\d{2}(:\d{2})?(\.\d+)?|\d
 
 # 裏で走っているもの（調べもの・影実行）しだいで答えが変わるルート。窓口の違いではなく、
 # 直前に起こしたスレッドが終わったかどうかで変わる。聞く前に、両方の裏が落ち着くのを待つ。
-SETTLE_BEFORE={'/api/background-tasks','/api/log'}
+SETTLE_BEFORE={'/api/background-tasks','/api/log','/api/log/delete-old'}   # どれもログの行数や裏の様子で答えが決まる
 
 def path_args(rule):
  """URL表の <名前> に入れる値。存在しない対象を指す ―― 答え（404など）が同じかを比べる。"""
@@ -179,11 +179,14 @@ class Direct:
 
 
 def settle(*sides,limit=15):
- """裏で走っているもの（調べもの・影実行）が両方とも終わるまで待つ。"""
+ """裏で走っているもの（調べもの・影実行・設定の共有への書き戻し）が両方とも終わるまで待つ。
+
+ 書き戻しは答えを返したあとに走り、終わるとログに1行残す。待たないと、その1行が A では /api/log より前、
+ B では後に書かれて、ログの件数が食い違う（Windows の CI で 36 と 35 になった。B の書き戻しを遅らせると手元でも再現する）。"""
  end=time.time()+limit
  while time.time()<end:
-  counts=[json.loads(x.call({'label':'bg','method':'GET','path':'/api/background-tasks','body':b''})[2]).get('count') for x in sides]
-  if not any(counts):return True
+  got=[json.loads(x.call({'label':'bg','method':'GET','path':'/api/background-tasks','body':b''})[2]) for x in sides]
+  if not any(g.get('count') or g.get('settings_flush') for g in got):return True
   time.sleep(0.2)
  return False
 

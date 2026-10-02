@@ -37,7 +37,7 @@ from app import (
     _read_api_diag_cache, _run_inspect_endpoint, _split_stage_logged, _split_trial_run,
     _viewer_output_path, _write_api_diag_cache, active_workers, active_workers_lock, alerts,
     alerts_lock, api_readiness, axis_balance_scores, blocked_row_axes, calendar,
-    settings_sync_lock, settings_revision, SETTINGS_DB,
+    settings_sync_lock, settings_revision, SETTINGS_DB, settings_flush_pending,
     run_api_diag_worker,
     cancel_requested, check_path_item, clamp_parallel_lines, clear_row_axis_blocks,
     column_cache_state, column_weights, command_queue, command_queue_lock, compute_period,
@@ -940,7 +940,8 @@ def background_tasks():
               'stage':st.get('stage') or '','job':st.get('job') or '','job_id':st.get('job_id') or '',
               'rne':st.get('rne') or '','percent':float(st.get('percent') or 0),
               'elapsed':round(time.time()-(st.get('started') or time.time()),1)})
- return jsonify(ok=True,count=len(out),tasks=out)
+ # 設定の共有への書き戻し（数秒で終わる）は一覧に出さず、件数だけ別に答える。
+ return jsonify(ok=True,count=len(out),tasks=out,settings_flush=settings_flush_pending())
 
 @app.post('/api/run')
 def run_all():

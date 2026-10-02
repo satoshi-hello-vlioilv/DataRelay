@@ -55,7 +55,7 @@ class PackageTest(unittest.TestCase):
  def test_markdown_conversion(self):
   sys.path.insert(0,str(ROOT/'.github'/'scripts'))
   import doctest,release
-  self.assertEqual(doctest.testmod(release).failed,0)
+  self.assertEqual(doctest.testmod(release,verbose=False).failed,0)   # verbose を決めないと unittest の -v に反応して出力を混ぜる
 
 
 class VersionAgreementTest(unittest.TestCase):
