@@ -7,7 +7,9 @@
   アプリの中身は lib/ にまとめてあります。
 
   <直下>
-    start.vbs / start.bat ... Windowsからの起動
+    start.vbs / start.bat ... Windowsからの起動（ブラウザ版）
+    DataRelay.exe         ... デスクトップ版の起動（desktop/ から作る。1.95.0）
+    sidecar.py            ... デスクトップ版の窓口（標準入出力で app.py を呼ぶ。ポートを開かない）
     stop_app.bat          ... 停止（lib/process_manager.py を呼びます）
     start_app.py          ... Pythonからの起動（lib/launch_guard.py を呼びます）
     app.py                ... アプリ本体（python app.py で直接も起動できます）
@@ -17,8 +19,8 @@
     assets/               ... 付属ファイル
     samples/              ... 検証用の見本（RNEなど）。実行では読みません (v1.93.0)
                               本番のRNE置き場(config/rne/)と混ぜると、見本が対象として出てしまうため分けています
-    migration/            ... デスクトップ版（Tauri/Rust/Python）への移行の検証と試作。実行では使いません
-                              結果は migration/FEASIBILITY.md
+    desktop/              ... デスクトップ版の窓（Tauri・Rust）。cargo build --release で DataRelay.exe を作る
+    migration/            ... デスクトップ版への移行の検証（報告書 migration/FEASIBILITY.md と移行先の割り当て）
     tests/                ... 検証（python -m unittest discover -s tests -t .）
 
   <lib/>

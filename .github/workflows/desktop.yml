@@ -1,0 +1,61 @@
+# デスクトップ版（desktop/・Tauri）を Windows で作り、本物の WebView2 で自己診断する。
+# 作った exe と自己診断の記録は Artifacts に置く（exe を app.py の隣に置けば動く）。
+name: desktop
+
+on:
+  push:
+    branches: [main]          # 作業の枝は pull_request で回す（同じ版を2回作らない）
+    paths: ["desktop/**", "sidecar.py", "app.py", "lib/**", "static/**", "templates/**", "tests/**", ".github/workflows/desktop.yml"]
+  pull_request:
+    paths: ["desktop/**", "sidecar.py", "app.py", "lib/**", "static/**", "templates/**", "tests/**", ".github/workflows/desktop.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Python の部品（config/requirements.txt と同じ）
+        run: python -m pip install -r config/requirements.txt
+
+      - name: Python の試験（Windows・ポートなしの窓口と全ルートの突き合わせを含む）
+        run: python -m unittest discover -s tests -t . -v
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop
+
+      - name: Rust の試験
+        working-directory: desktop
+        run: cargo test --locked
+
+      - name: exe を作る
+        working-directory: desktop
+        run: cargo build --release --locked
+
+      - name: 自己診断（本物の WebView2・ポートなし。全体・閉じるだけ・起こし直し）
+        # Python の場所は指定しない（ブラウザ版と同じ探し方で見つけられることも確かめる）
+        run: python desktop/selftest_runner.py desktop/target/release/DataRelay.exe
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: DataRelay-desktop-windows
+          path: desktop/target/release/DataRelay.exe
+          if-no-files-found: warn

@@ -191,6 +191,17 @@ def main() -> int:
             if not BROWSER_BY_VBS:
                 open_browser_best_effort()
             return 0
+        # デスクトップ版（DataRelay.exe）が中身を動かしていれば起動しない。同時に動かすと、
+        # スケジューラーが2つになり、同じ自動実行が二重に走る（錠の本体は app.py の boot_app が持つ）。
+        try:
+            import navi_instance
+            navi_instance.acquire(LOCAL_ROOT / 'runtime', 'probe').release()
+        except navi_instance.InstanceBusy as busy:
+            log(f'起動しません: {busy}')
+            print(str(busy))
+            return 2
+        except Exception as e:
+            log(f'錠の確認に失敗しました（起動は続けます）: {e}')
         write_info(os.getpid(), None)
         log(f'新規インスタンス起動 launcher_pid={os.getpid()}')
         proc = spawn_app(); spawned = True

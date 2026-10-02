@@ -1,4 +1,4 @@
-//! サイドカー（migration/poc/sidecar.py）との枠。両方向とも同じ形:
+//! 窓口（sidecar.py）との枠。両方向とも同じ形:
 //!   ヘッダー: JSON 1行（UTF-8・改行で終わる）。"len" が本文のバイト数
 //!   本文    : len バイトそのまま（base64 にしない。大きな一覧でも膨らませない）
 //! Defect-Pitch-Analyzer の desktop/src/frame.rs（版 2.0.0）と同じもの。Python 側の read_frame / Writer.send と対になる。

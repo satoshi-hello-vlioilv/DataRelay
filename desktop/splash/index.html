@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>DataRelay</title>
+<style>
+:root{--navy:#17384e;--blue:#087c98;--ok:#087a57;--bad:#b93b32;--muted:#647581;--line:#d7e0e5;--soft:#f3f6f8}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;display:grid;place-items:center;background:var(--soft);color:var(--navy);font-family:"Yu Gothic UI",Meiryo,sans-serif}
+.card{width:min(560px,92vw);background:#fff;border:1px solid var(--line);border-radius:14px;box-shadow:0 18px 50px #15384d1f;padding:26px 28px}
+h1{margin:0;font-size:22px;letter-spacing:.02em}
+.sub{margin:4px 0 18px;color:var(--muted);font-size:12px}
+ol{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+li{display:grid;grid-template-columns:22px 1fr;gap:10px;align-items:start;padding:9px 12px;border:1px solid var(--line);border-radius:9px;font-size:13px;color:var(--muted)}
+li b{display:block;font-weight:700}
+li small{display:block;font-size:11px;margin-top:2px;word-break:break-all}
+li i{font-style:normal;font-weight:900;text-align:center}
+li[data-state=now]{color:var(--blue);border-color:#9cd5db;background:#eaf6f8}
+li[data-state=ok]{color:var(--ok);border-color:#cce8db;background:#edf8f3}
+li[data-state=bad]{color:var(--bad);border-color:#efc4bf;background:#fff1ef}
+#fail{display:none;margin-top:16px;padding:12px 14px;border-left:4px solid var(--bad);background:#fff1ef;border-radius:7px}
+#fail b{display:block;color:var(--bad);margin-bottom:6px}
+#fail pre{margin:0;white-space:pre-wrap;font:12px/1.6 "Yu Gothic UI",Meiryo,sans-serif;color:#5c2a25}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>DataRelay</h1>
+  <p class="sub">起動しています。ブラウザやポートは使いません。</p>
+  <ol>
+    <li id="python" data-state="now"><i>…</i><div><b>Python を探す</b><small>ブラウザ版と同じ Python を使います</small></div></li>
+    <li id="backend" data-state="wait"><i>○</i><div><b>中身を読み込む</b><small></small></div></li>
+    <li id="open" data-state="wait"><i>○</i><div><b>画面を開く</b><small></small></div></li>
+  </ol>
+  <div id="fail"><b></b><pre></pre></div>
+</div>
+<script>
+// 窓（Rust）から呼ばれる。読み込み前の分は窓がためておき、読み終わったら流す。
+window.splash = {
+  step(id, state, detail) {
+    const li = document.getElementById(id);
+    if (!li) return;
+    li.dataset.state = state;
+    li.querySelector('i').textContent = { now: '…', ok: '✓', bad: '!', wait: '○' }[state] || '○';
+    if (detail !== undefined) li.querySelector('small').textContent = detail;
+  },
+  fail(title, detail) {
+    const f = document.getElementById('fail');
+    f.querySelector('b').textContent = title;
+    f.querySelector('pre').textContent = detail;
+    f.style.display = 'block';
+  },
+};
+</script>
+</body>
+</html>

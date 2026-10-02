@@ -4638,25 +4638,34 @@ def stop_tray_and_wait(seconds=1.0):
   time.sleep(0.05)
  return not getattr(tray,'hwnd',None)
 
-def request_shutdown_from_tray():
- # 通知領域からの終了も「アプリを終了」と同じ扱いにする。実行中なら先に中断してから終える。
- # 順番が肝。process() は終わりぎわに中断の札を下ろすので、キューを先に空にしておかないと
- # 中断した1本が終わった瞬間に次のバッチが始まり、そのワーカーは誰にも止められない
- # （終了を押したのに新しい抽出が始まる）。予定の投入も止めてから中断する。
+def prepare_exit(source,wait_seconds=30):
+ """終わる前の後始末。画面の「終了」・通知領域の「終了」・デスクトップ版の窓の「終了」で同じものを使う。
+
+ 順番が肝。process() は終わりぎわに中断の札を下ろすので、キューを先に空にしておかないと
+ 中断した1本が終わった瞬間に次のバッチが始まり、そのワーカーは誰にも止められない
+ （終了を押したのに新しい抽出が始まる）。予定の投入も止めてから中断する。
+ os._exit は finally も atexit も走らせない。ここで止めておかないと、抽出のワーカーと
+ （DDE方式なら）非表示のSymfoNaviが親を失って残り、次の起動でもう1本増える。
+ プロセスを終わらせるのは呼んだ側（ブラウザ版は os._exit、デスクトップ版は窓）。
+ 戻り値は、待ち切っても実行中のままだったか。"""
  with command_queue_lock:command_queue.clear()
  stop_event.set()
+ log.info('APP_EXIT_PREPARE source=%s running=%s resident=%s',source,status.get('running'),residency_state['active'])
  if status.get('running'):
-  log.info('TRAY_EXIT_REQUESTED running=1 action=cancel_then_exit')
-  cancel_requested.set(); stop_all_workers('tray-exit')
-  deadline=time.time()+30
+  cancel_requested.set(); stop_all_workers(source)
+  deadline=time.time()+max(0,float(wait_seconds))
   while status.get('running') and time.time()<deadline:time.sleep(0.3)
- else:
-  log.info('TRAY_EXIT_REQUESTED running=0 action=exit')
  # 待っているあいだに起き直したワーカーが居ないか、最後にもう一度見る。
- stop_all_workers('tray-exit-final')
+ stop_all_workers(source+'-final')
  with command_queue_lock:command_queue.clear()
+ _flush_settings_on_exit(source)
  flush_log()
- _flush_settings_on_exit('tray-exit');stop_event.set()
+ return bool(status.get('running'))
+
+def request_shutdown_from_tray():
+ # 通知領域からの終了も「アプリを終了」と同じ扱いにする。実行中なら先に中断してから終える。
+ log.info('TRAY_EXIT_REQUESTED running=%s',int(bool(status.get('running'))))
+ prepare_exit('tray-exit',30)
  stop_tray_and_wait()
  os._exit(0)
 def start_tray():
@@ -5533,23 +5542,35 @@ def stay_resident():
 @app.post('/api/shutdown-app')
 def shutdown_app():
  # 画面の「アプリを終了」。常駐条件が残っていても、ここからの終了は明示操作として尊重する。
+ # 停止バッチ（stop_app.bat）もこの受け口を先に叩くので、そちらから止めたときも同じ後始末を通る。
+ # （デスクトップ版では、この問い合わせは窓が受け取り、後始末だけを /api/app-cleanup で頼む。）
  def stop():
   time.sleep(.4)
-  with command_queue_lock:command_queue.clear()
   log.info('APP_EXIT_REQUESTED source=ui running=%s resident=%s',status.get('running'),residency_state['active'])
-  # os._exit は finally も atexit も走らせない。ここで止めておかないと、抽出のワーカーと
-  # （DDE方式なら）非表示のSymfoNaviが親を失って残り、次の起動でもう1本増える。
-  # 停止バッチもこの受け口を先に叩くため、そちらから止めたときも同じ取り残しが起きていた。
-  stop_event.set()
-  if status.get('running'):
-   cancel_requested.set(); stop_all_workers('shutdown-app')
-   deadline=time.time()+15
-   while status.get('running') and time.time()<deadline:time.sleep(0.3)
-  stop_all_workers('shutdown-app-final')
-  _flush_settings_on_exit('shutdown-app')
+  prepare_exit('shutdown-app',15)
   stop_tray_and_wait()
   os._exit(0)
  threading.Thread(target=stop,daemon=True).start(); return jsonify(ok=True)
+
+@app.get('/api/residency')
+def residency_status():
+ """常駐を続ける理由（実行中・キュー・自動実行の予定・影実行・頼まれた常駐）。無ければ空文字。
+
+ デスクトップ版の窓が、× を押されたときに聞く。理由があれば窓を隠して通知領域に残り、無ければ終わる。
+ 心拍の状態（/api/heartbeat-status）とは切り離してある ―― デスクトップ版に心拍は無い。"""
+ return jsonify(ok=True,reason=residency_reason(),running=bool(status.get('running')),
+                queued=pending_queue_count(),status_text=tray_status_text())
+
+@app.post('/api/app-cleanup')
+def app_cleanup():
+ """デスクトップ版の窓が終わる前に頼む後始末。プロセスは終わらせない（終わらせるのは窓）。
+
+ 答えを返してから窓が入力を閉じ、この窓口は入力の終わりを見て自分で終わる。"""
+ data=request.get_json(silent=True) or {}
+ try:wait=max(0.0,min(60.0,float(data.get('wait_seconds') or 30)))
+ except Exception:wait=30.0
+ still=prepare_exit(str(data.get('source') or 'desktop-quit')[:40],wait)
+ return jsonify(ok=True,still_running=still)
 
 # 起動計測用: Flaskが最初のHTTP要求を処理した時刻を1度だけ記録する（＝サーバー実質稼働開始）。
 _first_request_logged=False
@@ -5634,14 +5655,23 @@ from navi_diag import (FAILED_DIAG_TTL_SECONDS, PATH_SETTING_KIND, PATH_SETTING_
 if not WORKER_MODE:
  import navi_web
 
-if __name__=='__main__':
- if os.environ.get('NAVI_LAUNCHED_BY_GUARD')!='1':
-  raise SystemExit('start.vbsから起動してください。app.pyの直接起動はサポートされていません。')
- try:_spawn_at=float(os.environ.get('NAVI_APP_SPAWN_AT') or 0)
- except Exception:_spawn_at=0
- if _spawn_at:log.info('APP_IMPORT_ELAPSED spawn_to_import=%.2fs note=interpreter_init+module_import+source_compile(BOX)',_APP_IMPORT_DONE_AT-_spawn_at)
+# 中身を利用者ごとに1つにする錠（ブラウザ版とデスクトップ版の取り合い）。boot_app が取り、終わるまで持つ。
+import navi_instance
+_instance_lock=None
+
+def boot_app(mode='browser',_spawn_at=0.0):
+ """起動して裏で始めることを1か所にまとめる。ブラウザ版（__main__）とデスクトップ版（sidecar.py）の両方から呼ぶ。
+
+ mode='browser' … ポートとブラウザの形。心拍の監視・自分への疎通確認・通知領域のアイコン（pywin32）も起こす
+ mode='desktop' … 窓（Tauri）の中身として動く形。窓が閉じたことを直接受け取り、アイコンも窓が持つので、上の3つは起こさない
+ """
+ # 中身は利用者ごとに1つだけ。ブラウザ版とデスクトップ版を同時に起こすと、スケジューラーが2つ動いて
+ # 同じ自動実行が二重に走る。取れなければ navi_instance.InstanceBusy を投げる（呼んだ側が知らせて止まる）。
+ # 錠はこのプロセスが終わるまで持つ（落ちても OS が外す）。
+ global _instance_lock
+ _instance_lock=navi_instance.acquire(LOCAL_RUNTIME,mode)
  # どの版が動いているのかは、後からログだけを見て分かる必要がある。起動のいちばん最初に出す。
- startup_clock=time.perf_counter();log.info('APP_START version=%s build=%s released=%s source=%s local_root=%s pycache=%s',APP_VERSION,BUILD_VERSION,APP_RELEASED_AT,BASE,LOCAL_ROOT,os.environ.get('PYTHONPYCACHEPREFIX',''))
+ startup_clock=time.perf_counter();log.info('APP_START mode=%s version=%s build=%s released=%s source=%s local_root=%s pycache=%s',mode,APP_VERSION,BUILD_VERSION,APP_RELEASED_AT,BASE,LOCAL_ROOT,os.environ.get('PYTHONPYCACHEPREFIX',''))
  # 掃除するのは、実際に使う作業場所。決め打ちにしていたため、アカウント名が日本語の
  # PCでは作業場所（C:\DataRelayWork）と掃除する場所が食い違い、中間ファイルが
  # 起動のたびに積み上がっていた。
@@ -5664,16 +5694,36 @@ if __name__=='__main__':
   faulthandler.enable(file=_crash_file,all_threads=True)
   log.info('APP_START_FAULTHANDLER path=%s',LOCAL_LOGS/'crash.log')
  except Exception:log.exception('FAULTHANDLER_UNAVAILABLE')
- _t=time.perf_counter(); threading.Thread(target=scheduler,daemon=True,name='scheduler').start(); threading.Thread(target=command_dispatcher,daemon=True,name='command-dispatcher').start(); threading.Thread(target=heartbeat_watchdog,daemon=True,name='heartbeat-watchdog').start(); threading.Thread(target=self_probe,daemon=True,name='self-probe').start(); log.info('APP_START_THREADS elapsed=%.2fs',time.perf_counter()-_t)
+ _t=time.perf_counter(); threading.Thread(target=scheduler,daemon=True,name='scheduler').start(); threading.Thread(target=command_dispatcher,daemon=True,name='command-dispatcher').start()
+ # 心拍の監視と自分への疎通確認は、ポートとブラウザの形でだけ要る。デスクトップ版は窓（Rust）が
+ # 閉じたことを直接受け取り、中身が止まれば窓が起こし直すので、どちらも走らせない。
+ if mode=='browser':
+  threading.Thread(target=heartbeat_watchdog,daemon=True,name='heartbeat-watchdog').start(); threading.Thread(target=self_probe,daemon=True,name='self-probe').start()
+ log.info('APP_START_THREADS mode=%s elapsed=%.2fs',mode,time.perf_counter()-_t)
  # 通知領域のアイコンは、出来上がるまで待たされる（Explorerが混んでいると最大5秒）。
  # その待ちを画面が立つ前に払う理由は無い。裏で用意して、サーバーは先に立てる。
  # 出来上がったかどうかを待ちたい側は tray_ready を見る。
  _t=time.perf_counter()
- def _tray_boot():
-  ok=bool(start_tray());tray_ready.set()
-  log.info('APP_START_TRAY available=%s elapsed=%.2fs（サーバーの起動とは別に用意しました）',ok,time.perf_counter()-_t)
- threading.Thread(target=_tray_boot,daemon=True,name='tray-boot').start()
- log.info('APP_START_TOTAL boot_to_run=%.2fs total_since_spawn=%.2fs',time.perf_counter()-startup_clock,(time.time()-_spawn_at) if _spawn_at else -1)
+ if mode=='browser':
+  def _tray_boot():
+   ok=bool(start_tray());tray_ready.set()
+   log.info('APP_START_TRAY available=%s elapsed=%.2fs（サーバーの起動とは別に用意しました）',ok,time.perf_counter()-_t)
+  threading.Thread(target=_tray_boot,daemon=True,name='tray-boot').start()
+ else:
+  # 通知領域のアイコンは窓（Rust）が持つ。こちらは持たないことを確定させておく（待つ側を待たせない）。
+  tray_ready.set()
+ log.info('APP_START_TOTAL mode=%s boot_to_run=%.2fs total_since_spawn=%.2fs',mode,time.perf_counter()-startup_clock,(time.time()-_spawn_at) if _spawn_at else -1)
+
+if __name__=='__main__':
+ if os.environ.get('NAVI_LAUNCHED_BY_GUARD')!='1':
+  raise SystemExit('start.vbsから起動してください。app.pyの直接起動はサポートされていません。')
+ try:_spawn_at=float(os.environ.get('NAVI_APP_SPAWN_AT') or 0)
+ except Exception:_spawn_at=0
+ if _spawn_at:log.info('APP_IMPORT_ELAPSED spawn_to_import=%.2fs note=interpreter_init+module_import+source_compile(BOX)',_APP_IMPORT_DONE_AT-_spawn_at)
+ try:boot_app('browser',_spawn_at)
+ except navi_instance.InstanceBusy as busy:
+  log.error('APP_INSTANCE_BUSY mode=browser holder=%s detail=%s',busy.holder,busy);flush_log()
+  raise SystemExit(1)
  # ポートが空いているかを先に確かめる。Flask(werkzeug)は束縛失敗を自前で処理して
  # 標準出力にだけ出して終了するため、そのままではログに何も残らず、
  # ランチャー側からは「起動確認がタイムアウト」としか見えない。

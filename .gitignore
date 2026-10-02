@@ -16,3 +16,6 @@ Config/app_settings.sqlite3
 # Windowsでは config/ と Config/ が同じ場所を指すため、両方の綴りを書く。
 config/symnavim.conf
 Config/symnavim.conf
+
+# デスクトップ版の exe（desktop/ から作る。CI の Artifacts で配る）
+DataRelay.exe

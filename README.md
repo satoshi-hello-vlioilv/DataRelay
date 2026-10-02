@@ -138,6 +138,7 @@ CatalogDBMSList=SYMFOWARE/RDB
 | 方法 | 使うもの |
 |---|---|
 | ダブルクリック（推奨） | `start.vbs` |
+| デスクトップ版（1.95.0 から） | `DataRelay.exe`（下の節） |
 | コマンドプロンプトから | `start.bat` |
 | Python から | `py start_app.py` |
 
@@ -146,6 +147,25 @@ CatalogDBMSList=SYMFOWARE/RDB
 
 > **`python app.py` の直接起動はできません。**
 > 起動の見張り役（`lib/launch_guard.py`）を通さないと多重起動の防止・ローカル領域の準備が行われないため、拒否します。
+
+### デスクトップ版（DataRelay.exe・1.95.0 から）
+
+ブラウザを使わずに、アプリの窓で開く入口です。`DataRelay.exe` を `app.py` と同じフォルダーに置いて、ダブルクリックします。
+
+```
+DataRelay\
+  start.vbs        ← ブラウザ版の入口（これまでどおり）
+  DataRelay.exe    ← デスクトップ版の入口
+  app.py  sidecar.py  lib\  static\  templates\  config\ …（両方が同じものを使う）
+```
+
+- **ポートを使いません**。プロキシの設定でアプリが答えなくなる・前の版がポートに残る・ほかのプログラムとポートを取り合う、が起きません。2回開くと前の窓が前に出ます。
+- **× を押したとき**: 自動実行の予定・実行中の処理・実行キューがあれば、窓を隠して通知領域（タスクバー右側）に残り、自動実行を続けます。何も無ければ後始末をして終わります。
+- **心拍はありません**。窓が閉じたことを窓が直接受け取ります。中身（Python）が止まったら、窓がすぐ起こし直します。
+- Python はブラウザ版と同じものを使います（ブラウザ版が前回使った Python → `py -3` → `python` の順に探します）。増える要件は WebView2（Windows 11 に標準で入っています）だけです。
+- **ブラウザ版と同時には動きません**。同時に動かすと自動実行が二重に走るため、どちらか一方が動いていれば、もう一方は理由を出して起動しません。
+- exe は GitHub の Actions（desktop）が Windows で作り、自己診断してから置きます。窓の記録は `%LOCALAPPDATA%\DataRelay\logs\desktop.log`、中身の記録はこれまでどおり `app.log` です。
+- 役割の分け方・確かめ方・まだ確かめていないこと（社内の PC で署名の無い exe が止められないか など）は [migration/FEASIBILITY.md](migration/FEASIBILITY.md) にあります。
 
 ### 3. 対象を登録する
 
@@ -233,7 +253,9 @@ PC ごとに変わる場所は `<PC>` という印で持ち、使うときに実
 
 ```
 DataRelay/
-├─ start.vbs / start.bat     Windowsからの起動
+├─ start.vbs / start.bat     Windowsからの起動（ブラウザ版）
+├─ DataRelay.exe             デスクトップ版の起動（desktop/ から作る。リポジトリには入れない）
+├─ sidecar.py                デスクトップ版の窓口（標準入出力で app.py を呼ぶ。ポートを開かない）
 ├─ start_app.py              Pythonからの起動（lib/launch_guard.py を呼びます）
 ├─ stop_app.bat              停止（lib/process_manager.py を呼びます）
 ├─ app.py                    アプリ本体（Flask・設定・ジョブ・予定・抽出）
@@ -243,7 +265,8 @@ DataRelay/
 ├─ assets/                   付属ファイル（空のACCESSひな形など）
 ├─ lib/                      アプリの中身
 ├─ samples/                  検証用の見本（RNEなど）。実行では読みません
-├─ migration/                デスクトップ版（Tauri/Rust/Python）への移行の検証と試作。実行では使いません
+├─ desktop/                  デスクトップ版の窓（Tauri・Rust）。cargo build --release で DataRelay.exe を作る
+├─ migration/                デスクトップ版への移行の検証（報告書と移行先の割り当て）
 └─ tests/                    検証（python -m unittest discover -s tests -t .）
 ```
 
@@ -269,6 +292,7 @@ DataRelay/
 | `navi_split.py` | 列分割・行分割の試し打ちと設計（本番の実行経路には入りません） |
 | `navi_output.py` | 出力形式の読み替え・拡張子・食い違い検査 |
 | `navi_xlsx.py` | XLSX の書き出しと検査（ZIP/XML として直接組み立て） |
+| `navi_instance.py` | 中身（スケジューラーを持つプロセス）を利用者ごとに1つにする錠（ブラウザ版とデスクトップ版の取り合い） |
 | `navi_crosstab.py` | RNEの配置（表側・表頭・データ項目）を読み、集計表の段になった見出しを1段に畳む |
 | `navi_publish.py` | 公開 ―― 安全な差し替えと保留の適用 |
 | `navi_localcopy.py` | 共有のファイルをローカルへ写してから読む |

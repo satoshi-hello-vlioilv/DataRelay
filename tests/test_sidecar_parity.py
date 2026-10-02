@@ -5,7 +5,7 @@
 
 やっていること:
   A … いまと同じ形。Flask のアプリへ直接問い合わせる（ポート経由と同じ WSGI の答え）
-  B … デスクトップ版の形。migration/poc/sidecar.py を本物の子プロセスとして起こし、パイプの枠で問い合わせる
+  B … デスクトップ版の形。sidecar.py を本物の子プロセスとして起こし、パイプの枠で問い合わせる
   同じ問い合わせを同じ順に A と B へ送り、状態コード・種類・中身を突き合わせる。
   A と B はそれぞれ新しい設定置き場（雛形から作る）で動かすので、書き込む問い合わせも同じ条件で比べられる。
 
@@ -17,7 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 ROOT=Path(__file__).resolve().parent.parent
-SIDECAR=ROOT/'migration'/'poc'/'sidecar.py'
+SIDECAR=ROOT/'sidecar.py'
 SAMPLE_RNE=ROOT/'samples'/'rne'/'集計表形式サンプル.RNE'
 
 # 呼ぶと実害がある・窓（Rust）が受け持つことになるので、ここでは本文を比べないルート。
@@ -97,9 +97,12 @@ def scenario_requests(tmp):
  reqs.append(j('取り込んだあとの一覧','GET','/api/text-layouts'))
  return reqs
 
-def fresh_env(tmp,name):
+def fresh_env(tmp,name,boot=False):
+ """新しい置き場。突き合わせは窓口の違いを見るものなので、既定では裏の処理（スケジューラー等）を起こさない。"""
  d=Path(tmp)/name
  env=dict(os.environ,NAVI_LOCAL_ROOT=str(d/'local'),NAVI_CONFIG_DIR=str(d/'config'),PYTHONIOENCODING='utf-8')
+ env.pop('DATARELAY_NO_BOOT',None)
+ if not boot:env['DATARELAY_NO_BOOT']='1'
  return d,env
 
 
@@ -358,6 +361,47 @@ class SidecarRobustnessTest(unittest.TestCase):
     self.assertEqual(s,200);json.loads(b)
    self.assertEqual(side.close(),0)
 
+
+class SidecarBootTest(unittest.TestCase):
+ """デスクトップ版の起こし方（裏の処理あり）で、起動・常駐の理由・後始末・取り合いが正しいか。"""
+ def test_boot_residency_cleanup(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   d,env=fresh_env(tmp,'E',boot=True)
+   side=Sidecar(env)
+   try:
+    ready=[e for e in side.events if e.get('event')=='ready']
+    self.assertTrue(ready,side.events)
+    self.assertIn(ready[0].get('bits'),(32,64))
+    s,h,b=side.call({'label':'residency','method':'GET','path':'/api/residency','body':b''})
+    r=json.loads(b);self.assertEqual(s,200);self.assertEqual(r['reason'],'');self.assertFalse(r['running'])
+    s,h,b=side.call({'label':'cleanup','method':'POST','path':'/api/app-cleanup','headers':{'Content-Type':'application/json'},
+                     'body':json.dumps({'source':'test','wait_seconds':1}).encode()})
+    self.assertEqual(s,200);self.assertFalse(json.loads(b)['still_running'])
+   finally:
+    code=side.close()
+   self.assertEqual(code,0,'後始末のあと入力を閉じれば自分で終わる')
+   log=(d/'local'/'logs').glob('*.log')
+   text='\n'.join(x.read_text(encoding='utf-8',errors='replace') for x in log)
+   self.assertIn('APP_START mode=desktop',text)
+   self.assertIn('APP_EXIT_PREPARE source=test',text)
+   self.assertNotIn('heartbeat-watchdog',text)
+
+ def test_busy_when_another_form_runs(self):
+  """ブラウザ版（または別のデスクトップ版）が中身を動かしていれば、起動せずに busy と知らせる。"""
+  sys.path.insert(0,str(ROOT/'lib'))
+  import navi_instance
+  with tempfile.TemporaryDirectory() as tmp:
+   d,env=fresh_env(tmp,'F',boot=True)
+   lock=navi_instance.acquire(d/'local'/'runtime','browser')
+   try:
+    side=Sidecar(env)
+    fatal=[e for e in side.events if e.get('event')=='fatal']
+    self.assertTrue(fatal,side.events)
+    self.assertEqual(fatal[0].get('kind'),'busy')
+    self.assertIn('ブラウザ版がすでに動いています',fatal[0].get('error',''))
+    self.assertEqual(side.close(),2)
+   finally:
+    lock.release()
 
 def report():
  rules,results,ready=run_all()

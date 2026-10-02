@@ -16,6 +16,11 @@
    "to": "python",
    "note": ""
   },
+  "POST /api/app-cleanup": {
+   "area": "起動・常駐・終了",
+   "to": "python",
+   "note": "終わる前の後始末（prepare_exit）。デスクトップ版の窓が終わる前に頼む。プロセスは終わらせない（1.95.0 で追加）"
+  },
   "POST /api/apply-path-suggestion": {
    "area": "設定・対象の登録",
    "to": "python",
@@ -124,14 +129,14 @@
   "GET /api/heartbeat-status": {
    "area": "起動・常駐・終了",
    "to": "python",
-   "note": "心拍の部分は外し、「常駐を続ける理由」（residency_reason）だけを答える問い合わせに置き換える。Rust が×のときに聞く"
+   "note": "ブラウザ版の心拍の状態。デスクトップ版は使わない（常駐の理由は /api/residency）。第2段階で心拍と一緒に外す"
   },
-  "POST /api/inspect-task/<kind>": {
+  "GET /api/inspect-task/<kind>": {
    "area": "RNEの調査・分割",
    "to": "python",
    "note": ""
   },
-  "GET /api/inspect-task/<kind>": {
+  "POST /api/inspect-task/<kind>": {
    "area": "RNEの調査・分割",
    "to": "python",
    "note": ""
@@ -306,6 +311,11 @@
    "to": "python",
    "note": ""
   },
+  "GET /api/residency": {
+   "area": "起動・常駐・終了",
+   "to": "python",
+   "note": "常駐を続ける理由。デスクトップ版の窓が × のときに聞く（1.95.0 で追加。心拍の状態とは切り離した）"
+  },
   "POST /api/retries/cancel": {
    "area": "実行・キュー・予定",
    "to": "python",
@@ -379,7 +389,7 @@
   "POST /api/shutdown-app": {
    "area": "起動・常駐・終了",
    "to": "python+rust",
-   "note": "Python は後始末（キューを空に・実行中なら中断・ワーカーと非表示のSymfoNaviを止める・設定を書き出す）だけを行い os._exit しない。終わらせるのは Rust"
+   "note": "ブラウザ版: 後始末（prepare_exit）して os._exit。デスクトップ版: 窓が受け取り、/api/app-cleanup で後始末を頼んでから窓が終わる"
   },
   "POST /api/split-trial-batch": {
    "area": "RNEの調査・分割",
