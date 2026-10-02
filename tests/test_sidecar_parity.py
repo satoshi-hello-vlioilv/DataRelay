@@ -237,7 +237,11 @@ def first_diff(a,b,path='$'):
   if len(a)!=len(b):return f'{path}: 件数 {len(a)} ≠ {len(b)}'
   for i,(x,y) in enumerate(zip(a,b)):
    if x!=y:return first_diff(x,y,f'{path}[{i}]')
- return f'{path}: {str(a)[:60]!r} ≠ {str(b)[:60]!r}'
+ a,b=str(a),str(b)
+ # 違い始めた所の前後を見せる（先頭だけ切ると、長い行のどこが違うのか分からない）
+ i=next((k for k,(x,y) in enumerate(zip(a,b)) if x!=y),min(len(a),len(b)))
+ lo=max(0,i-40)
+ return f'{path}: …{a[lo:i+60]!r} ≠ …{b[lo:i+60]!r}'
 
 
 def url_rules(env):
