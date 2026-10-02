@@ -21,7 +21,7 @@ use router::{error_reply, Backend, Native, Router, Saver};
 use serde_json::{json, Value};
 use sidecar::{Ask, Reply, Supervisor, Watch};
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
@@ -89,6 +89,10 @@ struct Shell {
     quitting: AtomicBool,
     splash_loaded: AtomicBool,
     splash_queue: Mutex<Vec<String>>,
+    /// 最後に中身を起こし直した時刻（UTC）。画面の「アプリ監視」に出す
+    last_restart: Mutex<String>,
+    /// 窓と中身の名乗り（版・置き場・Python）。準備できたら入る
+    info: OnceLock<Value>,
 }
 
 impl Shell {
@@ -104,6 +108,17 @@ impl Shell {
             return Err(format!("{path} が {} を返しました", r.status));
         }
         serde_json::from_slice(&r.body).map_err(|e| e.to_string())
+    }
+
+    /// 設定に書かれたパス（アプリフォルダー基準の相対・<PC>・環境変数）を実際の場所へ直す。
+    /// 直し方の決まりは Python の resolve_path だけが持つ（/api/path-convert）。窓が別に真似ると食い違う。
+    /// 中身がまだ答えられないときは、書かれたまま使う。
+    fn resolve_path(&self, raw: &str) -> PathBuf {
+        let body = json!({"value": raw, "mode": "absolute"}).to_string();
+        self.ask_json("POST", "/api/path-convert", body.as_bytes())
+            .ok()
+            .and_then(|v| v["resolved"].as_str().filter(|s| !s.is_empty()).map(PathBuf::from))
+            .unwrap_or_else(|| PathBuf::from(raw))
     }
 
     /// 常駐を続ける理由（Python の residency_reason）。無ければ空文字。
@@ -142,6 +157,26 @@ fn notify(app: &AppHandle, title: &str, body: &str) {
         return; // 自己診断では通知を出さない（CI の画面に残るだけ）
     }
     let _ = app.notification().builder().title(title).body(body).show();
+}
+
+/// まだ OS へ出していない知らせ（/api/alerts の alerts のうち、info 以外）。題と本文の組を返す。
+/// seen は「いま中身が持っている知らせ」で置き換える（読んで消えた知らせを覚え続けない）。
+fn fresh_alerts(seen: &mut std::collections::HashSet<String>, v: &Value) -> Vec<(String, String)> {
+    let items = v["alerts"].as_array().cloned().unwrap_or_default();
+    let mut out = Vec::new();
+    let mut now = std::collections::HashSet::new();
+    for a in &items {
+        let Some(id) = a["id"].as_str() else { continue };
+        now.insert(id.to_string());
+        if seen.contains(id) || a["kind"].as_str() == Some("info") {
+            continue;
+        }
+        let title = a["title"].as_str().unwrap_or(TITLE).to_string();
+        let detail: String = a["detail"].as_str().filter(|d| !d.is_empty()).unwrap_or(&title).chars().take(200).collect();
+        out.push((title, detail));
+    }
+    *seen = now;
+    out
 }
 
 fn hide_to_tray(app: &AppHandle, shell: &Shell, reason: &str) {
@@ -243,20 +278,21 @@ fn selftest_dir() -> Option<PathBuf> {
     std::env::var_os("DATARELAY_SELFTEST").map(|p| PathBuf::from(p).with_extension("files"))
 }
 
-/// ファイル・フォルダーの選択。ブラウザ版の /api/pick-file・/api/pick-folder（tkinter）と同じ答えの形 {"path": "..."}。
-/// 自己診断ではダイアログを出せない（押す人がいない）ので、決めた場所を返す。
-fn pick(app: &AppHandle, folder: bool, body: &[u8]) -> Reply {
+/// ファイル・フォルダーの選択。答えの形は {"path": "..."}（ブラウザ版の tkinter と同じ）。
+/// 初期フォルダーは設定のパスなので、Python と同じ決まりで実際の場所へ直してから使う。
+/// 自己診断ではダイアログを出せない（押す人がいない）ので、決めた場所と、直した初期フォルダーを返す。
+fn pick(app: &AppHandle, shell: &Shell, folder: bool, body: &[u8]) -> Reply {
     let req: Value = serde_json::from_slice(body).unwrap_or(json!({}));
+    let initial = req["initial"].as_str().map(str::trim).filter(|s| !s.is_empty()).map(|s| shell.resolve_path(s)).map(|p| {
+        if p.is_file() || (!folder && p.extension().is_some()) { p.parent().map(PathBuf::from).unwrap_or(p) } else { p }
+    });
     if let Some(dir) = selftest_dir() {
-        return json_reply(&json!({"path": dir.to_string_lossy(), "selftest": true}));
+        let shown = initial.as_ref().map(|p| p.to_string_lossy().into_owned());
+        return json_reply(&json!({"path": dir.to_string_lossy(), "initial": shown, "selftest": true}));
     }
     let mut d = app.dialog().file();
-    if let Some(init) = req["initial"].as_str().filter(|s| !s.is_empty()) {
-        let p = PathBuf::from(init);
-        let dir = if p.is_file() || (!folder && p.extension().is_some()) { p.parent().map(PathBuf::from).unwrap_or(p) } else { p };
-        if dir.is_dir() {
-            d = d.set_directory(dir);
-        }
+    if let Some(dir) = initial.filter(|d| d.is_dir()) {
+        d = d.set_directory(dir);
     }
     if let Some(types) = req["types"].as_array() {
         for t in types {
@@ -276,22 +312,24 @@ fn pick(app: &AppHandle, folder: bool, body: &[u8]) -> Reply {
 /// 窓そのものが答える問い合わせ。
 fn native(app: AppHandle, shell: Arc<Shell>, info: Value) -> Native {
     Box::new(move |method, path, body| match (method, path) {
-        ("POST", "/api/pick-file") => Some(pick(&app, false, body)),
-        ("POST", "/api/pick-folder") => Some(pick(&app, true, body)),
+        ("POST", "/api/pick-file") => Some(pick(&app, &shell, false, body)),
+        ("POST", "/api/pick-folder") => Some(pick(&app, &shell, true, body)),
         // エクスプローラーで開く（ブラウザ版の os.startfile）。ファイルなら、そのファイルを選んだ状態でフォルダーを開く
         ("POST", "/api/open-path") => {
             use tauri_plugin_opener::OpenerExt;
             let req: Value = serde_json::from_slice(body).unwrap_or(json!({}));
-            let target = req["path"].as_str().unwrap_or("").trim().to_string();
-            if target.is_empty() {
+            let raw = req["path"].as_str().unwrap_or("").trim();
+            if raw.is_empty() {
                 return Some(error_reply(400, "no_path", "出力先が指定されていません"));
+            }
+            // 出力先は相対（アプリフォルダー基準）・<PC> のことがある。窓の作業フォルダー基準で読むと別の場所になる
+            let p = shell.resolve_path(raw);
+            let target = p.to_string_lossy().into_owned();
+            if !p.exists() {
+                return Some(error_reply(404, "not_found", &format!("出力先が見つかりません: {target}")));
             }
             if selftest_dir().is_some() {
                 return Some(json_reply(&json!({"ok": true, "selftest": true, "path": target})));
-            }
-            let p = PathBuf::from(&target);
-            if !p.exists() {
-                return Some(error_reply(404, "not_found", &format!("出力先が見つかりません: {target}")));
             }
             let r = if p.is_file() { app.opener().reveal_item_in_dir(&p) } else { app.opener().open_path(&target, None::<&str>) };
             Some(match r {
@@ -317,6 +355,16 @@ fn native(app: AppHandle, shell: Arc<Shell>, info: Value) -> Native {
                 hide_to_tray(&app2, &shell2, &r2);
             });
             Some(json_reply(&json!({"ok": true, "tray_available": true, "reason": reason, "desktop": true})))
+        }
+        // 画面の「アプリ監視」: 窓と中身（Python）のつながり。中身が止まっていても窓が答える
+        ("GET", "/api/desktop-status") => {
+            let mut v = shell.backend().map(|b| b.status()).unwrap_or_else(|| json!({"alive": false, "spawned": 0, "restarts": 0}));
+            v["shell_version"] = json!(env!("CARGO_PKG_VERSION"));
+            v["python"] = shell.info.get().map(|i| i["python"].clone()).unwrap_or(Value::Null);
+            v["program"] = shell.info.get().map(|i| i["program"].clone()).unwrap_or(Value::Null);
+            v["last_restart"] = json!(*shell.last_restart.lock().unwrap());
+            v["resident_reason"] = json!(*shell.resident_reason.lock().unwrap());
+            Some(json_reply(&v))
         }
         ("GET", "/__desktop/info") => {
             let w = app.get_webview_window("main");
@@ -404,6 +452,41 @@ fn window(app: &AppHandle, shell: Arc<Shell>) -> tauri::Result<WebviewWindow> {
         .build()
 }
 
+/// Flask を読める Python を探す。どれにも無ければ部品（config\requirements.txt）を入れて探し直す
+/// （1.95.0 までは start.vbs がしていたこと。初回だけ）。見つからなければ起動画面に理由を出して None。
+fn find_python(app: &AppHandle, shell: &Shell, program: &Path, local: &Path) -> Option<locate::Python> {
+    let e = match locate::python() {
+        Ok(p) => return Some(p),
+        Err(e) => e,
+    };
+    let (Some(target), Some(req)) = (e.candidate.clone().filter(|_| e.lacking), locate::requirements_file(program)) else {
+        shell.step(app, "python", "bad", if e.lacking { "Flask が入っていません" } else { "見つかりません" });
+        shell.fail(app, e.title(), &e.message);
+        return None;
+    };
+    shell.step(app, "python", "now", "Flask などの部品を入れています（初回だけ。数分かかることがあります）");
+    let log = local.join("logs").join("pip_install.log");
+    rlog(&format!("INSTALL_REQUIREMENTS python={} requirements={}", target.exe.display(), req.display()));
+    let t = std::time::Instant::now();
+    let done = locate::install_requirements(&target, &req, &log, Duration::from_secs(900)).and_then(|_| locate::python().map_err(|e| e.message));
+    rlog(&format!("INSTALL_REQUIREMENTS_DONE ok={} elapsed={:.1}s", done.is_ok(), t.elapsed().as_secs_f64()));
+    match done {
+        Ok(p) => Some(p),
+        Err(why) => {
+            shell.step(app, "python", "bad", "部品を入れられませんでした");
+            let detail = format!(
+                "{why}\n\n社内のネットワークから PyPI に届かないと入りません。次を実行するか、管理者に頼んでください:\n  \"{}\" -m pip install --user -r \"{}\"\n\npip の記録（最後の部分）: {}\n{}",
+                target.exe.display(),
+                req.display(),
+                log.display(),
+                sidecar::tail(&log, 12)
+            );
+            shell.fail(app, "必要な部品（Flask）を入れられませんでした", &detail);
+            None
+        }
+    }
+}
+
 /// 中身（Python）を探して起こし、準備できたら画面へ切り替える（裏の糸で。窓とアイコンは先に出しておく）。
 fn start(app: AppHandle, shell: Arc<Shell>) {
     let program = match locate::program_dir() {
@@ -411,23 +494,18 @@ fn start(app: AppHandle, shell: Arc<Shell>) {
         Err(e) => return shell.fail(&app, "アプリのフォルダが見つかりません", &e),
     };
     let local = locate::local_root();
-    let py = match locate::python(&local) {
-        Ok(p) => p,
-        Err(e) => {
-            shell.step(&app, "python", "bad", if e.lacking { "Flask が入っていません" } else { "見つかりません" });
-            return shell.fail(&app, e.title(), &e.message);
-        }
-    };
+    let Some(py) = find_python(&app, &shell, &program, &local) else { return };
     shell.step(&app, "python", "ok", &py.exe.display().to_string());
     shell.step(&app, "backend", "now", "Python でアプリの中身を読み込んでいます…");
     rlog(&format!("START program={} python={}", program.display(), py.exe.display()));
     let sup = Arc::new(Supervisor::new(py.clone(), program.clone(), local.join("logs")));
     // 中身を起こすたびに残す。2回目からは起こし直し（見張りが起こしても、画面の問い合わせが起こしても同じ）
     {
-        let app = app.clone();
+        let (app, shell) = (app.clone(), shell.clone());
         sup.on_spawn(Box::new(move |ready, n| {
             rlog(&format!("BACKEND_READY version={} pid={} elapsed={}s spawn={n}", ready["version"], ready["pid"], ready["elapsed"]));
             if n > 1 {
+                *shell.last_restart.lock().unwrap() = utc_now();
                 rlog(&format!("BACKEND_RESTARTED spawn={n}"));
                 notify(&app, TITLE, "アプリの中身（Python）が止まったため、起こし直しました。");
             }
@@ -437,7 +515,11 @@ fn start(app: AppHandle, shell: Arc<Shell>) {
         Ok(s) => s.ready.clone(),
         Err(e) if e.kind == "busy" => {
             shell.step(&app, "backend", "bad", "ほかの DataRelay が動いています");
-            return shell.fail(&app, "ブラウザ版（または別の DataRelay）が動いています", &format!("{}\n\nブラウザ版を終了するには、画面右上の「終了」か、通知領域のアイコンの「終了」を使ってください。", e.message));
+            return shell.fail(
+                &app,
+                "もう1つの DataRelay が動いています",
+                &format!("{}\n\n古い版のブラウザ版（start.vbs で起動するもの）なら、その画面右上の「終了」か、通知領域のアイコンの「終了」で終わらせてください。", e.message),
+            );
         }
         Err(e) => {
             shell.step(&app, "backend", "bad", "起動できません");
@@ -447,6 +529,7 @@ fn start(app: AppHandle, shell: Arc<Shell>) {
     let elapsed = ready["elapsed"].as_f64().unwrap_or(0.0);
     shell.step(&app, "backend", "ok", &format!("版 {} ・ {} bit ・ {:.1} 秒", ready["version"].as_str().unwrap_or("?"), ready["bits"], elapsed));
     let info = json!({"shell": "tauri", "shell_version": env!("CARGO_PKG_VERSION"), "program": program, "python": py.exe, "backend": ready, "local": local});
+    let _ = shell.info.set(info.clone());
     // 止まったらすぐ起こし直す（常駐中は問い合わせが来ないので、待っていると自動実行が止まったままになる）
     {
         let (app, shell) = (app.clone(), shell.clone());
@@ -464,18 +547,30 @@ fn start(app: AppHandle, shell: Arc<Shell>) {
     let r = Router { static_dir: program.join("static"), index_file, backend: sup, native: native(app.clone(), shell.clone(), info), saver: saver(app.clone(), shell.clone()) };
     let _ = shell.router.set(r);
     shell.step(&app, "open", "now", "画面を開いています…");
-    // 通知領域の文言を、いまの状態（実行中 3/5・待機中など）に合わせて更新する
+    // 見回り: 5 秒ごとに中身の知らせ（抽出の失敗・取り直しなど）を OS の通知へ出し、20 秒ごとに通知領域の文言
+    // （実行中 3/5・待機中など）を更新する。知らせは 1.95.0 までは Python が pywin32 のアイコンから出していた
     {
-        let shell = shell.clone();
-        std::thread::spawn(move || loop {
-            std::thread::sleep(Duration::from_secs(20));
-            if shell.quitting.load(Ordering::SeqCst) {
-                return;
-            }
-            if let Ok(v) = shell.ask_json("GET", "/api/residency", b"") {
-                let text = v["status_text"].as_str().unwrap_or("");
-                let resident = shell.resident_reason.lock().unwrap().clone();
-                shell.set_tooltip(&if resident.is_empty() { format!("{TITLE}（{text}）") } else { format!("{TITLE}（常駐中: {text}）") });
+        let (app, shell) = (app.clone(), shell.clone());
+        std::thread::spawn(move || {
+            let mut seen = std::collections::HashSet::new();
+            for tick in 1u64.. {
+                std::thread::sleep(Duration::from_secs(5));
+                if shell.quitting.load(Ordering::SeqCst) {
+                    return;
+                }
+                if let Ok(v) = shell.ask_json("GET", "/api/alerts", b"") {
+                    for (title, detail) in fresh_alerts(&mut seen, &v) {
+                        rlog(&format!("ALERT_NOTIFY title={title}"));
+                        notify(&app, &title, &detail);
+                    }
+                }
+                if tick % 4 == 0 {
+                    if let Ok(v) = shell.ask_json("GET", "/api/residency", b"") {
+                        let text = v["status_text"].as_str().unwrap_or("");
+                        let resident = shell.resident_reason.lock().unwrap().clone();
+                        shell.set_tooltip(&if resident.is_empty() { format!("{TITLE}（{text}）") } else { format!("{TITLE}（常駐中: {text}）") });
+                    }
+                }
             }
         });
     }
@@ -561,6 +656,24 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
+    use super::fresh_alerts;
+    use serde_json::json;
+
+    #[test]
+    fn alerts_are_notified_once_and_info_is_not() {
+        let mut seen = std::collections::HashSet::new();
+        let v = json!({"alerts": [
+            {"id": "a", "kind": "error", "title": "抽出に失敗", "detail": "対象 X"},
+            {"id": "b", "kind": "info", "title": "完了", "detail": ""},
+            {"id": "c", "kind": "warn", "title": "取り直し待ち", "detail": ""}
+        ]});
+        assert_eq!(fresh_alerts(&mut seen, &v), vec![("抽出に失敗".into(), "対象 X".into()), ("取り直し待ち".into(), "取り直し待ち".into())]);
+        assert!(fresh_alerts(&mut seen, &v).is_empty(), "同じ知らせは2回出さない");
+        let v2 = json!({"alerts": [{"id": "c", "kind": "warn", "title": "取り直し待ち"}, {"id": "d", "kind": "error", "title": "公開に失敗", "detail": "共有が使用中"}]});
+        assert_eq!(fresh_alerts(&mut seen, &v2), vec![("公開に失敗".into(), "共有が使用中".into())]);
+        assert!(!seen.contains("a"), "読んで消えた知らせは覚え続けない");
+    }
+
     #[test]
     fn utc_now_looks_like_a_date() {
         let t = super::utc_now();

@@ -1,10 +1,10 @@
 {
- "_about": "移行先の割り当て（migration/FEASIBILITY.md）。URL表のすべてのルートがここに無いと tests/test_route_plan.py が落ちる。to: python=Pythonのまま（WSGIを標準入出力で呼ぶ） / rust=窓（Tauri）が受け持つ / python+rust=両方で分担 / remove=外す",
+ "_about": "移行先の割り当て（migration/FEASIBILITY.md）。tests/test_route_plan.py が、中身（Python）の URL 表と窓（Rust）の振り分けの両方と突き合わせる。to: python=中身が答える（WSGIを標準入出力で呼ぶ。URL表にあること） / rust=窓が受け持つ（窓の振り分けにあり、URL表には無いこと） / python+rust=窓が受け持ち、中身にも残る（理由を書く） / remove=外した（どちらにも無いこと）。1.96.0（第2段階）で、窓へ移したルートと外したルートを中身から取り除いた",
  "routes": {
   "GET /": {
    "area": "画面",
    "to": "rust",
-   "note": "ひな形に差し込みが無い（静的なHTML）。Rust が直接返せば、Python の起動を待たずに画面が出る"
+   "note": "ひな形に差し込みが無い（静的なHTML）。窓が templates/index.html を直接返す（中身の起動を待たずに画面が出る）。中身の受け口は 1.96.0 で外した"
   },
   "GET /api/alerts": {
    "area": "実行・キュー・予定",
@@ -34,7 +34,7 @@
   "POST /api/browser-closing": {
    "area": "起動・常駐・終了",
    "to": "remove",
-   "note": "タブを閉じる瞬間の知らせ。同上で不要"
+   "note": "タブを閉じる瞬間の知らせ。心拍と同じ理由で 1.96.0 で外した"
   },
   "GET /api/bundle/export": {
    "area": "持ち出し・持ち込み",
@@ -91,6 +91,11 @@
    "to": "python",
    "note": ""
   },
+  "GET /api/desktop-status": {
+   "area": "起動・常駐・終了",
+   "to": "rust",
+   "note": "1.96.0 で足した。画面の「アプリ監視」に、窓と中身（Python）のつながり（中身の pid・Python・起こし直しの回数）を出す。中身が止まっていても窓が答える（心拍の状態 /api/heartbeat-status の置き換え）"
+  },
   "GET /api/docs": {
    "area": "ログ・仕様書・版",
    "to": "python",
@@ -124,12 +129,12 @@
   "POST /api/heartbeat": {
    "area": "起動・常駐・終了",
    "to": "remove",
-   "note": "ブラウザを閉じたかを推し量るための心拍。窓を閉じたことは Rust が直接受け取るので不要"
+   "note": "ブラウザを閉じたかを推し量るための心拍。窓を閉じたことは窓が直接受け取るので、1.96.0 で外した"
   },
   "GET /api/heartbeat-status": {
    "area": "起動・常駐・終了",
-   "to": "python",
-   "note": "ブラウザ版の心拍の状態。デスクトップ版は使わない（常駐の理由は /api/residency）。第2段階で心拍と一緒に外す"
+   "to": "remove",
+   "note": "ブラウザ版の心拍の状態。1.96.0 で心拍と一緒に外した（常駐の理由は /api/residency）"
   },
   "GET /api/inspect-task/<kind>": {
    "area": "RNEの調査・分割",
@@ -148,8 +153,8 @@
   },
   "GET /api/instance": {
    "area": "起動・常駐・終了",
-   "to": "rust",
-   "note": "ポートに居るのが自分かを確かめる問い合わせ。ポートが無くなるので、版の情報は窓が持つ"
+   "to": "python",
+   "note": "中身の名乗り（版・instance_id）。窓の自己診断が起こし直しを見分けるのに使う。ポートの確認と CORS は 1.96.0 で外した"
   },
   "GET /api/job-trend/<job_id>": {
    "area": "実行・キュー・予定",
@@ -269,7 +274,7 @@
   "POST /api/open-path": {
    "area": "OS連携",
    "to": "rust",
-   "note": "os.startfile → 窓が開く（ファイルならそのファイルを選んだ状態で）"
+   "note": "os.startfile → 窓が開く（ファイルならそのファイルを選んだ状態で）。相対パス・<PC> は /api/path-convert で直す。中身の受け口は 1.96.0 で外した"
   },
   "GET /api/output-capabilities": {
    "area": "設定・対象の登録",
@@ -299,7 +304,7 @@
   "POST /api/pick-file": {
    "area": "OS連携",
    "to": "rust",
-   "note": "tkinter のダイアログ → 窓のダイアログ（答えの形 {\"path\"} は同じ・試作で確認）"
+   "note": "tkinter のダイアログ → 窓のダイアログ（答えの形 {\"path\"} は同じ）。初期フォルダーは /api/path-convert で直す。中身の受け口は 1.96.0 で外した"
   },
   "POST /api/pick-folder": {
    "area": "OS連携",
@@ -388,8 +393,8 @@
   },
   "POST /api/shutdown-app": {
    "area": "起動・常駐・終了",
-   "to": "python+rust",
-   "note": "ブラウザ版: 後始末（prepare_exit）して os._exit。デスクトップ版: 窓が受け取り、/api/app-cleanup で後始末を頼んでから窓が終わる"
+   "to": "rust",
+   "note": "画面の「終了」。窓が受け取り、/api/app-cleanup で後始末を頼んでから窓が終わる。中身の受け口（os._exit）は 1.96.0 で外した"
   },
   "POST /api/split-trial-batch": {
    "area": "RNEの調査・分割",
@@ -419,7 +424,7 @@
   "POST /api/stay-resident": {
    "area": "起動・常駐・終了",
    "to": "rust",
-   "note": "「タスクバーに入れて閉じる」。通知領域のアイコンは Rust が持つので、窓を隠すのも Rust。頼まれた常駐の記録は Python に残す"
+   "note": "「タスクバーへ」。通知領域のアイコンは窓が持つので、窓を隠すのも窓。中身の受け口（頼まれた常駐の記録）は 1.96.0 で外した"
   },
   "GET /api/text-layouts": {
    "area": "読取マスタ・結合マスタ",
@@ -463,13 +468,13 @@
   },
   "GET /favicon.ico": {
    "area": "画面",
-   "to": "rust",
-   "note": "静的ファイル"
+   "to": "python",
+   "note": "窓の振り分けは / と /static/ だけ。アイコンの置き場を探す処理（ICO→SVG）があるので中身が答える"
   },
   "GET /static/<path:filename>": {
    "area": "画面",
-   "to": "rust",
-   "note": "JS・CSS・アイコン。Rust がディスクから直接返す（DPAと同じ・試作で確認）"
+   "to": "python+rust",
+   "note": "JS・CSS・アイコン。窓がディスクから直接返す。中身にも Flask の既定の受け口として残る（窓が先に返すので使われない）"
   }
  }
 }

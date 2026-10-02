@@ -5,6 +5,7 @@
 この文書は「何を移せるか・どこへ移すか・何で確かめたか・何が分からないか・どう進めるか」を残す。
 
 - 検証のときの試作は、第1段階（1.95.0）で本番の `desktop/`（窓）と `sidecar.py`（窓口）になった（§10）。評価は `tests/` と `desktop/selftest_runner.py`。
+- 第2段階（1.96.0）でブラウザ版の起動の仕組みを外し、入口を `DataRelay.exe` だけにした。main に入ると Release に配る zip を置く（§11）。
 - 結果（2026-10-02）: **全92ルートと、ルート以外の仕組みのすべてに移行先があり、移せないと分かった機能は無い。**
   ポートなしの窓口は全ルートで今と同じ答えを返し（Linux・Windows）、Tauri の試作は常駐・保存・ファイル選択・終わり方を
   本物の WebView2 の中で確かめた。ただし社内の PC・本物の Navigator サーバーと Access でしか確かめられない項目が残る（§7）。
@@ -189,8 +190,9 @@ Windows で初めて分かったこと:
 5. 常駐の理由は専用の問い合わせにする（試作は既存の `/api/heartbeat-status` の一部を読んだ）。
 6. 移行の間は**両方を配る**（DPA と同じ）。デスクトップ版で困らないことが実機で確かめられてから第2段階へ。
 
-**第2段階: 起動の仕組みを外す**
+**第2段階: 起動の仕組みを外す**（1.96.0 で実装。§11）
 - §6 のものを外す。画面から心拍・閉じる知らせ・接続が切れた表示を外す。
+- 当初は「デスクトップ版で困らないことが実機で確かめられてから」としていたが、利用者の判断で先に進めた。§7 の実機の確認は残っている（§11 の「残っていること」）。
 
 **第3段階: Rust へ移す候補（同じ入力で同じ答えになることを試験で示せるときだけ）**
 
@@ -205,9 +207,10 @@ DDE・ACCESS（pywin32）、分割の設計・読取/結合マスタ・スケジ
 
 ## 9. 作り方・配り方の変化
 
-- **作る**: `cargo build --release`（Windows では Rust と Visual Studio の C++ ビルドツールが要る）。CI（Windows）が作って自己診断し、exe を Artifacts に置く（DPA と同じ）。
+- **作る**: `cargo build --release`（Windows では Rust と Visual Studio の C++ ビルドツールが要る）。CI（Windows）が作って自己診断する。
+  main に入ったものは Release（`v{版}`）に `DataRelay.zip`（フォルダー一式＋exe）と `DataRelay.exe` を置く（1.96.0・§11）。
 - **置く**: `DataRelay.exe` を `app.py` のフォルダーに置く（exe は自分の場所から上へたどって `app.py` を探す）。共有上の exe が止められるなら §7 のとおり手元に置く。
-- **Python**: いまと同じ（各 PC に Python と `config/requirements.txt` の部品）。増える要件は WebView2 だけ。Python を同梱する（embeddable）かは別に決める。
+- **Python**: いまと同じ（各 PC に Python と `config/requirements.txt` の部品）。部品が無ければ exe が初回に `pip install --user` する（1.96.0。start.vbs の役目）。増える要件は WebView2 だけ。Python を同梱する（embeddable）かは別に決める。
 - **中身の更新**: Python の部分はいまと同じく共有のファイルを置き換える。exe は動いている間は上書きできない（Windows の決まり）ので、exe の更新は全員が閉じてから。
 
 ## 10. 第1段階の実装（1.95.0）
@@ -239,6 +242,44 @@ DDE・ACCESS（pywin32）、分割の設計・読取/結合マスタ・スケジ
 Windows（WebView2）は `.github/workflows/desktop.yml` で同じものを回す。
 
 §7 の「実機で確かめること」はそのまま残っている（社内 PC の署名なし exe・本物の Navigator サーバーと Access・一晩の常駐）。
+
+## 11. 第2段階の実装（1.96.0）
+
+§8 の第2段階を実装した。業務の処理（抽出・出力・分割・マスタ・スケジュールの規則）は1行も変えていない。
+
+| 外したもの | 引き継いだ先 |
+|---|---|
+| `start.vbs`・`start.bat`（Python を探す・Flask が無ければ pip で入れる） | 窓の `locate.rs`（Flask を読める Python を選ぶ。無ければ起動画面を出したまま `pip install --user -r config\requirements.txt` して探し直す） |
+| `start_app.py`・`lib/launch_guard.py`（作業場所の準備・多重起動の防止・起動待ち）・`loading.html` | 窓（1つだけ起動・起動画面）と `sidecar.py`（作業場所）。中身を1つにする錠（`navi_instance`）は残した ―― 古い版のフォルダーに残ったブラウザ版から起こされた中身も止めるため |
+| `stop_app.bat`・`lib/process_manager.py` | 画面の「終了」・通知領域の「終了」（窓が後始末を頼んでから終わる） |
+| `lib/tray_icon.py`（pywin32 の通知領域・知らせのバルーン） | 窓の通知領域。**知らせ（抽出の失敗など）の通知**は窓が `/api/alerts` を 5 秒ごとに見て出す |
+| app.py の心拍の監視・自分への疎通確認・常駐の出入り・ポートでの起動 | 窓（× を受け取る・中身を見張って起こし直す）。常駐の理由の判定（`residency_reason`）は Python に残した |
+| 受け口 `/api/heartbeat`・`/api/heartbeat-status`・`/api/browser-closing` | 外した。画面の「アプリ監視」は窓の `/api/desktop-status`（中身の pid・Python・起こし直しの回数）を見る |
+| 受け口 `/api/shutdown-app`・`/api/stay-resident`・`/api/pick-file`・`/api/pick-folder`・`/api/open-path`・`GET /` | 窓が受け持つので、中身からは外した（呼ばれない tkinter・os._exit を残さない） |
+| 画面のブラウザ版の分岐（心拍・閉じる知らせ・タブを閉じる工夫・閉じる前の確認・常駐の案内） | 外した。画面はデスクトップ版だけの形 |
+
+実装で分かったこと（1.95.0 のデスクトップ版に潜んでいた不具合）:
+
+1. **窓の「エクスプローラーで開く」「ファイル選択」が相対パス・`<PC>` を直していなかった**。設定のパスはアプリフォルダー基準の相対（`.\output`）や `<PC>` のことがあり、
+   窓の作業フォルダー基準で読まれて「出力先が見つかりません」・初期フォルダーが効かない、になっていた（ブラウザ版は Python の `resolve_path` を通していた）。
+   自己診断がダイアログを出せないため、パスを直す前に答えを返していて見逃していた。窓は `/api/path-convert` に聞いて直す（決まりは `resolve_path` だけが持つ）。
+   自己診断に相対パス・`<PC>` を渡す項目を足し、直す前は3項目とも不合格になることを確かめてから直した。
+2. **知らせの Windows 通知が出ていなかった**。`add_alert` は pywin32 の通知領域アイコン経由で通知していたが、デスクトップ版ではそのアイコンを起こさない。窓が出す形にした。
+3. **Python が複数ある PC で Flask の無い方を選ぶことがあった**（1.95.0 の Windows の CI で見つけて直した。`py -3` が最新版を指すため）。
+
+配り方（`.github/workflows/desktop.yml` の `release`）:
+
+- main に入るたびに、Windows で試験・exe・自己診断を通したものだけを Release `v{版}` に置く。`DataRelay.zip`（`git archive` ＋ exe）と `DataRelay.exe`。
+- zip に入れないもの（試験・exe の作り方・移行の記録・見本・CI）は `.gitattributes` の `export-ignore` にだけ書く。`tests/test_package.py` が、起動に要るものが入り、入れないものが入らないことを見る。
+- ファイル名に版を入れない（最新版の取り先 `releases/latest/download/DataRelay.zip` をいつも同じにするため）。版を上げずに main が進んだら、その版の Release をタグごと作り直す（配る zip とタグの指すコミットを食い違わせない）。
+- exe・中身・更新履歴の版の数字が揃っていることも試験で見る（Release のタグは中身の版で付ける）。
+
+評価（2026-10-02・Linux）: Python の試験 50 件・`cargo test` 14 件・自己診断（全体 25 項目・閉じるだけ 4 項目・起こし直し 7 項目）すべて合格。
+移行先の表の試験（`tests/test_route_plan.py`）は、中身の URL 表と窓の振り分けの両方と突き合わせる形にした。外す前の中身に当てると、外すべきルートと窓へ移したのに残るルートで落ちる。
+Flask の無い Python だけの状態から、窓が部品を入れて起動し、自己診断が全部合格することも確かめた。
+
+残っていること: §7 の実機の確認（社内 PC での署名の無い exe・本物の Navigator サーバーと Access・一晩の常駐）。
+ブラウザ版という逃げ道は無くなったので、署名の無い exe が社内の PC で止められる場合は、§7 のとおり exe だけを手元（%LOCALAPPDATA%）に置く形を先に用意する必要がある。
 
 ## 付録: 実装の中身
 

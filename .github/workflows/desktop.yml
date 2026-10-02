@@ -1,17 +1,22 @@
-# デスクトップ版（desktop/・Tauri）を Windows で作り、本物の WebView2 で自己診断する。
-# 作った exe と自己診断の記録は Artifacts に置く（exe を app.py の隣に置けば動く）。
+# DataRelay.exe（desktop/・Tauri）を Windows で作り、本物の WebView2 で自己診断する。
+# main に入ったら、通ったものを Release（v{版}）に置く:
+#   DataRelay.zip … アプリのフォルダー一式＋exe（展開すればそのまま動く）／DataRelay.exe … exe だけの差し替え用
+#   いつもの最新版: https://github.com/satoshi-hello-vlioilv/DataRelay/releases/latest/download/DataRelay.zip
 name: desktop
 
 on:
   push:
-    branches: [main]          # 作業の枝は pull_request で回す（同じ版を2回作らない）
-    paths: ["desktop/**", "sidecar.py", "app.py", "lib/**", "static/**", "templates/**", "tests/**", ".github/workflows/desktop.yml"]
-  pull_request:
-    paths: ["desktop/**", "sidecar.py", "app.py", "lib/**", "static/**", "templates/**", "tests/**", ".github/workflows/desktop.yml"]
+    branches: [main]          # main に入ったら毎回（配る zip には全部のファイルが入るので、場所で絞らない）
+  pull_request:               # 作業の枝は pull_request で確かめるだけ（配らない）
+    paths: ["desktop/**", "sidecar.py", "app.py", "lib/**", "static/**", "templates/**", "config/**", "tests/**", ".gitattributes", ".github/**"]
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}   # main は途中で止めない（配る途中で切れないように）
 
 jobs:
   windows:
@@ -59,3 +64,44 @@ jobs:
           name: DataRelay-desktop-windows
           path: desktop/target/release/DataRelay.exe
           if-no-files-found: warn
+
+  # main に入ったものだけ配る。Windows の試験・自己診断が全部通ったときだけ進む（needs）。
+  release:
+    needs: windows
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write          # Release とタグを作る
+    concurrency:
+      group: release           # 続けて main に入っても、配るのは1本ずつ
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: DataRelay-desktop-windows
+          path: dist
+
+      - name: 配る形にする（zip・exe・本文）
+        id: pkg
+        shell: bash            # pipefail 付き（作るのに失敗したら tee で隠さず止まる）
+        run: python3 .github/scripts/release.py package --exe dist/DataRelay.exe --out out | tee -a "$GITHUB_OUTPUT"
+
+      - name: Release に置く（v{版}）
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: v${{ steps.pkg.outputs.version }}
+          TITLE: ${{ steps.pkg.outputs.title }}
+        run: |
+          # 版を上げずに main が進んだときは、その版の Release を作り直す（タグも新しいコミットへ）。
+          # 配っている zip とタグの指すコミットを、いつも同じにしておくため。
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "同じ版 $TAG を作り直します"
+            gh release delete "$TAG" --cleanup-tag --yes
+          fi
+          gh release create "$TAG" out/DataRelay.zip out/DataRelay.exe \
+            --title "$TITLE" --notes-file out/notes.md --target "$GITHUB_SHA" --latest
+          echo "### $TITLE" >> "$GITHUB_STEP_SUMMARY"
+          echo "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$TAG" >> "$GITHUB_STEP_SUMMARY"

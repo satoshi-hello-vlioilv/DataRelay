@@ -24,6 +24,8 @@
       ok('中身が止まっても、窓が起こし直す', now && now !== first, `${first} → ${now}（${Math.round(performance.now() - t1)}ms）`);
       const r = await fetch('/api/residency');
       ok('起こし直した中身が答える', r.status === 200, r.status);
+      const st = await (await fetch('/api/desktop-status')).json();
+      ok('アプリ監視に起こし直しが出る', st.restarts >= 1 && st.last_restart, `${st.restarts}回 ${st.last_restart}`);
       const result = { ok: checks.every((c) => c.ok), checks };
       await fetch('/__desktop/selftest', json(result));
       return;
@@ -39,7 +41,13 @@
     let r = await fetch('/');
     const html = await r.text();
     ok('画面のひな形（/）は Rust が返す', r.status === 200 && by(r) === 'shell' && html.includes('DataRelay'), `${r.status} ${by(r)} ${html.length}B`);
-    ok('画面はデスクトップ版と分かる（心拍を送らない）', typeof DESKTOP !== 'undefined' && DESKTOP === true, typeof DESKTOP === 'undefined' ? '未定義' : DESKTOP);
+    // アプリ監視: 窓が中身（Python）の様子を答え、画面の監視欄がそれを出す
+    r = await fetch('/api/desktop-status');
+    const mon = await r.json();
+    ok('窓が中身の様子を答える（アプリ監視）', by(r) === 'shell' && mon.alive === true && mon.backend && mon.backend.pid === info.info.backend.pid, `${by(r)} alive=${mon.alive} pid=${mon.backend && mon.backend.pid}`);
+    let painted = '';
+    for (let i = 0; i < 40 && painted !== '正常'; i++) { await sleep(250); painted = (document.getElementById('mon-state') || {}).textContent || ''; }
+    ok('画面の監視欄が「正常」と出す', painted === '正常' && (document.getElementById('mon-pid') || {}).textContent === String(info.info.backend.pid), `${painted} pid=${(document.getElementById('mon-pid') || {}).textContent}`);
 
     r = await fetch('/static/app.js');
     ok('静的ファイルは Rust が返す', r.status === 200 && by(r) === 'shell', `${r.status} ${by(r)}`);
@@ -77,13 +85,17 @@
     ok('集計結果の EXCEL も窓が保存する', r.status === 204 && /\.xlsx$/.test(saved2), `${r.status} ${saved2}`);
 
     // tkinter・os.startfile の置き換え（答えの形はいまと同じ {"path": ...}）
-    r = await fetch('/api/pick-file', json({ initial: program, types: [['RNEファイル', '*.RNE'], ['すべて', '*.*']] }));
+    // 設定のパスは相対（アプリフォルダー基準）・<PC>（この PC の作業場所）のことがある。窓は Python と同じ決まりで実際の場所へ直す
+    const absolute = (p) => typeof p === 'string' && /^(?:\/|[A-Za-z]:[\\/]|\\\\)/.test(p);
+    r = await fetch('/api/pick-file', json({ initial: 'samples/rne', types: [['RNEファイル', '*.RNE'], ['すべて', '*.*']] }));
     const picked = await r.json();
-    ok('ファイル選択は窓が受け持つ', by(r) === 'shell' && typeof picked.path === 'string', `${by(r)} ${picked.path}`);
-    r = await fetch('/api/pick-folder', json({ initial: program }));
-    ok('フォルダー選択は窓が受け持つ', by(r) === 'shell' && typeof (await r.json()).path === 'string', by(r));
-    r = await fetch('/api/open-path', json({ path: program }));
-    ok('エクスプローラーで開くは窓が受け持つ', by(r) === 'shell' && (await r.json()).ok, by(r));
+    ok('ファイル選択は窓が受け持つ（初期フォルダーの相対パスを直す）', by(r) === 'shell' && typeof picked.path === 'string' && absolute(picked.initial) && /rne$/.test(picked.initial), `${by(r)} ${picked.initial}`);
+    r = await fetch('/api/pick-folder', json({ initial: '<PC>' }));
+    const pickedDir = await r.json();
+    ok('フォルダー選択は窓が受け持つ（<PC> を直す）', by(r) === 'shell' && absolute(pickedDir.initial) && !pickedDir.initial.includes('<PC>'), `${by(r)} ${pickedDir.initial}`);
+    r = await fetch('/api/open-path', json({ path: 'static' }));
+    const opened = await r.json();
+    ok('エクスプローラーで開くは窓が受け持つ（相対パスを直す）', by(r) === 'shell' && opened.ok && absolute(opened.path) && /static$/.test(opened.path), `${by(r)} ${r.status} ${opened.path || opened.error}`);
 
     const info2 = await (await fetch('/__desktop/info')).json();
     ok('通知領域のアイコンがある', info2.tray === true, info2.tray);
@@ -123,9 +135,13 @@
     ok('「タスクバーへ」で窓が隠れる', hid.visible === false, `visible=${hid.visible}`);
     await fetch('/__desktop/show', { method: 'POST' });
 
-    // 中身の心拍は送られていない（デスクトップ版では外す）
-    const hb = await (await fetch('/api/heartbeat-status')).json();
-    ok('画面は心拍を送っていない', (hb.total || 0) === 0, `心拍 ${hb.total}回`);
+    // ブラウザ版の受け口（心拍・閉じる知らせ）は中身から外してある（1.96.0）
+    const gone = [];
+    for (const [m, u] of [['POST', '/api/heartbeat'], ['GET', '/api/heartbeat-status'], ['POST', '/api/browser-closing']]) {
+      const g = await fetch(u, m === 'POST' ? json({}) : {});
+      gone.push(`${u}=${g.status}`);
+    }
+    ok('ブラウザ版の受け口（心拍・閉じる知らせ）が無い', gone.every((x) => x.endsWith('=404')), gone.join(' '));
   } catch (e) {
     ok('例外', false, e && e.stack ? e.stack : e);
   }

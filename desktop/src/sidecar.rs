@@ -219,7 +219,7 @@ fn read_loop(mut out: BufReader<std::process::ChildStdout>, pending: Arc<Mutex<H
 }
 
 /// 記録の終わりの数行（起動できない理由を画面に出すため）。
-pub fn tail(path: &PathBuf, lines: usize) -> String {
+pub fn tail(path: &Path, lines: usize) -> String {
     let text = std::fs::read_to_string(path).unwrap_or_default();
     let v: Vec<&str> = text.lines().collect();
     v[v.len().saturating_sub(lines)..].join("\n")
@@ -309,6 +309,19 @@ impl Supervisor {
 
     pub fn is_alive(&self) -> bool {
         self.current.lock().unwrap().as_ref().map(|s| s.is_alive()).unwrap_or(false)
+    }
+
+    /// いまの中身の様子（画面の「アプリ監視」に出す）。起こさずに見るだけ。
+    pub fn status(&self) -> Value {
+        let cur = self.current.lock().unwrap();
+        let alive = cur.as_ref().map(|s| s.is_alive()).unwrap_or(false);
+        let spawned = self.spawned.load(Ordering::SeqCst);
+        json!({
+            "alive": alive,
+            "spawned": spawned,
+            "restarts": spawned.saturating_sub(1),
+            "backend": cur.as_ref().filter(|_| alive).map(|s| s.ready.clone()),
+        })
     }
 
     /// 中身が止まったら、問い合わせを待たずに起こし直す（1秒ごとに見る）。

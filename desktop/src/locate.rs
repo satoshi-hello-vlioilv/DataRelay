@@ -1,10 +1,11 @@
 //! 置き場所を探す: アプリのフォルダ（app.py・sidecar.py がある所）・Python・この PC の作業場所。
-//! 決まりはブラウザ版（start.vbs・start_app.py）に合わせる。同じ Python・同じ作業場所を使う。
+//! 決まりは 1.95.0 までのブラウザ版（start.vbs・start_app.py）を引き継いだ。同じ Python・同じ作業場所を使う。
 //! Defect-Pitch-Analyzer の desktop/src/locate.rs（版 2.0.0）を土台にした。
 
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 /// アプリのフォルダ。DATARELAY_PROGRAM があればそれ。無ければこの exe の場所から上へたどって
 /// app.py と sidecar.py が並ぶ所（配る形: exe を app.py の隣に置く。作る途中: desktop/target/release/ から3つ上）。
@@ -54,19 +55,15 @@ fn plain(exe: PathBuf) -> Python {
     Python { exe, args: vec![] }
 }
 
-/// 起こし方の候補（先にあるほど優先）。
+/// 起こし方の候補（先にあるほど優先）。この中から Flask を読める最初のものを使う（`python`）。
 ///   1. DATARELAY_PYTHON
-///   2. ブラウザ版が前回の起動で使った Python（start.vbs が runtime\startup_cache.txt に残す PYTHON=…）
-///   3. start.vbs と同じ順: py -3 → python
-///   4. 標準の入れ場所（新しい版から）
+///   2. start.vbs と同じ順: py -3 → python
+///   3. 標準の入れ場所（新しい版から）
 /// pythonw は使わない（標準入出力が無い前提で動くため。窓は CREATE_NO_WINDOW で出さない）。
-pub fn python_candidates(local: &Path) -> Vec<Python> {
+pub fn python_candidates() -> Vec<Python> {
     let mut out = Vec::new();
     if let Some(p) = env::var_os("DATARELAY_PYTHON") {
         out.push(plain(PathBuf::from(p)));
-    }
-    if let Some(cmd) = startup_cache_python(local) {
-        out.push(command_to_python(&cmd));
     }
     if cfg!(windows) {
         let windir = env::var_os("WINDIR").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(r"C:\Windows"));
@@ -102,30 +99,6 @@ impl Python {
     }
 }
 
-/// start.vbs の起動記録から PYTHON=… を読む（"py -3"・"python"・フルパスのどれか）。
-pub fn startup_cache_python(local: &Path) -> Option<String> {
-    let text = std::fs::read(local.join("runtime").join("startup_cache.txt")).ok()?;
-    let text = String::from_utf8_lossy(&text);
-    text.lines().find_map(|l| l.trim().strip_prefix("PYTHON=").map(|v| v.trim().to_string())).filter(|v| !v.is_empty())
-}
-
-/// "py -3" → py と ["-3"]。"\"C:\\Python312\\python.exe\"" → そのパス。
-pub fn command_to_python(cmd: &str) -> Python {
-    let cmd = cmd.trim();
-    if let Some(rest) = cmd.strip_prefix('"') {
-        if let Some(end) = rest.find('"') {
-            let args = rest[end + 1..].split_whitespace().map(str::to_string).collect();
-            return Python { exe: PathBuf::from(&rest[..end]), args };
-        }
-    }
-    if Path::new(cmd).is_file() {
-        return plain(PathBuf::from(cmd));
-    }
-    let mut parts = cmd.split_whitespace();
-    let exe = parts.next().unwrap_or("python");
-    Python { exe: PathBuf::from(exe), args: parts.map(str::to_string).collect() }
-}
-
 /// 起動に欠かせない部品。start.vbs と同じく Flask だけ（ほかは使う場面で知らせる）。
 pub const REQUIRED_MODULE: &str = "flask";
 
@@ -134,6 +107,8 @@ pub const REQUIRED_MODULE: &str = "flask";
 pub struct NoPython {
     /// 起こせる Python はあったが、どれにも Flask が入っていない
     pub lacking: bool,
+    /// 部品を入れる先（起こせた最初の Python。start.vbs が pip を走らせる先と同じ）
+    pub candidate: Option<Python>,
     pub message: String,
 }
 
@@ -155,8 +130,8 @@ enum Probe {
 /// 候補を順に試し、Flask を読める最初の Python の実体（sys.executable）を返す。
 /// 起こせるだけで選ぶと、Python が複数ある PC では Flask の無い方を掴みうる（py -3 は最新版を指すため）。
 /// py ランチャーを挟んだまま起こすと、窓から止めたときに本体が残りうるので、本体を直接起こす。
-pub fn python(local: &Path) -> Result<Python, NoPython> {
-    pick(&python_candidates(local))
+pub fn python() -> Result<Python, NoPython> {
+    pick(&python_candidates())
 }
 
 fn pick(cands: &[Python]) -> Result<Python, NoPython> {
@@ -179,11 +154,16 @@ fn pick(cands: &[Python]) -> Result<Python, NoPython> {
             lacking: true,
             message: format!(
                 "起こせる Python はありますが、どれにも Flask が入っていません。\n\
-                 一度ブラウザ版（start.vbs）を起動すると自動で入ります。または次を実行してください:\n  \"{}\" -m pip install --user -r config\\requirements.txt\n試したもの:\n{tried}",
+                 次を実行すると入ります:\n  \"{}\" -m pip install --user -r config\\requirements.txt\n試したもの:\n{tried}",
                 p.exe.display()
             ),
+            candidate: Some(p),
         },
-        None => NoPython { lacking: false, message: format!("Python が見つかりません。ブラウザ版（start.vbs）と同じ Python 3 を使います。\n試したもの:\n{tried}") },
+        None => NoPython {
+            lacking: false,
+            candidate: None,
+            message: format!("Python が見つかりません。Python 3（python.org の版）を入れてください。\n試したもの:\n{tried}"),
+        },
     })
 }
 
@@ -219,6 +199,47 @@ fn resolve(c: &Python) -> Result<Probe, String> {
     Ok(if ready { Probe::Ready(plain(p)) } else { Probe::Lacks(plain(p)) })
 }
 
+/// アプリの部品の一覧（config\requirements.txt）。
+pub fn requirements_file(program: &Path) -> Option<PathBuf> {
+    ["config", "Config"].iter().map(|d| program.join(d).join("requirements.txt")).find(|p| p.is_file())
+}
+
+/// 部品（config\requirements.txt）を入れる。Flask が無いときに一度だけ走らせる（start.vbs がしていたこと）。
+/// 管理者権限が要らないよう --user で入れる。仮想環境の Python は --user を受け付けないので、そのときだけ付けない。
+/// pip の出力は log に足していく（入らなかったときの手がかり）。limit を過ぎたら止めて失敗にする。
+pub fn install_requirements(py: &Python, requirements: &Path, log: &Path, limit: Duration) -> Result<(), String> {
+    let script = "import subprocess,sys\n\
+                  a=[sys.executable,'-m','pip','install','--disable-pip-version-check','-r',sys.argv[1]]\n\
+                  if sys.prefix==sys.base_prefix:a.insert(4,'--user')\n\
+                  sys.exit(subprocess.call(a))";
+    if let Some(dir) = log.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let out = std::fs::OpenOptions::new().create(true).append(true).open(log).map_err(|e| format!("記録を開けません: {e}"))?;
+    let err = out.try_clone().map_err(|e| e.to_string())?;
+    let mut cmd = Command::new(&py.exe);
+    cmd.args(&py.args).args(["-c", script]).arg(requirements).stdin(Stdio::null()).stdout(out).stderr(err);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    let mut child = cmd.spawn().map_err(|e| format!("pip を起こせません: {e}"))?;
+    let end = Instant::now() + limit;
+    loop {
+        match child.try_wait().map_err(|e| e.to_string())? {
+            Some(st) if st.success() => return Ok(()),
+            Some(st) => return Err(format!("pip が終了コード {:?} で終わりました", st.code())),
+            None if Instant::now() >= end => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("{} 秒たっても終わらないため止めました", limit.as_secs()));
+            }
+            None => std::thread::sleep(Duration::from_millis(200)),
+        }
+    }
+}
+
 /// "Python312" → Some(312)。"Python3" の後ろが数字でなければ None。
 fn python_dir_version(name: &str) -> Option<u32> {
     let rest = name.strip_prefix("Python3").or_else(|| name.strip_prefix("python3"))?;
@@ -248,28 +269,16 @@ mod tests {
     }
 
     #[test]
-    fn reads_the_browser_versions_python() {
-        let tmp = env::temp_dir().join(format!("dr-cache-{}", std::process::id()));
-        std::fs::create_dir_all(tmp.join("runtime")).unwrap();
-        std::fs::write(tmp.join("runtime").join("startup_cache.txt"), "PYTHON=py -3\r\nREQSIG=abc\r\n").unwrap();
-        assert_eq!(startup_cache_python(&tmp).as_deref(), Some("py -3"));
-        assert_eq!(command_to_python("py -3"), Python { exe: PathBuf::from("py"), args: vec!["-3".into()] });
-        assert_eq!(command_to_python("\"C:\\Program Files\\Python312\\python.exe\""), plain(PathBuf::from("C:\\Program Files\\Python312\\python.exe")));
-        assert_eq!(startup_cache_python(&tmp.join("none")), None);
-        std::fs::remove_dir_all(&tmp).ok();
-    }
-
-    #[test]
     fn resolves_the_real_interpreter() {
         // この試験を流している Python（PATH の python3/python）の実体が取れる
-        let p = python(&env::temp_dir().join("dr-no-cache")).expect("python");
+        let p = python().expect("python");
         assert!(p.exe.is_file(), "{}", p.exe.display());
         assert!(p.args.is_empty(), "本体を直接起こす（ランチャーを挟まない）");
     }
 
     /// 試験を流している Python（Flask 入り）を、site-packages を見ない形（-S）で起こすと「Flask の無い Python」になる。
     fn this_python() -> Python {
-        python(&env::temp_dir().join("dr-no-cache")).expect("python")
+        python().expect("python")
     }
 
     #[test]
@@ -291,6 +300,25 @@ mod tests {
         assert!(e.message.contains("pip install") && e.message.contains(&ok.exe.display().to_string()), "{}", e.message);
         let e = pick(&[missing]).expect_err("起こせる Python が無い");
         assert!(!e.lacking && e.title() == "Python が見つかりません", "{e:?}");
+    }
+
+    #[test]
+    fn installs_requirements_and_reports_failure() {
+        // ネットを使わずに確かめる: 空の一覧は入れるものが無く成功する／無い場所を指す一覧は失敗し、記録に理由が残る
+        let py = this_python();
+        let tmp = env::temp_dir().join(format!("dr-pip-{}", std::process::id()));
+        std::fs::create_dir_all(tmp.join("config")).unwrap();
+        let req = tmp.join("config").join("requirements.txt");
+        std::fs::write(&req, "").unwrap();
+        assert_eq!(requirements_file(&tmp), Some(req.clone()));
+        let log = tmp.join("logs").join("pip_install.log");
+        install_requirements(&py, &req, &log, Duration::from_secs(120)).expect("空の一覧");
+        std::fs::write(&req, "./dr-no-such-package\n").unwrap();
+        let e = install_requirements(&py, &req, &log, Duration::from_secs(120)).expect_err("無い場所");
+        assert!(e.contains("終了コード"), "{e}");
+        assert!(std::fs::read_to_string(&log).unwrap().contains("dr-no-such-package"), "pip の出力が記録に残る");
+        assert_eq!(requirements_file(&tmp.join("none")), None);
+        std::fs::remove_dir_all(&tmp).ok();
     }
 
     #[test]

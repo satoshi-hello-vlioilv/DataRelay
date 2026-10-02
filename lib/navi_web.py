@@ -8,11 +8,8 @@ app.py から分けてある。ここにあるのは受け口だけで、実際�
 変えていない ―― 書き換えると、f文字列の中は Python 3.11 では位置が正確でなく、
 静かに壊れるため（実際に一度壊した）。
 
-実行中に差し替わる変数（heartbeat_total / last_heartbeat_at / tray /
-_first_request_logged）に触る4つの受け口は、実体で受け取ると古くなるので
+実行中に差し替わる状態（常駐の理由・後始末）に触る受け口（/api/residency・/api/app-cleanup）は、
 app.py 側に残してある。あれは受け口の形をした本体の状態そのもの。
-
-付け忘れが無いことは t_web.py が静的に確かめている。
 
 なお、ここが受け取るのは取り込んだ時点の実体。あとから app.X を差し替えても
 ここには届かない（Pythonでよくある「使われている場所で差し替える」の話）。
@@ -33,20 +30,20 @@ import navi_crosstab # RNEの配置（表側・表頭・データ項目）を読
 
 from app import (
     APP_ID, APP_NAME, APP_RELEASED_AT, APP_VERSION, APP_VERSION_TITLE, BASE, BUILD_VERSION, CHANGELOG,
-    CLOSE_GRACE_SECONDS, DEFAULT_DLL_SEARCH_ROOTS, DOCS, INSPECT_ALL_ORDER, INSPECT_ALL_SPEC,
+    DEFAULT_DLL_SEARCH_ROOTS, DOCS, INSPECT_ALL_ORDER, INSPECT_ALL_SPEC,
     INSPECT_TASK_SPECS, INSTANCE_ID, LOCAL_RUNTIME, LOG_FILTERS, LOG_PATH, LOG_READ_BYTES,
-    PORT, Path, ROW_AXIS_MODE_LABEL, SPLIT_BATCH_MAX, _api_diag_cache_path, _dll_requirement,
+    Path, ROW_AXIS_MODE_LABEL, SPLIT_BATCH_MAX, _api_diag_cache_path, _dll_requirement,
     _log_api_exports,
     _read_api_diag_cache, _run_inspect_endpoint, _split_stage_logged, _split_trial_run,
     _viewer_output_path, _write_api_diag_cache, active_workers, active_workers_lock, alerts,
     alerts_lock, api_readiness, axis_balance_scores, blocked_row_axes, calendar,
-    settings_sync_lock, settings_revision, SETTINGS_DB,
+    settings_sync_lock, settings_revision, SETTINGS_DB, settings_flush_pending,
     run_api_diag_worker,
     cancel_requested, check_path_item, clamp_parallel_lines, clear_row_axis_blocks,
     column_cache_state, column_weights, command_queue, command_queue_lock, compute_period,
     creds, csv, datetime, dll_diagnostic_issues, dll_search_roots, docs_dir, duplicate_columns,
     enqueue_command, expand_rule_occurrences, find_nearby_file, freshness_view,
-    has_template_variables, heartbeat_clients, heartbeat_lock, inspect_task_blank,
+    has_template_variables, inspect_task_blank,
     inspect_task_lock, inspect_task_percent, inspect_task_seconds, inspect_tasks,
     job_extra_formats, job_output_plan, job_schedule_preview, json, jsonify, last_run_info, load, sqlite3,
     load_column_cache, load_job_runs, load_rne_timing, load_split_trials, log, log_files,
@@ -83,9 +80,7 @@ from app import (
     STAMP_FORMAT_SAMPLES, DATE_FORMAT_DEFAULT, DATETIME_FORMAT_DEFAULT, MAX_SCALE,
     text_layout_column_types)
 
-@app.get('/')
-def index():
- response=app.make_response(render_template('index.html'));response.headers['Cache-Control']='no-store, no-cache, must-revalidate, max-age=0';response.headers['Pragma']='no-cache';return response
+# 画面のひな形（/ → templates/index.html）と static/ は窓がディスクから直接返す（中身の起動を待たずに画面が出る）。
 
 @app.get('/favicon.ico')
 def favicon():
@@ -945,7 +940,8 @@ def background_tasks():
               'stage':st.get('stage') or '','job':st.get('job') or '','job_id':st.get('job_id') or '',
               'rne':st.get('rne') or '','percent':float(st.get('percent') or 0),
               'elapsed':round(time.time()-(st.get('started') or time.time()),1)})
- return jsonify(ok=True,count=len(out),tasks=out)
+ # 設定の共有への書き戻し（数秒で終わる）は一覧に出さず、件数だけ別に答える。
+ return jsonify(ok=True,count=len(out),tasks=out,settings_flush=settings_flush_pending())
 
 @app.post('/api/run')
 def run_all():
@@ -1176,42 +1172,8 @@ def delete_old_log():
  log.info('LOG_RETENTION_DELETE days=%s removed=%s kept=%s',days,removed,len(kept))
  return jsonify(ok=True,removed=removed,kept=len(kept),days=days)
 
-@app.post('/api/pick-file')
-def pick_file():
- try:
-  import tkinter as tk
-  from tkinter import filedialog
-  data=request.get_json(silent=True) or {}; initial=str(resolve_path(data.get('initial') or str(BASE))); types=data.get('types') or [['すべてのファイル','*.*']]
-  root=tk.Tk(); root.withdraw(); root.attributes('-topmost',True)
-  path=filedialog.askopenfilename(initialdir=str(Path(initial).parent if Path(initial).suffix else Path(initial)),filetypes=[tuple(x) for x in types])
-  root.destroy(); return jsonify(path=path)
- except Exception as e:return jsonify(error=str(e)),500
-
-@app.post('/api/pick-folder')
-def pick_folder():
- try:
-  import tkinter as tk
-  from tkinter import filedialog
-  data=request.get_json(silent=True) or {}; initial=str(resolve_path(data.get('initial') or str(BASE))); root=tk.Tk(); root.withdraw(); root.attributes('-topmost',True); path=filedialog.askdirectory(initialdir=initial); root.destroy(); return jsonify(path=path)
- except Exception as e:return jsonify(error=str(e)),500
-
-@app.post('/api/open-path')
-def open_path():
- # 出力先は社内共有パス(UNC)やローカルパスであり、Webアドレスではない。
- # ブラウザーを遷移させず、このサーバー(ローカルPC)側でエクスプローラーを開く。
- data=request.get_json(silent=True) or {}; raw=str(data.get('path') or '').strip()
- if not raw:return jsonify(ok=False,error='出力先が指定されていません'),400
- if os.name!='nt':return jsonify(ok=False,error='フォルダーを開けるのはWindowsのみです'),400
- try:
-  target=resolve_path(raw)
-  # ファイル指定ならその親フォルダーを開く。存在しない場合は明示エラー(Web遷移させない)。
-  if target.is_file():target=target.parent
-  if not target.exists():return jsonify(ok=False,error=f'出力先が見つかりません: {target}'),404
-  os.startfile(str(target))  # type: ignore[attr-defined]
-  log.info('OPEN_PATH path=%s resolved=%s',raw,target)
-  return jsonify(ok=True,resolved=str(target))
- except Exception as e:
-  log.exception('OPEN_PATH_FAILED path=%s',raw); return jsonify(ok=False,error=str(e)),500
+# ファイル・フォルダーの選択とエクスプローラーで開く（/api/pick-file・/api/pick-folder・/api/open-path）は窓が受け持つ。
+# パスの直し方（相対・<PC>）は下の /api/path-convert に聞く ―― 決まりは resolve_path だけが持つ。
 
 @app.post('/api/path-convert')
 def path_convert():
@@ -1498,11 +1460,9 @@ def validate():
 
 @app.get('/api/instance')
 def instance_info():
- # versionは版だけ、build_versionは版＋ビルド名。起動待ちモーダルは前者を出す（差し込んだ値と
- # 同じ形にして、サーバーが立った瞬間に表示が変わって見えないようにする）。
- r=app.make_response(jsonify(app=APP_ID,instance_id=INSTANCE_ID,display_name=APP_NAME,version=APP_VERSION,build_version=BUILD_VERSION,pid=os.getpid(),port=PORT,path=str(BASE)))
- # 起動待ちモーダル(loading.html)がfile://から状態を確認できるよう、ローカル情報に限りCORSを許可する。
- r.headers['Access-Control-Allow-Origin']='*'; r.headers['Cache-Control']='no-store'; return r
+ # この中身の名乗り。instance_id は起こし直すたびに変わる（窓の自己診断が起こし直しを見分けるのに使う）。
+ r=app.make_response(jsonify(app=APP_ID,instance_id=INSTANCE_ID,display_name=APP_NAME,version=APP_VERSION,build_version=BUILD_VERSION,pid=os.getpid(),path=str(BASE)))
+ r.headers['Cache-Control']='no-store'; return r
 
 @app.get('/api/docs')
 def docs_list():
@@ -1539,19 +1499,6 @@ def docs_read(doc_id):
 def version_info():
  return jsonify(version=APP_VERSION,build_version=BUILD_VERSION,title=APP_VERSION_TITLE,released_at=APP_RELEASED_AT,changelog=CHANGELOG)
 
-@app.post('/api/browser-closing')
-def browser_closing():
- # pagehideはタブ/ブラウザー終了だけでなく再読込等でも発生する。client_idごとに終了候補へ入れ、猶予中の復帰で取り消す。
- global browser_closed_explicit,browser_closing_at
- data=request.get_json(silent=True) or {};app_id=str(data.get('app_id') or '');client_id=str(data.get('client_id') or request.form.get('client_id') or request.headers.get('X-Heartbeat-Client') or '')[:80]
- if app_id!=APP_ID or not client_id:return jsonify(ok=False,error='アプリタブ識別情報が不正です'),400
- now=time.time()
- with heartbeat_lock:
-  browser_closed_explicit=True;browser_closing_at=now
-  previous=heartbeat_clients.get(client_id,{})
-  heartbeat_clients[client_id]={'app_id':APP_ID,'instance_id':INSTANCE_ID,'last_seen':float(previous.get('last_seen') or now),'user_agent':request.headers.get('User-Agent','')[:160],'closing_at':now,'recovered_count':int(previous.get('recovered_count') or 0)}
- log.info('BROWSER_CLOSE_CANDIDATE client_id=%s grace=%ss',client_id,CLOSE_GRACE_SECONDS)
- return jsonify(ok=True,client_id=client_id,grace_seconds=CLOSE_GRACE_SECONDS)
 
 
 # ==== 読取マスタ（固定長テキストの切り方）=================================
