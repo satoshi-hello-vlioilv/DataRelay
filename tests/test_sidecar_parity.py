@@ -200,7 +200,10 @@ def normalize(obj,roots):
  return obj
 
 # pid は「[pid 3093]」（記録の頭）と「pid=7288」（Windows で DLL の診断に起こした子の番号）の両方の書き方がある。
-LOG_NOISE=re.compile(r'^[\d\-/: ,.<>a-z]*\[|pid[ =]\d+|\b[0-9a-f]{32}\b|elapsed=[\d.]+s|ready_since_\w+=[-\d.]+s')
+# 所要時間は「elapsed=0.03s」「NG(0.2s)」「120ms」「3秒」と書き方がいろいろある。測るたびに変わる値なので、どれも揃える
+# （Windows の CI で「NG(0.0s)」と「NG(0.2s)」の違いだけで不一致になった）。
+LOG_NOISE=re.compile(r'^[\d\-/: ,.<>a-z]*\[|pid[ =]\d+|\b[0-9a-f]{32}\b|ready_since_\w+=[-\d.]+s'
+                     r'|(?<![\w.])-?\d+(?:\.\d+)?(?:ms|s|秒)(?![A-Za-z])')
 
 def log_lines(text,roots):
  """ログの本文を「何の記録が何件出たか」にする。
@@ -320,6 +323,14 @@ class LogNormalizeTest(unittest.TestCase):
   b='2026-10-02 09:44:57,333 [INFO] [pid 3147] API_DLL_LOAD_BEGIN path=C:\\NAVIAP\\SymNaviA.dll pid=1588 worker=1'
   self.assertEqual(log_lines(a,[]),log_lines(b,[]))
   self.assertNotEqual(log_lines(a,[]),log_lines(b.replace('worker=1','worker=2'),[]))
+
+ def test_durations_in_any_form(self):
+  """所要時間（測るたびに変わる）は書き方によらず揃える。件数や結果（NG/OK）の違いは揃えない。"""
+  a='[INFO] [pid 1] INSPECT_ALL job=None ok=False elapsed=0.01s 内訳=中身を読む=NG(0.0s) / 列=NG(0.0s) 待ち 120ms 計 3秒 rows=6'
+  b='[INFO] [pid 2] INSPECT_ALL job=None ok=False elapsed=0.27s 内訳=中身を読む=NG(0.2s) / 列=NG(1.5s) 待ち 9ms 計 12秒 rows=6'
+  self.assertEqual(log_lines(a,[]),log_lines(b,[]))
+  self.assertNotEqual(log_lines(a,[]),log_lines(b.replace('中身を読む=NG','中身を読む=OK'),[]))
+  self.assertNotEqual(log_lines(a,[]),log_lines(b.replace('rows=6','rows=7'),[]))
 
 class SidecarRobustnessTest(unittest.TestCase):
  """壊れた枠で止まらない・窓口の子プロセス（抽出ワーカーと同じ起こし方）の print が枠に混ざらない。"""
