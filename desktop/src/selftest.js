@@ -77,13 +77,17 @@
     ok('集計結果の EXCEL も窓が保存する', r.status === 204 && /\.xlsx$/.test(saved2), `${r.status} ${saved2}`);
 
     // tkinter・os.startfile の置き換え（答えの形はいまと同じ {"path": ...}）
-    r = await fetch('/api/pick-file', json({ initial: program, types: [['RNEファイル', '*.RNE'], ['すべて', '*.*']] }));
+    // 設定のパスは相対（アプリフォルダー基準）・<PC>（この PC の作業場所）のことがある。窓は Python と同じ決まりで実際の場所へ直す
+    const absolute = (p) => typeof p === 'string' && /^(?:\/|[A-Za-z]:[\\/]|\\\\)/.test(p);
+    r = await fetch('/api/pick-file', json({ initial: 'samples/rne', types: [['RNEファイル', '*.RNE'], ['すべて', '*.*']] }));
     const picked = await r.json();
-    ok('ファイル選択は窓が受け持つ', by(r) === 'shell' && typeof picked.path === 'string', `${by(r)} ${picked.path}`);
-    r = await fetch('/api/pick-folder', json({ initial: program }));
-    ok('フォルダー選択は窓が受け持つ', by(r) === 'shell' && typeof (await r.json()).path === 'string', by(r));
-    r = await fetch('/api/open-path', json({ path: program }));
-    ok('エクスプローラーで開くは窓が受け持つ', by(r) === 'shell' && (await r.json()).ok, by(r));
+    ok('ファイル選択は窓が受け持つ（初期フォルダーの相対パスを直す）', by(r) === 'shell' && typeof picked.path === 'string' && absolute(picked.initial) && /rne$/.test(picked.initial), `${by(r)} ${picked.initial}`);
+    r = await fetch('/api/pick-folder', json({ initial: '<PC>' }));
+    const pickedDir = await r.json();
+    ok('フォルダー選択は窓が受け持つ（<PC> を直す）', by(r) === 'shell' && absolute(pickedDir.initial) && !pickedDir.initial.includes('<PC>'), `${by(r)} ${pickedDir.initial}`);
+    r = await fetch('/api/open-path', json({ path: 'static' }));
+    const opened = await r.json();
+    ok('エクスプローラーで開くは窓が受け持つ（相対パスを直す）', by(r) === 'shell' && opened.ok && absolute(opened.path) && /static$/.test(opened.path), `${by(r)} ${r.status} ${opened.path || opened.error}`);
 
     const info2 = await (await fetch('/__desktop/info')).json();
     ok('通知領域のアイコンがある', info2.tray === true, info2.tray);

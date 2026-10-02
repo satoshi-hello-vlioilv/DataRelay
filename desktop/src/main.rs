@@ -106,6 +106,17 @@ impl Shell {
         serde_json::from_slice(&r.body).map_err(|e| e.to_string())
     }
 
+    /// 設定に書かれたパス（アプリフォルダー基準の相対・<PC>・環境変数）を実際の場所へ直す。
+    /// 直し方の決まりは Python の resolve_path だけが持つ（/api/path-convert）。窓が別に真似ると食い違う。
+    /// 中身がまだ答えられないときは、書かれたまま使う。
+    fn resolve_path(&self, raw: &str) -> PathBuf {
+        let body = json!({"value": raw, "mode": "absolute"}).to_string();
+        self.ask_json("POST", "/api/path-convert", body.as_bytes())
+            .ok()
+            .and_then(|v| v["resolved"].as_str().filter(|s| !s.is_empty()).map(PathBuf::from))
+            .unwrap_or_else(|| PathBuf::from(raw))
+    }
+
     /// 常駐を続ける理由（Python の residency_reason）。無ければ空文字。
     fn residency_reason(&self) -> Result<String, String> {
         Ok(self.ask_json("GET", "/api/residency", b"")?["reason"].as_str().unwrap_or("").to_string())
@@ -243,20 +254,21 @@ fn selftest_dir() -> Option<PathBuf> {
     std::env::var_os("DATARELAY_SELFTEST").map(|p| PathBuf::from(p).with_extension("files"))
 }
 
-/// ファイル・フォルダーの選択。ブラウザ版の /api/pick-file・/api/pick-folder（tkinter）と同じ答えの形 {"path": "..."}。
-/// 自己診断ではダイアログを出せない（押す人がいない）ので、決めた場所を返す。
-fn pick(app: &AppHandle, folder: bool, body: &[u8]) -> Reply {
+/// ファイル・フォルダーの選択。答えの形は {"path": "..."}（ブラウザ版の tkinter と同じ）。
+/// 初期フォルダーは設定のパスなので、Python と同じ決まりで実際の場所へ直してから使う。
+/// 自己診断ではダイアログを出せない（押す人がいない）ので、決めた場所と、直した初期フォルダーを返す。
+fn pick(app: &AppHandle, shell: &Shell, folder: bool, body: &[u8]) -> Reply {
     let req: Value = serde_json::from_slice(body).unwrap_or(json!({}));
+    let initial = req["initial"].as_str().map(str::trim).filter(|s| !s.is_empty()).map(|s| shell.resolve_path(s)).map(|p| {
+        if p.is_file() || (!folder && p.extension().is_some()) { p.parent().map(PathBuf::from).unwrap_or(p) } else { p }
+    });
     if let Some(dir) = selftest_dir() {
-        return json_reply(&json!({"path": dir.to_string_lossy(), "selftest": true}));
+        let shown = initial.as_ref().map(|p| p.to_string_lossy().into_owned());
+        return json_reply(&json!({"path": dir.to_string_lossy(), "initial": shown, "selftest": true}));
     }
     let mut d = app.dialog().file();
-    if let Some(init) = req["initial"].as_str().filter(|s| !s.is_empty()) {
-        let p = PathBuf::from(init);
-        let dir = if p.is_file() || (!folder && p.extension().is_some()) { p.parent().map(PathBuf::from).unwrap_or(p) } else { p };
-        if dir.is_dir() {
-            d = d.set_directory(dir);
-        }
+    if let Some(dir) = initial.filter(|d| d.is_dir()) {
+        d = d.set_directory(dir);
     }
     if let Some(types) = req["types"].as_array() {
         for t in types {
@@ -276,22 +288,24 @@ fn pick(app: &AppHandle, folder: bool, body: &[u8]) -> Reply {
 /// 窓そのものが答える問い合わせ。
 fn native(app: AppHandle, shell: Arc<Shell>, info: Value) -> Native {
     Box::new(move |method, path, body| match (method, path) {
-        ("POST", "/api/pick-file") => Some(pick(&app, false, body)),
-        ("POST", "/api/pick-folder") => Some(pick(&app, true, body)),
+        ("POST", "/api/pick-file") => Some(pick(&app, &shell, false, body)),
+        ("POST", "/api/pick-folder") => Some(pick(&app, &shell, true, body)),
         // エクスプローラーで開く（ブラウザ版の os.startfile）。ファイルなら、そのファイルを選んだ状態でフォルダーを開く
         ("POST", "/api/open-path") => {
             use tauri_plugin_opener::OpenerExt;
             let req: Value = serde_json::from_slice(body).unwrap_or(json!({}));
-            let target = req["path"].as_str().unwrap_or("").trim().to_string();
-            if target.is_empty() {
+            let raw = req["path"].as_str().unwrap_or("").trim();
+            if raw.is_empty() {
                 return Some(error_reply(400, "no_path", "出力先が指定されていません"));
+            }
+            // 出力先は相対（アプリフォルダー基準）・<PC> のことがある。窓の作業フォルダー基準で読むと別の場所になる
+            let p = shell.resolve_path(raw);
+            let target = p.to_string_lossy().into_owned();
+            if !p.exists() {
+                return Some(error_reply(404, "not_found", &format!("出力先が見つかりません: {target}")));
             }
             if selftest_dir().is_some() {
                 return Some(json_reply(&json!({"ok": true, "selftest": true, "path": target})));
-            }
-            let p = PathBuf::from(&target);
-            if !p.exists() {
-                return Some(error_reply(404, "not_found", &format!("出力先が見つかりません: {target}")));
             }
             let r = if p.is_file() { app.opener().reveal_item_in_dir(&p) } else { app.opener().open_path(&target, None::<&str>) };
             Some(match r {
