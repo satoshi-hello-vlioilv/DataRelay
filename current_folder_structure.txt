@@ -17,6 +17,8 @@
     assets/               ... 付属ファイル
     samples/              ... 検証用の見本（RNEなど）。実行では読みません (v1.93.0)
                               本番のRNE置き場(config/rne/)と混ぜると、見本が対象として出てしまうため分けています
+    migration/            ... デスクトップ版（Tauri/Rust/Python）への移行の検証と試作。実行では使いません
+                              結果は migration/FEASIBILITY.md
     tests/                ... 検証（python -m unittest discover -s tests -t .）
 
   <lib/>

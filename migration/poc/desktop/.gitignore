@@ -1,0 +1,3 @@
+target/
+# tauri-build が作る（ビルドのたびに作り直される）
+gen/

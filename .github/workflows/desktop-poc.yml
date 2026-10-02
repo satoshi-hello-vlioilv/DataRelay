@@ -1,0 +1,91 @@
+# 【移行の検証】デスクトップ版の試作（migration/poc/desktop・Tauri）を Windows で作り、本物の WebView2 で自己診断する。
+# 試作は実行では使わない。移行してよいかを、Windows の上で確かめるためのもの（migration/FEASIBILITY.md）。
+name: desktop-poc
+
+on:
+  pull_request:
+    paths: ["migration/**", "app.py", "lib/**", "static/**", "templates/**", "tests/**", ".github/workflows/desktop-poc.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Python の部品（config/requirements.txt と同じ）
+        run: python -m pip install -r config/requirements.txt
+
+      - name: Python の試験（Windows・ポートなしの窓口と全ルートの突き合わせを含む）
+        run: python -m unittest discover -s tests -t . -v
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: migration/poc/desktop
+
+      - name: Rust の試験
+        working-directory: migration/poc/desktop
+        run: cargo test --locked
+
+      - name: exe を作る
+        working-directory: migration/poc/desktop
+        run: cargo build --release --locked
+
+      - name: 自己診断（本物の WebView2・ポートなし・pythonw で窓なし）
+        run: |
+          $py = (Get-Command python).Source
+          $env:DATARELAY_PYTHON = Join-Path (Split-Path $py) "pythonw.exe"
+          $env:DATARELAY_PROGRAM = (Get-Location).Path
+          $env:NAVI_LOCAL_ROOT = "$env:RUNNER_TEMP\dr-local"
+          $env:NAVI_CONFIG_DIR = "$env:RUNNER_TEMP\dr-config"
+          $env:DATARELAY_SELFTEST = "$env:RUNNER_TEMP\selftest.json"
+          $p = Start-Process -FilePath migration\poc\desktop\target\release\DataRelay.exe -PassThru -Wait
+          if (Test-Path $env:DATARELAY_SELFTEST) { Get-Content $env:DATARELAY_SELFTEST -Encoding utf8 } else { Write-Host "結果のファイルがありません" }
+          Get-ChildItem "$env:NAVI_LOCAL_ROOT\logs" -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "--- $($_.Name)"; Get-Content $_.FullName -Tail 30 -Encoding utf8 }
+          Start-Sleep -Seconds 2
+          if (Get-Process python*, pythonw* -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "*hostedtoolcache*" }) { Write-Host "Python が残っています"; exit 9 }
+          exit $p.ExitCode
+
+      - name: 自己診断（常駐の理由が無いまま × → 窓も Python も終わる）
+        run: |
+          $py = (Get-Command python).Source
+          $env:DATARELAY_PYTHON = Join-Path (Split-Path $py) "pythonw.exe"
+          $env:DATARELAY_PROGRAM = (Get-Location).Path
+          $env:NAVI_LOCAL_ROOT = "$env:RUNNER_TEMP\dr-local2"
+          $env:NAVI_CONFIG_DIR = "$env:RUNNER_TEMP\dr-config2"
+          $env:DATARELAY_SELFTEST = "$env:RUNNER_TEMP\close.json"
+          $env:DATARELAY_SELFTEST_MODE = "close"
+          $sw = [Diagnostics.Stopwatch]::StartNew()
+          $p = Start-Process -FilePath migration\poc\desktop\target\release\DataRelay.exe -PassThru
+          if (-not $p.WaitForExit(120000)) { Write-Host "120秒たっても終わりません"; $p.Kill(); exit 8 }
+          Write-Host "終わるまで $([math]::Round($sw.Elapsed.TotalSeconds,1)) 秒 / 終了コード $($p.ExitCode)"
+          $note = "$env:RUNNER_TEMP\close.note.json"
+          if (Test-Path $note) { Get-Content $note -Encoding utf8 } else { Write-Host "理由の記録がありません"; exit 7 }
+          Start-Sleep -Seconds 2
+          if (Get-Process python*, pythonw* -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "*hostedtoolcache*" }) { Write-Host "Python が残っています"; exit 9 }
+          exit $p.ExitCode
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: DataRelay-desktop-poc-windows
+          path: |
+            migration/poc/desktop/target/release/DataRelay.exe
+            ${{ runner.temp }}/selftest.json
+            ${{ runner.temp }}/close.note.json
+          if-no-files-found: warn
