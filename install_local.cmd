@@ -14,6 +14,9 @@ rem  試験用: DATARELAY_EXE_SOURCE があれば、その exe を置く（既�
 rem
 rem  このファイルは UTF-8・CRLF で保存する（.gitattributes で変換しない）。日本語は echo の行にだけ書く。
 rem ======================================================================
+rem このファイルのフォルダー（アプリのフォルダー）は、引数を読む前に控える。shift は %%0 もずらすので、あとで読むと別の場所になる
+set "APPDIR=%~dp0"
+set "APPDIR=%APPDIR:~0,-1%"
 set "QUIET="
 set "NOSHORTCUT="
 set "REMOVE="
@@ -26,8 +29,6 @@ shift
 goto args
 :args_done
 
-set "APPDIR=%~dp0"
-set "APPDIR=%APPDIR:~0,-1%"
 set "DEST=%LOCALAPPDATA%\DataRelay\bin"
 set "SRC=%APPDIR%\DataRelay.exe"
 if defined DATARELAY_EXE_SOURCE set "SRC=%DATARELAY_EXE_SOURCE%"

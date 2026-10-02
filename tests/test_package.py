@@ -71,6 +71,14 @@ class InstallScriptTest(unittest.TestCase):
   self.assertEqual(self.raw.count(b'\n'),self.raw.count(b'\r\n'),'改行はすべて CRLF')
   self.assertIn('chcp 65001',self.text.splitlines()[2],'日本語を出す前に UTF-8 へ切り替える')
 
+ def test_reads_its_own_folder_before_shift(self):
+  """shift は %1 だけでなく %0 もずらす。%~dp0（このファイルのフォルダー）は引数を読む前に控える。
+  （1.97.0 の初版は引数の繰り返しのあとで読み、/quiet を付けるとドライブの直下を指していた。Windows の CI で見つけた）"""
+  lines=self.text.splitlines()
+  first_shift=next(i for i,l in enumerate(lines) if re.match(r'\s*shift\b',l,re.I))
+  uses=[i for i,l in enumerate(lines) if '%~dp0' in l and not re.match(r'\s*rem\b',l,re.I)]
+  self.assertTrue(uses and max(uses)<first_shift,f'%~dp0 の行 {[u+1 for u in uses]} / 最初の shift {first_shift+1}')
+
  def test_every_goto_has_its_label(self):
   labels={l[1:].strip().lower() for l in self.text.splitlines() if l.startswith(':')}
   gotos={g.lower() for g in re.findall(r'\bgoto\s+(\w+)',self.text)}
