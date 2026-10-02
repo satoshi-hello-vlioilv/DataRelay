@@ -7,20 +7,74 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-/// アプリのフォルダ。DATARELAY_PROGRAM があればそれ。無ければこの exe の場所から上へたどって
-/// app.py と sidecar.py が並ぶ所（配る形: exe を app.py の隣に置く。作る途中: desktop/target/release/ から3つ上）。
-pub fn program_dir() -> Result<PathBuf, String> {
+/// exe を手元に置いた形の印。exe の隣のこのファイルに、共有のアプリのフォルダーを1行で書く（install_local.cmd が書く）。
+/// `#` で始まる行と空の行は読まない。UTF-8 で書く。
+pub const POINTER_FILE: &str = "DataRelay.program.txt";
+
+/// アプリのフォルダーをどこで知ったか。
+#[derive(Clone, Debug, PartialEq)]
+pub enum Place {
+    /// DATARELAY_PROGRAM（試験・作る途中）
+    Env,
+    /// exe を手元に置いた形。exe の隣の DataRelay.program.txt が共有のアプリのフォルダーを指す
+    Local { pointer: PathBuf },
+    /// exe がアプリのフォルダーの中（配る zip を展開した形・作る途中の desktop/target/…）
+    Beside,
+}
+
+impl Place {
+    pub fn label(&self) -> &'static str {
+        match self {
+            Place::Env => "env",
+            Place::Local { .. } => "local",
+            Place::Beside => "beside",
+        }
+    }
+}
+
+/// アプリのフォルダー（app.py・sidecar.py・lib がある所）と、どこで知ったか。探す順:
+///   1. DATARELAY_PROGRAM
+///   2. exe の隣の DataRelay.program.txt（exe を手元に置いた形。中身は共有から読む）
+///   3. exe の場所から上へたどって app.py と sidecar.py が並ぶ所（配る形: exe を app.py の隣に置く。作る途中: desktop/target/release/ から3つ上）
+pub fn program_dir() -> Result<(PathBuf, Place), String> {
     if let Some(p) = env::var_os("DATARELAY_PROGRAM") {
         let p = PathBuf::from(p);
-        return if is_program(&p) { Ok(p) } else { Err(format!("DATARELAY_PROGRAM に app.py と sidecar.py がありません: {}", p.display())) };
+        return if is_program(&p) { Ok((p, Place::Env)) } else { Err(format!("DATARELAY_PROGRAM に app.py と sidecar.py がありません: {}", p.display())) };
     }
     let exe = env::current_exe().map_err(|e| e.to_string())?;
-    find_program_from(&exe).ok_or_else(|| {
+    let pointer = exe.with_file_name(POINTER_FILE);
+    if let Some(p) = read_pointer(&pointer)? {
+        return if is_program(&p) {
+            Ok((p, Place::Local { pointer }))
+        } else {
+            Err(format!(
+                "共有のアプリのフォルダーに届きません（または app.py がありません）: {}\n\
+                 BOX Drive が動いているか・ネットワークにつながっているかを確かめてください。\n\
+                 場所を変えたときは、アプリのフォルダーの install_local.cmd をもう一度実行するか、次のファイルを書き直してください: {}",
+                p.display(),
+                pointer.display()
+            ))
+        };
+    }
+    find_program_from(&exe).map(|p| (p, Place::Beside)).ok_or_else(|| {
         format!(
-            "アプリのフォルダ（app.py と sidecar.py がある所）が見つかりません。この exe を app.py と同じフォルダに置いてください。\n探し始めた場所: {}",
+            "アプリのフォルダ（app.py と sidecar.py がある所）が見つかりません。この exe を app.py と同じフォルダに置くか、\n\
+             アプリのフォルダの install_local.cmd で手元に置き直してください。\n探し始めた場所: {}",
             exe.parent().unwrap_or(&exe).display()
         )
     })
+}
+
+/// DataRelay.program.txt を読む。無ければ None。あるのに読めない・何も書いていないときは理由を返す。
+pub fn read_pointer(file: &Path) -> Result<Option<PathBuf>, String> {
+    let Ok(bytes) = std::fs::read(file) else { return Ok(None) };
+    let bytes = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(&bytes);
+    let text = std::str::from_utf8(bytes).map_err(|_| format!("{} が UTF-8 で書かれていません。install_local.cmd をもう一度実行してください。", file.display()))?;
+    text.lines()
+        .map(|l| l.trim().trim_matches('"').trim())
+        .find(|l| !l.is_empty() && !l.starts_with('#'))
+        .map(|l| Some(PathBuf::from(l)))
+        .ok_or_else(|| format!("{} にアプリのフォルダーが書かれていません。install_local.cmd をもう一度実行してください。", file.display()))
 }
 
 fn is_program(d: &Path) -> bool {
@@ -265,6 +319,24 @@ mod tests {
         assert_eq!(find_program_from(&tmp.join("DataRelay.exe")), Some(tmp.clone()), "配る形（exe を app.py の隣に置く）");
         assert_eq!(find_program_from(&deep.join("DataRelay.exe")), Some(tmp.clone()), "作る途中（3つ上）");
         assert_eq!(find_program_from(&env::temp_dir().join("nowhere").join("x.exe")), None);
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn reads_the_pointer_to_the_shared_folder() {
+        let tmp = env::temp_dir().join(format!("dr-pointer-{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let f = tmp.join(POINTER_FILE);
+        assert_eq!(read_pointer(&f), Ok(None), "無ければ手元に置いた形ではない");
+        // install_local.cmd が書く形（コメント行・CRLF）と、メモ帳で BOM 付きにされた形の両方
+        std::fs::write(&f, "# DataRelay.exe（この隣）が読むアプリのフォルダー\r\nC:\\Users\\山田\\Box\\R&D (共有)\\DataRelay\r\n").unwrap();
+        assert_eq!(read_pointer(&f), Ok(Some(PathBuf::from("C:\\Users\\山田\\Box\\R&D (共有)\\DataRelay"))));
+        std::fs::write(&f, b"\xef\xbb\xbf\"D:\\share\\DataRelay\"\n").unwrap();
+        assert_eq!(read_pointer(&f), Ok(Some(PathBuf::from("D:\\share\\DataRelay"))));
+        std::fs::write(&f, "# だけ\n\n").unwrap();
+        assert!(read_pointer(&f).unwrap_err().contains("書かれていません"));
+        std::fs::write(&f, b"\x82\xa0\n").unwrap(); // CP932 の「あ」
+        assert!(read_pointer(&f).unwrap_err().contains("UTF-8"));
         std::fs::remove_dir_all(&tmp).ok();
     }
 

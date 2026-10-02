@@ -7,6 +7,7 @@
   <直下>
     DataRelay.exe         ... 入口（desktop/ から作る。リポジトリには入れず、Release の DataRelay.zip で配る）
     sidecar.py            ... 窓口（標準入出力で app.py を呼ぶ。ポートを開かない）
+    install_local.cmd     ... exe だけを手元（%LOCALAPPDATA%\DataRelay\bin）に置く。中身は共有から読む (v1.97.0)
     app.py                ... アプリ本体（直接の起動はできません。DataRelay.exe から）
     templates/ static/    ... 画面
     config/ Config/       ... 設定と接続情報

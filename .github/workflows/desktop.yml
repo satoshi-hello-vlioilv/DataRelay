@@ -54,7 +54,7 @@ jobs:
         working-directory: desktop
         run: cargo build --release --locked
 
-      - name: 自己診断（本物の WebView2・ポートなし。全体・閉じるだけ・起こし直し）
+      - name: 自己診断（本物の WebView2・ポートなし。全体・閉じるだけ・起こし直し・手元に置いた形・入れ替え）
         # Python の場所は指定しない（ブラウザ版と同じ探し方で見つけられることも確かめる）
         run: python desktop/selftest_runner.py desktop/target/release/DataRelay.exe
 

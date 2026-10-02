@@ -7,3 +7,6 @@
 /migration export-ignore
 /samples export-ignore
 /tests export-ignore
+
+# Windows のバッチは CRLF・UTF-8 のまま持つ（変換すると改行が LF になり、ラベルへの goto が外れることがある）
+*.cmd -text
