@@ -414,8 +414,8 @@ fn start(app: AppHandle, shell: Arc<Shell>) {
     let py = match locate::python(&local) {
         Ok(p) => p,
         Err(e) => {
-            shell.step(&app, "python", "bad", "見つかりません");
-            return shell.fail(&app, "Python が見つかりません", &e);
+            shell.step(&app, "python", "bad", if e.lacking { "Flask が入っていません" } else { "見つかりません" });
+            return shell.fail(&app, e.title(), &e.message);
         }
     };
     shell.step(&app, "python", "ok", &py.exe.display().to_string());

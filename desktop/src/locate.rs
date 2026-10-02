@@ -126,34 +126,85 @@ pub fn command_to_python(cmd: &str) -> Python {
     Python { exe: PathBuf::from(exe), args: parts.map(str::to_string).collect() }
 }
 
-/// 候補を順に試し、実体の python.exe の場所（sys.executable）を返す。
-/// py ランチャーを挟んだまま起こすと、窓から止めたときに本体が残りうるので、本体を直接起こす。
-pub fn python(local: &Path) -> Result<Python, String> {
-    let cands = python_candidates(local);
-    let mut tried = Vec::new();
-    for c in &cands {
-        match resolve(c) {
-            Ok(p) => return Ok(p),
-            Err(e) => tried.push(format!("  {} {} … {e}", c.exe.display(), c.args.join(" "))),
-        }
-    }
-    Err(format!("Python が見つかりません。ブラウザ版（start.vbs）と同じ Python 3 を使います。\n試したもの:\n{}", tried.join("\n")))
+/// 起動に欠かせない部品。start.vbs と同じく Flask だけ（ほかは使う場面で知らせる）。
+pub const REQUIRED_MODULE: &str = "flask";
+
+/// 使える Python が無かったわけ。窓はこれを最初の画面にそのまま出す。
+#[derive(Debug)]
+pub struct NoPython {
+    /// 起こせる Python はあったが、どれにも Flask が入っていない
+    pub lacking: bool,
+    pub message: String,
 }
 
-fn resolve(c: &Python) -> Result<Python, String> {
+impl NoPython {
+    pub fn title(&self) -> &'static str {
+        if self.lacking { "Python に必要な部品（Flask）が入っていません" } else { "Python が見つかりません" }
+    }
+}
+
+/// 一つの候補を試した結果。
+#[derive(Debug, PartialEq)]
+enum Probe {
+    /// 起こせて、Flask も読める
+    Ready(Python),
+    /// 起こせるが、Flask が読めない（本体の場所は分かる）
+    Lacks(Python),
+}
+
+/// 候補を順に試し、Flask を読める最初の Python の実体（sys.executable）を返す。
+/// 起こせるだけで選ぶと、Python が複数ある PC では Flask の無い方を掴みうる（py -3 は最新版を指すため）。
+/// py ランチャーを挟んだまま起こすと、窓から止めたときに本体が残りうるので、本体を直接起こす。
+pub fn python(local: &Path) -> Result<Python, NoPython> {
+    pick(&python_candidates(local))
+}
+
+fn pick(cands: &[Python]) -> Result<Python, NoPython> {
+    let mut tried = Vec::new();
+    let mut lacking: Option<Python> = None;
+    for c in cands {
+        let label = format!("  {} {}", c.exe.display(), c.args.join(" "));
+        match resolve(c) {
+            Ok(Probe::Ready(p)) => return Ok(p),
+            Ok(Probe::Lacks(p)) => {
+                tried.push(format!("{} … {} が入っていません（{}）", label.trim_end(), REQUIRED_MODULE, p.exe.display()));
+                lacking.get_or_insert(p);
+            }
+            Err(e) => tried.push(format!("{} … {e}", label.trim_end())),
+        }
+    }
+    let tried = tried.join("\n");
+    Err(match lacking {
+        Some(p) => NoPython {
+            lacking: true,
+            message: format!(
+                "起こせる Python はありますが、どれにも Flask が入っていません。\n\
+                 一度ブラウザ版（start.vbs）を起動すると自動で入ります。または次を実行してください:\n  \"{}\" -m pip install --user -r config\\requirements.txt\n試したもの:\n{tried}",
+                p.exe.display()
+            ),
+        },
+        None => NoPython { lacking: false, message: format!("Python が見つかりません。ブラウザ版（start.vbs）と同じ Python 3 を使います。\n試したもの:\n{tried}") },
+    })
+}
+
+fn resolve(c: &Python) -> Result<Probe, String> {
+    // 1回で両方を聞く: 本体の場所を先に出してから Flask を読む（読めなければ終了コード 3）
+    let script = format!("import sys;print(sys.executable,flush=True)\ntry:\n import {REQUIRED_MODULE}\nexcept Exception:\n sys.exit(3)");
     let mut cmd = Command::new(&c.exe);
-    cmd.args(&c.args).args(["-c", "import sys;print(sys.executable)"]).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
+    cmd.args(&c.args).args(["-c", &script]).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
     }
     let out = cmd.output().map_err(|e| e.to_string())?;
-    if !out.status.success() {
-        return Err(format!("終了コード {:?}", out.status.code()));
-    }
-    let exe = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    let p = PathBuf::from(&exe);
+    let ready = match out.status.code() {
+        Some(0) => true,
+        Some(3) => false,
+        code => return Err(format!("終了コード {code:?}")),
+    };
+    let exe = String::from_utf8_lossy(&out.stdout).lines().next().unwrap_or("").trim().to_string();
+    let mut p = PathBuf::from(&exe);
     if exe.is_empty() || !p.is_file() {
         return Err(format!("sys.executable が読めません（{exe}）"));
     }
@@ -161,10 +212,11 @@ fn resolve(c: &Python) -> Result<Python, String> {
     if p.file_name().map(|n| n.to_string_lossy().eq_ignore_ascii_case("pythonw.exe")).unwrap_or(false) {
         let sib = p.with_file_name("python.exe");
         if sib.is_file() {
-            return Ok(plain(sib));
+            p = sib;
         }
     }
-    Ok(plain(p))
+    // 本体を直接起こす形では前に付ける引数を持ち越さない（-3 などはランチャー向け）
+    Ok(if ready { Probe::Ready(plain(p)) } else { Probe::Lacks(plain(p)) })
 }
 
 /// "Python312" → Some(312)。"Python3" の後ろが数字でなければ None。
@@ -213,6 +265,32 @@ mod tests {
         let p = python(&env::temp_dir().join("dr-no-cache")).expect("python");
         assert!(p.exe.is_file(), "{}", p.exe.display());
         assert!(p.args.is_empty(), "本体を直接起こす（ランチャーを挟まない）");
+    }
+
+    /// 試験を流している Python（Flask 入り）を、site-packages を見ない形（-S）で起こすと「Flask の無い Python」になる。
+    fn this_python() -> Python {
+        python(&env::temp_dir().join("dr-no-cache")).expect("python")
+    }
+
+    #[test]
+    fn skips_a_python_without_flask() {
+        let ok = this_python();
+        let without = Python { exe: ok.exe.clone(), args: vec!["-S".into()] };
+        assert_eq!(resolve(&without), Ok(Probe::Lacks(ok.clone())), "起こせるが Flask が読めない");
+        // 先頭に Flask の無い Python があっても、読める方を選ぶ（CI 機で py -3 が別の Python を指した件）
+        assert_eq!(pick(&[without.clone(), ok.clone()]).expect("pick"), ok);
+    }
+
+    #[test]
+    fn says_what_is_missing_when_no_python_has_flask() {
+        let ok = this_python();
+        let without = Python { exe: ok.exe.clone(), args: vec!["-S".into()] };
+        let missing = Python { exe: PathBuf::from("dr-no-such-python"), args: vec![] };
+        let e = pick(&[missing.clone(), without]).expect_err("Flask の無い Python しか無い");
+        assert!(e.lacking && e.title().contains("Flask"), "{e:?}");
+        assert!(e.message.contains("pip install") && e.message.contains(&ok.exe.display().to_string()), "{}", e.message);
+        let e = pick(&[missing]).expect_err("起こせる Python が無い");
+        assert!(!e.lacking && e.title() == "Python が見つかりません", "{e:?}");
     }
 
     #[test]
