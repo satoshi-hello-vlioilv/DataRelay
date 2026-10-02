@@ -46,7 +46,12 @@ def place_locally(exe,work,checks):
   env=dict(os.environ,LOCALAPPDATA=str(lad),DATARELAY_EXE_SOURCE=str(exe))
   r=subprocess.run(['cmd','/c',str(ROOT/'install_local.cmd'),'/quiet','/noshortcut'],env=env,capture_output=True,timeout=120)
   placed=lad/'DataRelay'/'bin'/exe.name
-  checks.append(('install_local.cmd で手元に置けた',r.returncode==0 and placed.is_file(),f'終了コード {r.returncode} {placed}'))
+  ok=r.returncode==0 and placed.is_file()
+  checks.append(('install_local.cmd で手元に置けた',ok,f'終了コード {r.returncode} {placed}'))
+  if not ok:
+   # 置けなかった理由はスクリプトの出力にしか残らない。行ごとに残す（文字コードが合わなくても ASCII の部分は読める）
+   for line in (r.stdout+r.stderr).decode('utf-8','replace').splitlines():
+    if line.strip():checks.append(('  install_local.cmd の出力',False,line.strip()))
  else:
   placed=work/'bin'/exe.name;placed.parent.mkdir(parents=True)
   shutil.copy2(exe,placed)
@@ -66,6 +71,7 @@ def run(exe,wrap,mode,work):
   # アプリのフォルダーは exe の隣の DataRelay.program.txt で知る（DATARELAY_PROGRAM は使わない）
   env.pop('DATARELAY_PROGRAM',None)
   exe=place_locally(exe,work,checks)
+  if not exe.is_file():return checks   # 置けなかった。起動しない（理由は上の出力）
   if mode=='update':
    env.update(DATARELAY_SELFTEST_PRETEND_VERSION='0.0.1',DATARELAY_SELFTEST_UPDATE_SOURCE=str(exe.with_name('source-'+exe.name)))
    shutil.copy2(exe,exe.with_name('source-'+exe.name))
