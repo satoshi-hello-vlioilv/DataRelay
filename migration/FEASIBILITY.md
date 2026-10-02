@@ -4,7 +4,7 @@
 （Tauri の窓＋Python を標準入出力でつなぐ・ポートなし）へ移せるかを、**実装に入る前に**確かめた記録。
 この文書は「何を移せるか・どこへ移すか・何で確かめたか・何が分からないか・どう進めるか」を残す。
 
-- 試作と評価はすべて `migration/` と `tests/` にあり、**実行の経路には一切入らない**（いまのアプリの動きは変わらない）。
+- 検証のときの試作は、第1段階（1.95.0）で本番の `desktop/`（窓）と `sidecar.py`（窓口）になった（§10）。評価は `tests/` と `desktop/selftest_runner.py`。
 - 結果（2026-10-02）: **全92ルートと、ルート以外の仕組みのすべてに移行先があり、移せないと分かった機能は無い。**
   ポートなしの窓口は全ルートで今と同じ答えを返し（Linux・Windows）、Tauri の試作は常駐・保存・ファイル選択・終わり方を
   本物の WebView2 の中で確かめた。ただし社内の PC・本物の Navigator サーバーと Access でしか確かめられない項目が残る（§7）。
@@ -114,7 +114,7 @@ Flask は**残すが、サーバーとしては使わない**。URL の振り分
 | 物差し | 確かめること | 結果（2026-10-02） |
 |---|---|---|
 | `tests/test_sidecar_parity.py`（検証1・6件） | URL 表の**全 92 ルート**と場面の問い合わせを、本物の子プロセスの窓口（パイプの枠）と Flask への直接の両方へ同じ順に送り、状態・種類・中身を突き合わせる。場面: 日本語のパス・日本語の問い合わせ文字列・約 1MB の日本語の本文・cp932 の固定長テキストの下読み・ZIP の書き出しと持ち込み（multipart・バイナリ）・EXCEL の書き出し・設定の保存と読み戻し・40 本同時。あわせて、窓口の子プロセスの print が枠を壊さない・壊れた枠で止まらない・入力を閉じれば自分で終わる | **104 件すべて一致**・6 件合格（Linux・Windows） |
-| `migration/poc/desktop` の自己診断（検証2・18 項目） | 本物の WebView の中から: 画面・静的ファイル（Rust）・API（Python）・日本語のパス・約 1MB の POST・40 本同時・速さ・ZIP と EXCEL の保存（窓の保存ダイアログ・日本語の名前）・ファイル/フォルダー選択・エクスプローラー（窓）・通知領域のアイコン・予定を入れて × → 窓が隠れて常駐・常駐中も Python が答える・アイコンから開くと戻る | Linux（WebKitGTK）・Windows（WebView2）とも**18 項目すべて合格**。保存した ZIP・EXCEL は壊れていない |
+| 試作（いまの `desktop/`）の自己診断（検証2・18 項目） | 本物の WebView の中から: 画面・静的ファイル（Rust）・API（Python）・日本語のパス・約 1MB の POST・40 本同時・速さ・ZIP と EXCEL の保存（窓の保存ダイアログ・日本語の名前）・ファイル/フォルダー選択・エクスプローラー（窓）・通知領域のアイコン・予定を入れて × → 窓が隠れて常駐・常駐中も Python が答える・アイコンから開くと戻る | Linux（WebKitGTK）・Windows（WebView2）とも**18 項目すべて合格**。保存した ZIP・EXCEL は壊れていない |
 | 同（閉じるだけの型） | 常駐の理由が無いまま × → 窓も Python も終わる | 終了コード 0・起動から終わりまで **2 秒**（Windows 2.7 秒）・Python は残らない |
 | `cargo test`（6 件） | 枠の往復（改行・NUL・日本語）・切れた枠・振り分け（静的・窓・Python）・`..` で外へ出ない・保存名（`filename*=UTF-8''…` の日本語）・保存の受け止め | すべて合格 |
 | `tests/test_route_plan.py`（4 件） | URL 表のすべてのルートに移行先があり、余分な割り当てが無く、窓へ移す・外すものには理由が書いてある | すべて合格 |
@@ -210,22 +210,54 @@ DDE・ACCESS（pywin32）、分割の設計・読取/結合マスタ・スケジ
 - **Python**: いまと同じ（各 PC に Python と `config/requirements.txt` の部品）。増える要件は WebView2 だけ。Python を同梱する（embeddable）かは別に決める。
 - **中身の更新**: Python の部分はいまと同じく共有のファイルを置き換える。exe は動いている間は上書きできない（Windows の決まり）ので、exe の更新は全員が閉じてから。
 
-## 付録: 試作の中身
+## 10. 第1段階の実装（1.95.0）
+
+§8 の第1段階を実装した。業務の処理（抽出・出力・分割・マスタ・スケジュールの規則）は1行も変えていない。
+
+| もの | 中身 |
+|---|---|
+| `sidecar.py` | 窓口（検証1の試作を本番に）。`app.boot_app('desktop')` で裏の処理を起こしてから「準備できた」を知らせる |
+| `app.py` の `boot_app(mode)` | 起動して裏で始めることを1か所に切り出した。ブラウザ版（`__main__`）とデスクトップ版の両方が呼ぶ。心拍の監視・自分への疎通確認・pywin32 の常駐アイコンはブラウザ版だけ |
+| `app.py` の `prepare_exit` | 終わる前の後始末（キュー・中断・ワーカーと非表示の SymfoNavi・設定の書き出し）を1つにまとめた。画面の「終了」・通知領域の「終了」・デスクトップ版の窓の「終了」が同じものを使う |
+| `/api/residency`・`/api/app-cleanup` | 常駐を続ける理由／os._exit しない後始末。デスクトップ版の窓が使う |
+| `lib/navi_instance.py` | 中身を利用者ごとに1つにする錠（下の「実装で分かったこと」1） |
+| `desktop/` | 窓（検証2の試作を本番に）。起動画面・Python の探し方（`locate.rs`）・止まったらすぐ起こし直す監督・終了時の後始末・常駐の通知・窓の記録（`desktop.log`）・`/` と静的ファイル |
+| `static/app.js` | デスクトップ版では心拍・閉じる知らせ・閉じるときの確認を出さない。「終了」「タスクバーへ」は窓に任せる |
+| `desktop/selftest_runner.py`・`.github/workflows/desktop.yml` | 自己診断の3つの型（全体・閉じるだけ・起こし直し）を、手元（Linux）と CI（Windows）で同じ物差しで流す |
+
+実装で分かったこと（検証では見えていなかったもの）:
+
+1. **ブラウザ版とデスクトップ版を同時に起こすと、自動実行が二重に走る**。移行の間は両方を配るのに、スケジューラーを持つ中身が2つ動いてしまう
+   （DPA にはスケジューラーが無いので起きなかった）。`boot_app` の最初に OS のファイルロック（利用者ごと）を取り、取れなければ起動しない。
+   ブラウザ版はログに残して止まり、デスクトップ版は起動画面に「ブラウザ版がすでに動いています（pid・いつから）」と出す。プロセスが落ちても OS が錠を外す（`tests/test_instance.py`）。
+2. **× で終わったあと、中身（Python）がときどき残った**（2回に1回）。原因は2つの重なり: (a) 窓の終わり方が中身の値を「捨てる」だけで、
+   ほかの糸が値を持っていると入力を閉じる・待つ・止めるが走らなかった (b) 中身は入力が閉じたあとの設定の書き出しに上限が無く、そこで止まると誰も止めない。
+   窓は値の持ち主に関わらず必ず「入力を閉じる → 3 秒待つ → 止める」を行い、中身は書き出しを 3 秒で打ち切るようにした。直したあと、閉じるだけの型を 10 回続けて流して 10 回とも合格。
+3. **起こし直しは、見張りより先に画面の問い合わせが起こすことがある**（どちらが先でも結果は同じ）。どの道で起こしても窓の記録に残るよう、起こすたびに記録する形にした。
+
+評価（2026-10-02・Linux）: Python の試験 40 件・`cargo test` 11 件・自己診断（全体 24 項目・閉じるだけ 4 項目・起こし直し 6 項目）すべて合格。ブラウザ版の起動・終了も確かめた。
+Windows（WebView2）は `.github/workflows/desktop.yml` で同じものを回す。
+
+§7 の「実機で確かめること」はそのまま残っている（社内 PC の署名なし exe・本物の Navigator サーバーと Access・一晩の常駐）。
+
+## 付録: 実装の中身
 
 | ファイル | 中身 |
 |---|---|
-| `migration/poc/sidecar.py` | 窓口。DPA の `program/sidecar.py` と同じ枠の形 |
-| `migration/poc/desktop/src/frame.rs` | 枠の読み書き（DPA と同じ） |
-| `migration/poc/desktop/src/sidecar.rs` | 中身の起動・問い合わせ・監督（DPA を土台に置き場の探し方だけ変更） |
-| `migration/poc/desktop/src/router.rs` | 振り分け（DPA を土台に、保存の受け止めを追加） |
-| `migration/poc/desktop/src/main.rs` | 窓・通知領域・× の判断・ダイアログ・自己診断（DataRelay で足したもの） |
-| `migration/poc/desktop/src/selftest.js` | 本物の WebView の中から確かめる自己診断 |
-| `migration/route_plan.json` | 92 ルートの移行先 |
+| `sidecar.py` | 窓口。DPA の `program/sidecar.py` と同じ枠の形 |
+| `desktop/src/frame.rs` | 枠の読み書き（DPA と同じ） |
+| `desktop/src/locate.rs` | アプリのフォルダ・Python・作業場所の探し方（ブラウザ版と同じ決まり） |
+| `desktop/src/sidecar.rs` | 中身の起動・問い合わせ・監督（止まったらすぐ起こし直す・終わるときは必ず止める） |
+| `desktop/src/router.rs` | 振り分け（画面のひな形・静的ファイル・窓の操作・保存の受け止め・それ以外は中身へ） |
+| `desktop/src/main.rs` | 窓・起動画面・通知領域・× の判断・終了の後始末・ダイアログ・通知・自己診断 |
+| `desktop/src/selftest.js` | 本物の WebView の中から確かめる自己診断 |
+| `desktop/selftest_runner.py` | 自己診断の3つの型を外から流す係 |
+| `migration/route_plan.json` | 94 ルートの移行先 |
 
-自己診断の流し方（Linux）:
+自己診断の流し方:
 
 ```
-cd migration/poc/desktop && cargo build
-DATARELAY_PROGRAM=<このフォルダー> NAVI_LOCAL_ROOT=<空のフォルダー> NAVI_CONFIG_DIR=<空のフォルダー> \
-DATARELAY_SELFTEST=<結果.json> dbus-run-session -- xvfb-run -a ./target/debug/DataRelay
+cd desktop && cargo build
+python desktop/selftest_runner.py desktop/target/debug/DataRelay --wrap "dbus-run-session -- xvfb-run -a"   # Linux
+python desktop/selftest_runner.py desktop/target/release/DataRelay.exe                                      # Windows
 ```

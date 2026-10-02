@@ -1,5 +1,8 @@
-//! アプリの中身（Python・migration/poc/sidecar.py）を子プロセスで起こし、パイプの枠で問い合わせる。**ポートは使わない**。
-//! Defect-Pitch-Analyzer の desktop/src/sidecar.rs（版 2.0.0）を土台に、置き場の探し方だけ DataRelay に合わせた。
+//! アプリの中身（Python・sidecar.py）を子プロセスで起こし、パイプの枠で問い合わせる。**ポートは使わない**。
+//! Defect-Pitch-Analyzer の desktop/src/sidecar.rs（版 2.0.0）を土台にした。DataRelay で変えたところ:
+//!   - 中身が止まったら、次の問い合わせを待たずにすぐ起こし直す（Supervisor::watch）。
+//!     スケジューラーが中身の中にあり、窓を隠して常駐しているあいだは問い合わせが来ないため
+//!   - 起こせない理由に種類を付ける（busy = ブラウザ版がすでに動いている。起こし直しても無駄なので繰り返さない）
 //!
 //! - 問い合わせごとに番号（id）を付けて送り、答えは読み手の糸が番号で持ち主へ返す（長い問い合わせが短いものを待たせない）
 //! - 窓が終わればこの値が捨てられ、標準入力が閉じる → Python は入力の終わりを見て自分で終わる
@@ -7,6 +10,7 @@
 //! - 子が途中で止まったら、待っている問い合わせへ失敗を返し、Supervisor が次の問い合わせで起こし直す
 
 use crate::frame::{read_frame, write_frame};
+use crate::locate::Python;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::io::{BufReader, BufWriter};
@@ -47,7 +51,7 @@ pub struct Sidecar {
 
 impl Sidecar {
     /// 起こして「準備できた」を待つ。起動できない理由（Python の誤り）はそのまま返す。
-    pub fn spawn(py: &Python, program: &Path, log_dir: &Path, wait: Duration) -> Result<Sidecar, String> {
+    pub fn spawn(py: &Python, program: &Path, log_dir: &Path, wait: Duration) -> Result<Sidecar, SpawnError> {
         std::fs::create_dir_all(log_dir).ok();
         let err_log = log_dir.join("sidecar_stderr.log");
         let stderr = std::fs::File::create(&err_log).map(Stdio::from).unwrap_or_else(|_| Stdio::null());
@@ -55,10 +59,12 @@ impl Sidecar {
         cmd.args(&py.args)
             .arg("-X")
             .arg("utf8")
-            .arg(program.join("migration").join("poc").join("sidecar.py"))
+            .arg(program.join("sidecar.py"))
             .current_dir(program)
             .env("PYTHONIOENCODING", "utf-8")
             .env("DATARELAY_SHELL", "desktop")
+            .env("NAVI_LOCAL_ROOT", crate::locate::local_root())
+            .env("PYTHONPYCACHEPREFIX", crate::locate::local_root().join("pycache"))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(stderr);
@@ -68,9 +74,9 @@ impl Sidecar {
             const CREATE_NO_WINDOW: u32 = 0x0800_0000;
             cmd.creation_flags(CREATE_NO_WINDOW);
         }
-        let mut child = cmd.spawn().map_err(|e| format!("Python を起動できません（{}）: {e}", py.exe.display()))?;
-        let stdin = child.stdin.take().ok_or("標準入力を開けません")?;
-        let mut out = BufReader::with_capacity(1 << 16, child.stdout.take().ok_or("標準出力を開けません")?);
+        let mut child = cmd.spawn().map_err(|e| SpawnError::other(format!("Python を起動できません（{}）: {e}", py.exe.display())))?;
+        let stdin = child.stdin.take().ok_or_else(|| SpawnError::other("標準入力を開けません"))?;
+        let mut out = BufReader::with_capacity(1 << 16, child.stdout.take().ok_or_else(|| SpawnError::other("標準出力を開けません"))?);
 
         // 最初の枠は「準備できた」か「起動できない」。Python の読み込み（数秒）を待つ
         let (tx, rx) = mpsc::channel();
@@ -84,23 +90,25 @@ impl Sidecar {
             Ok(Ok(Some(head))) if head["event"] == "ready" => head,
             Ok(Ok(Some(head))) => {
                 let _ = child.kill();
-                return Err(format!("アプリの中身（Python）が起動できませんでした: {}", head["error"].as_str().unwrap_or("理由不明")));
+                let kind = head["kind"].as_str().unwrap_or("other").to_string();
+                let msg = head["error"].as_str().unwrap_or("理由不明").to_string();
+                return Err(SpawnError { kind, message: if msg.is_empty() { "理由不明".into() } else { msg } });
             }
             Ok(Ok(None)) | Ok(Err(_)) => {
                 let _ = child.wait();
-                return Err(format!("アプリの中身（Python）がすぐに終わりました。\n{}", tail(&err_log, 12)));
+                return Err(SpawnError::other(format!("アプリの中身（Python）がすぐに終わりました。\n{}", tail(&err_log, 12))));
             }
             Err(_) => {
                 let _ = child.kill();
-                return Err(format!("アプリの中身（Python）が {} 秒たっても準備できません。\n{}", wait.as_secs(), tail(&err_log, 12)));
+                return Err(SpawnError::other(format!("アプリの中身（Python）が {} 秒たっても準備できません。\n{}", wait.as_secs(), tail(&err_log, 12))));
             }
         };
-        let out = reader.join().map_err(|_| "読み手の糸が止まりました")?;
+        let out = reader.join().map_err(|_| SpawnError::other("読み手の糸が止まりました"))?;
 
         let pending: Arc<Mutex<HashMap<u64, Sender<Reply>>>> = Arc::default();
         let alive = Arc::new(AtomicBool::new(true));
         let (p2, a2) = (pending.clone(), alive.clone());
-        std::thread::Builder::new().name("sidecar-reader".into()).spawn(move || read_loop(out, p2, a2)).map_err(|e| e.to_string())?;
+        std::thread::Builder::new().name("sidecar-reader".into()).spawn(move || read_loop(out, p2, a2)).map_err(|e| SpawnError::other(e.to_string()))?;
         Ok(Sidecar {
             stdin: Mutex::new(Some(BufWriter::new(stdin))),
             pending,
@@ -153,12 +161,15 @@ impl Sidecar {
     }
 }
 
-impl Drop for Sidecar {
-    /// 入力を閉じて自分で終わるのを少し待ち、終わらなければ止める。
-    fn drop(&mut self) {
+impl Sidecar {
+    /// 入力を閉じて自分で終わるのを少し待ち、終わらなければ止める。何度呼んでもよい。
+    /// 窓が終わるときは、ほかの糸がまだこの値を持っていても（問い合わせの途中など）必ずここを通す。
+    /// 値が捨てられるのを待つだけでは、持っている糸があると後始末が走らず、中身が残ることがあった。
+    pub fn shutdown(&self) {
         if let Ok(mut w) = self.stdin.lock() {
             drop(w.take()); // 出し切ってから閉じる
         }
+        self.alive.store(false, Ordering::SeqCst);
         let mut child = self.child.lock().unwrap();
         let end = Instant::now() + Duration::from_millis(3000);
         while Instant::now() < end {
@@ -169,6 +180,12 @@ impl Drop for Sidecar {
         }
         let _ = child.kill();
         let _ = child.wait();
+    }
+}
+
+impl Drop for Sidecar {
+    fn drop(&mut self) {
+        self.shutdown();
     }
 }
 
@@ -208,22 +225,72 @@ pub fn tail(path: &PathBuf, lines: usize) -> String {
     v[v.len().saturating_sub(lines)..].join("\n")
 }
 
-/// 中身の Python を1つ持ち、止まっていたら次の問い合わせで起こし直す係。
+/// 起こせなかった理由。kind は Python 側の知らせ（busy・import・boot）か other。
+#[derive(Debug, Clone)]
+pub struct SpawnError {
+    pub kind: String,
+    pub message: String,
+}
+
+impl SpawnError {
+    pub fn other(m: impl Into<String>) -> Self {
+        SpawnError { kind: "other".into(), message: m.into() }
+    }
+    /// 起こし直しても同じ結果になる理由か（ブラウザ版が動いている・アプリの読み込みに失敗した）。
+    pub fn is_permanent(&self) -> bool {
+        matches!(self.kind.as_str(), "busy" | "import")
+    }
+}
+
+impl std::fmt::Display for SpawnError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+/// 中身の Python を1つ持ち、止まっていたら起こし直す係。
+/// 中身を起こすたびに呼ばれる（準備できたときの知らせ, 何回目か）。起こし直しがどの道で起きても残すため。
+pub type OnSpawn = Box<dyn Fn(&Value, u32) + Send + Sync>;
+
 pub struct Supervisor {
     py: Python,
     program: PathBuf,
     log_dir: PathBuf,
     current: Mutex<Option<Arc<Sidecar>>>,
+    stopping: AtomicBool,
+    spawned: AtomicU64,
+    on_spawn: Mutex<Option<OnSpawn>>,
     pub start_wait: Duration,
+}
+
+/// 見張りから窓へ伝えること（通知領域の文言・通知に使う）。
+pub enum Watch {
+    Failed { error: SpawnError, retry_in: Duration },
 }
 
 impl Supervisor {
     pub fn new(py: Python, program: PathBuf, log_dir: PathBuf) -> Self {
-        Supervisor { py, program, log_dir, current: Mutex::new(None), start_wait: Duration::from_secs(90) }
+        Supervisor {
+            py,
+            program,
+            log_dir,
+            current: Mutex::new(None),
+            stopping: AtomicBool::new(false),
+            spawned: AtomicU64::new(0),
+            on_spawn: Mutex::new(None),
+            start_wait: Duration::from_secs(90),
+        }
+    }
+
+    pub fn on_spawn(&self, f: OnSpawn) {
+        *self.on_spawn.lock().unwrap() = Some(f);
     }
 
     /// 動いている中身（無ければ・止まっていれば起こす）。
-    pub fn get(&self) -> Result<Arc<Sidecar>, String> {
+    pub fn get(&self) -> Result<Arc<Sidecar>, SpawnError> {
+        if self.stopping.load(Ordering::SeqCst) {
+            return Err(SpawnError::other("終了しています"));
+        }
         let mut cur = self.current.lock().unwrap();
         if let Some(s) = cur.as_ref() {
             if s.is_alive() {
@@ -233,41 +300,57 @@ impl Supervisor {
         *cur = None; // 古いものを捨てる（Drop で後始末）
         let s = Arc::new(Sidecar::spawn(&self.py, &self.program, &self.log_dir, self.start_wait)?);
         *cur = Some(s.clone());
+        let n = self.spawned.fetch_add(1, Ordering::SeqCst) + 1;
+        if let Some(f) = self.on_spawn.lock().unwrap().as_ref() {
+            f(&s.ready, n as u32);
+        }
         Ok(s)
     }
 
-    /// 終わるとき: 中身を捨てる（入力を閉じる → Python が自分で終わる）。
+    pub fn is_alive(&self) -> bool {
+        self.current.lock().unwrap().as_ref().map(|s| s.is_alive()).unwrap_or(false)
+    }
+
+    /// 中身が止まったら、問い合わせを待たずに起こし直す（1秒ごとに見る）。
+    /// 起こせなければ 2・4・8 … 最長 60 秒の間を空けて試し続ける（自動実行を朝まで止めない）。
+    /// ブラウザ版が動いている（busy）など、起こし直しても無駄な理由ならやめる。
+    pub fn watch(self: &Arc<Self>, report: impl Fn(Watch) + Send + 'static) {
+        let me = self.clone();
+        std::thread::Builder::new()
+            .name("sidecar-watch".into())
+            .spawn(move || {
+                let mut backoff = Duration::from_secs(2);
+                loop {
+                    std::thread::sleep(Duration::from_secs(1));
+                    if me.stopping.load(Ordering::SeqCst) {
+                        return;
+                    }
+                    if me.is_alive() {
+                        backoff = Duration::from_secs(2);
+                        continue;
+                    }
+                    match me.get() {
+                        Ok(_) => {} // 起こし直したことは on_spawn が残す
+                        Err(e) => {
+                            let permanent = e.is_permanent();
+                            report(Watch::Failed { error: e, retry_in: backoff });
+                            if permanent {
+                                return;
+                            }
+                            std::thread::sleep(backoff);
+                            backoff = (backoff * 2).min(Duration::from_secs(60));
+                        }
+                    }
+                }
+            })
+            .ok();
+    }
+
+    /// 終わるとき: 見張りを止め、中身を終わらせる（入力を閉じる → Python が自分で終わる。3 秒で終わらなければ止める）。
     pub fn stop(&self) {
-        self.current.lock().unwrap().take();
-    }
-}
-
-/// 中身を起こす Python（exe と前に付ける引数）。
-#[derive(Debug, Clone)]
-pub struct Python {
-    pub exe: PathBuf,
-    pub args: Vec<String>,
-}
-
-impl Python {
-    /// DATARELAY_PYTHON があればそれ。無ければ Windows は pythonw（窓を出さない）、ほかは python3。
-    /// 本番では start.vbs と同じ探し方（PATH・py ランチャー・標準の入れ場所）にする。
-    pub fn find() -> Python {
-        if let Some(p) = std::env::var_os("DATARELAY_PYTHON") {
-            return Python { exe: PathBuf::from(p), args: vec![] };
+        self.stopping.store(true, Ordering::SeqCst);
+        if let Some(s) = self.current.lock().unwrap().take() {
+            s.shutdown();
         }
-        Python { exe: PathBuf::from(if cfg!(windows) { "pythonw" } else { "python3" }), args: vec![] }
     }
-}
-
-/// アプリのフォルダ（app.py のある所）。DATARELAY_PROGRAM があればそれ、無ければ exe の場所から上へたどる。
-pub fn program_dir() -> Result<PathBuf, String> {
-    if let Some(p) = std::env::var_os("DATARELAY_PROGRAM") {
-        return Ok(PathBuf::from(p));
-    }
-    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    exe.ancestors()
-        .find(|d| d.join("app.py").is_file() && d.join("lib").is_dir())
-        .map(Path::to_path_buf)
-        .ok_or_else(|| format!("app.py が見つかりません（{} から上へ探しました）", exe.display()))
 }

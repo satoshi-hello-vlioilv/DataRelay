@@ -1,4 +1,4 @@
-// 【検証用】本物の WebView の中から、窓・中身・画面のつながりを確かめる（DATARELAY_SELFTEST のときだけ流す）。
+// 本物の WebView の中から、窓・中身・画面のつながりを確かめる（DATARELAY_SELFTEST のときだけ流す。CI の自己診断）。
 // 結果は /__desktop/selftest へ送り、窓がファイルに書いて終わる。
 (async () => {
   const checks = [];
@@ -10,9 +10,27 @@
   try {
     const info = await (await fetch('/__desktop/info')).json();
     const program = info.info.program;
+    if (info.mode === 'restart') {
+      // 起こし直しの型: 外の試験が中身（Python）を強制終了する → 窓が問い合わせを待たずに起こし直す
+      const first = (await (await fetch('/api/instance')).json()).instance_id;
+      await fetch('/__desktop/note', json({ pid: info.info.backend.pid, instance: first }));
+      let now = first, tries = 0;
+      const t1 = performance.now();
+      while (now === first && tries < 120) {
+        await sleep(500);
+        tries++;
+        try { const r = await fetch('/api/instance'); if (r.ok) now = (await r.json()).instance_id; } catch (e) {}
+      }
+      ok('中身が止まっても、窓が起こし直す', now && now !== first, `${first} → ${now}（${Math.round(performance.now() - t1)}ms）`);
+      const r = await fetch('/api/residency');
+      ok('起こし直した中身が答える', r.status === 200, r.status);
+      const result = { ok: checks.every((c) => c.ok), checks };
+      await fetch('/__desktop/selftest', json(result));
+      return;
+    }
     if (info.mode === 'close') {
       // 閉じるだけの型: 常駐の理由が無いまま × を押す → 窓も中身も終わるはず（外の試験が終わり方を確かめる）
-      const reason = (await (await fetch('/api/heartbeat-status')).json()).residency_pending_reason;
+      const reason = (await (await fetch('/api/residency')).json()).reason;
       await fetch('/__desktop/note', json({ reason }));
       await fetch('/__desktop/close', { method: 'POST' });
       return;
@@ -20,7 +38,8 @@
 
     let r = await fetch('/');
     const html = await r.text();
-    ok('画面（/）を Python が作る', r.status === 200 && by(r) === 'python' && html.includes('DataRelay'), `${r.status} ${by(r)} ${html.length}B`);
+    ok('画面のひな形（/）は Rust が返す', r.status === 200 && by(r) === 'shell' && html.includes('DataRelay'), `${r.status} ${by(r)} ${html.length}B`);
+    ok('画面はデスクトップ版と分かる（心拍を送らない）', typeof DESKTOP !== 'undefined' && DESKTOP === true, typeof DESKTOP === 'undefined' ? '未定義' : DESKTOP);
 
     r = await fetch('/static/app.js');
     ok('静的ファイルは Rust が返す', r.status === 200 && by(r) === 'shell', `${r.status} ${by(r)}`);
@@ -74,7 +93,7 @@
     const cur = await (await fetch('/api/config')).json();
     cur.jobs[0].schedules = [{ id: 'selftest', enabled: true, name: '毎朝', type: 'daily', time: '06:00' }];
     r = await fetch('/api/config', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cur) });
-    const reason = (await (await fetch('/api/heartbeat-status')).json()).residency_pending_reason;
+    const reason = (await (await fetch('/api/residency')).json()).reason;
     ok('自動実行の予定を入れると、常駐の理由がある', r.status === 200 && reason === '自動実行の予定あり', reason);
     await fetch('/__desktop/close', { method: 'POST' });
     let after = null;
@@ -90,6 +109,23 @@
     await sleep(300);
     const shown = await (await fetch('/__desktop/info')).json();
     ok('通知領域から開くと窓が戻る', shown.visible === true && shown.resident_reason === '', `visible=${shown.visible}`);
+
+    // 画面の「タスクバーへ」: 窓が隠れて常駐する（アイコンは窓が持つので、いつでも引き受けられる）
+    r = await fetch('/api/stay-resident', { method: 'POST' });
+    const st = await r.json();
+    ok('「タスクバーへ」は窓が受け持つ', by(r) === 'shell' && st.ok && st.tray_available, `${by(r)} ${st.reason}`);
+    let hid = null;
+    for (let i = 0; i < 30; i++) {
+      await sleep(200);
+      hid = await (await fetch('/__desktop/info')).json();
+      if (hid.visible === false) break;
+    }
+    ok('「タスクバーへ」で窓が隠れる', hid.visible === false, `visible=${hid.visible}`);
+    await fetch('/__desktop/show', { method: 'POST' });
+
+    // 中身の心拍は送られていない（デスクトップ版では外す）
+    const hb = await (await fetch('/api/heartbeat-status')).json();
+    ok('画面は心拍を送っていない', (hb.total || 0) === 0, `心拍 ${hb.total}回`);
   } catch (e) {
     ok('例外', false, e && e.stack ? e.stack : e);
   }

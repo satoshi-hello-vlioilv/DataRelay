@@ -1,5 +1,5 @@
 //! 画面（WebView）からの問い合わせの振り分け。得意なほうが答える:
-//!   - /static/…           … Rust がディスクから直接返す（JS・CSS。Python を通さず速い）
+//!   - /・/static/…        … Rust がディスクから直接返す（画面のひな形・JS・CSS。Python の起動を待たずに画面が出る）
 //!   - 窓そのものの操作      … Rust（終了・ファイル選択・フォルダーを開く・自己診断。main.rs が native として渡す）
 //!   - それ以外（画面・API） … Python（サイドカー）へそのまま渡す。答えはいまと同じ
 //!   - Python の答えが「保存してください」（Content-Disposition: attachment）なら、窓の保存ダイアログで受ける
@@ -27,7 +27,7 @@ impl Backend for Supervisor {
         for attempt in 0..2 {
             let side = match self.get() {
                 Ok(s) => s,
-                Err(e) => return error_reply(503, "backend_unavailable", &e),
+                Err(e) => return error_reply(503, if e.kind == "busy" { "busy" } else { "backend_unavailable" }, &e.message),
             };
             match side.request(ask, ASK_WAIT) {
                 Ok(r) => return r,
@@ -48,6 +48,13 @@ impl Backend for Supervisor {
     }
 }
 
+/// 窓は監督を見張りの糸とも分け合うので、Arc に包んだまま渡せるようにする。
+impl<T: Backend> Backend for std::sync::Arc<T> {
+    fn ask(&self, ask: &Ask) -> Reply {
+        (**self).ask(ask)
+    }
+}
+
 pub fn error_reply(status: u16, kind: &str, message: &str) -> Reply {
     Reply {
         status,
@@ -64,6 +71,8 @@ pub type Saver = Box<dyn Fn(&str, &[u8]) -> Result<Option<PathBuf>, String> + Se
 
 pub struct Router<B: Backend> {
     pub static_dir: PathBuf,
+    /// 画面のひな形（templates/index.html）。差し込みが1つも無い静的な HTML なので Rust が返す
+    pub index_file: PathBuf,
     pub backend: B,
     pub native: Native,
     pub saver: Saver,
@@ -77,6 +86,8 @@ impl<B: Backend> Router<B> {
         let method = req.method().as_str();
         let (reply, by) = if let Some(r) = (self.native)(method, path, req.body()) {
             (r, "shell")
+        } else if (method == "GET" || method == "HEAD") && path == "/" {
+            (index_page(&self.index_file), "shell")
         } else if let (true, Some(rest)) = (method == "GET" || method == "HEAD", path.strip_prefix("/static/")) {
             (static_file(&self.static_dir, rest, query), "shell")
         } else {
@@ -112,6 +123,21 @@ fn to_response(r: Reply, by: &str) -> Response<Vec<u8>> {
     // どちらが答えたか（自己診断・不具合の切り分けに使う）
     b = b.header("X-DR-By", by);
     b.body(r.body).unwrap_or_else(|_| Response::builder().status(500).body(Vec::new()).unwrap())
+}
+
+/// 画面のひな形。Flask の / と同じく、毎回読み直させる（版を入れ替えた直後に古い画面を見せない）。
+pub fn index_page(file: &Path) -> Reply {
+    match std::fs::read(file) {
+        Ok(body) => Reply {
+            status: 200,
+            headers: vec![
+                ("Content-Type".into(), "text/html; charset=utf-8".into()),
+                ("Cache-Control".into(), "no-store, no-cache, must-revalidate, max-age=0".into()),
+            ],
+            body,
+        },
+        Err(e) => error_reply(500, "index_missing", &format!("画面のひな形が読めません（{}）: {e}", file.display())),
+    }
 }
 
 /// 保存名（filename*=UTF-8''… を優先。Flask の send_file は日本語の名前をこの形で付ける）。attachment でなければ None。
@@ -218,6 +244,7 @@ mod tests {
     fn router(dir: &Path) -> Router<Echo> {
         Router {
             static_dir: dir.to_path_buf(),
+            index_file: dir.join("index.html"),
             backend: Echo(Mutex::default()),
             native: Box::new(|m, p, _| (m == "POST" && p == "/api/shutdown").then(|| error_reply(200, "stopping", "終了します"))),
             saver: Box::new(|name, body| Ok(Some(PathBuf::from(format!("/saved/{name}/{}", body.len()))))),
@@ -254,7 +281,11 @@ mod tests {
 
         let n = r.handle(&req("POST", "datarelay://localhost/api/shutdown", b""));
         assert_eq!((n.status().as_u16(), n.headers()["x-dr-by"].to_str().unwrap()), (200, "shell"), "窓の操作は Rust");
-        assert_eq!(r.handle(&req("GET", "datarelay://localhost/", b"")).headers()["x-dr-by"], "python", "画面は Python が作る");
+        std::fs::write(dir.join("index.html"), "<!doctype html>画面").unwrap();
+        let top = r.handle(&req("GET", "datarelay://localhost/", b""));
+        assert_eq!((top.status().as_u16(), top.headers()["x-dr-by"].to_str().unwrap()), (200, "shell"), "画面のひな形は Rust");
+        assert!(top.headers()["cache-control"].to_str().unwrap().contains("no-store"), "毎回読み直させる");
+        assert_eq!(r.handle(&req("GET", "datarelay://localhost/api/config", b"")).headers()["x-dr-by"], "python", "API は Python");
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -276,6 +307,7 @@ mod tests {
     fn attachment_goes_to_save_dialog() {
         let r = Router {
             static_dir: PathBuf::from("."),
+            index_file: PathBuf::from("index.html"),
             backend: Attach,
             native: Box::new(|_, _, _| None),
             saver: Box::new(|name, body| Ok(Some(PathBuf::from(format!("/saved/{name}/{}", body.len()))))),

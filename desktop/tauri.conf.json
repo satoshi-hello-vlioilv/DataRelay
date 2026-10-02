@@ -2,8 +2,8 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "DataRelay",
   "mainBinaryName": "DataRelay",
-  "version": "0.1.0",
-  "identifier": "local.datarelay.desktop.poc",
+  "version": "1.95.0",
+  "identifier": "local.datarelay.desktop",
   "build": {
     "frontendDist": "splash"
   },
