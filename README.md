@@ -243,8 +243,11 @@ DataRelay/
 ├─ assets/                   付属ファイル（空のACCESSひな形など）
 ├─ lib/                      アプリの中身
 ├─ samples/                  検証用の見本（RNEなど）。実行では読みません
+├─ migration/                デスクトップ版（Tauri/Rust/Python）への移行の検証と試作。実行では使いません
 └─ tests/                    検証（python -m unittest discover -s tests -t .）
 ```
+
+デスクトップ版（ポートを使わない Tauri の窓＋Python）へ移せるかの検証結果は [migration/FEASIBILITY.md](migration/FEASIBILITY.md) にあります。
 
 `samples/` は本番のRNE置き場（`config/rne/`）とは分けてあります。混ぜると、見本が本番の対象として
 一覧や「RNEを選ぶ」に出てしまうためです。
