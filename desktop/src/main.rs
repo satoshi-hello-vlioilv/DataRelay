@@ -21,7 +21,7 @@ use router::{error_reply, Backend, Native, Router, Saver};
 use serde_json::{json, Value};
 use sidecar::{Ask, Reply, Supervisor, Watch};
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
@@ -418,6 +418,41 @@ fn window(app: &AppHandle, shell: Arc<Shell>) -> tauri::Result<WebviewWindow> {
         .build()
 }
 
+/// Flask を読める Python を探す。どれにも無ければ部品（config\requirements.txt）を入れて探し直す
+/// （1.95.0 までは start.vbs がしていたこと。初回だけ）。見つからなければ起動画面に理由を出して None。
+fn find_python(app: &AppHandle, shell: &Shell, program: &Path, local: &Path) -> Option<locate::Python> {
+    let e = match locate::python() {
+        Ok(p) => return Some(p),
+        Err(e) => e,
+    };
+    let (Some(target), Some(req)) = (e.candidate.clone().filter(|_| e.lacking), locate::requirements_file(program)) else {
+        shell.step(app, "python", "bad", if e.lacking { "Flask が入っていません" } else { "見つかりません" });
+        shell.fail(app, e.title(), &e.message);
+        return None;
+    };
+    shell.step(app, "python", "now", "Flask などの部品を入れています（初回だけ。数分かかることがあります）");
+    let log = local.join("logs").join("pip_install.log");
+    rlog(&format!("INSTALL_REQUIREMENTS python={} requirements={}", target.exe.display(), req.display()));
+    let t = std::time::Instant::now();
+    let done = locate::install_requirements(&target, &req, &log, Duration::from_secs(900)).and_then(|_| locate::python().map_err(|e| e.message));
+    rlog(&format!("INSTALL_REQUIREMENTS_DONE ok={} elapsed={:.1}s", done.is_ok(), t.elapsed().as_secs_f64()));
+    match done {
+        Ok(p) => Some(p),
+        Err(why) => {
+            shell.step(app, "python", "bad", "部品を入れられませんでした");
+            let detail = format!(
+                "{why}\n\n社内のネットワークから PyPI に届かないと入りません。次を実行するか、管理者に頼んでください:\n  \"{}\" -m pip install --user -r \"{}\"\n\npip の記録（最後の部分）: {}\n{}",
+                target.exe.display(),
+                req.display(),
+                log.display(),
+                sidecar::tail(&log, 12)
+            );
+            shell.fail(app, "必要な部品（Flask）を入れられませんでした", &detail);
+            None
+        }
+    }
+}
+
 /// 中身（Python）を探して起こし、準備できたら画面へ切り替える（裏の糸で。窓とアイコンは先に出しておく）。
 fn start(app: AppHandle, shell: Arc<Shell>) {
     let program = match locate::program_dir() {
@@ -425,13 +460,7 @@ fn start(app: AppHandle, shell: Arc<Shell>) {
         Err(e) => return shell.fail(&app, "アプリのフォルダが見つかりません", &e),
     };
     let local = locate::local_root();
-    let py = match locate::python(&local) {
-        Ok(p) => p,
-        Err(e) => {
-            shell.step(&app, "python", "bad", if e.lacking { "Flask が入っていません" } else { "見つかりません" });
-            return shell.fail(&app, e.title(), &e.message);
-        }
-    };
+    let Some(py) = find_python(&app, &shell, &program, &local) else { return };
     shell.step(&app, "python", "ok", &py.exe.display().to_string());
     shell.step(&app, "backend", "now", "Python でアプリの中身を読み込んでいます…");
     rlog(&format!("START program={} python={}", program.display(), py.exe.display()));

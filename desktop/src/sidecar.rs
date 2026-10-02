@@ -219,7 +219,7 @@ fn read_loop(mut out: BufReader<std::process::ChildStdout>, pending: Arc<Mutex<H
 }
 
 /// 記録の終わりの数行（起動できない理由を画面に出すため）。
-pub fn tail(path: &PathBuf, lines: usize) -> String {
+pub fn tail(path: &Path, lines: usize) -> String {
     let text = std::fs::read_to_string(path).unwrap_or_default();
     let v: Vec<&str> = text.lines().collect();
     v[v.len().saturating_sub(lines)..].join("\n")
