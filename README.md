@@ -3,7 +3,7 @@
 FUJITSU Interstage Navigator（SymfoNavi）からデータを取り出し、
 **SQLite3 / CSV / TXT / EXCEL / ACCESS** のファイルとして、決まった場所へ決まった時刻に置き続けるための Windows 用アプリです。
 
-ブラウザーで操作します（Flask + ローカルサーバー、`http://127.0.0.1:5031`）。
+`DataRelay.exe` をダブルクリックすると、アプリの窓で開きます（Tauri の窓＋Python。**ポートもブラウザーも使いません**）。
 
 - 取り出す元は3種類 ―― **RNE**（Navigator への問い合わせ）、**固定長テキスト**（手元のファイルを位置で切る）、**結合**（複数ファイルをキーで繋ぐ）
 - 取り出したあとの道は3種類とも同じ ―― 変換 → 公開（差し替え）→ 控え（世代バックアップ）
@@ -89,20 +89,20 @@ FUJITSU Interstage Navigator（SymfoNavi）からデータを取り出し、
 ### 診断・ログ
 
 - **事前診断** … 「設定した場所は在るか」「いまの抽出方式でそれは要るのか」「データは新しいか」「API は使える状態か」を読むだけで確かめます。赤くするのは *いま要るのに使えないもの* だけです。
-- **アプリ監視** … ブラウザーとサーバーのハートビート、往復時間、再接続回数
+- **アプリ監視** … 窓と中身（Python）のつながり（中身の pid・Python・往復時間・起こし直しの回数）
 - **実行ログ** … 画面から全体コピー／最新実行のみコピー／消去
 
 ---
 
 ## 必要なもの
 
-- **Windows**（ランチャー・通知領域・DDE・DLL 呼び出しがすべて Windows 前提です）
-- **Python 3**（PATH が通っていること。`py` または `python` で起動します）
-- 依存パッケージ（`config/requirements.txt`）
+- **Windows**（窓・通知領域・DDE・DLL 呼び出しがすべて Windows 前提です）。窓は **WebView2** で描きます（Windows 11 には標準で入っています）
+- **Python 3**（`py -3` → `python` → 標準の入れ場所の順に探します）
+- 依存パッケージ（`config/requirements.txt`）。無ければ `DataRelay.exe` が初回の起動で `pip install --user` します
 
   ```
   Flask>=3.0,<4
-  pywin32>=306
+  pywin32>=306; sys_platform == "win32"
   xlrd>=2.0.1
   openpyxl>=3.1
   ```
@@ -135,36 +135,26 @@ CatalogDBMSList=SYMFOWARE/RDB
 
 ### 2. 起動する
 
-| 方法 | 使うもの |
-|---|---|
-| ダブルクリック（推奨） | `start.vbs` |
-| デスクトップ版（1.95.0 から） | `DataRelay.exe`（下の節） |
-| コマンドプロンプトから | `start.bat` |
-| Python から | `py start_app.py` |
-
-初回は不足パッケージを `pip install --user` で入れてから起動します（`start.bat`）。
-起動するとブラウザーが `http://127.0.0.1:5031` を開きます。
-
-> **`python app.py` の直接起動はできません。**
-> 起動の見張り役（`lib/launch_guard.py`）を通さないと多重起動の防止・ローカル領域の準備が行われないため、拒否します。
-
-### デスクトップ版（DataRelay.exe・1.95.0 から）
-
-ブラウザを使わずに、アプリの窓で開く入口です。`DataRelay.exe` を `app.py` と同じフォルダーに置いて、ダブルクリックします。
+アプリのフォルダーにある **`DataRelay.exe` をダブルクリック**します（1.96.0 から入口はこれだけです）。
 
 ```
 DataRelay\
-  start.vbs        ← ブラウザ版の入口（これまでどおり）
-  DataRelay.exe    ← デスクトップ版の入口
-  app.py  sidecar.py  lib\  static\  templates\  config\ …（両方が同じものを使う）
+  DataRelay.exe    ← 入口
+  app.py  sidecar.py  lib\  static\  templates\  config\  assets\ …
 ```
 
+- **手に入れる**: GitHub の Releases に、main に入るたびに置かれます。
+  - `DataRelay.zip` … アプリのフォルダー一式＋exe。展開したフォルダーごと置けば、そのまま動きます
+  - `DataRelay.exe` … exe だけを差し替えたいとき用（窓を閉じて、通知領域の「終了」まで済ませてから置き換えます）
+  - 最新版はいつも同じ場所: <https://github.com/satoshi-hello-vlioilv/DataRelay/releases/latest/download/DataRelay.zip>（リポジトリは非公開なので、GitHub にログインして、このリポジトリを見られる人だけが取れます）
+  - 版ごとの一覧: <https://github.com/satoshi-hello-vlioilv/DataRelay/releases>
+- **初回**: Python に Flask などの部品が無ければ、起動画面に「部品を入れています（初回だけ）」と出して `pip install --user -r config\requirements.txt` を行います。入らなかったときは、理由と手で入れるコマンドを起動画面に出します（pip の記録は `%LOCALAPPDATA%\DataRelay\logs\pip_install.log`）。
 - **ポートを使いません**。プロキシの設定でアプリが答えなくなる・前の版がポートに残る・ほかのプログラムとポートを取り合う、が起きません。2回開くと前の窓が前に出ます。
 - **× を押したとき**: 自動実行の予定・実行中の処理・実行キューがあれば、窓を隠して通知領域（タスクバー右側）に残り、自動実行を続けます。何も無ければ後始末をして終わります。
-- **心拍はありません**。窓が閉じたことを窓が直接受け取ります。中身（Python）が止まったら、窓がすぐ起こし直します。
-- Python はブラウザ版と同じものを使います（ブラウザ版が前回使った Python → `py -3` → `python` の順に探し、Flask が入っている最初のものを選びます。どれにも無いときは、最初の画面に入れ方を出します）。増える要件は WebView2（Windows 11 に標準で入っています）だけです。
-- **ブラウザ版と同時には動きません**。同時に動かすと自動実行が二重に走るため、どちらか一方が動いていれば、もう一方は理由を出して起動しません。
-- exe は GitHub の Actions（desktop）が Windows で作り、自己診断してから置きます。窓の記録は `%LOCALAPPDATA%\DataRelay\logs\desktop.log`、中身の記録はこれまでどおり `app.log` です。
+- **中身（Python）が止まったら**、窓がすぐ起こし直します（常駐中でも）。様子はログ画面の「アプリ監視」で見られます。
+- **中身は利用者ごとに1つだけ**です。古い版のフォルダーに残った `start.vbs` でブラウザ版が動いていると、自動実行が二重に走らないよう、理由を出して起動しません。
+- `python app.py` の直接起動はできません（入口は `DataRelay.exe` だけです）。
+- 窓の記録は `%LOCALAPPDATA%\DataRelay\logs\desktop.log`、中身の記録は `app.log` です。
 - 役割の分け方・確かめ方・まだ確かめていないこと（社内の PC で署名の無い exe が止められないか など）は [migration/FEASIBILITY.md](migration/FEASIBILITY.md) にあります。
 
 ### 3. 対象を登録する
@@ -249,39 +239,35 @@ PC ごとに変わる場所は `<PC>` という印で持ち、使うときに実
 
 ## フォルダー構成
 
-直下に置くのは「起動するもの」だけです。アプリの中身は `lib/` にまとめてあります。
+直下に置くのは入口と窓口だけです。アプリの中身は `lib/` にまとめてあります。
 
 ```
 DataRelay/
-├─ start.vbs / start.bat     Windowsからの起動（ブラウザ版）
-├─ DataRelay.exe             デスクトップ版の起動（desktop/ から作る。リポジトリには入れない）
-├─ sidecar.py                デスクトップ版の窓口（標準入出力で app.py を呼ぶ。ポートを開かない）
-├─ start_app.py              Pythonからの起動（lib/launch_guard.py を呼びます）
-├─ stop_app.bat              停止（lib/process_manager.py を呼びます）
+├─ DataRelay.exe             入口（desktop/ から作る。リポジトリには入れず、Release で配る）
+├─ sidecar.py                窓口（標準入出力で app.py を呼ぶ。ポートを開かない）
 ├─ app.py                    アプリ本体（Flask・設定・ジョブ・予定・抽出）
-├─ loading.html              起動待ちの画面（start.vbs が読みます）
 ├─ templates/ static/        画面（index.html / app.css / app.js）
 ├─ config/ Config/           設定と接続情報
 ├─ assets/                   付属ファイル（空のACCESSひな形など）
 ├─ lib/                      アプリの中身
+│
+│   ↓ ここから下は作る側・確かめる側だけが使う（配る zip には入らない。.gitattributes）
+├─ desktop/                  窓（Tauri・Rust）。cargo build --release で DataRelay.exe を作る
 ├─ samples/                  検証用の見本（RNEなど）。実行では読みません
-├─ desktop/                  デスクトップ版の窓（Tauri・Rust）。cargo build --release で DataRelay.exe を作る
-├─ migration/                デスクトップ版への移行の検証（報告書と移行先の割り当て）
-└─ tests/                    検証（python -m unittest discover -s tests -t .）
+├─ migration/                デスクトップ版への移行の記録（報告書と移行先の割り当て）
+├─ tests/                    検証（python -m unittest discover -s tests -t .）
+└─ .github/                  Windows で exe を作って自己診断し、main に入ったら Release に置く
 ```
-
-デスクトップ版（ポートを使わない Tauri の窓＋Python）へ移せるかの検証結果は [migration/FEASIBILITY.md](migration/FEASIBILITY.md) にあります。
 
 `samples/` は本番のRNE置き場（`config/rne/`）とは分けてあります。混ぜると、見本が本番の対象として
 一覧や「RNEを選ぶ」に出てしまうためです。
 
-`app.py` と `start_app.py` が起動時に `lib/` を探し先へ足すので、コードの `import` は分ける前と同じです。
+`app.py` が起動時に `lib/` を探し先へ足すので、コードの `import` は分ける前と同じです。
 
 ### `lib/` の中身
 
 | ファイル | 役割 |
 |---|---|
-| `launch_guard.py` | 起動の見張りと多重起動の防止。ブラウザー起動、ランチャーログ |
 | `navi_web.py` | HTTP 層。画面からの求めに応える受け口だけ（処理は本体） |
 | `navigator_api.py` | Navigator API 連携。DLL 読み込み、API 定数、DLL 診断、RNE 実行 |
 | `api_worker.py` | Navigator API の並列ワーカー（別プロセス） |
@@ -292,7 +278,7 @@ DataRelay/
 | `navi_split.py` | 列分割・行分割の試し打ちと設計（本番の実行経路には入りません） |
 | `navi_output.py` | 出力形式の読み替え・拡張子・食い違い検査 |
 | `navi_xlsx.py` | XLSX の書き出しと検査（ZIP/XML として直接組み立て） |
-| `navi_instance.py` | 中身（スケジューラーを持つプロセス）を利用者ごとに1つにする錠（ブラウザ版とデスクトップ版の取り合い） |
+| `navi_instance.py` | 中身（スケジューラーを持つプロセス）を利用者ごとに1つにする錠（自動実行を二重に走らせない） |
 | `navi_crosstab.py` | RNEの配置（表側・表頭・データ項目）を読み、集計表の段になった見出しを1段に畳む |
 | `navi_publish.py` | 公開 ―― 安全な差し替えと保留の適用 |
 | `navi_localcopy.py` | 共有のファイルをローカルへ写してから読む |
@@ -302,22 +288,16 @@ DataRelay/
 | `navi_log.py` | ログの機構（出す・省略する・末尾だけ読む・世代を押し出す） |
 | `navi_diag.py` | 事前診断（読むだけ。実行中の状態を書き換えません） |
 | `navi_version.py` / `navi_changelog.py` | 版の定数 ／ 更新履歴と同梱仕様書 |
-| `tray_icon.py` | 通知領域の常駐アイコン（Windows専用・pywin32のみ） |
-| `process_manager.py` | 停止処理（終了 API とプロセス終了） |
 
 ### 呼び出し関係
 
 ```
-start_app.py
-  └─ launch_guard.py
-       └─ app.py
+DataRelay.exe（窓・Rust）  … 画面・静的ファイル・ダイアログ・通知領域・常駐・通知・中身の監督
+  └─ sidecar.py（標準入出力の窓口）
+       └─ app.py（boot_app でスケジューラーなどを起こす）
             ├─ navi_web.py（受け口）
             ├─ navigator_api.py
-            ├─ api_worker.py（別プロセス）
-            └─ templates/ static/
-
-process_manager.py
-  └─ app.py が公開する終了API・実行中プロセス
+            └─ api_worker.py（別プロセス）
 ```
 
 ---
@@ -328,12 +308,10 @@ process_manager.py
 
 ```
 <アプリ配置フォルダ>/
-├─ Config/
-│  ├─ app_settings.sqlite3      設定の実体（マスター）
-│  ├─ rne/                      RNEファイル
-│  └─ NAVIAP/                   Navigator API DLL（フォールバック）
-├─ runtime/app_instance.json    実行中インスタンス情報
-└─ logs/launcher.log            ランチャーのログ
+└─ Config/
+   ├─ app_settings.sqlite3      設定の実体（マスター）
+   ├─ rne/                      RNEファイル
+   └─ NAVIAP/                   Navigator API DLL（フォールバック）
 ```
 
 ### ローカル領域（`%LOCALAPPDATA%\DataRelay\`）
@@ -342,9 +320,9 @@ process_manager.py
 
 ```
 %LOCALAPPDATA%\DataRelay\
-├─ runtime\    PID情報・API診断キャッシュ・version.txt
+├─ runtime\    中身の錠（app.lock）・API診断キャッシュ
 ├─ cache\      設定DBの手元の写し
-├─ logs\       launcher.log・app.log・crash.log
+├─ logs\       desktop.log（窓）・app.log（中身）・crash.log・sidecar_stderr.log・pip_install.log
 ├─ pycache\    Pythonバイトコードキャッシュ
 ├─ backup\     ユーザー別バックアップの既定先
 └─ dde_work等  一時処理領域（終了時・次回起動時に削除）
@@ -354,13 +332,11 @@ process_manager.py
 
 ## 止めかた
 
-- 画面右上の **終了**（終わり方を選べます）
-- `stop_app.bat`
+- 画面右上の **終了**（▾ で「タスクバーに入れる」も選べます）
+- 通知領域のアイコンの **終了**
 
-ブラウザーのタブを閉じても、自動実行の予定や実行キューが残っていれば常駐を続けます。
-そのときは通知領域のアイコンから画面を開く／終了できます。
-
-タブを閉じただけで、走らせるものが何も無いときは自プロセスを終了します（閉じ忘れによるゾンビ化の防止）。
+窓の × は、自動実行の予定や実行キューが残っていれば常駐を続けます（通知で知らせます）。
+走らせるものが何も無ければ、後始末をしてそのまま終わります。
 
 ---
 
@@ -368,17 +344,12 @@ process_manager.py
 
 | 症状 | 見るところ |
 |---|---|
-| 起動しない | `logs\startup.log`、`%LOCALAPPDATA%\DataRelay\logs\launcher.log` |
+| 起動しない | 起動画面に出る理由。`%LOCALAPPDATA%\DataRelay\logs\desktop.log`・`sidecar_stderr.log`・`pip_install.log` |
 | 突然落ちた | `%LOCALAPPDATA%\DataRelay\logs\crash.log`（DLL 由来の異常終了はここにだけ残ります） |
-| 「既存の起動処理が残っています」 | `stop_app.bat` を実行してから起動し直します |
+| 「もう1つの DataRelay が動いています」 | 古い版のブラウザ版なら、その画面の「終了」か通知領域のアイコンの「終了」で終わらせてから起動し直します |
 | 設定した場所が使えない | 「ログ・診断」→ **事前診断** |
 | DLL が読めない | 「共通設定」→ **抽出方式** →「いま確認する」 |
 | 出力が更新されない | 公開の保留（`*.pending_*`）が残っていないか。次の実行のはじめに適用されます |
-
-> **自分自身への問い合わせはプロキシを通しません。**
-> `127.0.0.1` が Windows のインターネットオプションの例外一覧に無い端末では、
-> 自分自身への確認まで社内プロキシへ送られて失敗します。ランチャー・本体の自己確認・停止ツールの
-> 3か所すべてでプロキシを迂回しています。
 
 ---
 
