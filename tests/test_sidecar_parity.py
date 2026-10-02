@@ -145,6 +145,9 @@ class Sidecar:
   except Exception:pass
   try:return self.p.wait(timeout)
   except subprocess.TimeoutExpired:self.p.kill();return None
+  finally:
+   try:self.p.stdout.close()
+   except Exception:pass
 
 
 DIRECT_SCRIPT=r'''
@@ -171,7 +174,7 @@ class Direct:
   r=json.loads(self.p.stdout.readline())
   return r['status'],r['headers'],self.b64.b64decode(r['body'])
  def close(self):
-  self.p.stdin.close();self.p.wait(10)
+  self.p.stdin.close();self.p.wait(10);self.p.stdout.close()
 
 
 def settle(*sides,limit=15):
@@ -193,7 +196,8 @@ def normalize(obj,roots):
  if isinstance(obj,float):return '<number>'
  return obj
 
-LOG_NOISE=re.compile(r'^[\d\-/: ,.<>a-z]*\[|pid \d+|\b[0-9a-f]{32}\b|elapsed=[\d.]+s|ready_since_\w+=[-\d.]+s')
+# pid は「[pid 3093]」（記録の頭）と「pid=7288」（Windows で DLL の診断に起こした子の番号）の両方の書き方がある。
+LOG_NOISE=re.compile(r'^[\d\-/: ,.<>a-z]*\[|pid[ =]\d+|\b[0-9a-f]{32}\b|elapsed=[\d.]+s|ready_since_\w+=[-\d.]+s')
 
 def log_lines(text,roots):
  """ログの本文を「何の記録が何件出たか」にする。
@@ -305,6 +309,14 @@ class SidecarParityTest(unittest.TestCase):
  def test_same_answers(self):
   bad=[f"{r['label']}: {r['why']}" for r in self.results if not r['ok']]
   self.assertEqual(bad,[])
+
+class LogNormalizeTest(unittest.TestCase):
+ def test_process_ids_in_both_forms(self):
+  """ログの比べ方: プロセスで決まる番号（pid）は、どちらの書き方でも揃える。それ以外は揃えない。"""
+  a='2026-10-02 09:44:56,324 [INFO] [pid 3146] API_DLL_LOAD_BEGIN path=C:\\NAVIAP\\SymNaviA.dll pid=7288 worker=1'
+  b='2026-10-02 09:44:57,333 [INFO] [pid 3147] API_DLL_LOAD_BEGIN path=C:\\NAVIAP\\SymNaviA.dll pid=1588 worker=1'
+  self.assertEqual(log_lines(a,[]),log_lines(b,[]))
+  self.assertNotEqual(log_lines(a,[]),log_lines(b.replace('worker=1','worker=2'),[]))
 
 class SidecarRobustnessTest(unittest.TestCase):
  """壊れた枠で止まらない・窓口の子プロセス（抽出ワーカーと同じ起こし方）の print が枠に混ざらない。"""
