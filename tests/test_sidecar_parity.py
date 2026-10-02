@@ -4,8 +4,8 @@
 報告:  python tests/test_sidecar_parity.py      （ルートごとの突き合わせ表）
 
 やっていること:
-  A … いまと同じ形。Flask のアプリへ直接問い合わせる（ポート経由と同じ WSGI の答え）
-  B … デスクトップ版の形。sidecar.py を本物の子プロセスとして起こし、パイプの枠で問い合わせる
+  A … Flask のアプリへ直接問い合わせる（WSGI の答えそのもの。1.95.0 まではポート経由と同じ答え）
+  B … 窓（DataRelay.exe）と同じ形。sidecar.py を本物の子プロセスとして起こし、パイプの枠で問い合わせる
   同じ問い合わせを同じ順に A と B へ送り、状態コード・種類・中身を突き合わせる。
   A と B はそれぞれ新しい設定置き場（雛形から作る）で動かすので、書き込む問い合わせも同じ条件で比べられる。
 
@@ -20,12 +20,10 @@ ROOT=Path(__file__).resolve().parent.parent
 SIDECAR=ROOT/'sidecar.py'
 SAMPLE_RNE=ROOT/'samples'/'rne'/'集計表形式サンプル.RNE'
 
-# 呼ぶと実害がある・窓（Rust）が受け持つことになるので、ここでは本文を比べないルート。
-# 窓口を通ること自体は「同じ答えか」でなく「届くか」で確かめる（REACH_ONLY）。
-#   shutdown-app … プロセスを終わらせる（デスクトップ版では窓が受け持つ）
-#   pick-file / pick-folder … tkinter のダイアログを出す（デスクトップ版では窓のダイアログに置き換える）
-#   open-path … エクスプローラーを開く（同じく窓が受け持つ）
-NOT_CALLED={'/api/shutdown-app','/api/pick-file','/api/pick-folder','/api/open-path'}
+# 呼ぶと実害があるので、ここでは本文を比べないルート。1.95.0 までは shutdown-app（プロセスを終わらせる）・
+# pick-file / pick-folder（tkinter）・open-path（エクスプローラー）がここにあったが、1.96.0 で窓が受け持つことになり、
+# 中身の受け口は外した（窓の側は desktop/selftest_runner.py の自己診断で確かめる）。いまは無い。
+NOT_CALLED=set()
 
 # その時刻・その置き場・そのプロセスでしか決まらない値。A と B で違って当たり前なので比べない。
 VOLATILE={'server_time','instance_id','pid','started_at','last_received','age_seconds','elapsed','uptime_seconds',
@@ -161,7 +159,7 @@ c=app.app.test_client()
 for line in sys.stdin:
  r=json.loads(line)
  body=base64.b64decode(r['body'])
- resp=c.open(r['path'],method=r['method'],query_string=r.get('query',''),headers=r.get('headers') or {},data=body,base_url='http://127.0.0.1:5031/')
+ resp=c.open(r['path'],method=r['method'],query_string=r.get('query',''),headers=r.get('headers') or {},data=body,base_url='http://datarelay.localhost/')
  out={'status':resp.status_code,'headers':{k.lower():v for k,v in resp.headers.items()},'body':base64.b64encode(resp.get_data()).decode()}
  sys.__stdout__.write(json.dumps(out)+'\n');sys.__stdout__.flush()
 '''
@@ -398,7 +396,7 @@ class SidecarBootTest(unittest.TestCase):
    self.assertNotIn('heartbeat-watchdog',text)
 
  def test_busy_when_another_form_runs(self):
-  """ブラウザ版（または別のデスクトップ版）が中身を動かしていれば、起動せずに busy と知らせる。"""
+  """古い版のブラウザ版（または別の場所の exe）が中身を動かしていれば、起動せずに busy と知らせる。"""
   sys.path.insert(0,str(ROOT/'lib'))
   import navi_instance
   with tempfile.TemporaryDirectory() as tmp:
@@ -409,7 +407,7 @@ class SidecarBootTest(unittest.TestCase):
     fatal=[e for e in side.events if e.get('event')=='fatal']
     self.assertTrue(fatal,side.events)
     self.assertEqual(fatal[0].get('kind'),'busy')
-    self.assertIn('ブラウザ版がすでに動いています',fatal[0].get('error',''))
+    self.assertIn('古い版のブラウザ版（1.95.0 まで）がすでに動いています',fatal[0].get('error',''))
     self.assertEqual(side.close(),2)
    finally:
     lock.release()
@@ -423,6 +421,6 @@ def report():
   mark='一致' if r['ok'] else '★不一致'
   ms=f"A {r['a_ms']:.0f}ms / B {r['b_ms']:.0f}ms" if r['a_ms'] else ''
   print(f"  {mark:<5} {r['status']:>3} {r['label']:<55} {ms} {r['why']}")
- print('呼ばずに残したルート（窓が受け持つ）:',', '.join(sorted(NOT_CALLED)))
+ print('呼ばずに残したルート:',', '.join(sorted(NOT_CALLED)) or 'なし')
 
 if __name__=='__main__':report()

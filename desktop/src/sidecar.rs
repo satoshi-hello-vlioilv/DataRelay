@@ -311,6 +311,19 @@ impl Supervisor {
         self.current.lock().unwrap().as_ref().map(|s| s.is_alive()).unwrap_or(false)
     }
 
+    /// いまの中身の様子（画面の「アプリ監視」に出す）。起こさずに見るだけ。
+    pub fn status(&self) -> Value {
+        let cur = self.current.lock().unwrap();
+        let alive = cur.as_ref().map(|s| s.is_alive()).unwrap_or(false);
+        let spawned = self.spawned.load(Ordering::SeqCst);
+        json!({
+            "alive": alive,
+            "spawned": spawned,
+            "restarts": spawned.saturating_sub(1),
+            "backend": cur.as_ref().filter(|_| alive).map(|s| s.ready.clone()),
+        })
+    }
+
     /// 中身が止まったら、問い合わせを待たずに起こし直す（1秒ごとに見る）。
     /// 起こせなければ 2・4・8 … 最長 60 秒の間を空けて試し続ける（自動実行を朝まで止めない）。
     /// ブラウザ版が動いている（busy）など、起こし直しても無駄な理由ならやめる。

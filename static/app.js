@@ -1195,46 +1195,21 @@ $('#api-test').onclick=testNavigatorApi;$('#extract-engine').onchange=()=>{updat
 
 $('#suggest-close').onclick=()=>$('#path-suggestion').close();
 async function waitUntilNotRunning(timeoutMs){let start=Date.now();while(Date.now()-start<timeoutMs){try{let s=await fetch('/api/status',{cache:'no-store'}).then(r=>r.json());if(!s.running)return true}catch{return false}await new Promise(r=>setTimeout(r,500))}return false}
-/* V1.77: 終わり方は2通りある。押す場所は1つのまま、右の▾で選び直す。
-     quit … サーバーごと終える。タスクバー（通知領域）にも残らない
-     tray … サーバーは通知領域に残したまま、タブだけ閉じる
-   どちらも、済んだらタブを素直に閉じる。以前は必ず「このタブを閉じてください」と
-   出して残っていたが、押した人はもう終わらせるつもりでいる。
-   window.close() はスクリプトで開いたタブ以外では拒否されるので、閉じられなかった
-   ときだけ、実際に起きたこと（終了した／タスクバーに入った）に合う文を1枚出す。 */
+/* 終わり方は2通りある。押す場所は1つのまま、右の▾で選び直す。
+     quit … 後始末（実行中の中断・設定の書き出し）をしてから窓を閉じる。タスクバー（通知領域）にも残らない
+     tray … 窓を通知領域に隠す。中身はそのまま動き、予定した自動実行も続く
+   どちらも窓（DataRelay.exe）が受け持つ。通知領域のアイコンは窓が持つので、いつでも引き受けられる。 */
 let appExiting=false;
 let exitMode=(localStorage.getItem('navi-exit-mode')==='tray')?'tray':'quit';
 const EXIT_LABEL={quit:'終了',tray:'タスクバーへ'};
-/* デスクトップ版（DataRelay.exe・Tauri の窓）か。窓は自前の仕組み（datarelay）で画面を出すので、置き場で分かる。
-   デスクトップ版では、窓を閉じたことを窓（Rust）が直接受け取る。心拍・閉じる知らせ・タブを閉じる工夫は要らない。 */
-const DESKTOP=location.hostname==='datarelay.localhost'||location.protocol==='datarelay:';
-const EXIT_TITLE=DESKTOP?{quit:'アプリを終了します（後始末をしてから窓を閉じます）',
-                          tray:'窓を通知領域に隠します。予定した自動実行はそのまま動きます'}
-                        :{quit:'アプリを終了します（サーバーも止めます）',
-                          tray:'サーバーを通知領域に残したまま、このタブを閉じます'};
+const EXIT_TITLE={quit:'アプリを終了します（後始末をしてから窓を閉じます）',
+                  tray:'窓を通知領域に隠します。予定した自動実行はそのまま動きます'};
 function exitPage(title,body){
  /* 画面を差し替える前に、周期処理を止める合図を立てる。立てないと、参照先を失った
-    poll が毎秒 TypeError を投げ続け、常駐させたときはサーバーへも毎秒問い合わせ続ける。 */
+    poll が毎秒 TypeError を投げ続ける。 */
  appExiting=true;
  document.body.innerHTML='<main style="max-width:680px;margin:80px auto;padding:24px">'
   +`<article class="panel"><h2>${E(title)}</h2><p>${E(body)}</p></article></main>`;
-}
-/* 閉じられるなら閉じる。閉じられないブラウザーのときだけ、何が起きたかを出す。 */
-function closeThisTab(title,body){
- try{window.close()}catch(e){}
- setTimeout(()=>exitPage(title,body),450);
-}
-async function exitStatus(){
- try{return await fetch('/api/heartbeat-status',{cache:'no-store'}).then(r=>r.json())}catch{return null}
-}
-/* サーバーが本当に止まったか。答えが返ってくるあいだは、まだ生きている。 */
-async function waitServerGone(timeoutMs){
- let end=Date.now()+timeoutMs;
- while(Date.now()<end){
-  await new Promise(r=>setTimeout(r,250));
-  if(!await exitStatus())return true;
- }
- return false;
 }
 async function doExitQuit(){
  if(lastRunning){
@@ -1242,42 +1217,18 @@ async function doExitQuit(){
   toast('実行を中断しています…');
   try{await fetch('/api/run/cancel',{method:'POST'})}catch{}
   await waitUntilNotRunning(20000);
- }else if(!confirm('DataRelayを終了しますか？\nサーバーも止めるので、タスクバー（通知領域）には残りません。自動実行の予定が残っていても、次に起動するまで動きません。')){
+ }else if(!confirm('DataRelayを終了しますか？\nタスクバー（通知領域）には残らないので、自動実行の予定が残っていても、次に起動するまで動きません。')){
   return;
  }
  appExiting=true;
  try{await fetch('/api/shutdown-app',{method:'POST'})}catch{}
- // デスクトップ版は窓が後始末を頼んでから閉じる。タブが閉じたかを推し量る必要は無い。
- if(DESKTOP)return exitPage('終了しています','後始末（実行中の中断・設定の書き出し）をしてから窓を閉じます。');
- if(await waitServerGone(2500))
-  return closeThisTab('アプリを終了しました','このブラウザータブを閉じてください。');
- // まだ答えている。常駐に切り替わったのなら、そう言う（「終了しました」は嘘になる）。
- let st=await exitStatus();
- if(st&&(st.resident||st.residency_pending_reason))
-  return exitPage('タスクバー（通知領域）に入りました',
-                  `${st.resident_reason||st.residency_pending_reason}のため、サーバーは動いたままです。開くときも終わらせるときも、タスクバー右側のアイコンを使ってください。`);
- appExiting=false;
- toast('終了できませんでした。もう一度お試しください');
+ exitPage('終了しています','後始末（実行中の中断・設定の書き出し）をしてから窓を閉じます。');
 }
 async function doExitToTray(){
- if(DESKTOP){
-  // 通知領域のアイコンは窓が持つので、いつでも引き受けられる。窓が隠れるだけで、画面はそのまま残る。
-  let r=null;
-  try{r=await fetch('/api/stay-resident',{method:'POST'}).then(x=>x.json())}catch{}
-  if(!r||!r.ok)toast((r&&r.error)||'タスクバーへ入れられませんでした');
-  return;
- }
- let st=await exitStatus();
- if(st&&st.tray_available===false)
-  return toast('この環境では通知領域にアイコンを出せないため、残すと開くことも終わらせることもできなくなります。「終了」をお使いください');
+ // 窓が隠れるだけで、画面はそのまま残る（通知領域のアイコンから開くと、同じ画面に戻る）。
  let r=null;
  try{r=await fetch('/api/stay-resident',{method:'POST'}).then(x=>x.json())}catch{}
- if(!r||!r.ok)return toast((r&&r.error)||'タスクバーへ残す設定にできませんでした');
- appExiting=true;
- // 閉じる合図を先に送る。閉じられなかった場合でも、常駐へ切り替わることは変わらない。
- notifyBrowserClosing();
- closeThisTab('タスクバー（通知領域）に入りました',
-              'サーバーは動いたままです。このブラウザータブを閉じてください。次に開くときも終わらせるときも、タスクバー右側のアイコンを使えます。');
+ if(!r||!r.ok)toast((r&&r.error)||'タスクバーへ入れられませんでした');
 }
 function runExit(mode){return (mode==='tray')?doExitToTray():doExitQuit()}
 function paintExitMode(){
@@ -1291,21 +1242,6 @@ function openExitMenu(on){
  if(!menu||!more)return;
  menu.hidden=!on;more.setAttribute('aria-expanded',String(!!on));
  if(!on)return;
- if(DESKTOP){
-  let t=$('#exit-menu button[data-mode="tray"]'),note=$('#exit-tray-note');
-  if(t)t.disabled=false;
-  if(note)note.textContent='窓を通知領域に隠します。予定した自動実行はそのまま動きます';
-  return;
- }
- // 通知領域にアイコンを出せるかは環境しだい。出せないなら選ばせない（残しても操作できない）。
- exitStatus().then(st=>{
-  let t=$('#exit-menu button[data-mode="tray"]'),note=$('#exit-tray-note');
-  if(!t)return;
-  let no=!!st&&st.tray_available===false;
-  t.disabled=no;
-  if(note)note.textContent=no?'この環境では通知領域にアイコンを出せないため選べません'
-   :'通知領域に残したままタブを閉じます。予定した自動実行はそのまま動きます';
- });
 }
 if($('#app-exit'))$('#app-exit').onclick=()=>runExit(exitMode);
 if($('#app-exit-more'))$('#app-exit-more').onclick=e=>{e.stopPropagation();openExitMenu($('#exit-menu')?.hidden)};
@@ -1725,53 +1661,48 @@ function paintRowProgress(){
 document.addEventListener('click',e=>{let el=e.target.closest('.rowprogress');if(!el)return;if(el.classList.contains('is-running')||el.classList.contains('is-wait')||el.classList.contains('is-done')||el.classList.contains('is-error'))openProgressModal()});
 setInterval(loadSchedulePreview,60000);loadSchedulePreview();
 
-/* 0.9.0&0.12.0 (旧V33/V36): browser heartbeat — lets the backend detect an ABANDONED (closed) tab and self-terminate, while NOT mistaking a merely
-   inactive/background tab for a closed one. Background tabs throttle setInterval (often to ~1/min), so a main-thread timer alone
-   caused false "browser closed" detections. We now: (1) drive the heartbeat from a Web Worker whose timer resists background
-   throttling, with a main-thread fallback; (2) send an immediate heartbeat whenever the tab becomes visible again; and
-   (3) send an explicit close beacon on real close so genuine closes are detected fast without killing on tab-switch/reload. */
-const HEARTBEAT_APP_ID='DataRelay';
-const HEARTBEAT_CLIENT_ID=(crypto.randomUUID?crypto.randomUUID():String(Date.now())+'-'+Math.random());
-let hb={lastSend:null,lastOk:null,latency:null,fails:0,reconnects:0,wasDown:false,sending:false};
-function hbTime(d){return d?new Date(d).toLocaleTimeString('ja-JP',{hour12:false}):'—'}
-function paintHeartbeat(serverStatus){let state=$('#hb-state');if(!state)return;let connected=hb.fails===0,label=connected?'正常':(hb.fails<3?'再接続中':'切断中'),cls=connected?'healthy':(hb.fails<3?'reconnecting':'disconnected');state.textContent=label;state.className='hb-status '+cls;$('#hb-last-send').textContent=hbTime(hb.lastSend);$('#hb-last-ok').textContent=hbTime(hb.lastOk);$('#hb-latency').textContent=hb.latency==null?'—':hb.latency+' ms';$('#hb-fails').textContent=hb.fails+'回';$('#hb-reconnects').textContent=hb.reconnects+'回';$('#hb-server-age').textContent=serverStatus?serverStatus.age_seconds+'秒':'—';if($('#hb-app-tabs'))$('#hb-app-tabs').textContent=serverStatus?serverStatus.active_clients+'個':'—';$('#hb-detail').textContent=connected?'通信は正常です。接続断が発生してもサーバーは停止せず自動復旧を待ちます。':'サーバーへ再接続しています。次回試行まで画面を開いたままお待ちください。'}
-async function sendHeartbeat(){if(hb.sending||appExiting)return false;hb.sending=true;hb.lastSend=new Date();let t=performance.now();try{let r=await fetch('/api/heartbeat',{method:'POST',headers:{'Content-Type':'application/json','X-Heartbeat-Client':HEARTBEAT_CLIENT_ID},body:JSON.stringify({app_id:HEARTBEAT_APP_ID,client_id:HEARTBEAT_CLIENT_ID}),cache:'no-store'});if(!r.ok)throw Error('HTTP '+r.status);await r.json();hb.latency=Math.round(performance.now()-t);hb.lastOk=new Date();if(hb.wasDown)hb.reconnects++;hb.wasDown=false;hb.fails=0;let st=null;try{st=await fetch('/api/heartbeat-status',{cache:'no-store'}).then(x=>x.json())}catch{}paintHeartbeat(st);hideServerLost();return true}catch(e){hb.fails++;hb.wasDown=true;paintHeartbeat();if(hb.fails>=3)showServerLost();return false}finally{hb.sending=false}}
-function startHeartbeat(){sendHeartbeat();let worker=null;try{const code="let t=null;onmessage=e=>{if(e.data==='start'){clearInterval(t);t=setInterval(()=>postMessage('tick'),10000)}else if(e.data==='stop'){clearInterval(t);t=null}}";worker=new Worker(URL.createObjectURL(new Blob([code],{type:'application/javascript'})));worker.onmessage=()=>sendHeartbeat();worker.postMessage('start')}catch(e){worker=null}setInterval(sendHeartbeat,10000);document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')sendHeartbeat()});window.addEventListener('focus',sendHeartbeat);window.addEventListener('pageshow',sendHeartbeat);if($('#hb-retry'))$('#hb-retry').onclick=sendHeartbeat}
-/* デスクトップ版には心拍が無い。窓が中身（Python）を直接見張り、止まれば起こし直す。
-   「アプリ監視」欄は、そのことを書いて数字の欄を隠す（何も動かない数字を並べない）。 */
-if(DESKTOP){
- let st=$('#hb-state');if(st){st.textContent='デスクトップ版';st.className='hb-status healthy'}
- let g=$('.monitor-panel .hb-grid');if(g)g.hidden=true;
- let rb=$('#hb-retry');if(rb)rb.hidden=true;
- let d=$('#hb-detail');if(d)d.textContent='窓が中身（Python）を直接見張っています。ポートと心拍は使いません。止まったときは自動で起こし直します。';
- let lead=$('.monitor-panel .panelhead p');if(lead)lead.textContent='デスクトップ版の窓と中身（Python）のつながりを確認します。';
-}else startHeartbeat();
-// タブ×・ウィンドウ×・遷移など「実際に閉じる」ときだけ明示通知。タブ切替(非アクティブ)ではpagehideは発火しないため誤検知しない。
-// リロードでもpagehideは発火するが、再読込後のハートビートがバックエンドの明示クローズ判定を猶予内に解除するため終了しない。
-function notifyBrowserClosing(event){if(event?.persisted)return;try{let body=new Blob([JSON.stringify({app_id:HEARTBEAT_APP_ID,client_id:HEARTBEAT_CLIENT_ID,reason:'pagehide',at:new Date().toISOString()})],{type:'application/json'});navigator.sendBeacon('/api/browser-closing',body)}catch(e){}}
-if(!DESKTOP)window.addEventListener('pagehide',notifyBrowserClosing);
-
-/* V34: keep the browser and the running state in sync — warn before closing during a run, and surface it clearly if the server itself disappears */
-// デスクトップ版では × を窓が受け取り、実行中なら通知領域に残る（閉じても実行は止まらない）。確認は出さない。
-if(!DESKTOP)window.addEventListener('beforeunload',e=>{if(lastRunning){e.preventDefault();e.returnValue=''}});
-/* 1.19.0: タブを閉じても常駐する条件を、閉じる前に一度だけ知らせる。
-   実行中はブラウザー標準の確認が出るため、それ以外（予定あり・キューあり）のときだけ案内する。 */
-let residencyHintShown=false;
-async function noteResidencyOnce(){
- if(residencyHintShown||lastRunning)return;
- try{
-  let d=await fetch('/api/heartbeat-status',{cache:'no-store'}).then(r=>r.json());
-  if(!d.residency_pending_reason)return;
-  residencyHintShown=true;
-  toast(`このタブを閉じても「${d.residency_pending_reason}」のため、タスクバー（通知領域）に残ります。完全に終わらせるには右上の「終了」を押してください。`);
- }catch{}
+/* アプリ監視: 窓と中身（Python）のつながり。窓（/api/desktop-status）は中身が止まっていても答える。
+   往復時間は中身まで届く問い合わせ（/api/residency）で測る。中身が3回続けて答えないときだけ知らせを出す
+   （起こし直しは数秒で済むので、1回の取りこぼしでは出さない）。 */
+let mon={fails:0,busy:false};
+function monTime(s){if(!s)return '—';let d=new Date(String(s).replace(' ','T'));return isNaN(d)?String(s):d.toLocaleString('ja-JP',{hour12:false,month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit'})}
+function paintMonitor(st,latency){
+ let state=$('#mon-state');if(!state)return;
+ let alive=!!(st&&st.alive&&latency!=null),label=alive?'正常':(mon.fails<3?'起こし直し中':'応答なし'),cls=alive?'healthy':(mon.fails<3?'reconnecting':'disconnected');
+ state.textContent=label;state.className='hb-status '+cls;
+ let b=st&&st.backend||{};
+ $('#mon-pid').textContent=b.pid||'—';
+ $('#mon-python').textContent=b.python?`${b.python.split(/[\\/]/).slice(-3).join('\\')}（${b.bits||'?'} bit）`:'—';
+ $('#mon-python').title=b.python||'';
+ $('#mon-version').textContent=b.version||'—';
+ $('#mon-latency').textContent=latency==null?'—':`${latency}ms`;
+ $('#mon-restarts').textContent=`${st?st.restarts||0:0}回`;
+ $('#mon-last-restart').textContent=monTime(st&&st.last_restart);
+ $('#mon-checked').textContent=new Date().toLocaleTimeString('ja-JP',{hour12:false});
+ $('#mon-detail').textContent=alive
+  ?(st.resident_reason?`通知領域に常駐しています（${st.resident_reason}）。`:'窓が中身を見張っています。止まったときは自動で起こし直します。')
+  :'中身が答えていません。窓が起こし直しています。';
 }
-if(!DESKTOP)document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden')noteResidencyOnce()});
-/* 終わらせている最中にサーバーが答えなくなるのは当たり前。「接続が切れました」を
-   かぶせると、終わったのか壊れたのか分からなくなる。 */
+async function checkMonitor(){
+ if(mon.busy||appExiting)return;mon.busy=true;
+ let st=null,latency=null;
+ try{
+  st=await fetch('/api/desktop-status',{cache:'no-store'}).then(r=>r.json());
+  let t=performance.now(),r=await fetch('/api/residency',{cache:'no-store'});
+  if(r.ok)latency=Math.round(performance.now()-t);
+ }catch{}
+ mon.fails=(st&&st.alive&&latency!=null)?0:mon.fails+1;
+ paintMonitor(st,latency);
+ if(mon.fails>=3)showServerLost();else if(mon.fails===0)hideServerLost();
+ mon.busy=false;
+}
+/* 終わらせている最中に中身が答えなくなるのは当たり前。「応答していません」をかぶせると、
+   終わったのか壊れたのか分からなくなる。 */
 function showServerLost(){if(serverLostShown||appExiting)return;serverLostShown=true;let d=$('#server-lost-overlay');if(d&&!d.open)d.showModal()}
 function hideServerLost(){if(!serverLostShown)return;serverLostShown=false;let d=$('#server-lost-overlay');if(d&&d.open)d.close()}
-if($('#server-lost-reload'))$('#server-lost-reload').onclick=()=>sendHeartbeat();
+if($('#server-lost-reload'))$('#server-lost-reload').onclick=()=>checkMonitor();
+if($('#mon-check'))$('#mon-check').onclick=()=>checkMonitor();
+setInterval(()=>{if(document.visibilityState==='visible')checkMonitor()},10000);checkMonitor();
 
 /* v1.2.0: カレンダービュー — 予定(自動実行)と実施履歴を月カレンダーへ色分け表示し、日単位で確認・編集導線を提供する */
 let calYM=null,calView='both',calData=null,calJobFilter='all',calBound=false;

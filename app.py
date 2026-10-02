@@ -1,11 +1,11 @@
 from __future__ import annotations
-import atexit, calendar, configparser, contextlib, copy, csv, gc, itertools, json, logging, os, re, shutil, socket, sqlite3, struct, subprocess, sys, tempfile, threading, time, traceback, uuid, webbrowser
+import atexit, calendar, configparser, contextlib, copy, csv, gc, itertools, json, logging, os, re, shutil, socket, sqlite3, struct, subprocess, sys, tempfile, threading, time, traceback, uuid
 from collections import deque
 from datetime import datetime, timedelta, date
 from pathlib import Path
 
 # アプリの中身は lib/ に置いてある。直下に残すのは起動するファイルだけ、という
-# 分け方にしてある（app.py と start_app.py）。取り込む名前は分ける前と同じなので、
+# 分け方にしてある（直下は app.py と sidecar.py）。取り込む名前は分ける前と同じなので、
 # ここで lib/ を探し先へ足しておけば、以降の import は1行も変わらない。
 sys.path.insert(0,str(Path(__file__).resolve().parent/'lib'))
 
@@ -43,7 +43,7 @@ if WORKER_MODE:
  DOCS=[];CHANGELOG=[]
 else:
  from navi_changelog import DOCS,CHANGELOG
-BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'DataRelay'; import navi_paths as _paths0; MIGRATED_LOCAL=_paths0.migrate_local_root(LOCAL_ROOT,LEGACY_LOCAL_NAMES); LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=Path(os.environ['NAVI_CONFIG_DIR']) if os.environ.get('NAVI_CONFIG_DIR') else BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'; HOST='127.0.0.1'; PORT=5031
+BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'DataRelay'; import navi_paths as _paths0; MIGRATED_LOCAL=_paths0.migrate_local_root(LOCAL_ROOT,LEGACY_LOCAL_NAMES); LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=Path(os.environ['NAVI_CONFIG_DIR']) if os.environ.get('NAVI_CONFIG_DIR') else BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'
 def docs_dir():
  # Windowsでは Config と config は同じ場所を指す。Linuxでの検証時だけ綴りが分かれるので両方見る。
  for d in (CONFIG_DIR/'docs',BASE/'config'/'docs'):
@@ -58,11 +58,6 @@ def docs_dir():
 APP_ID=APP_NAME; INSTANCE_ID=str(uuid.uuid4()); app=_UnusedWebLayer() if WORKER_MODE else Flask(__name__)
 if not WORKER_MODE:app.config['SEND_FILE_MAX_AGE_DEFAULT']=0
 run_lock=threading.Lock(); stop_event=threading.Event(); status_lock=threading.Lock(); command_queue_lock=threading.RLock(); command_queue_event=threading.Event(); command_queue=[]; active_command=None
-# ブラウザー側ハートビート監視。フロントからの生存信号が途絶えたら、ジョブ実行中でなく、
-# かつ有効な自動実行ルールも無い場合にだけ自プロセスを終了し、閉じ忘れによるゾンビ化を防ぐ。
-# 0.12.0（旧V36）: 非アクティブ（タブ切替）でもブラウザーは生存しているため、バックグラウンド時のタイマー抑制（多くのブラウザーで最悪1分に1回程度まで低速化）を考慮し、
-# ハートビート途絶の判定しきい値を余裕を持って200秒へ拡大する。加えてタブが実際に閉じられた場合は明示シグナルで即時判定する。
-HEARTBEAT_TIMEOUT_SECONDS=200; CLOSE_GRACE_SECONDS=12; heartbeat_lock=threading.Lock(); last_heartbeat_at=time.time(); browser_closed_explicit=False; browser_closing_at=0.0; heartbeat_clients={}; heartbeat_total=0
 # 実行中断（ユーザーによる明示キャンセル）。プロセス分離ワーカーはterminateで即時停止できるが、
 # 直列(DDE/API)実行中の1件はCOM/DDE操作の途中で安全に打ち切れないため、次のジョブ開始前でのみ打ち切る。
 cancel_requested=threading.Event(); active_workers_lock=threading.Lock(); active_workers={}
@@ -4323,16 +4318,13 @@ retry_lock=threading.Lock()
 retry_waiting=[]    # {'due_at':epoch,'job_ids':[...],'attempt':n,'lines':n,'names':[...]}
 
 def add_alert(kind,title,detail,job_names=None):
- """知らせを1件積む。常駐アイコンが使えるなら、そこへも出す。"""
+ """知らせを1件積む。OS の通知は窓（DataRelay.exe）が /api/alerts を見て出す。"""
  item={'id':uuid.uuid4().hex,'kind':kind,'title':title,'detail':str(detail or '')[:400],
        'jobs':list(job_names or []),'at':datetime.now().isoformat(timespec='seconds')}
  with alerts_lock:
   alerts.append(item)
   del alerts[:-50]   # 溜め込まない。読むのは直近だけ
  log.info('ALERT kind=%s title=%s jobs=%s detail=%s',kind,title,item['jobs'],item['detail'][:120])
- if tray and kind!='info':
-  try:tray.notify(title,item['detail'][:200] or title)
-  except Exception:log.warning('ALERT_NOTIFY_FAILED title=%s',title)
  return item
 
 def pending_jobs_of_run():
@@ -4587,18 +4579,8 @@ def any_enabled_schedule_exists():
 
 # ==== ブラウザーを閉じた後の常駐（通知領域） ==============================
 # タブが無くなっても、実行中・実行キューあり・自動実行の予定ありのいずれかなら常駐を続ける。
-# 常駐中は通知領域にアイコンを出し、そこから画面を開く／終了できるようにする。
-residency_state={'active':False,'reason':'','since':0.0}
-# 画面の「タスクバーに入れて閉じる」で頼まれた常駐。実行中でも予定でもないが、
-# 利用者が「入れておきたい」と言ったのだから、その1回は残す。
-# 次にタブが開かれた時点で外す（ずっと残ると、閉じても終わらない状態が続く）。
-residency_hold={'on':False,'at':0.0}
-RESIDENCY_HOLD_REASON='画面から「タスクバーに入れる」を選択'
-tray=None
-# 通知領域のアイコンは裏で用意する。「まだ分からない」と「出せない」は別なので、
-# 用意が済んだかどうかを別に持つ（済む前に「出せません」と答えると嘘になる）。
-tray_ready=threading.Event()
-
+# 常駐（× を押しても通知領域に残って自動実行を続ける）の判断。隠す・出す・アイコンは窓（DataRelay.exe）が持ち、
+# ここは「続ける理由があるか」だけを答える（/api/residency）。
 def pending_queue_count():
  with command_queue_lock:return len(command_queue)+(1 if active_command else 0)
 def residency_reason():
@@ -4611,46 +4593,25 @@ def residency_reason():
  # 見ていなかったので、タブを閉じただけで os._exit され、走っていたワーカーと作業
  # フォルダーだけが残っていた。
  if split_batch_state.get('running') or split_trial_state.get('running'):return '分け方を試しています'
- # 頼まれた常駐は最後に見る。ほかに理由があるなら、そちらのほうが役に立つ。
- if residency_hold['on']:return RESIDENCY_HOLD_REASON
  return ''
 def tray_status_text():
  reason=residency_reason()
  if status.get('running'):
   return f'実行中 {status.get("completed_jobs",0)}/{status.get("total_jobs",0)}'
  return reason or '待機中'
-def open_app_window():
- try:webbrowser.open(f'http://{HOST}:{PORT}')
- except Exception:log.exception('TRAY_OPEN_FAILED')
-def stop_tray_and_wait(seconds=1.0):
- """通知領域のアイコンを片付けてもらい、消えるのを少しだけ待つ。
-
- stop() は片付けの依頼を投げるだけ（PostMessage）で、実際に消すのはトレイ側の
- スレッド。待たずに os._exit すると依頼が処理される前にプロセスごと消えるため、
- 押しても何も起きないアイコンが通知領域に残る。
- """
- if not tray:return False
- try:tray.stop()
- except Exception:return False
- deadline=time.time()+max(0.0,float(seconds))
- while time.time()<deadline:
-  if not getattr(tray,'hwnd',None):return True
-  time.sleep(0.05)
- return not getattr(tray,'hwnd',None)
-
 def prepare_exit(source,wait_seconds=30):
- """終わる前の後始末。画面の「終了」・通知領域の「終了」・デスクトップ版の窓の「終了」で同じものを使う。
+ """終わる前の後始末。画面の「終了」・通知領域の「終了」・× で終わるとき、どれも窓が /api/app-cleanup で頼む。
 
  順番が肝。process() は終わりぎわに中断の札を下ろすので、キューを先に空にしておかないと
  中断した1本が終わった瞬間に次のバッチが始まり、そのワーカーは誰にも止められない
  （終了を押したのに新しい抽出が始まる）。予定の投入も止めてから中断する。
  os._exit は finally も atexit も走らせない。ここで止めておかないと、抽出のワーカーと
  （DDE方式なら）非表示のSymfoNaviが親を失って残り、次の起動でもう1本増える。
- プロセスを終わらせるのは呼んだ側（ブラウザ版は os._exit、デスクトップ版は窓）。
+ プロセスを終わらせるのは窓（後始末を頼んだあと入力を閉じ、この中身は入力の終わりを見て自分で終わる）。
  戻り値は、待ち切っても実行中のままだったか。"""
  with command_queue_lock:command_queue.clear()
  stop_event.set()
- log.info('APP_EXIT_PREPARE source=%s running=%s resident=%s',source,status.get('running'),residency_state['active'])
+ log.info('APP_EXIT_PREPARE source=%s running=%s',source,status.get('running'))
  if status.get('running'):
   cancel_requested.set(); stop_all_workers(source)
   deadline=time.time()+max(0,float(wait_seconds))
@@ -4662,188 +4623,7 @@ def prepare_exit(source,wait_seconds=30):
  flush_log()
  return bool(status.get('running'))
 
-def request_shutdown_from_tray():
- # 通知領域からの終了も「アプリを終了」と同じ扱いにする。実行中なら先に中断してから終える。
- log.info('TRAY_EXIT_REQUESTED running=%s',int(bool(status.get('running'))))
- prepare_exit('tray-exit',30)
- stop_tray_and_wait()
- os._exit(0)
-def start_tray():
- global tray
- # 出来上がっても、作れないと分かっても、「答えが出た」ことは必ず知らせる。
- # 知らせないと、待つ側（常駐してよいかの判断）が待ち続ける。
- try:
-  if WORKER_MODE or os.name!='nt':return None
-  try:
-   from tray_icon import TrayIcon
-   icon=BASE/'static'/'favicon.ico'
-   # 先に global へ入れてから start() していたため、アイコンを作れなくても入れ物だけが
-   # 残り、tray が真のまま扱われていた。「アイコンを出せない環境では常駐を引き受けない」
-   # という歯止め（/api/stay-resident）が素通しになり、画面には「タスクバーに入りました」
-   # と出るのにアイコンは無い、という状態になる。作れたときだけ受け取る。
-   made=TrayIcon(APP_NAME,f'http://{HOST}:{PORT}',str(icon) if icon.is_file() else None,
-                 on_open=open_app_window,on_exit=request_shutdown_from_tray,status_text=tray_status_text,logger=log)
-   if not made.start():
-    log.warning('TRAY_UNAVAILABLE note=通知領域にアイコンを出せませんでした（常駐は引き受けません）');return None
-   tray=made;return tray
-  except Exception:
-   # 常駐アイコンを作れなくてもアプリ本体は動かし続ける（自動実行を止めない）。
-   log.exception('TRAY_INIT_FAILED');tray=None;return None
- finally:
-  tray_ready.set()
-def enter_residency(reason,client_ids=''):
- if residency_state['active']:
-  if reason!=residency_state['reason']:
-   residency_state['reason']=reason
-   if tray:tray.refresh_tooltip()
-  return
- residency_state.update(active=True,reason=reason,since=time.time())
- log.info('APP_RESIDENT_ENTER closing_clients=%s reason=%s action=keep_alive_with_tray',client_ids,reason)
- if tray:
-  tray.refresh_tooltip()
-  tray.notify(f'{APP_NAME} は常駐しています',
-              f'{reason}のため実行を続けます。\n画面を開く・終了するには通知領域のアイコンを使用してください。')
-def leave_residency():
- # 頼まれた常駐は1回きり。画面が戻ってきたら外す。外さないと、次にタブを閉じたときも
- # 終わらなくなり、「終了したのに残っている」という分かりにくい状態になる。
- if residency_hold['on']:
-  residency_hold.update(on=False,at=0.0)
-  log.info('APP_RESIDENT_HOLD_CLEAR reason=app_tab_active')
- if not residency_state['active']:return
- residency_state.update(active=False,reason='',since=0.0)
- log.info('APP_RESIDENT_LEAVE reason=app_tab_reopened')
- if tray:tray.refresh_tooltip()
 # =====================================================================
-
-# ---- 生きているかを、自分で確かめる ------------------------------------------
-# 「突然落ちた」と言われても、記録のある終了経路を通っていなければ理由が何も残らない。
-# 落ちたのか、答えられなくなっただけなのかで、直す場所がまるで違う。区別できるようにする。
-def dump_threads(tag):
- """いま全部のスレッドがどこに居るか。止まったときは、これが唯一の手がかりになる。"""
- try:
-  names={t.ident:t.name for t in threading.enumerate()}
-  lines=[]
-  for tid,frame in sys._current_frames().items():
-   lines.append(f'--- {names.get(tid,tid)} (tid={tid}) ---')
-   lines.extend(x.rstrip() for x in traceback.format_stack(frame)[-8:])
-  log.error('%s thread_dump\n%s',tag,'\n'.join(lines))
- except Exception:
-  log.exception('THREAD_DUMP_FAILED tag=%s',tag)
-
-def self_probe():
- """自分のHTTPが答えるかを、自分で確かめ続ける。
-
- 答えなくなった状態＝画面に「サーバーとの接続が切れました」と出ている状態。
- そのときプロセスはまだ生きているので、どのスレッドが握ったまま止まっているのかを
- 書き残せる。生きているあいだも、時々そのことだけを残す（いつまで動いていたかが
- 分かると、消えた時刻を挟み込める）。
- """
- import urllib.request
- # 自分自身への問い合わせをプロキシへ回させない。urllib は Windows の
- # インターネットオプションのプロキシ設定を読むので、例外一覧に 127.0.0.1 が
- # 入っていない端末では、生きているのに「答えない」と判定してしまう。
- opener=urllib.request.build_opener(urllib.request.ProxyHandler({}))
- time.sleep(30); miss=0; last_alive=0.0
- while not stop_event.wait(30):
-  try:
-   with opener.open(f'http://{HOST}:{PORT}/api/instance',timeout=5) as r:r.read(200)
-   if miss:log.info('APP_SELF_PROBE_RECOVERED after_miss=%s',miss)
-   miss=0
-   if time.time()-last_alive>=600:
-    last_alive=time.time()
-    log.info('APP_ALIVE threads=%s tabs=%s running=%s queued=%s',
-             threading.active_count(),len(heartbeat_clients),status.get('running'),pending_queue_count())
-  except Exception as e:
-   miss+=1
-   log.error('APP_SELF_PROBE_FAILED miss=%s error=%s（画面には「接続が切れました」と出ています）',miss,e)
-   if miss in (1,3,10):dump_threads('APP_SELF_PROBE_FAILED')
-   flush_log()
-
-def heartbeat_watchdog():
- time.sleep(10)
- while not stop_event.wait(2):
-  try:
-   now=time.time()
-   with heartbeat_lock:
-    silence=now-last_heartbeat_at
-    clients={k:dict(v) for k,v in heartbeat_clients.items()}
-   # pagehide通知後も同じclient_idのハートビートが猶予時間内に戻れば、再読込・戻る/進む・BFCache復帰として終了を取り消す。
-   # 閉じた側にだけ期限が無かった。client_idは読込のたびに作り直されるので、F5を1回押すか
-   # 2枚目のタブを閉じるだけで「閉じた記録」が1件は必ず残る。それが永久に効き続けるため、
-   # タブを開いたままでも心拍が200秒途切れた瞬間（PCのスリープ、タブの凍結）に
-   # 「閉じたタブがあって生きたタブが無い」と判定され、サーバーが自分で落ちていた。
-   # 生きている側と同じ期限を置き、過ぎた記録は数えない。
-   closing=[(cid,v) for cid,v in clients.items()
-            if v.get('closing_at') and CLOSE_GRACE_SECONDS<=now-float(v.get('closing_at') or 0)<HEARTBEAT_TIMEOUT_SECONDS]
-   # 明示的な終了通知が無いまま消えたタブ(ブラウザー強制終了・通信断など)を「常時接続中」と誤認すると、
-   # 二度と自動終了できなくなる。最後の受信からの経過でも生存を判定する。
-   active=[(cid,v) for cid,v in clients.items() if not v.get('closing_at') and now-float(v.get('last_seen') or 0)<HEARTBEAT_TIMEOUT_SECONDS]
-   # 期限切れになった「閉じた記録」を落とす。掃除は心拍を受け取ったときにしか走って
-   # いなかったので、最後のタブが閉じたあとは誰も片付けず、記録が残ったままになっていた。
-   # 片付けるのは閉じた記録だけにする ―― 心拍が途切れているだけのタブは、生きている
-   # かもしれない（スリープ・タブの凍結・通信の瞬断）。消すと「1枚も無い」と誤って
-   # 数えることになる。そちらの掃除は、これまでどおり心拍を受け取ったときに行う。
-   expired=[cid for cid,v in clients.items()
-            if v.get('closing_at') and now-float(v.get('closing_at') or 0)>=HEARTBEAT_TIMEOUT_SECONDS]
-   if expired:
-    with heartbeat_lock:
-     for cid in expired:heartbeat_clients.pop(cid,None)
-     remaining=len(heartbeat_clients)
-    log.info('HEARTBEAT_CLIENTS_PRUNED source=watchdog count=%s remaining=%s',len(expired),remaining)
-   # 終わってよいと決めてよいのは、「閉じた」という明示の知らせが届いているときだけ。
-   # 1.90.0 では、常駐に入ったあと理由が消えた場合に、心拍が途切れているだけで
-   # 終了する道を足してしまった。スリープ・タブの凍結・通信の瞬断と見分けが付かない
-   # ので、タブを開いたまま待機しているだけでサーバーが落ちる（実際に落ちた）。
-   # 「心拍途絶だけでは終了しない」という下の約束と食い違っていたので、その道は外す。
-   # 常駐したまま残ることはあるが、そのときは通知領域にアイコンが出ていて、
-   # そこから開くことも終わらせることもできる（見えない常駐にはならない）。
-   if closing and not active:
-    ids=','.join(cid for cid,_ in closing)
-    # 実行中・実行キューあり・自動実行の予定ありの場合は終了しない。ここで落とすと処理が中途半端に打ち切られ、
-    # 並列実行中の各ラインのワーカープロセスが親を失って孤児化する。
-    # 常駐へ切り替えるときは通知領域アイコンを出し、「見えない・止められない」状態にしない。
-    reason=residency_reason()
-    if reason:
-     enter_residency(reason,ids);continue
-    log.info('APP_TABS_EMPTY_CONFIRMED closing_clients=%s active_app_tabs=0 grace=%ss action=python_exit',ids,CLOSE_GRACE_SECONDS)
-    flush_log()
-    _flush_settings_on_exit('app-tabs-empty');stop_event.set()
-    # ここだけアイコンの片付けを頼んでいなかった。頼まないまま終わると、通知領域に
-    # 押しても何も起きないアイコンが残る（マウスを乗せるまで消えない）。
-    stop_tray_and_wait()
-    os._exit(0)
-   elif active and (residency_state['active'] or residency_hold['on']):
-    leave_residency()
-   # ハートビート途絶だけでは終了しない。ネットワーク断、スリープ、ブラウザー破棄との誤判定を避ける。
-   # 状態は変わらないので、そのつど出すとログがこれだけで埋まる（実測 7時間ぶんで数千行）。
-   # 最初の1回と、間隔を広げながらの節目だけ残す。分かることは同じで、量は1/100以下になる。
-   if silence>HEARTBEAT_TIMEOUT_SECONDS:
-    if _heartbeat_should_log(silence):
-     log.warning('HEARTBEAT_DEGRADED silence=%.0fs server_kept_alive=1 note=次は%s後に出します',
-                 silence,_heartbeat_next_label(silence))
-   else:
-    _heartbeat_notice['at']=0.0
-  except Exception:
-   log.exception('ハートビート監視エラー')
-
-# 途絶の知らせは節目だけ。1分 → 5分 → 30分 → 1時間ごと、と間隔を広げる。
-HEARTBEAT_NOTICE_STEPS=(60,300,1800,3600)
-_heartbeat_notice={'at':0.0}
-
-def _heartbeat_should_log(silence):
- """この途絶を残すか。前回から十分に間が空いたときだけ True。"""
- last=float(_heartbeat_notice.get('at') or 0)
- if last<=0:
-  _heartbeat_notice['at']=silence;return True
- gap=silence-last
- want=next((x for x in HEARTBEAT_NOTICE_STEPS if silence<x*2),HEARTBEAT_NOTICE_STEPS[-1])
- if gap>=want:
-  _heartbeat_notice['at']=silence;return True
- return False
-
-def _heartbeat_next_label(silence):
- want=next((x for x in HEARTBEAT_NOTICE_STEPS if silence<x*2),HEARTBEAT_NOTICE_STEPS[-1])
- return f'{want//60}分' if want>=60 else f'{want}秒'
 
 def missed_schedules(cfg,st,since,now,catchup):
  """実行中に時刻が過ぎ、猶予も切れてしまった予定を洗い出す。
@@ -5493,77 +5273,17 @@ def read_preview_data(path,job,limit=500,max_columns=None):
 
 
 
-@app.post('/api/heartbeat')
-def heartbeat():
- global last_heartbeat_at,browser_closed_explicit,browser_closing_at,heartbeat_total
- data=request.get_json(silent=True) or {}; app_id=str(data.get('app_id') or ''); client_id=str(data.get('client_id') or request.headers.get('X-Heartbeat-Client') or '')[:80]
- if app_id!=APP_ID or not client_id:return jsonify(ok=False,error='アプリタブ識別情報が不正です'),400
- now=time.time()
- with heartbeat_lock:
-  last_heartbeat_at=now;browser_closed_explicit=False;browser_closing_at=0.0;heartbeat_total+=1
-  previous=heartbeat_clients.get(client_id,{})
-  heartbeat_clients[client_id]={'app_id':APP_ID,'instance_id':INSTANCE_ID,'last_seen':now,'user_agent':request.headers.get('User-Agent','')[:160],'closing_at':0.0,'recovered_count':int(previous.get('recovered_count') or 0)+(1 if previous.get('closing_at') else 0)}
-  # 終了通知後に戻らなかったタブに加え、通知なく消えたタブ(強制終了・通信断)も回収する。
-  # 放置すると client_id はページ読込ごとに増え、辞書が際限なく肥大化する。
-  stale=[k for k,v in heartbeat_clients.items()
-         if (v.get('closing_at') and now-float(v.get('closing_at') or 0)>86400)
-         or (not v.get('closing_at') and now-float(v.get('last_seen') or 0)>HEARTBEAT_TIMEOUT_SECONDS*3)]
-  for k in stale:heartbeat_clients.pop(k,None)
-  if stale:log.info('HEARTBEAT_CLIENTS_PRUNED count=%s remaining=%s',len(stale),len(heartbeat_clients))
- return jsonify(ok=True,app_id=APP_ID,instance_id=INSTANCE_ID,server_time=datetime.now().isoformat(timespec='milliseconds'),received_at=now,timeout_seconds=HEARTBEAT_TIMEOUT_SECONDS,total=heartbeat_total)
-
-@app.get('/api/heartbeat-status')
-def heartbeat_status():
- now=time.time()
- with heartbeat_lock:
-  age=max(0,now-last_heartbeat_at);clients=[{'client_id':k,'age_seconds':round(now-v['last_seen'],1),'closing':bool(v.get('closing_at'))} for k,v in heartbeat_clients.items()]
- return jsonify(ok=True,app_id=APP_ID,instance_id=INSTANCE_ID,state='healthy' if age<30 else ('delayed' if age<HEARTBEAT_TIMEOUT_SECONDS else 'disconnected'),last_received=datetime.fromtimestamp(last_heartbeat_at).isoformat(timespec='seconds'),age_seconds=round(age,1),timeout_seconds=HEARTBEAT_TIMEOUT_SECONDS,active_clients=sum(1 for x in clients if not x['closing']),recent_clients=sum(1 for x in clients if not x['closing'] and x['age_seconds']<30),closing_clients=sum(1 for x in clients if x['closing']),clients=clients,total=heartbeat_total,server_time=datetime.now().isoformat(timespec='seconds'),auto_shutdown_on_disconnect=False,exit_when_app_tabs_empty=True,close_grace_seconds=CLOSE_GRACE_SECONDS,resident=bool(residency_state['active']),resident_reason=residency_state['reason'],residency_pending_reason=residency_reason(),tray_available=(bool(tray) if tray_ready.is_set() else None),resident_hold=bool(residency_hold['on']),queued_commands=pending_queue_count())
-
-@app.post('/api/stay-resident')
-def stay_resident():
- """画面の「タスクバーに入れて閉じる」。サーバーは残し、タブだけ閉じてもらう。
-
- 通知領域にアイコンを出せない環境では引き受けない。アイコンが無いまま常駐すると、
- 動いていることが見えず、止める手段も無くなる（そのために常駐アイコンを付けた）。
- """
- # 起動直後はまだアイコンを用意している最中のことがある。ここは「残していいか」を
- # 決める場面なので、分かるまで少しだけ待つ（待たずに断ると、起動直後だけ断られる）。
- tray_ready.wait(3)
- if not tray:
-  log.info('APP_RESIDENT_HOLD_REFUSED reason=tray_unavailable')
-  return jsonify(ok=False,tray_available=False,
-                 error='この環境では通知領域にアイコンを出せないため、常駐させると画面からも通知領域からも操作できなくなります。'
-                       '「終了」で終わらせてください'),409
- residency_hold.update(on=True,at=time.time())
- log.info('APP_RESIDENT_HOLD_SET source=ui reason=%s（タブが閉じたら常駐します）',RESIDENCY_HOLD_REASON)
- return jsonify(ok=True,tray_available=True,reason=RESIDENCY_HOLD_REASON,
-                close_grace_seconds=CLOSE_GRACE_SECONDS)
-
-@app.post('/api/shutdown-app')
-def shutdown_app():
- # 画面の「アプリを終了」。常駐条件が残っていても、ここからの終了は明示操作として尊重する。
- # 停止バッチ（stop_app.bat）もこの受け口を先に叩くので、そちらから止めたときも同じ後始末を通る。
- # （デスクトップ版では、この問い合わせは窓が受け取り、後始末だけを /api/app-cleanup で頼む。）
- def stop():
-  time.sleep(.4)
-  log.info('APP_EXIT_REQUESTED source=ui running=%s resident=%s',status.get('running'),residency_state['active'])
-  prepare_exit('shutdown-app',15)
-  stop_tray_and_wait()
-  os._exit(0)
- threading.Thread(target=stop,daemon=True).start(); return jsonify(ok=True)
-
 @app.get('/api/residency')
 def residency_status():
  """常駐を続ける理由（実行中・キュー・自動実行の予定・影実行・頼まれた常駐）。無ければ空文字。
 
- デスクトップ版の窓が、× を押されたときに聞く。理由があれば窓を隠して通知領域に残り、無ければ終わる。
- 心拍の状態（/api/heartbeat-status）とは切り離してある ―― デスクトップ版に心拍は無い。"""
+ 窓が、× を押されたとき・通知領域の文言を更新するときに聞く。理由があれば窓を隠して通知領域に残り、無ければ終わる。"""
  return jsonify(ok=True,reason=residency_reason(),running=bool(status.get('running')),
                 queued=pending_queue_count(),status_text=tray_status_text())
 
 @app.post('/api/app-cleanup')
 def app_cleanup():
- """デスクトップ版の窓が終わる前に頼む後始末。プロセスは終わらせない（終わらせるのは窓）。
+ """窓が終わる前に頼む後始末（画面の「終了」・通知領域の「終了」・理由の無い ×）。プロセスは終わらせない（終わらせるのは窓）。
 
  答えを返してから窓が入力を閉じ、この窓口は入力の終わりを見て自分で終わる。"""
  data=request.get_json(silent=True) or {}
@@ -5572,25 +5292,20 @@ def app_cleanup():
  still=prepare_exit(str(data.get('source') or 'desktop-quit')[:40],wait)
  return jsonify(ok=True,still_running=still)
 
-# 起動計測用: Flaskが最初のHTTP要求を処理した時刻を1度だけ記録する（＝サーバー実質稼働開始）。
+# 起動計測用: 最初の問い合わせを処理した時刻を1度だけ記録する（＝画面が中身を使い始めた時刻）。
 _first_request_logged=False
 @app.before_request
 def _log_first_request():
  global _first_request_logged
  if _first_request_logged:return
  _first_request_logged=True
- try:spawn_at=float(os.environ.get('NAVI_APP_SPAWN_AT') or 0)
- except Exception:spawn_at=0
- ready_since_spawn=(time.time()-spawn_at) if spawn_at else -1
- log.info('APP_FIRST_REQUEST path=%s ready_since_spawn=%.2fs ready_since_import=%.2fs',request.path,ready_since_spawn,time.time()-_APP_IMPORT_DONE_AT)
+ log.info('APP_FIRST_REQUEST path=%s ready_since_import=%.2fs',request.path,time.time()-_APP_IMPORT_DONE_AT)
 
 @atexit.register
 def shutdown():
  # ここを黙って通ると、あとから見て「気づいたら消えていた」としか分からない。
- # 記録のある終了経路（画面・通知領域・タブ空）はどれも os._exit なので、ここへ来るのは
- # 「HTTPサーバーが自分で止まった」「主のスレッドが終わった」など、別の理由のとき。
- try:log.info('APP_ATEXIT running=%s resident=%s note=インタプリタが終了します',
-              status.get('running'),residency_state['active'])
+ # 窓口（sidecar.py）は入力の終わりを見たあと os._exit で終わるので、ここへ来るのは別の理由のとき。
+ try:log.info('APP_ATEXIT running=%s note=インタプリタが終了します',status.get('running'))
  except Exception:pass
  try:flush_log()
  except Exception:pass
@@ -5655,23 +5370,23 @@ from navi_diag import (FAILED_DIAG_TTL_SECONDS, PATH_SETTING_KIND, PATH_SETTING_
 if not WORKER_MODE:
  import navi_web
 
-# 中身を利用者ごとに1つにする錠（ブラウザ版とデスクトップ版の取り合い）。boot_app が取り、終わるまで持つ。
+# 中身を利用者ごとに1つにする錠。boot_app が取り、終わるまで持つ。
 import navi_instance
 _instance_lock=None
 
-def boot_app(mode='browser',_spawn_at=0.0):
- """起動して裏で始めることを1か所にまとめる。ブラウザ版（__main__）とデスクトップ版（sidecar.py）の両方から呼ぶ。
+def boot_app(_spawn_at=0.0):
+ """起動して裏で始めることを1か所にまとめる。窓口（sidecar.py）が呼ぶ。
 
- mode='browser' … ポートとブラウザの形。心拍の監視・自分への疎通確認・通知領域のアイコン（pywin32）も起こす
- mode='desktop' … 窓（Tauri）の中身として動く形。窓が閉じたことを直接受け取り、アイコンも窓が持つので、上の3つは起こさない
+ 窓（DataRelay.exe）が閉じたことを直接受け取り、通知領域のアイコンも窓が持つ。
+ 中身が止まれば窓がすぐ起こし直すので、ここで生存を見張る仕組みは要らない。
  """
- # 中身は利用者ごとに1つだけ。ブラウザ版とデスクトップ版を同時に起こすと、スケジューラーが2つ動いて
- # 同じ自動実行が二重に走る。取れなければ navi_instance.InstanceBusy を投げる（呼んだ側が知らせて止まる）。
+ # 中身は利用者ごとに1つだけ。2つ動くとスケジューラーも2つになり、同じ自動実行が二重に走る
+ # （古い版のフォルダーに残ったブラウザ版から起こされた場合も含む）。取れなければ navi_instance.InstanceBusy を投げる。
  # 錠はこのプロセスが終わるまで持つ（落ちても OS が外す）。
  global _instance_lock
- _instance_lock=navi_instance.acquire(LOCAL_RUNTIME,mode)
+ _instance_lock=navi_instance.acquire(LOCAL_RUNTIME,'desktop')
  # どの版が動いているのかは、後からログだけを見て分かる必要がある。起動のいちばん最初に出す。
- startup_clock=time.perf_counter();log.info('APP_START mode=%s version=%s build=%s released=%s source=%s local_root=%s pycache=%s',mode,APP_VERSION,BUILD_VERSION,APP_RELEASED_AT,BASE,LOCAL_ROOT,os.environ.get('PYTHONPYCACHEPREFIX',''))
+ startup_clock=time.perf_counter();log.info('APP_START mode=desktop version=%s build=%s released=%s source=%s local_root=%s pycache=%s',APP_VERSION,BUILD_VERSION,APP_RELEASED_AT,BASE,LOCAL_ROOT,os.environ.get('PYTHONPYCACHEPREFIX',''))
  # 掃除するのは、実際に使う作業場所。決め打ちにしていたため、アカウント名が日本語の
  # PCでは作業場所（C:\DataRelayWork）と掃除する場所が食い違い、中間ファイルが
  # 起動のたびに積み上がっていた。
@@ -5679,12 +5394,6 @@ def boot_app(mode='browser',_spawn_at=0.0):
  except Exception:_workdir=None
  log.info('APP_START_WORKCLEAN elapsed=%.2fs mode=%s',*clean_work_folder(_workdir))
  log.info('APP_START_WORKDIR path=%s',_workdir)
- # 起動待ちモーダル(loading.html)は file:// から開くので、サーバーが立つまで版が分からない。
- # ここに置いておけば、ランチャーが次回の起動時に画面へ差し込める。
- # 中身はASCIIだけにする。ランチャー(VBScript)は既定でANSIとして読むので、
- # 日本語を混ぜると読み取り側の文字コードに左右される。版とビルドが分かれば足りる。
- try:(LOCAL_RUNTIME/'version.txt').write_text(f'{APP_VERSION}\t{BUILD_VERSION}',encoding='ascii')
- except Exception:log.exception('VERSION_STAMP_FAILED')
  _t=time.perf_counter(); migrate_legacy_settings(); log.info('APP_START_MIGRATION elapsed=%.2fs',time.perf_counter()-_t)
  # 落ち方が荒い（DLLの異常終了など）ときは、Pythonの例外すら残らない。
  # faulthandler に書かせておくと、そのときだけ crash.log に足跡が残る。
@@ -5695,69 +5404,9 @@ def boot_app(mode='browser',_spawn_at=0.0):
   log.info('APP_START_FAULTHANDLER path=%s',LOCAL_LOGS/'crash.log')
  except Exception:log.exception('FAULTHANDLER_UNAVAILABLE')
  _t=time.perf_counter(); threading.Thread(target=scheduler,daemon=True,name='scheduler').start(); threading.Thread(target=command_dispatcher,daemon=True,name='command-dispatcher').start()
- # 心拍の監視と自分への疎通確認は、ポートとブラウザの形でだけ要る。デスクトップ版は窓（Rust）が
- # 閉じたことを直接受け取り、中身が止まれば窓が起こし直すので、どちらも走らせない。
- if mode=='browser':
-  threading.Thread(target=heartbeat_watchdog,daemon=True,name='heartbeat-watchdog').start(); threading.Thread(target=self_probe,daemon=True,name='self-probe').start()
- log.info('APP_START_THREADS mode=%s elapsed=%.2fs',mode,time.perf_counter()-_t)
- # 通知領域のアイコンは、出来上がるまで待たされる（Explorerが混んでいると最大5秒）。
- # その待ちを画面が立つ前に払う理由は無い。裏で用意して、サーバーは先に立てる。
- # 出来上がったかどうかを待ちたい側は tray_ready を見る。
- _t=time.perf_counter()
- if mode=='browser':
-  def _tray_boot():
-   ok=bool(start_tray());tray_ready.set()
-   log.info('APP_START_TRAY available=%s elapsed=%.2fs（サーバーの起動とは別に用意しました）',ok,time.perf_counter()-_t)
-  threading.Thread(target=_tray_boot,daemon=True,name='tray-boot').start()
- else:
-  # 通知領域のアイコンは窓（Rust）が持つ。こちらは持たないことを確定させておく（待つ側を待たせない）。
-  tray_ready.set()
- log.info('APP_START_TOTAL mode=%s boot_to_run=%.2fs total_since_spawn=%.2fs',mode,time.perf_counter()-startup_clock,(time.time()-_spawn_at) if _spawn_at else -1)
+ log.info('APP_START_THREADS elapsed=%.2fs',time.perf_counter()-_t)
+ log.info('APP_START_TOTAL boot_to_run=%.2fs total_since_spawn=%.2fs',time.perf_counter()-startup_clock,(time.time()-_spawn_at) if _spawn_at else -1)
 
 if __name__=='__main__':
- if os.environ.get('NAVI_LAUNCHED_BY_GUARD')!='1':
-  raise SystemExit('start.vbsから起動してください。app.pyの直接起動はサポートされていません。')
- try:_spawn_at=float(os.environ.get('NAVI_APP_SPAWN_AT') or 0)
- except Exception:_spawn_at=0
- if _spawn_at:log.info('APP_IMPORT_ELAPSED spawn_to_import=%.2fs note=interpreter_init+module_import+source_compile(BOX)',_APP_IMPORT_DONE_AT-_spawn_at)
- try:boot_app('browser',_spawn_at)
- except navi_instance.InstanceBusy as busy:
-  log.error('APP_INSTANCE_BUSY mode=browser holder=%s detail=%s',busy.holder,busy);flush_log()
-  raise SystemExit(1)
- # ポートが空いているかを先に確かめる。Flask(werkzeug)は束縛失敗を自前で処理して
- # 標準出力にだけ出して終了するため、そのままではログに何も残らず、
- # ランチャー側からは「起動確認がタイムアウト」としか見えない。
- # まず「誰かが応答するか」を見る。束縛の試しだけだと、Windowsの SO_REUSEADDR は
- # 使用中のポートへの束縛を許すことがあり、動いているインスタンスがいても「空き」と
- # 判定されうる。つながるなら、それは間違いなく使用中。
- _live=socket.socket(socket.AF_INET,socket.SOCK_STREAM); _live.settimeout(0.6)
- try:_in_use=_live.connect_ex((HOST,PORT))==0
- except OSError:_in_use=False
- finally:_live.close()
- if _in_use:
-  log.error('APP_PORT_IN_USE host=%s port=%s detail=すでに応答があります',HOST,PORT)
-  log.error('APP_PORT_IN_USE_HINT 既に%sが起動しています。画面はそのまま使えます。'%APP_NAME+
-            '止めたい場合は stop_app.bat を実行してください。')
-  raise SystemExit(1)
- _probe=socket.socket(socket.AF_INET,socket.SOCK_STREAM)
- try:
-  # Flask(werkzeug)と同じ条件で試す。これを付けないと、直前に終了したプロセスの
-  # 後始末待ち(TIME_WAIT)が残っているだけで「使用中」と判定してしまい、
-  # 本当は起動できるのに起動を諦めることになる（停止直後の再起動で起きる）。
-  _probe.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
-  _probe.bind((HOST,PORT))
- except OSError as e:
-  log.error('APP_PORT_IN_USE host=%s port=%s error=%s',HOST,PORT,e)
-  log.error('APP_PORT_IN_USE_HINT 既に%sが起動しているか、前回のプロセスが残っています。'%APP_NAME+
-            'stop_app.bat を実行するか、タスクマネージャーで python.exe / pythonw.exe を終了してから起動し直してください。')
-  raise SystemExit(1)
- finally:
-  _probe.close()
- try:
-  app.run(host=HOST,port=PORT,debug=False,threaded=True)
-  # app.run は普通は戻ってこない。戻ったということは、HTTPサーバーが自分で
-  # 止まったということ ―― この後プロセスは終わるので、必ず理由を残す。
-  log.error('APP_RUN_RETURNED note=HTTPサーバーが自分で止まりました。この後プロセスは終了します')
-  dump_threads('APP_RUN_RETURNED');flush_log()
- except Exception:
-  log.exception('APP_RUN_FAILED host=%s port=%s',HOST,PORT);flush_log();raise
+ # 起動の入口は DataRelay.exe（窓）だけ。窓が Python を探し、sidecar.py を通してこのファイルを読み込む。
+ raise SystemExit('app.py は直接起動しません。アプリのフォルダーにある DataRelay.exe から起動してください。')

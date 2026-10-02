@@ -1,6 +1,6 @@
 """中身（スケジューラーを持つプロセス）を利用者ごとに1つにする錠（lib/navi_instance.py）。
 
-ブラウザ版とデスクトップ版を同じPCで両方起こしても、自動実行が二重に走らないことを確かめる。
+中身が2つ起こされても（古い版のフォルダーに残ったブラウザ版・別の場所の exe）、自動実行が二重に走らないことを確かめる。
 本物の別プロセスで錠を取り合う。実行: python -m unittest tests.test_instance -v
 """
 import json,os,subprocess,sys,tempfile,time,unittest
@@ -33,7 +33,16 @@ class InstanceLockTest(unittest.TestCase):
     with self.assertRaises(navi_instance.InstanceBusy) as cm:navi_instance.acquire(d,'desktop')
     self.assertEqual(cm.exception.holder.get('mode'),'browser')
     self.assertEqual(cm.exception.holder.get('pid'),p.pid)
-    self.assertIn('ブラウザ版がすでに動いています',str(cm.exception))
+    self.assertIn('古い版のブラウザ版（1.95.0 まで）がすでに動いています',str(cm.exception))
+   finally:
+    p.kill();p.wait();p.stdout.close()
+
+ def test_another_window_is_named_as_datarelay(self):
+  with tempfile.TemporaryDirectory() as d:
+   p=self.hold(d,'desktop')
+   try:
+    with self.assertRaises(navi_instance.InstanceBusy) as cm:navi_instance.acquire(d,'desktop')
+    self.assertIn('DataRelayがすでに動いています',str(cm.exception))
    finally:
     p.kill();p.wait();p.stdout.close()
 

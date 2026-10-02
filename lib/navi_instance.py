@@ -1,8 +1,8 @@
 """このアプリの中身（スケジューラーを持つプロセス）を、利用者ごとに1つだけにする。
 
-移行の間はブラウザ版（start.vbs → app.py・ポート）とデスクトップ版（DataRelay.exe → sidecar.py）を両方配る。
-同じPCで両方を起こすと、スケジューラーが2つ動いて同じ自動実行が二重に走る。どちらの形でも
-起動のいちばん最初（boot_app）でこの錠を取り、取れなければ起動しない。
+中身が2つ動くと、スケジューラーも2つになって同じ自動実行が二重に走る。起動のいちばん最初（boot_app）で
+この錠を取り、取れなければ起動しない。窓（DataRelay.exe）は1つだけ起動する仕組みを持つが、古い版のフォルダーに
+残ったブラウザ版（1.95.0 まで。start.vbs → app.py）や、別の場所に置いた exe から起こされた中身もここで止まる。
 
 錠は OS のファイルロック（Windows は msvcrt.locking、ほかは fcntl.flock）。プロセスが落ちても
 OS が外すので、「錠だけが残って二度と起動できない」ことは起きない。
@@ -21,7 +21,7 @@ class InstanceBusy(RuntimeError):
  """ほかの形（またはもう1つ）がすでに動いている。holder は錠の持ち主の記録（読めなければ {}）。"""
  def __init__(self,holder):
   self.holder=holder or {}
-  mode={'browser':'ブラウザ版','desktop':'デスクトップ版'}.get(self.holder.get('mode'),'もう1つの DataRelay')
+  mode={'browser':'古い版のブラウザ版（1.95.0 まで）','desktop':'DataRelay'}.get(self.holder.get('mode'),'もう1つの DataRelay')
   since=self.holder.get('since') or ''
   super().__init__(f'{mode}がすでに動いています（pid {self.holder.get("pid","?")}・{since} から）。'
                    'そちらを終了してから起動してください。同時に動かすと、自動実行が二重に走ります。')

@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-"""デスクトップ版（DataRelay.exe・desktop/）の窓口: 標準入出力でアプリへ問い合わせる。**ポートを開かない**。
+"""窓（DataRelay.exe・desktop/）の窓口: 標準入出力でアプリへ問い合わせる。**ポートを開かない**。
 
-ブラウザ版（start.vbs → app.py）は 127.0.0.1:5031 で待ち受けるため、プロキシ・ポートの取り合い・古いサーバーの残り・
-心拍による推し量りに付き合ってきた（migration/FEASIBILITY.md §1）。デスクトップ版はこのプロセスを窓の子として起こし、
-パイプで問い合わせる。窓が終われば標準入力が閉じ、このプロセスも自分で終わる。
+1.95.0 までのブラウザ版（start.vbs → app.py）は 127.0.0.1:5031 で待ち受けていたため、プロキシ・ポートの取り合い・
+古いサーバーの残り・心拍による推し量りに付き合ってきた（migration/FEASIBILITY.md §1）。1.96.0 からは窓だけが入口で、
+このプロセスを窓の子として起こし、パイプで問い合わせる。窓が終われば標準入力が閉じ、このプロセスも自分で終わる。
 Defect-Pitch-Analyzer の program/sidecar.py（版 2.0.0）と同じ枠の形にしてある。Rust 側（desktop/src/frame.rs）も同じ形で読み書きする。
 
 枠の形（両方向とも同じ。テキストの行と生のバイトを混ぜる）:
@@ -12,10 +12,10 @@ Defect-Pitch-Analyzer の program/sidecar.py（版 2.0.0）と同じ枠の形に
   問い合わせ {"id", "method", "path", "query", "headers": {名前: 値}, "len"}
   答え       {"id", "status", "headers": [[名前, 値], ...], "len"}
   知らせ     {"id": 0, "event": "ready" | "fatal" | "bad-frame", ...}（id 0 は問い合わせに使わない）
-             fatal の "kind" が "busy" なら、ほかの形（ブラウザ版）がすでに動いている（navi_instance）。
+             fatal の "kind" が "busy" なら、もう1つの中身がすでに動いている（navi_instance）。
 
-DataRelay の本体（app.py の Flask）はそのまま WSGI として呼ぶ。画面・ルート・試験はブラウザ版と同じものを使う。
-起動して裏で始めること（スケジューラー・実行の受け付け・作業フォルダーの掃除など）は app.boot_app('desktop')。
+DataRelay の本体（app.py の Flask）はそのまま WSGI として呼ぶ。サーバーとしては起こさない。
+起動して裏で始めること（スケジューラー・実行の受け付け・作業フォルダーの掃除など）は app.boot_app()。
 抽出のワーカー（lib/api_worker.py）はこのプロセスの子として起動される。子の標準出力は fd 1 を
 標準エラーへ向け直してあるので、子が print しても枠には混ざらない。
 """
@@ -117,7 +117,7 @@ def protocol_streams():
 
 
 def local_settings():
-    """ブラウザ版の start_app.py と同じ置き場にする。.pyc は共有フォルダー（BOX）ではなく手元へ。"""
+    """この PC の作業場所（NAVI_LOCAL_ROOT、無ければ %LOCALAPPDATA%\DataRelay）。.pyc は共有フォルダー（BOX）ではなく手元へ。"""
     local = Path(os.environ.get('NAVI_LOCAL_ROOT') or Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home()) / 'DataRelay')
     (local / 'pycache').mkdir(parents=True, exist_ok=True)
     os.environ['NAVI_LOCAL_ROOT'] = str(local)
@@ -137,7 +137,7 @@ def main() -> int:
         return 1
     if os.environ.get('DATARELAY_NO_BOOT') != '1':      # 窓口だけを確かめる試験のときは裏の処理を起こさない
         try:
-            datarelay.boot_app('desktop')
+            datarelay.boot_app()
         except datarelay.navi_instance.InstanceBusy as busy:
             datarelay.log.error('APP_INSTANCE_BUSY mode=desktop holder=%s detail=%s', busy.holder, busy)
             writer.send({'id': 0, 'event': 'fatal', 'kind': 'busy', 'error': str(busy), 'holder': busy.holder})

@@ -89,6 +89,10 @@ struct Shell {
     quitting: AtomicBool,
     splash_loaded: AtomicBool,
     splash_queue: Mutex<Vec<String>>,
+    /// 最後に中身を起こし直した時刻（UTC）。画面の「アプリ監視」に出す
+    last_restart: Mutex<String>,
+    /// 窓と中身の名乗り（版・置き場・Python）。準備できたら入る
+    info: OnceLock<Value>,
 }
 
 impl Shell {
@@ -153,6 +157,26 @@ fn notify(app: &AppHandle, title: &str, body: &str) {
         return; // 自己診断では通知を出さない（CI の画面に残るだけ）
     }
     let _ = app.notification().builder().title(title).body(body).show();
+}
+
+/// まだ OS へ出していない知らせ（/api/alerts の alerts のうち、info 以外）。題と本文の組を返す。
+/// seen は「いま中身が持っている知らせ」で置き換える（読んで消えた知らせを覚え続けない）。
+fn fresh_alerts(seen: &mut std::collections::HashSet<String>, v: &Value) -> Vec<(String, String)> {
+    let items = v["alerts"].as_array().cloned().unwrap_or_default();
+    let mut out = Vec::new();
+    let mut now = std::collections::HashSet::new();
+    for a in &items {
+        let Some(id) = a["id"].as_str() else { continue };
+        now.insert(id.to_string());
+        if seen.contains(id) || a["kind"].as_str() == Some("info") {
+            continue;
+        }
+        let title = a["title"].as_str().unwrap_or(TITLE).to_string();
+        let detail: String = a["detail"].as_str().filter(|d| !d.is_empty()).unwrap_or(&title).chars().take(200).collect();
+        out.push((title, detail));
+    }
+    *seen = now;
+    out
 }
 
 fn hide_to_tray(app: &AppHandle, shell: &Shell, reason: &str) {
@@ -332,6 +356,16 @@ fn native(app: AppHandle, shell: Arc<Shell>, info: Value) -> Native {
             });
             Some(json_reply(&json!({"ok": true, "tray_available": true, "reason": reason, "desktop": true})))
         }
+        // 画面の「アプリ監視」: 窓と中身（Python）のつながり。中身が止まっていても窓が答える
+        ("GET", "/api/desktop-status") => {
+            let mut v = shell.backend().map(|b| b.status()).unwrap_or_else(|| json!({"alive": false, "spawned": 0, "restarts": 0}));
+            v["shell_version"] = json!(env!("CARGO_PKG_VERSION"));
+            v["python"] = shell.info.get().map(|i| i["python"].clone()).unwrap_or(Value::Null);
+            v["program"] = shell.info.get().map(|i| i["program"].clone()).unwrap_or(Value::Null);
+            v["last_restart"] = json!(*shell.last_restart.lock().unwrap());
+            v["resident_reason"] = json!(*shell.resident_reason.lock().unwrap());
+            Some(json_reply(&v))
+        }
         ("GET", "/__desktop/info") => {
             let w = app.get_webview_window("main");
             Some(json_reply(&json!({
@@ -467,10 +501,11 @@ fn start(app: AppHandle, shell: Arc<Shell>) {
     let sup = Arc::new(Supervisor::new(py.clone(), program.clone(), local.join("logs")));
     // 中身を起こすたびに残す。2回目からは起こし直し（見張りが起こしても、画面の問い合わせが起こしても同じ）
     {
-        let app = app.clone();
+        let (app, shell) = (app.clone(), shell.clone());
         sup.on_spawn(Box::new(move |ready, n| {
             rlog(&format!("BACKEND_READY version={} pid={} elapsed={}s spawn={n}", ready["version"], ready["pid"], ready["elapsed"]));
             if n > 1 {
+                *shell.last_restart.lock().unwrap() = utc_now();
                 rlog(&format!("BACKEND_RESTARTED spawn={n}"));
                 notify(&app, TITLE, "アプリの中身（Python）が止まったため、起こし直しました。");
             }
@@ -480,7 +515,11 @@ fn start(app: AppHandle, shell: Arc<Shell>) {
         Ok(s) => s.ready.clone(),
         Err(e) if e.kind == "busy" => {
             shell.step(&app, "backend", "bad", "ほかの DataRelay が動いています");
-            return shell.fail(&app, "ブラウザ版（または別の DataRelay）が動いています", &format!("{}\n\nブラウザ版を終了するには、画面右上の「終了」か、通知領域のアイコンの「終了」を使ってください。", e.message));
+            return shell.fail(
+                &app,
+                "もう1つの DataRelay が動いています",
+                &format!("{}\n\n古い版のブラウザ版（start.vbs で起動するもの）なら、その画面右上の「終了」か、通知領域のアイコンの「終了」で終わらせてください。", e.message),
+            );
         }
         Err(e) => {
             shell.step(&app, "backend", "bad", "起動できません");
@@ -490,6 +529,7 @@ fn start(app: AppHandle, shell: Arc<Shell>) {
     let elapsed = ready["elapsed"].as_f64().unwrap_or(0.0);
     shell.step(&app, "backend", "ok", &format!("版 {} ・ {} bit ・ {:.1} 秒", ready["version"].as_str().unwrap_or("?"), ready["bits"], elapsed));
     let info = json!({"shell": "tauri", "shell_version": env!("CARGO_PKG_VERSION"), "program": program, "python": py.exe, "backend": ready, "local": local});
+    let _ = shell.info.set(info.clone());
     // 止まったらすぐ起こし直す（常駐中は問い合わせが来ないので、待っていると自動実行が止まったままになる）
     {
         let (app, shell) = (app.clone(), shell.clone());
@@ -507,18 +547,30 @@ fn start(app: AppHandle, shell: Arc<Shell>) {
     let r = Router { static_dir: program.join("static"), index_file, backend: sup, native: native(app.clone(), shell.clone(), info), saver: saver(app.clone(), shell.clone()) };
     let _ = shell.router.set(r);
     shell.step(&app, "open", "now", "画面を開いています…");
-    // 通知領域の文言を、いまの状態（実行中 3/5・待機中など）に合わせて更新する
+    // 見回り: 5 秒ごとに中身の知らせ（抽出の失敗・取り直しなど）を OS の通知へ出し、20 秒ごとに通知領域の文言
+    // （実行中 3/5・待機中など）を更新する。知らせは 1.95.0 までは Python が pywin32 のアイコンから出していた
     {
-        let shell = shell.clone();
-        std::thread::spawn(move || loop {
-            std::thread::sleep(Duration::from_secs(20));
-            if shell.quitting.load(Ordering::SeqCst) {
-                return;
-            }
-            if let Ok(v) = shell.ask_json("GET", "/api/residency", b"") {
-                let text = v["status_text"].as_str().unwrap_or("");
-                let resident = shell.resident_reason.lock().unwrap().clone();
-                shell.set_tooltip(&if resident.is_empty() { format!("{TITLE}（{text}）") } else { format!("{TITLE}（常駐中: {text}）") });
+        let (app, shell) = (app.clone(), shell.clone());
+        std::thread::spawn(move || {
+            let mut seen = std::collections::HashSet::new();
+            for tick in 1u64.. {
+                std::thread::sleep(Duration::from_secs(5));
+                if shell.quitting.load(Ordering::SeqCst) {
+                    return;
+                }
+                if let Ok(v) = shell.ask_json("GET", "/api/alerts", b"") {
+                    for (title, detail) in fresh_alerts(&mut seen, &v) {
+                        rlog(&format!("ALERT_NOTIFY title={title}"));
+                        notify(&app, &title, &detail);
+                    }
+                }
+                if tick % 4 == 0 {
+                    if let Ok(v) = shell.ask_json("GET", "/api/residency", b"") {
+                        let text = v["status_text"].as_str().unwrap_or("");
+                        let resident = shell.resident_reason.lock().unwrap().clone();
+                        shell.set_tooltip(&if resident.is_empty() { format!("{TITLE}（{text}）") } else { format!("{TITLE}（常駐中: {text}）") });
+                    }
+                }
             }
         });
     }
@@ -604,6 +656,24 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
+    use super::fresh_alerts;
+    use serde_json::json;
+
+    #[test]
+    fn alerts_are_notified_once_and_info_is_not() {
+        let mut seen = std::collections::HashSet::new();
+        let v = json!({"alerts": [
+            {"id": "a", "kind": "error", "title": "抽出に失敗", "detail": "対象 X"},
+            {"id": "b", "kind": "info", "title": "完了", "detail": ""},
+            {"id": "c", "kind": "warn", "title": "取り直し待ち", "detail": ""}
+        ]});
+        assert_eq!(fresh_alerts(&mut seen, &v), vec![("抽出に失敗".into(), "対象 X".into()), ("取り直し待ち".into(), "取り直し待ち".into())]);
+        assert!(fresh_alerts(&mut seen, &v).is_empty(), "同じ知らせは2回出さない");
+        let v2 = json!({"alerts": [{"id": "c", "kind": "warn", "title": "取り直し待ち"}, {"id": "d", "kind": "error", "title": "公開に失敗", "detail": "共有が使用中"}]});
+        assert_eq!(fresh_alerts(&mut seen, &v2), vec![("公開に失敗".into(), "共有が使用中".into())]);
+        assert!(!seen.contains("a"), "読んで消えた知らせは覚え続けない");
+    }
+
     #[test]
     fn utc_now_looks_like_a_date() {
         let t = super::utc_now();
