@@ -1,6 +1,6 @@
 [package]
 name = "datarelay-desktop"
-version = "1.96.0"
+version = "1.97.0"
 description = "DataRelay デスクトップ版（Tauri の窓＋Python の中身・ポートなし）"
 edition = "2021"
 rust-version = "1.90"

@@ -157,6 +157,23 @@ DataRelay\
 - 窓の記録は `%LOCALAPPDATA%\DataRelay\logs\desktop.log`、中身の記録は `app.log` です。
 - 役割の分け方・確かめ方・まだ確かめていないこと（社内の PC で署名の無い exe が止められないか など）は [migration/FEASIBILITY.md](migration/FEASIBILITY.md) にあります。
 
+### exe だけを手元に置く（共有の exe が止められるとき・共有からの起動が遅いとき）
+
+共有フォルダー（BOX）上の `DataRelay.exe` が社内の設定（SmartScreen・AppLocker）で止められるときは、exe だけを手元に置き、
+アプリの中身は共有から読む形にできます。
+
+1. 共有のアプリのフォルダーにある **`install_local.cmd`** を1回ダブルクリックします。
+2. exe が `%LOCALAPPDATA%\DataRelay\bin\DataRelay.exe` に写り、隣の `DataRelay.program.txt` に共有のアプリのフォルダーが書かれます。
+   デスクトップとスタートメニューに「DataRelay」ができ、そのまま起動します。
+3. 次からはそのショートカットから起動します。
+
+- **中身は共有から読みます**。共有を新しい版に置き換えれば、全員に届きます（これまでどおり）。
+- **手元の exe は自分で入れ替わります**。起動のたびに共有のアプリの版（`lib/navi_version.py`）と比べ、食い違っていれば共有の `DataRelay.exe` で自分を入れ替えて起動し直します（Windows の通知で知らせます）。共有を前の版に戻したときも、共有に合わせます。
+- 共有に届かない（BOX Drive が止まっている・ネットワークにつながっていない）ときは、起動画面にその場所と確かめることを出します。
+- どちらの形で動いているかは、ログ画面の「アプリ監視」の「exe の置き場」で分かります。
+- やめるときは `install_local.cmd /remove`（手元の exe とショートカットだけを消します。アプリの中身・設定・記録は消しません）。
+- **分からないこと**: 社内の PC で `%LOCALAPPDATA%` の下の exe が許されるかは、社内の設定しだいです（AppLocker の既定の決まりでは、利用者のフォルダーの exe も止められることがあります）。実機で確かめる必要があります。
+
 ### 3. 対象を登録する
 
 「対象ファイル」画面から登録します。設定の実体は
@@ -244,6 +261,7 @@ PC ごとに変わる場所は `<PC>` という印で持ち、使うときに実
 ```
 DataRelay/
 ├─ DataRelay.exe             入口（desktop/ から作る。リポジトリには入れず、Release で配る）
+├─ install_local.cmd         exe だけを手元に置く（中身は共有から読む。1.97.0）
 ├─ sidecar.py                窓口（標準入出力で app.py を呼ぶ。ポートを開かない）
 ├─ app.py                    アプリ本体（Flask・設定・ジョブ・予定・抽出）
 ├─ templates/ static/        画面（index.html / app.css / app.js）

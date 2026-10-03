@@ -1678,6 +1678,11 @@ function paintMonitor(st,latency){
  $('#mon-latency').textContent=latency==null?'—':`${latency}ms`;
  $('#mon-restarts').textContent=`${st?st.restarts||0:0}回`;
  $('#mon-last-restart').textContent=monTime(st&&st.last_restart);
+ // exe の置き場: 手元（共有のアプリの中身を読む）か、アプリのフォルダーの中か。問い合わせのとき最初に聞くことなので、言葉で出す
+ let place={local:'手元（共有の中身を読む）',beside:'アプリのフォルダー',env:'指定の場所'}[st&&st.place]||'—';
+ if(st&&st.updated_from)place+=`・${st.updated_from} から入れ替え済み`;
+ $('#mon-place').textContent=place;
+ $('#mon-place').title=st?[st.exe,st.pointer&&`指し先: ${st.pointer}`].filter(Boolean).join('\n'):'';
  $('#mon-checked').textContent=new Date().toLocaleTimeString('ja-JP',{hour12:false});
  $('#mon-detail').textContent=alive
   ?(st.resident_reason?`通知領域に常駐しています（${st.resident_reason}）。`:'窓が中身を見張っています。止まったときは自動で起こし直します。')

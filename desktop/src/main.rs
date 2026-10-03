@@ -16,6 +16,7 @@ mod frame;
 mod locate;
 mod router;
 mod sidecar;
+mod update;
 
 use router::{error_reply, Backend, Native, Router, Saver};
 use serde_json::{json, Value};
@@ -363,6 +364,9 @@ fn native(app: AppHandle, shell: Arc<Shell>, info: Value) -> Native {
             v["python"] = shell.info.get().map(|i| i["python"].clone()).unwrap_or(Value::Null);
             v["program"] = shell.info.get().map(|i| i["program"].clone()).unwrap_or(Value::Null);
             v["last_restart"] = json!(*shell.last_restart.lock().unwrap());
+            for k in ["exe", "place", "pointer", "updated_from"] {
+                v[k] = shell.info.get().map(|i| i[k].clone()).unwrap_or(Value::Null);
+            }
             v["resident_reason"] = json!(*shell.resident_reason.lock().unwrap());
             Some(json_reply(&v))
         }
@@ -489,7 +493,7 @@ fn find_python(app: &AppHandle, shell: &Shell, program: &Path, local: &Path) -> 
 
 /// 中身（Python）を探して起こし、準備できたら画面へ切り替える（裏の糸で。窓とアイコンは先に出しておく）。
 fn start(app: AppHandle, shell: Arc<Shell>) {
-    let program = match locate::program_dir() {
+    let (program, place) = match locate::program_dir() {
         Ok(p) => p,
         Err(e) => return shell.fail(&app, "アプリのフォルダが見つかりません", &e),
     };
@@ -497,7 +501,11 @@ fn start(app: AppHandle, shell: Arc<Shell>) {
     let Some(py) = find_python(&app, &shell, &program, &local) else { return };
     shell.step(&app, "python", "ok", &py.exe.display().to_string());
     shell.step(&app, "backend", "now", "Python でアプリの中身を読み込んでいます…");
-    rlog(&format!("START program={} python={}", program.display(), py.exe.display()));
+    let pointer = match &place {
+        locate::Place::Local { pointer } => pointer.display().to_string(),
+        _ => String::new(),
+    };
+    rlog(&format!("START program={} place={} pointer={pointer} python={}", program.display(), place.label(), py.exe.display()));
     let sup = Arc::new(Supervisor::new(py.clone(), program.clone(), local.join("logs")));
     // 中身を起こすたびに残す。2回目からは起こし直し（見張りが起こしても、画面の問い合わせが起こしても同じ）
     {
@@ -528,7 +536,13 @@ fn start(app: AppHandle, shell: Arc<Shell>) {
     };
     let elapsed = ready["elapsed"].as_f64().unwrap_or(0.0);
     shell.step(&app, "backend", "ok", &format!("版 {} ・ {} bit ・ {:.1} 秒", ready["version"].as_str().unwrap_or("?"), ready["bits"], elapsed));
-    let info = json!({"shell": "tauri", "shell_version": env!("CARGO_PKG_VERSION"), "program": program, "python": py.exe, "backend": ready, "local": local});
+    let exe = std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_default();
+    let updated_from = std::env::var("DATARELAY_UPDATED").unwrap_or_default();
+    let info = json!({"shell": "tauri", "shell_version": env!("CARGO_PKG_VERSION"), "program": program, "python": py.exe, "backend": ready, "local": local,
+                      "exe": exe, "place": place.label(), "pointer": pointer, "updated_from": updated_from});
+    if !updated_from.is_empty() {
+        notify(&app, TITLE, &format!("手元の DataRelay.exe を、共有のアプリに合わせて {updated_from} から {} に入れ替えました。", env!("CARGO_PKG_VERSION")));
+    }
     let _ = shell.info.set(info.clone());
     // 止まったらすぐ起こし直す（常駐中は問い合わせが来ないので、待っていると自動実行が止まったままになる）
     {
@@ -579,7 +593,54 @@ fn start(app: AppHandle, shell: Arc<Shell>) {
     }
 }
 
+/// exe を手元に置いた形のとき、共有のアプリの版と食い違っていれば共有の exe で自分を入れ替えて起こし直す（update.rs）。
+/// 起こし直したら Some(終了コード)。窓を作る前に呼ぶ（1つだけ起動の仕組みに登録する前なので、新しい exe とぶつからない）。
+fn self_update() -> Option<i32> {
+    let exe = std::env::current_exe().ok()?;
+    let (program, place) = locate::program_dir().ok()?;
+    if !matches!(place, locate::Place::Local { .. }) {
+        return None;
+    }
+    update::cleanup(&exe);
+    if std::env::var_os("DATARELAY_UPDATED").is_some() {
+        return None; // 入れ替えたあとの起動。もう一度は入れ替えない（版が食い違う置き方でも回り続けない）
+    }
+    let selftest = std::env::var_os("DATARELAY_SELFTEST").is_some();
+    // 自己診断だけ: 古い版のふりをする・写す元を決める（入れ替えの道を本物の exe で通すため）
+    let own = std::env::var("DATARELAY_SELFTEST_PRETEND_VERSION").ok().filter(|_| selftest).unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
+    let source = std::env::var_os("DATARELAY_SELFTEST_UPDATE_SOURCE")
+        .filter(|_| selftest)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| program.join(exe.file_name().unwrap_or_default()));
+    let shared = update::program_version(&program);
+    match update::decide(&own, shared.as_deref(), source.is_file()) {
+        update::Decision::Keep => None,
+        update::Decision::NoSource => {
+            rlog(&format!("EXE_UPDATE_SKIPPED own={own} shared={} detail=共有に exe がありません: {}", shared.unwrap_or_default(), source.display()));
+            None
+        }
+        update::Decision::Update => {
+            let shared = shared.unwrap_or_default();
+            if let Err(e) = update::swap(&exe, &source) {
+                rlog(&format!("EXE_UPDATE_FAILED own={own} shared={shared} error={e}"));
+                return None; // 入れ替えられなくても、いまの exe で動く
+            }
+            rlog(&format!("EXE_UPDATED from={own} to={shared} source={}", source.display()));
+            match std::process::Command::new(&exe).args(std::env::args_os().skip(1)).env("DATARELAY_UPDATED", &own).spawn() {
+                Ok(_) => Some(0),
+                Err(e) => {
+                    rlog(&format!("EXE_RELAUNCH_FAILED error={e}"));
+                    None
+                }
+            }
+        }
+    }
+}
+
 fn main() {
+    if let Some(code) = self_update() {
+        std::process::exit(code);
+    }
     let shell: Arc<Shell> = Arc::default();
     let (proto, close_shell) = (shell.clone(), shell.clone());
 

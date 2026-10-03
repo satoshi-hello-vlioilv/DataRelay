@@ -45,6 +45,7 @@
     r = await fetch('/api/desktop-status');
     const mon = await r.json();
     ok('窓が中身の様子を答える（アプリ監視）', by(r) === 'shell' && mon.alive === true && mon.backend && mon.backend.pid === info.info.backend.pid, `${by(r)} alive=${mon.alive} pid=${mon.backend && mon.backend.pid}`);
+    ok('exe の置き場が分かる（アプリ監視）', ['local', 'beside', 'env'].includes(mon.place) && typeof mon.exe === 'string' && mon.exe.length > 0, `place=${mon.place} updated_from=${mon.updated_from || ''} exe=${mon.exe}`);
     let painted = '';
     for (let i = 0; i < 40 && painted !== '正常'; i++) { await sleep(250); painted = (document.getElementById('mon-state') || {}).textContent || ''; }
     ok('画面の監視欄が「正常」と出す', painted === '正常' && (document.getElementById('mon-pid') || {}).textContent === String(info.info.backend.pid), `${painted} pid=${(document.getElementById('mon-pid') || {}).textContent}`);
