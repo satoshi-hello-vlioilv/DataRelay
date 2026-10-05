@@ -3,6 +3,7 @@
 //!   - 窓そのものの操作      … Rust（終了・ファイル選択・フォルダーを開く・自己診断。main.rs が native として渡す）
 //!   - それ以外（画面・API） … Python（サイドカー）へそのまま渡す。答えはいまと同じ
 //!   - Python の答えが「保存してください」（Content-Disposition: attachment）なら、窓の保存ダイアログで受ける
+//!
 //! Defect-Pitch-Analyzer の desktop/src/router.rs（版 2.0.0）を土台に、ダウンロードの受け止めを足した。
 //!
 //! 画面の JS は fetch("/api/...") のまま（同じ置き場への問い合わせ）で、ポートも CORS も要らない。
@@ -104,11 +105,9 @@ impl<B: Backend> Router<B> {
         let disp = reply.headers.iter().find(|(k, _)| k.eq_ignore_ascii_case("content-disposition")).map(|(_, v)| v.clone());
         let Some(name) = disp.as_deref().and_then(attachment_name) else { return reply };
         match (self.saver)(&name, &reply.body) {
-            Ok(Some(path)) => Reply {
-                status: 204,
-                headers: vec![("X-DR-Saved".into(), percent_encode(&path.to_string_lossy()))],
-                body: Vec::new(),
-            },
+            Ok(Some(path)) => {
+                Reply { status: 204, headers: vec![("X-DR-Saved".into(), percent_encode(&path.to_string_lossy()))], body: Vec::new() }
+            }
             Ok(None) => Reply { status: 204, headers: vec![("X-DR-Saved".into(), String::new())], body: Vec::new() },
             Err(e) => error_reply(500, "save_failed", &format!("保存できませんでした: {e}")),
         }
@@ -296,7 +295,10 @@ mod tests {
                 status: 200,
                 headers: vec![
                     ("Content-Type".into(), "application/zip".into()),
-                    ("Content-Disposition".into(), "attachment; filename=DataRelay.zip; filename*=UTF-8''DataRelay_%E4%B8%80%E5%BC%8F.zip".into()),
+                    (
+                        "Content-Disposition".into(),
+                        "attachment; filename=DataRelay.zip; filename*=UTF-8''DataRelay_%E4%B8%80%E5%BC%8F.zip".into(),
+                    ),
                 ],
                 body: vec![1, 2, 3],
             }

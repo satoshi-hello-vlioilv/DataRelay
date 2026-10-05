@@ -39,7 +39,11 @@ impl Place {
 pub fn program_dir() -> Result<(PathBuf, Place), String> {
     if let Some(p) = env::var_os("DATARELAY_PROGRAM") {
         let p = PathBuf::from(p);
-        return if is_program(&p) { Ok((p, Place::Env)) } else { Err(format!("DATARELAY_PROGRAM に app.py と sidecar.py がありません: {}", p.display())) };
+        return if is_program(&p) {
+            Ok((p, Place::Env))
+        } else {
+            Err(format!("DATARELAY_PROGRAM に app.py と sidecar.py がありません: {}", p.display()))
+        };
     }
     let exe = env::current_exe().map_err(|e| e.to_string())?;
     let pointer = exe.with_file_name(POINTER_FILE);
@@ -69,7 +73,8 @@ pub fn program_dir() -> Result<(PathBuf, Place), String> {
 pub fn read_pointer(file: &Path) -> Result<Option<PathBuf>, String> {
     let Ok(bytes) = std::fs::read(file) else { return Ok(None) };
     let bytes = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(&bytes);
-    let text = std::str::from_utf8(bytes).map_err(|_| format!("{} が UTF-8 で書かれていません。install_local.cmd をもう一度実行してください。", file.display()))?;
+    let text = std::str::from_utf8(bytes)
+        .map_err(|_| format!("{} が UTF-8 で書かれていません。install_local.cmd をもう一度実行してください。", file.display()))?;
     text.lines()
         .map(|l| l.trim().trim_matches('"').trim())
         .find(|l| !l.is_empty() && !l.starts_with('#'))
@@ -113,6 +118,7 @@ fn plain(exe: PathBuf) -> Python {
 ///   1. DATARELAY_PYTHON
 ///   2. start.vbs と同じ順: py -3 → python
 ///   3. 標準の入れ場所（新しい版から）
+///
 /// pythonw は使わない（標準入出力が無い前提で動くため。窓は CREATE_NO_WINDOW で出さない）。
 pub fn python_candidates() -> Vec<Python> {
     let mut out = Vec::new();
@@ -127,9 +133,12 @@ pub fn python_candidates() -> Vec<Python> {
     out.push(plain(PathBuf::from(if cfg!(windows) { "python" } else { "python3" })));
     if cfg!(windows) {
         let mut installed = Vec::new();
-        for root in [env::var_os("LOCALAPPDATA").map(|p| PathBuf::from(p).join("Programs").join("Python")), env::var_os("ProgramFiles").map(PathBuf::from)]
-            .into_iter()
-            .flatten()
+        for root in [
+            env::var_os("LOCALAPPDATA").map(|p| PathBuf::from(p).join("Programs").join("Python")),
+            env::var_os("ProgramFiles").map(PathBuf::from),
+        ]
+        .into_iter()
+        .flatten()
         {
             if let Ok(rd) = std::fs::read_dir(&root) {
                 for e in rd.flatten() {
@@ -140,7 +149,7 @@ pub fn python_candidates() -> Vec<Python> {
                 }
             }
         }
-        installed.sort_by(|a, b| b.0.cmp(&a.0));
+        installed.sort_by_key(|x| std::cmp::Reverse(x.0)); // 新しい版から
         out.extend(installed.into_iter().map(|(_, p)| plain(p)));
     }
     out
@@ -168,7 +177,11 @@ pub struct NoPython {
 
 impl NoPython {
     pub fn title(&self) -> &'static str {
-        if self.lacking { "Python に必要な部品（Flask）が入っていません" } else { "Python が見つかりません" }
+        if self.lacking {
+            "Python に必要な部品（Flask）が入っていません"
+        } else {
+            "Python が見つかりません"
+        }
     }
 }
 
