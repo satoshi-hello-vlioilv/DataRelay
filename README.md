@@ -110,7 +110,7 @@ FUJITSU Interstage Navigator（SymfoNavi）からデータを取り出し、
   RNE を使う場合のみ、加えて次のどちらかが必要です。
 
   - **Navigator API（既定）** … `SymNaviA.dll`。`C:\NAVIAP` 配下の **Python と bit 数が一致する** DLL を最優先で探します。見つからないときだけ、同梱の `Config\NAVIAP` を探します。
-  - **DDE 互換方式** … `SymNavi.exe`（既定 `C:\NAVICL\bin\SymNavi.exe`）と `symnavim.def`
+  - **DDE 互換方式** … `SymNavi.exe`（既定 `C:\NAVICL\bin\SymNavi.exe`）。`symnavim.def` は SymfoNavi 側のもの（アプリは読みません）
 
 固定長テキストと結合だけを使うなら、Navigator への接続は要りません（Flask があれば動きます）。
 
@@ -118,20 +118,19 @@ FUJITSU Interstage Navigator（SymfoNavi）からデータを取り出し、
 
 ## はじめかた
 
-### 1. 接続情報を用意する
+### 1. 接続情報は、初めて開いたときに画面から登録する（1.99.0）
 
-`config/symnavim.conf.sample` を同じフォルダーへ `symnavim.conf` として複製し、実際の値を書きます。
+接続先・利用者ID・パスワードは、ファイルに書いて共有へ置くのではなく、**各PCの Windows の資格情報マネージャー**に置きます
+（汎用資格情報「`DataRelay/Navigator`」。Windows がそのPCのその利用者だけが読める形に暗号化して持ちます）。
 
-```ini
-[Connect_例]
-SymNaviServer=＜Navigator Server 名＞
-SymNaviUSERID=＜利用者ID＞
-SymNaviPASSWD=＜パスワード＞
-CatalogDBMSList=SYMFOWARE/RDB
-```
-
-`symnavim.conf` は **リポジトリで追跡しません**（`.gitignore`）。認証情報は PC・環境ごとに違うためです。
-文字コードは CP932 / UTF-8 のどちらでも読めます。
+- 初めて開いたとき、未登録なら「接続情報を登録」と聞きます。入れて **このPCに保存** を押すだけです。
+  固定長テキスト・結合だけを使うなら **Navigator は使わない** を押せば、そのPCでは聞きません。
+- あとから見る・変える・消すのは **共通設定 → 接続とパス →「Navigator の接続情報」** です。パスワードは画面に出ません。
+- **これまでの `symnavim.conf` があるPC**: 登録を聞くときに「この内容で取り込む」と出ます（打ち直しは要りません）。
+  取り込むまでは、これまでどおり `symnavim.conf` から読むので、配った日に抽出が止まることはありません。
+  全PCの取り込みが済んだら、共有の `symnavim.conf`（平文のパスワード入り）は消してください（事前診断が「注意」で知らせます）。
+- 抽出のワーカーへもパスワードをファイルで渡しません（ワーカーが同じ置き場から自分で読みます）。
+- `symnavim.def`（DDE 互換方式）はアプリが中身を読まず、SymfoNavi へ場所も渡していません。DDE で指定してあれば実行前に「在ること」だけを確かめ、空なら確かめません（同梱は要りません）。
 
 ### 2. 起動する
 
@@ -171,7 +170,7 @@ DataRelay\
 - **前の版へ戻す**ときは、戻したい版の **この版へ戻す** を押すだけです（置いた版は消えません）。
 - **開いたままの PC**（自動実行で常駐している PC）には、新しい版が配られると画面の上の帯と Windows の通知で知らせます。帯の **開き直す** で、後始末をしてから新しい版で開き直します（実行中・実行待ちがあるあいだは押せません）。
 - **各 PC の版**（古い版のまま・しばらく名乗っていない PC）も「配布と更新」で見られます。
-- 写した PC では、置き場に届かない日もいまの版のまま開けます（3 秒で確かめるのをやめます）。写したファイルが置き場の目録と1つでも合わなければ何も入れ替えず、途中で失敗したときは元に戻します。
+- 写した PC では、置き場に届かない日もいまの版のまま開けます（3 秒で確かめるのをやめます）。置き場に届かないあいだは、画面の左上の版の隣に控えめな「更新 休止中」の印が出ます（押すと「配布と更新」を開きます）。ふだんどおり使え、届くようになれば消えます。写したファイルが置き場の目録と1つでも合わなければ何も入れ替えず、途中で失敗したときは元に戻します。
 
 ### exe だけを手元に置く（共有の exe が止められるとき・共有からの起動が遅いとき）
 
@@ -202,11 +201,9 @@ DataRelay\
 
 | ファイル | 中身 | 追跡 |
 |---|---|---|
-| `config/symnavim.conf` | Navigator への接続先・認証情報 | しない |
 | `Config/app_settings.sqlite3` | 登録した対象・予定・共通設定・実績 | しない |
-| `config/symnavim.conf.sample` | 接続設定のひな形 | する |
+| `config/symnavim.conf` | 1.98.0 までの接続情報（平文）。いまは各PCへの取り込み元としてだけ読みます | しない |
 | `config/app_settings.template.sqlite3` | 設定 DB の初期値 | する |
-| `config/config.json` | 旧形式の設定（移行元として読みます） | する |
 | `config/requirements.txt` | 依存パッケージ | する |
 | `config/rne/` | RNE ファイルの既定の置き場所 | する |
 | `config/NAVIAP/` | `SymNaviA.dll`（ローカルに無いときのフォールバック） | する |
@@ -321,6 +318,7 @@ DataRelay/
 | `navi_book.py` | マスタを EXCEL で出し入れする |
 | `navi_bundle.py` | 登録内容の持ち出し・持ち込み（ZIP／部分） |
 | `navi_paths.py` | PC ごとに変わる場所を設定に固定しない |
+| `navi_secret.py` | Navigator への接続情報を各PCの資格情報マネージャーに置く・symnavim.conf の読み方（1.99.0） |
 | `navi_log.py` | ログの機構（出す・省略する・末尾だけ読む・世代を押し出す） |
 | `navi_diag.py` | 事前診断（読むだけ。実行中の状態を書き換えません） |
 | `navi_version.py` / `navi_changelog.py` | 版の定数 ／ 更新履歴と同梱仕様書 |
@@ -356,7 +354,7 @@ DataRelay.exe（窓・Rust）  … 画面・静的ファイル・ダイアログ
 
 ```
 %LOCALAPPDATA%\DataRelay\
-├─ runtime\    中身の錠（app.lock）・API診断キャッシュ
+├─ runtime\    中身の錠（app.lock）・API診断キャッシュ・「Navigator は使わない」と答えた控え
 ├─ cache\      設定DBの手元の写し
 ├─ logs\       desktop.log（窓）・app.log（中身）・crash.log・sidecar_stderr.log・pip_install.log
 ├─ pycache\    Pythonバイトコードキャッシュ
@@ -383,6 +381,7 @@ DataRelay.exe（窓・Rust）  … 画面・静的ファイル・ダイアログ
 | 起動しない | 起動画面に出る理由。`%LOCALAPPDATA%\DataRelay\logs\desktop.log`・`sidecar_stderr.log`・`pip_install.log` |
 | 突然落ちた | `%LOCALAPPDATA%\DataRelay\logs\crash.log`（DLL 由来の異常終了はここにだけ残ります） |
 | 「もう1つの DataRelay が動いています」 | 古い版のブラウザ版なら、その画面の「終了」か通知領域のアイコンの「終了」で終わらせてから起動し直します |
+| 「Navigator の接続情報が登録されていません」 | 「共通設定」→「接続とパス」→ **Navigator の接続情報** で登録（または symnavim.conf から取り込み） |
 | 設定した場所が使えない | 「ログ・診断」→ **事前診断** |
 | DLL が読めない | 「共通設定」→ **抽出方式** →「いま確認する」 |
 | 出力が更新されない | 公開の保留（`*.pending_*`）が残っていないか。次の実行のはじめに適用されます |

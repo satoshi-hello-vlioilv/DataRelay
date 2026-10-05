@@ -69,7 +69,8 @@ def place_locally(exe,work,checks):
 def run(exe,wrap,mode,work):
  local=work/'local';result=work/'result.json';checks=[]
  env=dict(os.environ,DATARELAY_PROGRAM=str(ROOT),NAVI_LOCAL_ROOT=str(local),NAVI_CONFIG_DIR=str(work/'config'),
-          DATARELAY_SELFTEST=str(result),DATARELAY_SELFTEST_MODE='' if mode in ('full','local','update') else mode)
+          DATARELAY_SELFTEST=str(result),DATARELAY_SELFTEST_MODE='' if mode in ('full','local','update') else mode,
+          NAVI_SECRET_FILE=str(local/'secrets'/'navigator.json'))   # 手元の PC の資格情報マネージャーを上書きしない
  env.pop('DATARELAY_NO_BOOT',None)
  if mode in ('local','update'):
   # アプリのフォルダーは exe の隣の DataRelay.program.txt で知る（DATARELAY_PROGRAM は使わない）
@@ -163,7 +164,7 @@ def run_release(exe,wrap,work):
   result=work/f'result-{name}.json'
   start=dlog_path.stat().st_size if dlog_path.exists() else 0
   env=dict(os.environ,NAVI_LOCAL_ROOT=str(local),DATARELAY_INSTALL_ROOT=str(root),DATARELAY_SELFTEST=str(result),
-           DATARELAY_SELFTEST_MODE=mode)
+           DATARELAY_SELFTEST_MODE=mode,NAVI_SECRET_FILE=str(local/'secrets'/'navigator.json'))
   for k in ('DATARELAY_PROGRAM','NAVI_CONFIG_DIR','NAVI_DATA_ROOT','DATARELAY_NO_BOOT','DATARELAY_UPDATE_FORCE'):env.pop(k,None)
   cmd=shlex.split(wrap)+[str(launch)] if wrap else [str(launch)]
   p=subprocess.Popen(cmd,env=env,cwd=str(launch.parent),stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)

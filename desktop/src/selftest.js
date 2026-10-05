@@ -84,6 +84,26 @@
     for (let i = 0; i < 40 && painted !== '正常'; i++) { await sleep(250); painted = (document.getElementById('mon-state') || {}).textContent || ''; }
     ok('画面の監視欄が「正常」と出す', painted === '正常' && (document.getElementById('mon-pid') || {}).textContent === String(info.info.backend.pid), `${painted} pid=${(document.getElementById('mon-pid') || {}).textContent}`);
 
+    // Navigator の接続情報（1.99.0）: 新しい置き場では未登録なので、初めて開いたときに登録を聞く。
+    // 画面から保存すると「登録済み」と描き、パスワードはどの答えにも出ない。確かめたら消して元に戻す
+    let asked = false;
+    for (let i = 0; i < 40 && !asked; i++) { await sleep(250); asked = !!(document.getElementById('login-dialog') || {}).open; }
+    ok('初めて開いたとき、接続情報の登録を聞く', asked, asked ? 'ダイアログが開いた' : '開かなかった');
+    document.getElementById('login-server').value = 'SELFTEST-SV';
+    document.getElementById('login-user').value = '自己診断';
+    document.getElementById('login-password').value = 'pw-selftest-秘密';
+    document.getElementById('login-save').click();
+    let card = '';
+    for (let i = 0; i < 40 && card !== 'このPCに登録済み'; i++) { await sleep(250); card = (document.getElementById('login-state') || {}).textContent || ''; }
+    r = await fetch('/api/login');
+    const loginRaw = await r.text();
+    const login = JSON.parse(loginRaw);
+    ok('画面から保存すると、このPCに登録済みと描く', card === 'このPCに登録済み' && login.saved && login.user === '自己診断' && !document.getElementById('login-dialog').open, `${card} ${login.server} ${login.where}`);
+    ok('パスワードは画面への答えに出ない', !loginRaw.includes('pw-selftest') && login.has_password === true, `${loginRaw.length}B`);
+    await fetch('/api/login/delete', { method: 'POST' });
+    // 更新の休止の印（1.99.0）: 作る途中の木では出さない
+    ok('作る途中の木では「更新 休止中」の印を出さない', (document.getElementById('update-badge') || {}).hidden === true, String((document.getElementById('update-badge') || {}).hidden));
+
     // 配布と更新（1.98.0）: 作る途中の木では置き場＝アプリのフォルダー。配る版は無く、名乗らない
     r = await fetch('/api/release/status');
     const rel = await r.json();

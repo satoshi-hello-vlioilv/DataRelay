@@ -1244,7 +1244,7 @@ def resolve_axis_now(job,cfg,rne_path,parts,prefer='',hint=None,line='',choice=N
  want=str(ch.get('name') or '').strip() if mode=='name' else ''
  pinned=dict(hint) if (want and hint and str(hint.get('name') or '').strip()==want) else None
  try:
-  user,pw,server,_=creds(resolve_path(cfg['symnavim_conf']))
+  user,pw,server,_=navi_login(cfg)
   if pinned is None:
    ins=run_inspect_worker(dict(job,_read_names=True),cfg,user,pw,server,['axes'],
                           timeout=int(cfg['settings'].get('split_trial_timeout_seconds',1800) or 1800))
@@ -2323,33 +2323,57 @@ def dde_staging_folder():
   except Exception:continue
  raise RuntimeError(f'{APP_NAME}用のローカル一時フォルダーを作成できません')
 
-def api_data_source_profiles(path):
- # 公式APIサンプルにある追加データソース接続を、明示されたCONFセクションだけから構成する。
- cp=configparser.ConfigParser(interpolation=None); cp.optionxform=str.lower
- for enc in ('cp932','utf-8-sig','utf-8'):
-  try:cp.read(path,encoding=enc);break
-  except UnicodeDecodeError:continue
- profiles=[]
- supported={'apioracle':'oracle','apisqlserver':'sqlserver','apirda':'rda','apipostgres':'postgres','apiresource':'resource','apiresourcenoauth':'noauth'}
- for section in cp.sections():
-  compact=''.join(ch for ch in section.lower() if ch.isalnum())
-  kind=supported.get(compact)
-  if not kind:continue
-  d={k.lower():v.strip() for k,v in cp.items(section)}
-  enabled=str(d.get('enabled','yes')).lower() not in ('0','no','false','off')
-  if not enabled:continue
-  profiles.append({'section':section,'kind':kind,'user':d.get('user',d.get('userid','')),'password':d.get('password',d.get('passwd','')),'server':d.get('server',''),'option':d.get('option',d.get('opt','')),'resource':d.get('resource',d.get('resourcename','')),'resource_kind':d.get('resource_kind',d.get('resourcekind','0'))})
+# ==== Navigator への接続情報（1.99.0・置き場と symnavim.conf の読み方は lib/navi_secret.py） ====
+# 出どころは2つ。このPCの置き場（Windows の資格情報マネージャー）を先に見て、まだ取り込んでいないPCだけ
+# 設定の symnavim.conf を読む（配った日に、取り込むまで抽出が止まらないように）。読み手はここだけ ――
+# 抽出・調査・影実行・ワーカーが別々に読むと、出どころの決め方がずれる。
+import navi_secret
+NAVI_VAULT=navi_secret.default_vault(LOCAL_ROOT)
+NO_LOGIN_MESSAGE='Navigator の接続情報が登録されていません。共通設定 →「接続とパス」の「Navigator の接続情報」で登録してください'
+def legacy_conf_path(cfg=None):
+ """設定の symnavim.conf の実体（在れば）。無い・未設定なら None。"""
+ try:raw=str((cfg if cfg is not None else load()).get('symnavim_conf') or '').strip()
+ except Exception:return None
+ if not raw:return None
+ p=resolve_path(raw)
+ return p if p.is_file() else None
+def navi_connection(cfg=None):
+ """(接続情報, 出どころ)。出どころは 'vault'（このPCの置き場）／'conf'（設定の symnavim.conf）／''（無い）。
+ 置き場が読めないとき（壊れている・権限）は symnavim.conf へ黙って落ちず、理由を上げる（どちらを使ったか分からなくなる）。"""
+ d=NAVI_VAULT.load()
+ if d:return d,'vault'
+ p=legacy_conf_path(cfg)
+ if p:return navi_secret.read_conf(p),'conf'
+ return None,''
+def navi_login(cfg=None):
+ """Navigator のセッションを開く (利用者ID, パスワード, サーバー, 出どころ)。"""
+ d,src=navi_connection(cfg)
+ if not d:raise ValueError(NO_LOGIN_MESSAGE)
+ return d['user'],d['password'],d['server'],src
+def login_needed(cfg):
+ """有効な RNE の対象があるか（固定長・結合だけなら Navigator へは接続しない）。"""
+ return any(j.get('enabled',True) and normalize_job_source(j.get('source'))=='rne' for j in cfg.get('jobs') or [])
+def login_state(cfg=None):
+ """画面「Navigator の接続情報」と事前診断が見る答え。パスワードは返さない。"""
+ cfg=cfg if cfg is not None else load()
+ out={'where':NAVI_VAULT.where,'vault':NAVI_VAULT.kind,'needed':login_needed(cfg),
+      'declined':navi_secret.declined(LOCAL_ROOT),'conf':None,'error':''}
+ try:out.update(navi_secret.public(NAVI_VAULT.load()))
+ except Exception as e:out.update(saved=False,error=f'このPCの置き場を読めません: {e}')
+ p=legacy_conf_path(cfg)
+ if p:
+  try:d=navi_secret.read_conf(p);out['conf']={'path':str(p),'ok':True,'server':d['server'],'user':d['user'],'section':d['section'],'profiles':len(d['profiles'])}
+  except Exception as e:out['conf']={'path':str(p),'ok':False,'error':str(e)}
+ out['source']='vault' if out.get('saved') else ('conf' if (out['conf'] or {}).get('ok') else '')
+ return out
+def data_source_profiles(cfg,user,pw):
+ """追加のデータソース接続（公式APIサンプルの ApiOracle など）。Oracle の指定が無ければ、
+ Navigator の認証を Oracle 接続へ1回だけ流用する（credential_source=navigator_session）。明示した指定を常に優先する。"""
+ d,_=navi_connection(cfg)
+ profiles=[dict(x) for x in ((d or {}).get('profiles') or [])]
+ if not any(x.get('kind')=='oracle' for x in profiles):
+  profiles.insert(0,{'section':'NavigatorCredentialFallback','kind':'oracle','user':user,'password':pw,'server':'','option':'','resource':'','resource_kind':'0','credential_source':'navigator_session'})
  return profiles
-def creds(path):
- cp=configparser.ConfigParser(interpolation=None); cp.optionxform=str.lower
- for enc in ('cp932','utf-8-sig','utf-8'):
-  try: cp.read(path,encoding=enc); break
-  except UnicodeDecodeError: continue
- if not cp.sections(): raise ValueError('symnavim.confを読み取れません')
- sec='Default' if cp.has_section('Default') else next((x for x in cp.sections() if x.lower().startswith('connect_')),cp.sections()[0])
- d={k.lower():v.strip() for k,v in cp.items(sec)}; a=(d.get('symnaviuserid',''),d.get('symnavipasswd',''),d.get('symnaviserver',''))
- if not all(a): raise ValueError(f'[{sec}]にSymNaviUSERID、SymNaviPASSWD、SymNaviServerが必要です')
- return *a,sec
 
 _wmi_warning_reported=False
 def symnavi_process_ids(root_pid):
@@ -3141,7 +3165,7 @@ def run_inspect_worker(job,cfg,user,pw,server,want,timeout=180):
  """RNEの読み取りを独立プロセスで行う。落ちても本体は生き残る。"""
  work=LOCAL_RUNTIME/('inspect_'+uuid.uuid4().hex[:8]);work.mkdir(parents=True,exist_ok=True)
  try:
-  payload={'job':job,'cfg':cfg,'user':user,'password':pw,'server':server,'inspect':{'want':want}}
+  payload={'job':job,'cfg':cfg,'user':user,'server':server,'inspect':{'want':want}}   # パスワードは書かない（ワーカーが置き場から読む）
   pp=work/'payload.json';pp.write_text(json.dumps(payload,ensure_ascii=False),encoding='utf-8')
   rp=work/'result.json'
   env=os.environ.copy();env['NAVI_WORKER_RESULT']=str(rp);env['NAVI_WORKER_LINE']='調査'
@@ -3359,10 +3383,7 @@ def process_split_part(j,cfg,user,pw,server,out_csv,drop_columns,part_label='',r
   step('接続')
   api=NavigatorApi(resolve_path(cfg.get('symnavi_exe','')),log,resolve_path(cfg.get('navigator_api_dll')) if cfg.get('navigator_api_dll') else None,base_dir=BASE,search_roots=dll_search_roots(cfg))
   api.open_session(user,pw,server)
-  profiles=api_data_source_profiles(resolve_path(cfg['symnavim_conf']))
-  if not any(p.get('kind')=='oracle' for p in profiles):
-   profiles.insert(0,{'section':'NavigatorCredentialFallback','kind':'oracle','user':user,'password':pw,'server':'','option':'','resource':'','resource_kind':'0'})
-  for profile in profiles:api.connect_data_source(profile)
+  for profile in data_source_profiles(cfg,user,pw):api.connect_data_source(profile)
   with chdir_lock:
    prev=os.getcwd()
    try:
@@ -3906,9 +3927,8 @@ def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,
   if intermediate is None:
    _dll_started=time.perf_counter();api_client=NavigatorApi(resolve_path(cfg['symnavi_exe']),log,resolve_path(cfg.get('navigator_api_dll')) if cfg.get('navigator_api_dll') else None,base_dir=BASE,search_roots=dll_search_roots(cfg));phase_profile_add('api_load_dll',time.perf_counter()-_dll_started)
    update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='API接続',percent=line_percent('session',0.4),detail='セッション接続',phase='session');session_started=time.perf_counter();session_elapsed=api_client.open_session(user,pw,server);phase_profile_add('api_open_session',session_elapsed);log.info('PARALLEL_API_SESSION line=%s job=%s dll=%s elapsed=%.2fs is_opened=1',line_name,j['name'],api_client.dll_path,session_elapsed)
-   profiles=api_data_source_profiles(resolve_path(cfg['symnavim_conf']))
-   if not any(p.get('kind')=='oracle' for p in profiles):
-    profiles.insert(0,{'section':'NavigatorCredentialFallback','kind':'oracle','user':user,'password':pw,'server':'','option':'','resource':'','resource_kind':'0','credential_source':'navigator_session'})
+   profiles=data_source_profiles(cfg,user,pw)
+   if profiles[0].get('credential_source')=='navigator_session':
     log.info('API Oracle接続設定未指定。Navigator認証を1回だけ流用 line=%s job=%s credential_source=navigator_session user_configured=%s password_configured=%s',line_name,j['name'],bool(user),bool(pw))
    for profile in profiles:
     source=profile.get('credential_source') or 'explicit_config'
@@ -4070,12 +4090,13 @@ def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=No
   if api_jobs:
    # 何が要るかの判断は path_setting_roles に1本化する。画面が「いまは不要」と出している
    # ものを実行時にだけ必須にすると、直しようのない停止になる（v1.60.0〜v1.66.1は
-   # symnavim.def が無いだけでAPI方式でも止まっていた）。
+   # symnavim.def が無いだけでAPI方式でも止まっていた）。接続情報は navi_login が出どころを決め、
+   # 無ければ「どこで登録するか」を添えて止める（symnavim.conf はもう必須のファイルではない・1.99.0）。
    _roles=path_setting_roles(cfg)
-   for k in ('symnavi_exe','symnavim_conf','symnavim_def'):
+   for k in ('symnavi_exe','symnavim_def'):
     if _roles.get(k,('required',''))[0]!='required':continue
     if not resolve_path(cfg[k]).is_file():raise FileNotFoundError(f'{PATH_SETTING_LABEL.get(k,k)}がありません: {cfg[k]}')
-   cred_started=time.perf_counter();user,pw,server,_=creds(resolve_path(cfg['symnavim_conf']));log.info('STARTUP_PHASE phase=credential_load elapsed=%.2fs',time.perf_counter()-cred_started);path_started=time.perf_counter();rne_root=resolve_path(cfg['rne_folder']);log.info('STARTUP_PHASE phase=path_prepare elapsed=%.2fs total=%.2fs',time.perf_counter()-path_started,time.perf_counter()-startup_started);log.info('共通一時保存先: %s',dde_work)
+   cred_started=time.perf_counter();user,pw,server,cred_source=navi_login(cfg);log.info('STARTUP_PHASE phase=credential_load elapsed=%.2fs source=%s',time.perf_counter()-cred_started,cred_source);path_started=time.perf_counter();rne_root=resolve_path(cfg['rne_folder']);log.info('STARTUP_PHASE phase=path_prepare elapsed=%.2fs total=%.2fs',time.perf_counter()-path_started,time.perf_counter()-startup_started);log.info('共通一時保存先: %s',dde_work)
    # rne_folder設定は使われていない場合がある（対象ごとのrne_pathが優先）。実際にRNEがある場所を測る。
    try:probe_rne_dir=resolve_rne_path(api_jobs[0],cfg).parent
    except Exception:probe_rne_dir=rne_root
@@ -4109,11 +4130,9 @@ def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=No
    from navigator_api import NavigatorApi
    progress('launch','Navigator APIを初期化しています',8); api_client=NavigatorApi(resolve_path(cfg['symnavi_exe']),log,resolve_path(cfg.get('navigator_api_dll')) if cfg.get('navigator_api_dll') else None,base_dir=BASE,search_roots=dll_search_roots(cfg)); set_status(symnavi_window='APIモード')
    progress('dde','Navigator ServerへAPI接続しています',15); t=time.perf_counter(); elapsed=api_client.open_session(user,pw,server); log.info('APIセッション接続完了 dll=%s elapsed=%.2fs is_opened=1',api_client.dll_path,elapsed)
-   profiles=api_data_source_profiles(resolve_path(cfg['symnavim_conf']))
-   # Oracle専用設定がなければ、Navigator認証情報をOracle接続へ1回だけ流用する。
-   # 明示的なApiOracle設定を常に優先し、ユーザー名・パスワードの実値はログへ出さない。
-   if not any(p.get('kind')=='oracle' for p in profiles):
-    profiles.insert(0,{'section':'NavigatorCredentialFallback','kind':'oracle','user':user,'password':pw,'server':'','option':'','resource':'','resource_kind':'0','credential_source':'navigator_session'})
+   profiles=data_source_profiles(cfg,user,pw)
+   # ユーザー名・パスワードの実値はログへ出さない。
+   if profiles[0].get('credential_source')=='navigator_session':
     log.info('API Oracle接続設定未指定。Navigator認証を1回だけ流用 credential_source=navigator_session user_configured=%s password_configured=%s',bool(user),bool(pw))
    for profile in profiles:
     source=profile.get('credential_source') or 'explicit_config'
@@ -4774,13 +4793,10 @@ def schedule_gap_minutes(job):
 def open_api_catalog(c,rne_path):
  """セッションを開き、データソースへ接続し、RNEを読み込んで (api, handle) を返す。呼び出し側で api.close() すること。"""
  from navigator_api import NavigatorApi
- user,pw,server,_=creds(resolve_path(c['symnavim_conf']))
+ user,pw,server,_=navi_login(c)
  api=NavigatorApi(resolve_path(c.get('symnavi_exe','')),log,resolve_path(c.get('navigator_api_dll')) if c.get('navigator_api_dll') else None,base_dir=BASE,search_roots=dll_search_roots(c))
  api.open_session(user,pw,server)
- profiles=api_data_source_profiles(resolve_path(c['symnavim_conf']))
- if not any(p.get('kind')=='oracle' for p in profiles):
-  profiles.insert(0,{'section':'NavigatorCredentialFallback','kind':'oracle','user':user,'password':pw,'server':'','option':'','resource':'','resource_kind':'0'})
- for profile in profiles:api.connect_data_source(profile)
+ for profile in data_source_profiles(c,user,pw):api.connect_data_source(profile)
  with chdir_lock:
   prev=os.getcwd()
   try:
@@ -4804,7 +4820,7 @@ def _spawn_racers(job,cfg,user,pw,server,work,jobs_spec,timeout=1800,stop_when=N
  procs=[];started=time.perf_counter();deadline=started+max(60,int(timeout))
  for spec in jobs_spec:
   d=work/f'part{spec["index"]}';d.mkdir(parents=True,exist_ok=True)
-  payload={'job':job,'cfg':cfg,'user':user,'password':pw,'server':server,
+  payload={'job':job,'cfg':cfg,'user':user,'server':server,   # パスワードは書かない（ワーカーが置き場から読む）
            'split_part':{'out_csv':str(spec['out_csv']),'drop':spec['drop'],'label':spec['label'],
                          'row':spec.get('row'),'row_axis':spec.get('row_axis')}}
   pp=d/'payload.json';pp.write_text(json.dumps(payload,ensure_ascii=False),encoding='utf-8')

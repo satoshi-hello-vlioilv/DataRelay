@@ -30,6 +30,7 @@ import navi_crosstab # RNEの配置（表側・表頭・データ項目）を読
 import navi_release  # 配布の置き場（版を置く・配る版・各PCの版）
 import navi_paths
 import navi_shortcut # 起動アイコン（このPCの写しへ向ける）
+import navi_secret   # Navigator への接続情報（このPCの置き場・1.99.0）
 
 from app import (
     APP_ID, APP_NAME, APP_RELEASED_AT, APP_VERSION, APP_VERSION_TITLE, BASE, BUILD_VERSION, CHANGELOG, CONFIG_DIR, DATA_ROOT,
@@ -45,7 +46,7 @@ from app import (
     run_api_diag_worker,
     cancel_requested, check_path_item, clamp_parallel_lines, clear_row_axis_blocks,
     column_cache_state, column_weights, command_queue, command_queue_lock, compute_period,
-    creds, csv, datetime, dll_diagnostic_issues, dll_search_roots, docs_dir, duplicate_columns,
+    NAVI_VAULT, NO_LOGIN_MESSAGE, legacy_conf_path, login_state, navi_login, csv, datetime, dll_diagnostic_issues, dll_search_roots, docs_dir, duplicate_columns,
     enqueue_command, expand_rule_occurrences, find_nearby_file, freshness_view,
     has_template_variables, inspect_task_blank,
     inspect_task_lock, inspect_task_percent, inspect_task_seconds, inspect_tasks,
@@ -97,8 +98,6 @@ def favicon():
 @app.get('/api/config')
 def get_config():
  c=load()
- try:*_,s=creds(resolve_path(c['symnavim_conf'])); c['credential_status']='読取可能 ['+s+']'
- except Exception as e:c['credential_status']='未確認: '+str(e)
  now=datetime.now()
  for j in c['jobs']:
   pattern=str(j.get('output_pattern') or '').strip()
@@ -382,7 +381,7 @@ def period_control_points():
  except Exception as e:return jsonify(ok=False,error=f'RNEパスの解決に失敗しました: {e}'),200
  if not Path(rp).is_file():return jsonify(ok=False,error=f'RNEが見つかりません: {rp}'),200
  try:
-  user,pw,server,_=creds(resolve_path(c['symnavim_conf']))
+  user,pw,server,_=navi_login(c)
   known=(load_column_cache(rp) or {}).get('columns') or []
   ins=run_inspect_worker(dict(tmp,id=(job or {}).get('id',''),name=(job or {}).get('name',''),_known_columns=known),c,user,pw,server,['points','items'])
  except Exception as e:
@@ -451,7 +450,7 @@ def column_plan():
  try:
   if need_probe or need_classify:
    # 列挙は独立プロセスで行う。DLL側の異常終了でアプリごと落ちないようにするため。
-   user,pw,server,_=creds(resolve_path(c['symnavim_conf']))
+   user,pw,server,_=navi_login(c)
    ins=run_inspect_worker(dict(job,_known_columns=columns),c,user,pw,server,['items'])
    if not ins.get('ok'):
     return jsonify(ok=False,error=ins.get('error') or 'RNEを読み取れませんでした',crashed=bool(ins.get('crashed'))),200
@@ -591,7 +590,7 @@ def row_split_plan():
  # どのRNEでも同じように調べられる。
  axes=[];axes_error='';axis=None;ranked=[]
  try:
-  user,pw,server,_=creds(resolve_path(c['symnavim_conf']))
+  user,pw,server,_=navi_login(c)
   ins=run_inspect_worker(dict(job,_read_names=True),c,user,pw,server,['axes'],
                          timeout=int(c['settings'].get('split_trial_timeout_seconds',1800) or 1800))
   if ins.get('ok'):axes=ins.get('axes') or []
@@ -645,7 +644,7 @@ def row_split_plan():
  timing=load_rne_timing(rp);deferred=None;probe_error=''
  if data.get('probe'):
   try:
-   user,pw,server,_=creds(resolve_path(c['symnavim_conf']))
+   user,pw,server,_=navi_login(c)
    ins=run_inspect_worker(dict(job,_read_names=False),c,user,pw,server,['timing'],
                           timeout=int(c['settings'].get('split_trial_timeout_seconds',1800) or 1800))
    if ins.get('ok') and ins.get('deferred'):deferred=ins['deferred']
@@ -1236,10 +1235,12 @@ def release_status():
 
 @app.get('/api/release/brief')
 def release_brief():
- """画面の上の帯が見る短い答え（最後に読んだ配る版・開き直してよいか・起動アイコンを聞くか）。置き場は読まない。"""
+ """画面の上の帯と版の隣の印が見る短い答え（最後に読んだ配る版・置き場に届いたか・開き直してよいか・起動アイコンを聞くか）。
+ 置き場は読まない。reachable は最後に確かめた結果で、まだ確かめていなければ None（印を出さない）。"""
  snap=RELEASE_WATCH.snapshot(APP_VERSION)
  return jsonify(ok=True,version=APP_VERSION,place=release_place(),pending=snap['pending'],want=snap['want'],
-                checked=snap['checked'],restartBlock=restart_block_reason(),shortcut=_shortcut_offer())
+                checked=snap['checked'],reachable=snap['reachable'],why=snap['why'],dir=snap['dir'],
+                restartBlock=restart_block_reason(),shortcut=_shortcut_offer())
 
 @app.post('/api/release/check')
 def release_check_now():
@@ -1320,6 +1321,56 @@ def shortcut_make():
 def shortcut_decline():
  navi_shortcut.decline(LOCAL_ROOT,BASE/navi_release.ENTRY_EXE)
  return jsonify(ok=True)
+
+# ==== Navigator への接続情報（1.99.0・置き場と読み方は navi_secret。ここは受け渡しだけ） ====
+# パスワードは画面へ返さない（入っているかどうかだけ）。ログにも出さない（出すのはサーバー・利用者ID・出どころ）。
+@app.get('/api/login')
+def login_get():
+ return jsonify(ok=True,**login_state())
+
+def _login_saved(data,origin):
+ NAVI_VAULT.save(navi_secret.stamp(data,origin))
+ navi_secret.decline(LOCAL_ROOT,False)
+ log.info('LOGIN_SAVED origin=%s server=%s user=%s profiles=%s vault=%s',origin,data['server'],data['user'],len(data['profiles']),NAVI_VAULT.kind)
+ return jsonify(ok=True,**login_state())
+
+@app.post('/api/login')
+def login_save():
+ """画面から登録・変更する。パスワードを空のまま送れば前のものを使う（同じ利用者IDのときだけ）。"""
+ body=request.get_json(silent=True) or {}
+ try:
+  old=NAVI_VAULT.load()
+  data=navi_secret.clean(navi_secret.merge(old,body))
+  return _login_saved(data,'form')
+ except (ValueError,OSError) as e:return jsonify(ok=False,error=str(e)),400
+
+@app.post('/api/login/import')
+def login_import():
+ """symnavim.conf の中身をこのPCの置き場へ取り込む。path が無ければ設定の symnavim.conf。ファイルは消さない
+ （共有のファイルを消すかどうかは、ほかのPCの取り込みが済んだかを知っている人が決める）。"""
+ body=request.get_json(silent=True) or {}
+ raw=str(body.get('path') or '').strip()
+ p=Path(raw) if raw else legacy_conf_path()
+ if not p or not p.is_file():return jsonify(ok=False,error='取り込む symnavim.conf が見つかりません'+(f': {raw}' if raw else '（設定の symnavim.conf がありません）')),400
+ try:data=navi_secret.clean(navi_secret.read_conf(p))
+ except (ValueError,OSError) as e:return jsonify(ok=False,error=str(e)),400
+ try:return _login_saved(data,'conf')
+ except (ValueError,OSError) as e:return jsonify(ok=False,error=str(e)),400
+
+@app.post('/api/login/delete')
+def login_delete():
+ """このPCの置き場から消す（PCを人に譲る・利用者IDを変える前など）。"""
+ try:removed=NAVI_VAULT.delete()
+ except OSError as e:return jsonify(ok=False,error=str(e)),400
+ log.info('LOGIN_DELETED removed=%s vault=%s',removed,NAVI_VAULT.kind)
+ return jsonify(ok=True,removed=removed,**login_state())
+
+@app.post('/api/login/decline')
+def login_decline():
+ """初めて開いたときの「登録しますか」に「Navigator は使わない」と答えたこと（このPC・利用者ごと）。yes=false で取り消す。"""
+ body=request.get_json(silent=True) or {}
+ navi_secret.decline(LOCAL_ROOT,body.get('yes',True) is not False)
+ return jsonify(ok=True,**login_state())
 
 @app.get('/api/alerts')
 def get_alerts():
@@ -1477,7 +1528,14 @@ def validate():
    add('実行環境','pywin32のDDE機能',False,f'読み込めません: {e}（pip install pywin32 が必要です）',item='pywin32')
  # 共通接続ファイル。いま要るかどうかは path_setting_roles に合わせる（画面の役割表示と食い違わせない）。
  conn_roles=path_setting_roles(c)
- for label,key in [('symnavim.conf','symnavim_conf'),('symnavim.def','symnavim_def')]:
+ # 接続情報（1.99.0）。赤くするのは「RNE の対象があるのに、どこにも無い」ときだけ（固定長・結合だけなら要らない）。
+ ls=login_state(c)
+ if ls.get('saved'):add('接続設定','Navigator の接続情報',True,f"このPCに登録済みです（{ls['where']}・サーバー {ls['server']}・利用者ID {ls['user']}）",item='login')
+ elif ls['source']=='conf':add('接続設定','Navigator の接続情報',True,f"このPCには未登録で、{ls['conf']['path']} から読んでいます。「接続とパス」で取り込むと、このファイルは要らなくなります",level='warning',item='login')
+ elif ls.get('error'):add('接続設定','Navigator の接続情報',False,ls['error'],item='login')
+ elif ls['needed']:add('接続設定','Navigator の接続情報',False,NO_LOGIN_MESSAGE,item='login')
+ else:add('接続設定','Navigator の接続情報',True,'未登録です（RNE の対象が無いので、いまは要りません）',level='ok',item='login')
+ for label,key in [('symnavim.def','symnavim_def')]:
   role,why=conn_roles.get(key,('required',''))
   raw=str(c.get(key) or '').strip();p=resolve_path(raw) if raw else None
   if role=='unused':add('接続設定',label,True,why,level='ok',configured=raw,item=key)
