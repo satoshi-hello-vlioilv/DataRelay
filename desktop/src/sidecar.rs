@@ -100,7 +100,11 @@ impl Sidecar {
             }
             Err(_) => {
                 let _ = child.kill();
-                return Err(SpawnError::other(format!("アプリの中身（Python）が {} 秒たっても準備できません。\n{}", wait.as_secs(), tail(&err_log, 12))));
+                return Err(SpawnError::other(format!(
+                    "アプリの中身（Python）が {} 秒たっても準備できません。\n{}",
+                    wait.as_secs(),
+                    tail(&err_log, 12)
+                )));
             }
         };
         let out = reader.join().map_err(|_| SpawnError::other("読み手の糸が止まりました"))?;
@@ -108,7 +112,10 @@ impl Sidecar {
         let pending: Arc<Mutex<HashMap<u64, Sender<Reply>>>> = Arc::default();
         let alive = Arc::new(AtomicBool::new(true));
         let (p2, a2) = (pending.clone(), alive.clone());
-        std::thread::Builder::new().name("sidecar-reader".into()).spawn(move || read_loop(out, p2, a2)).map_err(|e| SpawnError::other(e.to_string()))?;
+        std::thread::Builder::new()
+            .name("sidecar-reader".into())
+            .spawn(move || read_loop(out, p2, a2))
+            .map_err(|e| SpawnError::other(e.to_string()))?;
         Ok(Sidecar {
             stdin: Mutex::new(Some(BufWriter::new(stdin))),
             pending,

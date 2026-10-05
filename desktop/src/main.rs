@@ -2,7 +2,7 @@
 //!
 //! 役割の分け方（migration/FEASIBILITY.md）:
 //!   - Rust（この exe）: 窓・通知領域のアイコン・常駐（隠す・出す）・1つだけ起動・起動と終了・画面のひな形と静的ファイル・
-//!                      ファイル/フォルダーの選択・保存ダイアログ・エクスプローラーで開く・中身（Python）の監督と起こし直し
+//!     ファイル/フォルダーの選択・保存ダイアログ・エクスプローラーで開く・中身（Python）の監督と起こし直し
 //!   - Python（sidecar.py → app.py）: 業務の処理のすべて（いまの Flask のまま。WSGI を標準入出力で呼ぶ）
 //!   - 画面（WebView2）: いまの HTML/JS/CSS。問い合わせは自前の仕組み（datarelay）で Rust が受ける
 //!
@@ -187,7 +187,11 @@ fn hide_to_tray(app: &AppHandle, shell: &Shell, reason: &str) {
     shell.set_tooltip(&format!("{TITLE}（常駐中: {reason}）"));
     *shell.resident_reason.lock().unwrap() = reason.to_string();
     rlog(&format!("RESIDENT_ENTER reason={reason}"));
-    notify(app, &format!("{TITLE} は常駐しています"), &format!("{reason}のため、通知領域に残って実行を続けます。\n開く・終了するには通知領域のアイコンを使ってください。"));
+    notify(
+        app,
+        &format!("{TITLE} は常駐しています"),
+        &format!("{reason}のため、通知領域に残って実行を続けます。\n開く・終了するには通知領域のアイコンを使ってください。"),
+    );
 }
 
 fn show_main(app: &AppHandle, shell: &Shell) {
@@ -265,7 +269,11 @@ fn build_tray(app: &AppHandle, shell: Arc<Shell>) -> tauri::Result<TrayIcon> {
 }
 
 fn json_reply(v: &Value) -> Reply {
-    Reply { status: 200, headers: vec![("Content-Type".into(), "application/json".into())], body: serde_json::to_vec(v).unwrap_or_default() }
+    Reply {
+        status: 200,
+        headers: vec![("Content-Type".into(), "application/json".into())],
+        body: serde_json::to_vec(v).unwrap_or_default(),
+    }
 }
 
 fn selftest_finish(app: &AppHandle, result: &Value) {
@@ -285,7 +293,11 @@ fn selftest_dir() -> Option<PathBuf> {
 fn pick(app: &AppHandle, shell: &Shell, folder: bool, body: &[u8]) -> Reply {
     let req: Value = serde_json::from_slice(body).unwrap_or(json!({}));
     let initial = req["initial"].as_str().map(str::trim).filter(|s| !s.is_empty()).map(|s| shell.resolve_path(s)).map(|p| {
-        if p.is_file() || (!folder && p.extension().is_some()) { p.parent().map(PathBuf::from).unwrap_or(p) } else { p }
+        if p.is_file() || (!folder && p.extension().is_some()) {
+            p.parent().map(PathBuf::from).unwrap_or(p)
+        } else {
+            p
+        }
     });
     if let Some(dir) = selftest_dir() {
         let shown = initial.as_ref().map(|p| p.to_string_lossy().into_owned());
@@ -298,7 +310,8 @@ fn pick(app: &AppHandle, shell: &Shell, folder: bool, body: &[u8]) -> Reply {
     if let Some(types) = req["types"].as_array() {
         for t in types {
             if let (Some(name), Some(pat)) = (t.get(0).and_then(Value::as_str), t.get(1).and_then(Value::as_str)) {
-                let exts: Vec<&str> = pat.split(';').map(|x| x.trim().trim_start_matches("*.")).filter(|x| !x.is_empty() && *x != "*").collect();
+                let exts: Vec<&str> =
+                    pat.split(';').map(|x| x.trim().trim_start_matches("*.")).filter(|x| !x.is_empty() && *x != "*").collect();
                 if !exts.is_empty() {
                     d = d.add_filter(name, &exts);
                 }
@@ -472,7 +485,8 @@ fn find_python(app: &AppHandle, shell: &Shell, program: &Path, local: &Path) -> 
     let log = local.join("logs").join("pip_install.log");
     rlog(&format!("INSTALL_REQUIREMENTS python={} requirements={}", target.exe.display(), req.display()));
     let t = std::time::Instant::now();
-    let done = locate::install_requirements(&target, &req, &log, Duration::from_secs(900)).and_then(|_| locate::python().map_err(|e| e.message));
+    let done =
+        locate::install_requirements(&target, &req, &log, Duration::from_secs(900)).and_then(|_| locate::python().map_err(|e| e.message));
     rlog(&format!("INSTALL_REQUIREMENTS_DONE ok={} elapsed={:.1}s", done.is_ok(), t.elapsed().as_secs_f64()));
     match done {
         Ok(p) => Some(p),
@@ -531,17 +545,33 @@ fn start(app: AppHandle, shell: Arc<Shell>) {
         }
         Err(e) => {
             shell.step(&app, "backend", "bad", "起動できません");
-            return shell.fail(&app, "アプリの中身（Python）が起動できません", &format!("{}\n\n記録: {}", e.message, local.join("logs").join("sidecar_stderr.log").display()));
+            return shell.fail(
+                &app,
+                "アプリの中身（Python）が起動できません",
+                &format!("{}\n\n記録: {}", e.message, local.join("logs").join("sidecar_stderr.log").display()),
+            );
         }
     };
     let elapsed = ready["elapsed"].as_f64().unwrap_or(0.0);
-    shell.step(&app, "backend", "ok", &format!("版 {} ・ {} bit ・ {:.1} 秒", ready["version"].as_str().unwrap_or("?"), ready["bits"], elapsed));
+    shell.step(
+        &app,
+        "backend",
+        "ok",
+        &format!("版 {} ・ {} bit ・ {:.1} 秒", ready["version"].as_str().unwrap_or("?"), ready["bits"], elapsed),
+    );
     let exe = std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_default();
     let updated_from = std::env::var("DATARELAY_UPDATED").unwrap_or_default();
     let info = json!({"shell": "tauri", "shell_version": env!("CARGO_PKG_VERSION"), "program": program, "python": py.exe, "backend": ready, "local": local,
                       "exe": exe, "place": place.label(), "pointer": pointer, "updated_from": updated_from});
     if !updated_from.is_empty() {
-        notify(&app, TITLE, &format!("手元の DataRelay.exe を、共有のアプリに合わせて {updated_from} から {} に入れ替えました。", env!("CARGO_PKG_VERSION")));
+        notify(
+            &app,
+            TITLE,
+            &format!(
+                "手元の DataRelay.exe を、共有のアプリに合わせて {updated_from} から {} に入れ替えました。",
+                env!("CARGO_PKG_VERSION")
+            ),
+        );
     }
     let _ = shell.info.set(info.clone());
     // 止まったらすぐ起こし直す（常駐中は問い合わせが来ないので、待っていると自動実行が止まったままになる）
@@ -558,7 +588,13 @@ fn start(app: AppHandle, shell: Arc<Shell>) {
         });
     }
     let index_file = program.join("templates").join("index.html");
-    let r = Router { static_dir: program.join("static"), index_file, backend: sup, native: native(app.clone(), shell.clone(), info), saver: saver(app.clone(), shell.clone()) };
+    let r = Router {
+        static_dir: program.join("static"),
+        index_file,
+        backend: sup,
+        native: native(app.clone(), shell.clone(), info),
+        saver: saver(app.clone(), shell.clone()),
+    };
     let _ = shell.router.set(r);
     shell.step(&app, "open", "now", "画面を開いています…");
     // 見回り: 5 秒ごとに中身の知らせ（抽出の失敗・取り直しなど）を OS の通知へ出し、20 秒ごとに通知領域の文言
@@ -582,7 +618,11 @@ fn start(app: AppHandle, shell: Arc<Shell>) {
                     if let Ok(v) = shell.ask_json("GET", "/api/residency", b"") {
                         let text = v["status_text"].as_str().unwrap_or("");
                         let resident = shell.resident_reason.lock().unwrap().clone();
-                        shell.set_tooltip(&if resident.is_empty() { format!("{TITLE}（{text}）") } else { format!("{TITLE}（常駐中: {text}）") });
+                        shell.set_tooltip(&if resident.is_empty() {
+                            format!("{TITLE}（{text}）")
+                        } else {
+                            format!("{TITLE}（常駐中: {text}）")
+                        });
                     }
                 }
             }
@@ -607,7 +647,10 @@ fn self_update() -> Option<i32> {
     }
     let selftest = std::env::var_os("DATARELAY_SELFTEST").is_some();
     // 自己診断だけ: 古い版のふりをする・写す元を決める（入れ替えの道を本物の exe で通すため）
-    let own = std::env::var("DATARELAY_SELFTEST_PRETEND_VERSION").ok().filter(|_| selftest).unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
+    let own = std::env::var("DATARELAY_SELFTEST_PRETEND_VERSION")
+        .ok()
+        .filter(|_| selftest)
+        .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
     let source = std::env::var_os("DATARELAY_SELFTEST_UPDATE_SOURCE")
         .filter(|_| selftest)
         .map(PathBuf::from)
@@ -616,7 +659,11 @@ fn self_update() -> Option<i32> {
     match update::decide(&own, shared.as_deref(), source.is_file()) {
         update::Decision::Keep => None,
         update::Decision::NoSource => {
-            rlog(&format!("EXE_UPDATE_SKIPPED own={own} shared={} detail=共有に exe がありません: {}", shared.unwrap_or_default(), source.display()));
+            rlog(&format!(
+                "EXE_UPDATE_SKIPPED own={own} shared={} detail=共有に exe がありません: {}",
+                shared.unwrap_or_default(),
+                source.display()
+            ));
             None
         }
         update::Decision::Update => {
@@ -728,7 +775,10 @@ mod tests {
             {"id": "b", "kind": "info", "title": "完了", "detail": ""},
             {"id": "c", "kind": "warn", "title": "取り直し待ち", "detail": ""}
         ]});
-        assert_eq!(fresh_alerts(&mut seen, &v), vec![("抽出に失敗".into(), "対象 X".into()), ("取り直し待ち".into(), "取り直し待ち".into())]);
+        assert_eq!(
+            fresh_alerts(&mut seen, &v),
+            vec![("抽出に失敗".into(), "対象 X".into()), ("取り直し待ち".into(), "取り直し待ち".into())]
+        );
         assert!(fresh_alerts(&mut seen, &v).is_empty(), "同じ知らせは2回出さない");
         let v2 = json!({"alerts": [{"id": "c", "kind": "warn", "title": "取り直し待ち"}, {"id": "d", "kind": "error", "title": "公開に失敗", "detail": "共有が使用中"}]});
         assert_eq!(fresh_alerts(&mut seen, &v2), vec![("公開に失敗".into(), "共有が使用中".into())]);

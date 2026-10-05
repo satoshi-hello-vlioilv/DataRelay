@@ -213,6 +213,12 @@ def log_lines(text,roots):
  それらを除いた行の集まり（並びは問わない）が同じなら、同じことが起きたと言える。"""
  return sorted(LOG_NOISE.sub('',normalize(x,roots)) for x in text.splitlines())
 
+# 書き出しの保存名に入る時刻（集計_20261005_030231.xlsx）。A と B を呼ぶ間に秒が変わることがあるので揃える。
+SAVE_STAMP=re.compile(r'\d{8}_\d{6}')
+
+def save_name(headers):
+ return SAVE_STAMP.sub('<stamp>',headers.get('content-disposition') or '')
+
 def compare(a,b,roots,rule=''):
  """→ (同じか, 違いの説明)"""
  sa,ha,ba=a;sb,hb,bb=b
@@ -230,7 +236,7 @@ def compare(a,b,roots,rule=''):
   try:
    za=zipfile.ZipFile(io.BytesIO(ba));zb=zipfile.ZipFile(io.BytesIO(bb))
    if za.namelist()!=zb.namelist():return False,'ZIPの中身の名前が違います'
-   if ha.get('content-disposition')!=hb.get('content-disposition'):return False,'保存名が違います'
+   if save_name(ha)!=save_name(hb):return False,'保存名が違います'
    return True,f'ZIP {len(za.namelist())}件・保存名一致'
   except Exception as e:return False,f'ZIPとして読めません: {e}'
  if ba==bb:return True,''
@@ -316,6 +322,26 @@ class SidecarParityTest(unittest.TestCase):
  def test_same_answers(self):
   bad=[f"{r['label']}: {r['why']}" for r in self.results if not r['ok']]
   self.assertEqual(bad,[])
+
+class SaveNameTest(unittest.TestCase):
+ """書き出しの保存名（Content-Disposition）の比べ方。保存名には秒までの時刻が入るので、A と B を呼ぶ間に秒が変わると違って当たり前。
+ （Windows の CI で「集計結果の書き出し（XLSX）: 保存名が違います」になった。時刻を揃えて比べ、名前そのものの違いは見逃さない）"""
+ @staticmethod
+ def reply(name):
+  buf=io.BytesIO()
+  with zipfile.ZipFile(buf,'w') as z:z.writestr('xl/workbook.xml','<w/>')
+  return 200,{'content-type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+              'content-disposition':f"attachment; filename*=UTF-8''{name}"},buf.getvalue()
+
+ def test_time_in_the_name_is_ignored(self):
+  ok,why=compare(self.reply('%E9%9B%86%E8%A8%88_20261005_030231.xlsx'),self.reply('%E9%9B%86%E8%A8%88_20261005_030232.xlsx'),[])
+  self.assertTrue(ok,why)
+
+ def test_different_name_is_caught(self):
+  ok,why=compare(self.reply('%E9%9B%86%E8%A8%88_20261005_030231.xlsx'),self.reply('other_20261005_030231.xlsx'),[])
+  self.assertFalse(ok)
+  self.assertIn('保存名',why)
+
 
 class LogNormalizeTest(unittest.TestCase):
  def test_process_ids_in_both_forms(self):
