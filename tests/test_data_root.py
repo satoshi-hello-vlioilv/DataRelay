@@ -49,7 +49,9 @@ class ResolveAgainstDataRootTest(unittest.TestCase):
   self.addCleanup(lambda:navi_paths.setup(*self.saved) if self.saved[0] else None)
 
  def test_relative_paths_point_to_the_share_from_a_local_copy(self):
-  share,local=Path('/share/DataRelay'),Path('/local/root')
+  # どの OS でも絶対の道（Windows で /share と書くと、いまのドライブの D:/share になる）
+  base=Path(tempfile.gettempdir()).resolve()
+  share,local=base/'share'/'DataRelay',base/'local'/'root'
   navi_paths.setup(share,local)
   self.assertEqual(navi_paths.resolve_path('.\\config\\symnavim.conf'.replace('\\','/')),share/'config'/'symnavim.conf')
   self.assertEqual(navi_paths.resolve_path('rne'),share/'rne')
@@ -70,7 +72,7 @@ class AppFollowsDataRootTest(unittest.TestCase):
  """app.py を本当に読み込み、マスターの在りかと相対パスがデータの基準に付いていくか。"""
  def test_config_dir_and_relative_paths(self):
   with tempfile.TemporaryDirectory() as d:
-   share=Path(d)/'share'
+   share=Path(d).resolve()/'share'      # Windows の短い名前（RUNNER~1）を長い名前へ（resolve_path が長い名前で答える）
    env=dict(os.environ,NAVI_LOCAL_ROOT=str(Path(d)/'local'),NAVI_DATA_ROOT=str(share),PYTHONIOENCODING='utf-8')
    env.pop('NAVI_CONFIG_DIR',None)
    code=('import sys,json;sys.path.insert(0,"lib");import app;'

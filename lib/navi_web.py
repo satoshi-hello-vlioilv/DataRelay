@@ -1307,6 +1307,9 @@ def release_restart_check():
 @app.post('/api/shortcut/make')
 def shortcut_make():
  """起動アイコンをこのPCの写しへ向ける（前からある DataRelay のアイコンは向け直し、無ければデスクトップに作る）。"""
+ # 作るのは配布の置き場から写したアプリだけ（画面が聞くのもそのときだけ）。作る途中の木・共有から直に動かす形・試験では
+ # 本物のデスクトップを触らない（全ルートを呼ぶ突き合わせの試験が、CI のデスクトップにアイコンを作っていた）
+ if release_place()!='installed':return jsonify(ok=False,error='起動アイコンを作るのは、配布の置き場からこのPCへ写したアプリだけです'),400
  shell=_shortcut_shell()
  if shell is None:return jsonify(ok=False,error='このPCでは起動アイコンを作れません（Windows と pywin32 が要ります）'),400
  out=navi_shortcut.ensure(shell,BASE/navi_release.ENTRY_EXE)

@@ -9,7 +9,7 @@
 アイコンは名前ではなく**行き先**で見分ける（利用者が名前を変えていても見つける）。行き先の名前が DataRelay.exe の
 ものだけを DataRelay のアイコンとみなす。
 
-.lnk はシェルのオブジェクトなので、Windows の部品（WScript.Shell・pywin32 の COM）で作る・読む。
+.lnk はシェルのオブジェクトなので、Windows の部品（IShellLinkW・pywin32 の COM）で作る・読む。
 決め方（どれを向け直すか・どの名前で作るか）はこのファイルの関数が持ち、シェルは差し替えられる（試験は偽物を渡す）。
 """
 import json
@@ -23,33 +23,44 @@ DECLINED_FILE = 'shortcut.json'
 
 
 class WindowsShell:
-    """WScript.Shell を通してシェルのフォルダーと .lnk を扱う（Windows だけ）。"""
+    """.lnk を Windows の部品で作る・読む（Windows だけ）。
+
+    WScript.Shell（WSH）は使わない ―― 名前やフォルダーに日本語が入ると「?」に化けて保存できない（1.98.0 の CI で実測。
+    アカウント名が日本語の PC ではデスクトップの場所そのものが日本語になる）。文字を UTF-16 のまま渡す
+    IShellLinkW・IPersistFile と、デスクトップの場所を聞く SHGetFolderPathW を pywin32 から直に呼ぶ（WaveLog と同じ部品）。"""
 
     def __init__(self):
         import pythoncom                       # pywin32（config\requirements.txt）
-        import win32com.client
+        from win32com.shell import shell, shellcon
         # 画面の問い合わせは別の糸で答える。COM はその糸ごとに初期化が要る（無いと「CoInitialize が呼ばれていない」で断られる）。
         # 同じ糸で何度呼んでもよい
         pythoncom.CoInitialize()
-        self.sh = win32com.client.Dispatch('WScript.Shell')
+        self.pc, self.shell, self.con = pythoncom, shell, shellcon
 
     def folder(self, kind):
         """'desktop'／'programs'（スタートメニューのプログラム）。OneDrive へ移したデスクトップも正しく返る。"""
-        return Path(self.sh.SpecialFolders({'desktop': 'Desktop', 'programs': 'Programs'}[kind]))
+        csidl = {'desktop': self.con.CSIDL_DESKTOPDIRECTORY, 'programs': self.con.CSIDL_PROGRAMS}[kind]
+        return Path(self.shell.SHGetFolderPath(0, csidl, None, 0))
+
+    def _link(self):
+        return self.pc.CoCreateInstance(self.shell.CLSID_ShellLink, None, self.pc.CLSCTX_INPROC_SERVER, self.shell.IID_IShellLink)
 
     def target(self, link):
         try:
-            return str(self.sh.CreateShortcut(str(link)).TargetPath or '')
+            sc = self._link()
+            sc.QueryInterface(self.pc.IID_IPersistFile).Load(str(link), 0)
+            # SLGP_RAWPATH（4）＝書かれたままの道（環境変数を展開しない・短い名前へ直さない）
+            return str(sc.GetPath(getattr(self.shell, 'SLGP_RAWPATH', 4))[0] or '')
         except Exception:
             return ''
 
     def make(self, link, target, workdir, description):
-        sc = self.sh.CreateShortcut(str(link))
-        sc.TargetPath = str(target)
-        sc.WorkingDirectory = str(workdir)
-        sc.IconLocation = '%s,0' % target
-        sc.Description = description
-        sc.Save()
+        sc = self._link()
+        sc.SetPath(str(target))
+        sc.SetWorkingDirectory(str(workdir))
+        sc.SetIconLocation(str(target), 0)
+        sc.SetDescription(description)
+        sc.QueryInterface(self.pc.IID_IPersistFile).Save(str(link), 0)
 
 
 def available():
@@ -57,7 +68,7 @@ def available():
     if os.name != 'nt':
         return False
     try:
-        import win32com.client  # noqa: F401
+        from win32com.shell import shell  # noqa: F401
         return True
     except Exception:
         return False

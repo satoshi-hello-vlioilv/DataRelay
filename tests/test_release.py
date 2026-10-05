@@ -241,7 +241,8 @@ class RouteTest(unittest.TestCase):
 
 @unittest.skipUnless(S.available(),'Windows と pywin32 が要る（CI の Windows で流す）')
 class RealShellTest(unittest.TestCase):
- """本物の WScript.Shell で .lnk を作って読む（置き場所だけ作業用のフォルダーへ向ける。本物のデスクトップは触らない）。"""
+ """本物の Windows の部品で .lnk を作って読む（置き場所だけ作業用のフォルダーへ向ける。本物のデスクトップは触らない）。
+ 置き場所の名前もアイコンの名前も日本語にする（アカウント名が日本語の PC のデスクトップ・利用者が付けた名前）。"""
  def test_make_read_and_retarget(self):
   # 画面の問い合わせと同じく、別の糸で動かす（COM は糸ごとの初期化が要る）
   import threading
@@ -256,9 +257,9 @@ class RealShellTest(unittest.TestCase):
   with tempfile.TemporaryDirectory() as d:
    class Shell(S.WindowsShell):
     def folder(self,kind):
-     f=Path(d)/kind;f.mkdir(exist_ok=True);return f
+     f=Path(d)/'利用者'/{'desktop':'デスクトップ','programs':'プログラム'}[kind];f.mkdir(parents=True,exist_ok=True);return f
    sh=Shell();exe=Path(sys.executable)
-   old=Path(d)/'desktop'/'共有の DataRelay.lnk'
+   old=sh.folder('desktop')/'共有の DataRelay.lnk'
    sh.make(old,Path(d)/'share'/'DataRelay.exe',Path(d),'古いアイコン')
    self.assertTrue(old.is_file())
    self.assertTrue(sh.target(old).lower().endswith('datarelay.exe'),sh.target(old))
@@ -266,6 +267,8 @@ class RealShellTest(unittest.TestCase):
    self.assertEqual(out['retargeted'],[str(old)],out)
    self.assertEqual(Path(sh.target(old)),exe,'日本語の名前のアイコンも向け直せる')
    self.assertFalse(S.offer(sh,exe,Path(d)/'local',installed=True)['show'])
+   made=S.ensure(Shell(),Path(d)/'写し'/'DataRelay.exe')
+   self.assertEqual(len(made['made'])+len(made['retargeted']),1,made)
 
 
 if __name__=='__main__':
