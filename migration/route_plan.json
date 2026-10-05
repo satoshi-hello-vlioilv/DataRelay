@@ -316,10 +316,55 @@
    "to": "python",
    "note": ""
   },
+  "GET /api/release/brief": {
+   "area": "配布と更新",
+   "to": "python",
+   "note": "1.98.0 で足した。画面の上の帯（新しい版・起動アイコン）が見る短い答え。置き場は読まない"
+  },
+  "POST /api/release/check": {
+   "area": "配布と更新",
+   "to": "python",
+   "note": "1.98.0 で足した。配る版をいま読み直す"
+  },
+  "POST /api/release/dir": {
+   "area": "配布と更新",
+   "to": "python",
+   "note": "1.98.0 で足した。置き場を変える（共有の設定）"
+  },
+  "GET /api/release/progress": {
+   "area": "配布と更新",
+   "to": "python",
+   "note": "1.98.0 で足した。版を置く進み具合"
+  },
+  "POST /api/release/publish": {
+   "area": "配布と更新",
+   "to": "python",
+   "note": "1.98.0 で足した。ZIP から版を置く。ZIP は窓のダイアログで選んだ道で受け取る"
+  },
+  "GET /api/release/restart-check": {
+   "area": "配布と更新",
+   "to": "python",
+   "note": "1.98.0 で足した。窓が開き直す前に、いま開き直してよいかを聞く"
+  },
+  "POST /api/release/set": {
+   "area": "配布と更新",
+   "to": "python",
+   "note": "1.98.0 で足した。配る版を決める（前の版へ戻すのも同じ）"
+  },
+  "GET /api/release/status": {
+   "area": "配布と更新",
+   "to": "python",
+   "note": "1.98.0 で足した。画面「配布と更新」の全部（置き場・配る版・置いてある版・入口・各PCの版）"
+  },
   "GET /api/residency": {
    "area": "起動・常駐・終了",
    "to": "python",
    "note": "常駐を続ける理由。デスクトップ版の窓が × のときに聞く（1.95.0 で追加。心拍の状態とは切り離した）"
+  },
+  "POST /api/restart-app": {
+   "area": "配布と更新",
+   "to": "rust",
+   "note": "1.98.0 で足した。画面の「開き直して新しい版にする」。窓が中身に開き直してよいかを聞き、後始末を頼んでから、新しい自分を --after-pid 付きで起こして終わる（起動のときに配る版へそろう）"
   },
   "POST /api/retries/cancel": {
    "area": "実行・キュー・予定",
@@ -390,6 +435,16 @@
    "area": "設定・対象の登録",
    "to": "python",
    "note": ""
+  },
+  "POST /api/shortcut/decline": {
+   "area": "配布と更新",
+   "to": "python",
+   "note": "1.98.0 で足した。起動アイコンを作らないと答えたことを覚える"
+  },
+  "POST /api/shortcut/make": {
+   "area": "配布と更新",
+   "to": "python",
+   "note": "1.98.0 で足した。起動アイコンをこのPCの写しへ向ける（pywin32 の COM）"
   },
   "POST /api/shutdown-app": {
    "area": "起動・常駐・終了",

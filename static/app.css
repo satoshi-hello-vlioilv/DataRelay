@@ -2563,3 +2563,81 @@ body>main{width:var(--app-shell);max-width:var(--app-shell);
 .bundle-notes li{margin-bottom:3px}
 /* 読込形式の見通し（RNEが集計表なら、どう畳んで出すかを先に見せる） */
 .type-hint{margin:6px 0 2px;padding:7px 10px;background:#eef7f8;border-left:3px solid #14979e;border-radius:6px;font-size:11px;line-height:1.6;color:#2c5566}.type-hint b{color:#145b70}.type-hint code{font:11px Consolas,"Yu Gothic UI";background:#fff;border:1px solid #d5e6ea;border-radius:4px;padding:0 4px;color:#17384e;white-space:nowrap}.type-hint.warn{background:#fff7ec;border-left-color:#c98a1a;color:#6b4a10}
+
+/* ==== 配布と更新（1.98.0） ====
+   色の決まり: 緑＝配る版でそろっている／琥珀＝次の起動で変わる・古い版／赤＝置き場に届かない・置けない／
+   灰＝まだ決めていない・しばらく名乗っていない／青＝このPC。帯は「気づいてほしいが壊れてはいない」ので琥珀の淡い面。
+   バッジの色は保守の操作を表す藍（ほかの設定の青緑と見分ける）。 */
+.settings-badge.cat-release{background:#ecebfa;color:#4a3fa3}
+.rel-block{max-width:900px!important}
+.rel-block.rel-wide{max-width:1100px!important}
+.rel-pill.is-ok{background:#e5f5ef;color:var(--ok)}
+.rel-pill.is-warn{background:#fbf0dc;color:#8a5200}
+.rel-pill.is-bad{background:#fde7e4;color:#a5372c}
+.rel-pill.is-idle{background:#eef2f4;color:#5f6f77}
+.rel-facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:7px}
+.rel-facts>div{display:grid;gap:2px;padding:8px 10px;background:#f6f9fa;border:1px solid #dce6ea;border-radius:8px;min-width:0}
+.rel-facts small{font-size:10px;font-weight:900;color:#71858e}
+.rel-facts b{font:12.5px Consolas,"Yu Gothic UI";color:#244653;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rel-facts>div.is-ok{border-color:#cce8db;background:#f0f9f5}.rel-facts>div.is-ok b{color:var(--ok)}
+.rel-facts>div.is-warn{border-color:#ecd3a3;background:#fdf7ec}.rel-facts>div.is-warn b{color:#8a5200}
+.rel-facts>div.is-idle b{color:#7a8a92}
+.rel-note{font-size:11.5px;color:#5d7380;line-height:1.55}
+.rel-note code,.rel-steps code{font:11.5px Consolas,monospace;background:#eef3f5;border-radius:4px;padding:1px 5px;overflow-wrap:anywhere}
+.rel-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.rel-empty{margin:0;padding:14px;border:1px dashed #c9d7dc;border-radius:9px;color:#6b7e87;font-size:12px;background:#fbfcfd}
+.rel-warn{margin:0 0 8px;padding:9px 11px;border-left:4px solid #d39a37;background:#fdf7ec;border-radius:6px;color:#7a4c06;font-size:12px}
+.rel-table{width:100%;border-collapse:collapse;font-size:12px;background:#fff;border:1px solid var(--line);border-radius:9px;overflow:hidden}
+.rel-table th{background:#edf3f6;color:#536671;font-size:10.5px;text-align:left;padding:7px 9px;border-bottom:1px solid #cdd9df;white-space:nowrap}
+.rel-table td{padding:7px 9px;border-bottom:1px solid #e7edf0;vertical-align:middle;color:#263d48}
+.rel-table tr:last-child td{border-bottom:0}
+.rel-table tr.is-current td{background:#f0f9f5}
+.rel-table tr.is-old td{background:#fdf9f1}
+.rel-table tr.is-stale td{color:#8d9ca3}
+.rel-table td.rel-act{text-align:right;white-space:nowrap}
+.rel-table td.rel-act button{padding:5px 11px;font-size:11.5px}
+.rel-muted{color:#8d9ca3;font-size:11px}
+.rel-tag{display:inline-block;font-style:normal;font-size:10px;font-weight:800;padding:2px 7px;border-radius:10px;margin-right:4px;border:1px solid transparent}
+.rel-tag.is-ok{background:#e5f5ef;color:var(--ok);border-color:#cce8db}
+.rel-tag.is-warn{background:#fbf0dc;color:#8a5200;border-color:#ecd3a3}
+.rel-tag.is-idle{background:#eef2f4;color:#5f6f77}
+.rel-tag.is-here{background:#e6f2f8;color:#155f80;border-color:#c3dfec}
+.rel-progress{display:grid;gap:6px;padding:10px 12px;background:#f2f8fa;border-left:4px solid #14979e;border-radius:7px}
+.rel-progress-head{display:flex;justify-content:space-between;gap:10px;font-size:12px;color:#145b70}
+.rel-progress-head span{font:11px Consolas,monospace;color:#5d7380}
+.rel-track{height:8px;background:#dce7ea;border-radius:999px;overflow:hidden}
+.rel-track i{display:block;height:100%;width:0;background:linear-gradient(90deg,#14a39f,#237fbc);border-radius:inherit;transition:width .3s ease}
+.rel-result{display:grid;gap:3px;padding:10px 12px;border-radius:8px;font-size:12px}
+.rel-result.is-ok{background:#f0f9f5;border:1px solid #cce8db;color:#1f5b45}
+.rel-result.is-bad{background:#fff1ef;border:1px solid #efc4bf;color:#8d2f28}
+.rel-result span{color:inherit;opacity:.9}
+.rel-steps{margin:0;padding-left:22px;display:grid;gap:10px}
+.rel-steps li{font-size:12px;color:#425661}
+.rel-steps li b{display:block;color:#203d4a;margin-bottom:3px}
+.rel-steps li>span{display:block;color:#5d7380;line-height:1.55}
+.rel-copy{display:flex;align-items:center;gap:7px;margin:2px 0 4px}
+.rel-copy code{flex:1;min-width:0;padding:6px 8px!important;font-size:12px!important}
+.rel-copy button{padding:5px 11px;font-size:11.5px}
+.rel-fleet-sum{display:flex;flex-wrap:wrap;gap:6px}
+.rel-chip{font-size:11px;font-weight:800;padding:4px 10px;border-radius:999px;border:1px solid transparent}
+.rel-chip.is-ok{background:#e5f5ef;color:var(--ok);border-color:#cce8db}
+.rel-chip.is-warn{background:#fbf0dc;color:#8a5200;border-color:#ecd3a3}
+.rel-chip.is-idle{background:#eef2f4;color:#5f6f77}
+.rel-dir summary{cursor:pointer;display:flex;align-items:baseline;gap:10px;font-size:12.5px;color:#305265}
+.rel-dir summary span{font-size:11px;color:var(--muted)}
+.rel-dir-body{display:grid;gap:10px;margin-top:10px}
+.rel-progress[hidden],.rel-result[hidden]{display:none}
+/* 上の帯（新しい版・起動アイコン）。main の先頭（タブの上）に置く。body は「帯・中身・足」の3段なので、段は増やさない */
+.release-banner{flex:0 0 auto;display:flex;align-items:center;gap:12px;margin:8px 0 0;padding:10px 14px;border-radius:10px;
+ background:#fdf7ec;border:1px solid #ecd3a3;box-shadow:0 4px 14px #a7610014}
+.release-banner[hidden]{display:none}
+.release-banner[data-kind=shortcut]{background:#eef6fb;border-color:#c3dfec;box-shadow:0 4px 14px #155f8012}
+.rb-icon{font-style:normal;font-weight:900;font-size:17px;width:32px;height:32px;flex:none;display:grid;place-items:center;border-radius:50%;background:#f6e2bd;color:#8a5200}
+.release-banner[data-kind=shortcut] .rb-icon{background:#d5e9f4;color:#155f80}
+.rb-text{display:grid;gap:2px;min-width:0;flex:1}
+.rb-text b{font-size:13px;color:#5b3a05}
+.release-banner[data-kind=shortcut] .rb-text b{color:#14445c}
+.rb-text span{font-size:11.5px;color:#6f5a3a;line-height:1.5}
+.release-banner[data-kind=shortcut] .rb-text span{color:#4b6a7a}
+.rb-actions{display:flex;gap:7px;flex:none}
+.rb-actions button{padding:7px 13px}

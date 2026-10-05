@@ -6,12 +6,16 @@
   local   … exe だけを手元に置いた形（隣の DataRelay.program.txt が共有のアプリのフォルダーを指す）で full を流す。
              Windows では本物の install_local.cmd で置く（それ以外では同じ形を作る）
   update  … 手元の exe に古い版のふりをさせて起動 → 自分を入れ替えて起こし直し、入れ替わった exe が full を流す
+  release … 配布（1.98.0）。作業ツリーから配る zip を作って置き場へ2つの版を置き、
+             入口（置き場の DataRelay.exe）から写す → 次の版へそろえる（exe も変わるので開き直す）→ 前の版へ戻す、を
+             本物の exe で通す。写しの中では selftest.js の release の型が、データの基準・各PCの名乗りを確かめる
 
 使い方:
-  python desktop/selftest_runner.py <exe> [--wrap "dbus-run-session -- xvfb-run -a"] [--modes full,close,restart,local,update]
+  python desktop/selftest_runner.py <exe> [--wrap "dbus-run-session -- xvfb-run -a"] [--modes full,close,restart,local,update,release]
+update と release は、起こし直した・渡した先の exe が画面を失わないよう、Linux では xvfb-run ではなく別に立てた Xvfb の上で流す。
 各型は新しい置き場（NAVI_LOCAL_ROOT・NAVI_CONFIG_DIR）で動かし、終わったあと Python が残っていないことも見る。
 """
-import argparse,json,os,shlex,shutil,signal,subprocess,sys,tempfile,time
+import argparse,json,os,re,shlex,shutil,signal,subprocess,sys,tempfile,time,zipfile
 from pathlib import Path
 
 ROOT=Path(__file__).resolve().parent.parent
@@ -122,13 +126,107 @@ def run(exe,wrap,mode,work):
  return checks
 
 
+def build_zip(exe,out,version=None,exe_tail=b''):
+ """配る zip（Release の DataRelay.zip と同じ形: DataRelay/ の下にアプリのフォルダー一式＋DataRelay.exe）を作業ツリーから作る。
+ git archive は commit した物しか入らないので、手元の変更も入るよう ls-files（追跡している物＋まだ追跡していない物）から
+ .gitattributes の export-ignore を外して詰める。version を渡すと navi_version.py の版を差し替える（次の版のふり）。
+ exe_tail は exe の後ろに足す（中身の違う exe にする。後ろに足した物は読み込まれない）。"""
+ ignore={l.split()[0].strip('/') for l in (ROOT/'.gitattributes').read_text(encoding='utf-8').splitlines()
+         if 'export-ignore' in l and not l.lstrip().startswith('#')}
+ names=subprocess.run(['git','-C',str(ROOT),'ls-files','-co','--exclude-standard','-z'],capture_output=True,check=True).stdout.decode('utf-8').split('\0')
+ with zipfile.ZipFile(out,'w',zipfile.ZIP_DEFLATED) as z:
+  for n in sorted(set(names)):
+   if not n or n.split('/')[0] in ignore or not (ROOT/n).is_file():continue
+   data=(ROOT/n).read_bytes()
+   if version and n=='lib/navi_version.py':data=re.sub(rb"APP_VERSION='[^']*'",f"APP_VERSION='{version}'".encode(),data,count=1)
+   z.writestr('DataRelay/'+n,data)
+  info=zipfile.ZipInfo('DataRelay/DataRelay.exe',time.localtime()[:6]);info.external_attr=0o755<<16;info.compress_type=zipfile.ZIP_DEFLATED
+  z.writestr(info,exe.read_bytes()+exe_tail)
+ return out
+
+
+def run_release(exe,wrap,work):
+ """配布の型。置き場に2つの版を置き、入口から写す → 次の版へそろえる → 前の版へ戻す。"""
+ sys.path.insert(0,str(ROOT/'lib'))
+ import navi_release as R
+ checks=[]
+ work=work.resolve()                     # Windows の短い名前（RUNNER~1）を長い名前へ（画面が道を比べる）
+ share=work/'share';share.mkdir()
+ local=work/'local';root=work/'home'/'DataRelay'
+ v1=R.version_in((ROOT/'lib'/'navi_version.py').read_text(encoding='utf-8'));v2=v1+'-st2'
+ for v,tail in ((v1,b''),(v2,b'\0'*64)):
+  out=R.publish_zip(build_zip(exe,work/f'{v}.zip',None if v==v1 else v,tail),share,uid='selftest')
+  checks.append((f'版 {v} を置き場に置けた',out.get('ok'),out.get('error') or f"{out.get('files')}ファイル"))
+ dlog_path=local/'logs'/'desktop.log'
+
+ def phase(name,launch,want,expect,note=None,mode='release'):
+  result=work/f'result-{name}.json'
+  start=dlog_path.stat().st_size if dlog_path.exists() else 0
+  env=dict(os.environ,NAVI_LOCAL_ROOT=str(local),DATARELAY_INSTALL_ROOT=str(root),DATARELAY_SELFTEST=str(result),
+           DATARELAY_SELFTEST_MODE=mode)
+  for k in ('DATARELAY_PROGRAM','NAVI_CONFIG_DIR','NAVI_DATA_ROOT','DATARELAY_NO_BOOT','DATARELAY_UPDATE_FORCE'):env.pop(k,None)
+  cmd=shlex.split(wrap)+[str(launch)] if wrap else [str(launch)]
+  p=subprocess.Popen(cmd,env=env,cwd=str(launch.parent),stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+  try:code=p.wait(240)
+  except subprocess.TimeoutExpired:p.kill();code='時間切れ'
+  # 入口・開き直す前の窓はすぐ終わる。渡した先の窓（子ではない）が結果を書いて終わるのを待つ
+  end=time.time()+240
+  while not result.exists() and time.time()<end:time.sleep(0.5)
+  time.sleep(2.5)
+  r=json.loads(result.read_text(encoding='utf-8')) if result.exists() else {'ok':False,'checks':[],'error':'結果のファイルがありません'}
+  for c in r.get('checks',[]):checks.append((f'[{name}] {c["name"]}',c['ok'],c['detail']))
+  if r.get('error'):checks.append((f'[{name}] 自己診断',False,r['error']))
+  checks.append((f'[{name}] 最初に起こした exe の終了コード 0',code==0,code))
+  vf=root/'lib'/'navi_version.py'
+  have=R.version_in(vf.read_text(encoding='utf-8')) if vf.exists() else '(写していない)'
+  checks.append((f'[{name}] 写しの版は {want}',have==want,have))
+  if name!='install':checks.append((f'[{name}] アプリ監視の exe は写しの DataRelay.exe（退いた先ではない）',f"exe={root/'DataRelay.exe'} " in ' '.join(c['detail']+' ' for c in r.get('checks',[])),root/'DataRelay.exe'))
+  dlog=dlog_path.read_text(encoding='utf-8',errors='replace')[start:] if dlog_path.exists() else ''
+  for label,needle in expect:checks.append((f'[{name}] {label}',needle in dlog,needle))
+  if not r.get('ok'):
+   for line in dlog.splitlines()[-12:]:checks.append((f'[{name}]   desktop.log',False,line[:300]))
+  if note is not None:
+   n=result.with_suffix('.note.json')
+   got=json.loads(n.read_text(encoding='utf-8')).get('release_note') if n.exists() else None
+   checks.append((f'[{name}] そろえたことを画面が知っている（アプリ監視・通知）',got==note,repr(got)))
+  left=[x for x in backend_pids(local) if alive(x)]
+  checks.append((f'[{name}] 終わったあと Python が残っていない',not left,f'残り {left}'))
+
+ out=R.set_release(v1,share,share,uid='selftest')
+ checks.append((f'配る版を {v1} に決めた',out.get('ok') and not out.get('notes'),out.get('notes') or out.get('error') or ''))
+ checks.append(('配る入口が置き場の直下にある',(share/'DataRelay.exe').is_file(),share/'DataRelay.exe'))
+ phase('install',share/'DataRelay.exe',v1,[('入口から写しへ渡した','INSTALL 置き場から写しへ渡しました'),
+                                           ('中身の無い所へ配る版を写した',f'RELEASE_APPLIED from= to={v1} exe_changed=false')],note='')
+ seed=json.loads((root/'config'/'install.json').read_text(encoding='utf-8')) if (root/'config'/'install.json').exists() else {}
+ checks.append(('写しはデータの基準と入れた元を知っている（config/install.json）',seed.get('data_root')==str(share) and seed.get('from')==str(share),seed))
+ checks.append(('設定のマスターは共有のアプリのフォルダーに作られる',(share/'Config'/'app_settings.sqlite3').is_file(),share/'Config'))
+ checks.append(('写しの中に設定のマスターを作らない',not any((root/d/'app_settings.sqlite3').exists() for d in ('Config','config')),root))
+
+ R.set_release(v2,share,share,uid='selftest')
+ phase('update',root/'DataRelay.exe',v2,[('配る版へそろえた（exe も変わった）',f'RELEASE_APPLIED from={v1} to={v2} exe_changed=true'),
+                                         ('新しい exe が、前の窓の終わりを待ってから開いた','AFTER_PREVIOUS waited=')],note=f'{v1} → {v2}')
+ checks.append(('前の版は写しの控えに残る',(root/'.update'/f'{v1}.old'/'app.py').is_file(),root/'.update'))
+ checks.append(('exe も配る版の物になった',(root/'DataRelay.exe').read_bytes()==(share/'versions'/v2/'DataRelay.exe').read_bytes(),root/'DataRelay.exe'))
+
+ R.set_release(v1,share,share,uid='selftest')
+ phase('rollback',root/'DataRelay.exe',v1,[('前の版へ戻した（配る版を選び直しただけ）',f'RELEASE_APPLIED from={v2} to={v1}')],note=f'{v2} → {v1}')
+ # 画面の「開き直して新しい版にする」と同じ道（配る版は変えない。開き直した窓が確かめを流す）
+ phase('restart',root/'DataRelay.exe',v1,[('画面から開き直しを頼まれ、後始末をしてから開き直した','QUIT source=ui-restart restart=true'),
+                                         ('新しい自分を起こした','RESTART relaunched'),('開き直した窓が、前の窓の終わりを待った','AFTER_PREVIOUS waited=')],
+       mode='release-restart')
+ fleet=R.fleet(share,v1)
+ checks.append(('置き場の各PCの版に、このPCが配る版で載る',any(f['version']==v1 and not f['outdated'] for f in fleet),[(f['pc'],f['version']) for f in fleet]))
+ return checks
+
+
 def main():
  ap=argparse.ArgumentParser()
- ap.add_argument('exe');ap.add_argument('--wrap',default='');ap.add_argument('--modes',default='full,close,restart,local,update')
+ ap.add_argument('exe');ap.add_argument('--wrap',default='');ap.add_argument('--modes',default='full,close,restart,local,update,release')
  a=ap.parse_args();bad=0
  for mode in a.modes.split(','):
   with tempfile.TemporaryDirectory() as d:
-   checks=run(Path(a.exe).resolve(),a.wrap,mode,Path(d))
+   exe=Path(a.exe).resolve()
+   checks=run_release(exe,a.wrap,Path(d)) if mode=='release' else run(exe,a.wrap,mode,Path(d))
   print(f'■ {mode}')
   for name,ok,detail in checks:
    print(f"  {'合格' if ok else '★不合格'} {name} | {str(detail)[:160]}")
