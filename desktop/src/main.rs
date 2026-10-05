@@ -13,7 +13,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod frame;
+mod install;
 mod locate;
+mod release;
 mod router;
 mod sidecar;
 mod update;
@@ -94,6 +96,8 @@ struct Shell {
     last_restart: Mutex<String>,
     /// 窓と中身の名乗り（版・置き場・Python）。準備できたら入る
     info: OnceLock<Value>,
+    /// 起動のときに配る版へそろえたなら「前の版 → 新しい版」（画面の「アプリ監視」と通知に出す）
+    release_note: Mutex<String>,
 }
 
 impl Shell {
@@ -226,11 +230,17 @@ fn on_close_requested(app: &AppHandle, shell: &Arc<Shell>) {
 /// 終了。先に Python へ後始末を頼み（実行中なら中断・ワーカーと非表示の SymfoNavi を止める・設定を書き出す）、
 /// 答えが返ってから終わる。終われば Python の入力が閉じ、Python は自分で終わる。
 fn quit_app(app: &AppHandle, shell: &Arc<Shell>, source: &str) {
+    quit_or_restart(app, shell, source, false)
+}
+
+/// 開き直す（画面の「開き直して新しい版にする」）。後始末は終了と同じ。終わる前に新しい自分を `--after-pid` 付きで起こす
+/// ——新しい窓はこの窓が終わるのを待ってから開き、起動のときに配る版へそろう（写していない形なら写しへ渡る）。
+fn quit_or_restart(app: &AppHandle, shell: &Arc<Shell>, source: &str, restart: bool) {
     if shell.quitting.swap(true, Ordering::SeqCst) {
         return;
     }
-    rlog(&format!("QUIT source={source}"));
-    shell.set_tooltip(&format!("{TITLE}（終了しています…）"));
+    rlog(&format!("QUIT source={source} restart={restart}"));
+    shell.set_tooltip(&format!("{TITLE}（{}しています…）", if restart { "開き直" } else { "終了" }));
     let (app, shell, source) = (app.clone(), shell.clone(), source.to_string());
     std::thread::spawn(move || {
         if shell.backend().map(|b| b.is_alive()).unwrap_or(false) {
@@ -240,8 +250,24 @@ fn quit_app(app: &AppHandle, shell: &Arc<Shell>, source: &str) {
                 Err(e) => rlog(&format!("CLEANUP failed error={e}")),
             }
         }
+        if restart {
+            match install::relaunch(&own_exe(), "") {
+                Ok(()) => rlog("RESTART relaunched"),
+                Err(e) => rlog(&format!("RESTART_FAILED error={e}")),
+            }
+        }
         app.exit(0);
     });
+}
+
+/// 起こし直すときの exe。写したアプリなら写しの DataRelay.exe（入れ替えたあとも同じ道に新しい exe がある）、
+/// ほかはいま動いている exe。
+fn own_exe() -> PathBuf {
+    let me = locate::exe().unwrap_or_else(|_| PathBuf::from(install::ENTRY));
+    match me.parent() {
+        Some(root) if release::installed(root) => root.join(install::ENTRY),
+        _ => me,
+    }
 }
 
 /// 通知領域のアイコン。左クリックで開く。右のメニューに「画面を開く」「終了」。
@@ -360,6 +386,23 @@ fn native(app: AppHandle, shell: Arc<Shell>, info: Value) -> Native {
             });
             Some(json_reply(&json!({"ok": true, "status": "stopping"})))
         }
+        // 画面の「開き直して新しい版にする」: 中身に開き直してよいかを聞き（実行中・キューがあれば断る）、後始末を頼んで開き直す
+        ("POST", "/api/restart-app") => {
+            match shell.ask_json("GET", "/api/release/restart-check", b"") {
+                Ok(v) if v["ok"].as_bool() == Some(false) => {
+                    let why = v["reason"].as_str().unwrap_or("いまは開き直せません");
+                    return Some(error_reply(409, "busy", &format!("{why}。終わってからもう一度押してください")));
+                }
+                Err(e) => rlog(&format!("RESTART check_unknown error={e}（中身が答えないので開き直します）")),
+                _ => {}
+            }
+            let (app, shell) = (app.clone(), shell.clone());
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(150));
+                quit_or_restart(&app, &shell, "ui-restart", true);
+            });
+            Some(json_reply(&json!({"ok": true, "status": "restarting"})))
+        }
         // 画面の「タスクバーへ」: 窓を隠して通知領域に残る（アイコンは窓が持つので、いつでも引き受けられる）
         ("POST", "/api/stay-resident") => {
             let reason = shell.residency_reason().ok().filter(|r| !r.is_empty()).unwrap_or_else(|| "タスクバーへ入れるよう頼まれた".into());
@@ -377,6 +420,7 @@ fn native(app: AppHandle, shell: Arc<Shell>, info: Value) -> Native {
             v["python"] = shell.info.get().map(|i| i["python"].clone()).unwrap_or(Value::Null);
             v["program"] = shell.info.get().map(|i| i["program"].clone()).unwrap_or(Value::Null);
             v["last_restart"] = json!(*shell.last_restart.lock().unwrap());
+            v["release_note"] = json!(*shell.release_note.lock().unwrap());
             for k in ["exe", "place", "pointer", "updated_from"] {
                 v[k] = shell.info.get().map(|i| i[k].clone()).unwrap_or(Value::Null);
             }
@@ -388,6 +432,7 @@ fn native(app: AppHandle, shell: Arc<Shell>, info: Value) -> Native {
             Some(json_reply(&json!({
                 "info": info,
                 "mode": std::env::var("DATARELAY_SELFTEST_MODE").unwrap_or_default(),
+                "relaunched": install::relaunched(),
                 "tray": shell.tray.lock().unwrap().is_some(),
                 "visible": w.as_ref().and_then(|w| w.is_visible().ok()),
                 "resident_reason": *shell.resident_reason.lock().unwrap(),
@@ -507,6 +552,10 @@ fn find_python(app: &AppHandle, shell: &Shell, program: &Path, local: &Path) -> 
 
 /// 中身（Python）を探して起こし、準備できたら画面へ切り替える（裏の糸で。窓とアイコンは先に出しておく）。
 fn start(app: AppHandle, shell: Arc<Shell>) {
+    if align_release(&app, &shell) {
+        return;
+    }
+    shell.step(&app, "python", "now", "Flask を読める Python を探しています…");
     let (program, place) = match locate::program_dir() {
         Ok(p) => p,
         Err(e) => return shell.fail(&app, "アプリのフォルダが見つかりません", &e),
@@ -559,10 +608,14 @@ fn start(app: AppHandle, shell: Arc<Shell>) {
         "ok",
         &format!("版 {} ・ {} bit ・ {:.1} 秒", ready["version"].as_str().unwrap_or("?"), ready["bits"], elapsed),
     );
-    let exe = std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_default();
+    let exe = locate::exe().map(|p| p.display().to_string()).unwrap_or_default();
     let updated_from = std::env::var("DATARELAY_UPDATED").unwrap_or_default();
     let info = json!({"shell": "tauri", "shell_version": env!("CARGO_PKG_VERSION"), "program": program, "python": py.exe, "backend": ready, "local": local,
                       "exe": exe, "place": place.label(), "pointer": pointer, "updated_from": updated_from});
+    let release_note = shell.release_note.lock().unwrap().clone();
+    if !release_note.is_empty() {
+        notify(&app, TITLE, &format!("配られた版にそろえました（{release_note}）。"));
+    }
     if !updated_from.is_empty() {
         notify(
             &app,
@@ -633,10 +686,130 @@ fn start(app: AppHandle, shell: Arc<Shell>) {
     }
 }
 
+/// 配る版へそろえる（配布の置き場から写したアプリ・初回のインストール・release.rs）。中身（Python）を起こす前に、起動画面の中で。
+/// → true なら起動を続けない（新しい exe で開き直す・初回に写せなかった）。
+fn align_release(app: &AppHandle, shell: &Arc<Shell>) -> bool {
+    let Some(root) = locate::exe().ok().and_then(|e| e.parent().map(Path::to_path_buf)) else { return false };
+    let fresh = !root.join("app.py").is_file(); // まだ中身が無い（初回のインストール）
+    if let Some(dir) = install::from_arg() {
+        match release::mirror_seed(&root, &dir) {
+            Ok(changed) => rlog(&format!("INSTALL_SEED dir={} changed={changed}", dir.display())),
+            Err(e) if fresh => {
+                shell.step(app, "update", "bad", "配布の置き場に届きません");
+                shell.fail(
+                    app,
+                    "配布の置き場に届きません",
+                    &format!("{e}\n\nBOX Drive が動いているか・ネットワークにつながっているかを確かめて、もう一度入口を開いてください。"),
+                );
+                return true;
+            }
+            Err(e) => rlog(&format!("INSTALL_SEED_FAILED dir={} error={e}（前の写しのまま）", dir.display())),
+        }
+    }
+    if !release::installed(&root) {
+        shell.step(app, "update", "skip", "配布の置き場から写したアプリではないので、確かめません");
+        return false;
+    }
+    shell.step(app, "update", "now", "配る版を確かめています…");
+    let stop_fresh = |why: &str| {
+        shell.step(app, "update", "bad", "このPCへ写せませんでした");
+        shell.fail(app, "アプリをこのPCへ写せませんでした", why);
+        true
+    };
+    match release::peek(&root) {
+        release::Peek::Same(v) => {
+            // 前の窓がそろえてから新しい exe で開き直した: 前の窓が渡した「前の版 → 新しい版」を引き継ぐ
+            if let Some(note) = std::env::var(install::RELEASED_ENV).ok().filter(|n| !n.is_empty()) {
+                *shell.release_note.lock().unwrap() = note;
+            }
+            shell.step(app, "update", "ok", &format!("版 {v}（配る版と同じ）"));
+            false
+        }
+        release::Peek::Skip(why) | release::Peek::Bad(why) if fresh => stop_fresh(&why),
+        release::Peek::Skip(why) => {
+            rlog(&format!("RELEASE_SKIPPED {why}"));
+            shell.step(app, "update", "skip", &why);
+            false
+        }
+        release::Peek::Bad(why) => {
+            rlog(&format!("RELEASE_BAD {why}"));
+            shell.step(app, "update", "bad", &why);
+            false
+        }
+        release::Peek::Differs { have, want, dir } => {
+            let progress = |m: &str| shell.step(app, "update", "now", m);
+            match release::apply(&root, &dir, &have, &want, &|m: &str| rlog(m), &progress) {
+                release::Outcome::Applied { from, to, exe_changed } => {
+                    rlog(&format!("RELEASE_APPLIED from={from} to={to} exe_changed={exe_changed} dir={}", dir.display()));
+                    let note = if from.is_empty() { String::new() } else { format!("{from} → {to}") };
+                    *shell.release_note.lock().unwrap() = note.clone();
+                    if exe_changed {
+                        // 窓（exe）も変わった: 新しい exe で開き直す（この窓が終わるのを待ってから開く）
+                        match install::relaunch(&root.join(install::ENTRY), &note) {
+                            Ok(()) => {
+                                shell.step(app, "update", "ok", &format!("版 {to} にそろえました。新しい窓で開き直します"));
+                                app.exit(0);
+                                return true;
+                            }
+                            Err(e) => rlog(&format!("RELEASE_RELAUNCH_FAILED error={e}（いまの窓で続けます）")),
+                        }
+                    }
+                    shell.step(app, "update", "ok", &format!("版 {to} にそろえました"));
+                    false
+                }
+                release::Outcome::Failed(e) if fresh => stop_fresh(&e),
+                release::Outcome::Failed(e) => {
+                    rlog(&format!("RELEASE_FAILED want={want} error={e}"));
+                    shell.step(app, "update", "bad", &format!("そろえられませんでした（版 {have} のまま開きます）"));
+                    notify(app, TITLE, &format!("配られた版 {want} にそろえられませんでした。版 {have} のまま開きます。\n{e}"));
+                    false
+                }
+            }
+        }
+    }
+}
+
+/// 窓を作る前にすること（1つだけ起動の仕組みに登録する前）。この exe はここで終わるなら Some(終了コード)。
+///   1. 入口・共有から直に動かす形で、置き場に配る版があれば、この PC の写しへ渡して終わる（install.rs）
+///   2. 開き直しで起こされた（`--after-pid`）なら、前の窓が終わるのを待つ
+///   3. 窓の錠を持つ（次に開き直す窓が、この窓の終わりを待てるように）
+///   4. exe だけを手元に置いた形の自己更新（update.rs・配る版が無いときのこれまでの道）
+fn early() -> Option<i32> {
+    let _ = locate::exe(); // 退く前の exe の道を、何よりも先に覚える（release.rs が入れ替えると OS の答えが変わる）
+    if install::from_arg().is_none() {
+        if let Some(dir) = handoff_target() {
+            match install::handoff(&dir, &|m: &str| rlog(m)) {
+                install::Handoff::Done(_) => return Some(0),
+                install::Handoff::Failed(e) => rlog(&format!("INSTALL_HANDOFF_FAILED dir={} error={e}（このまま動きます）", dir.display())),
+            }
+        }
+    }
+    if let Some(waited) = install::wait_for_previous(Duration::from_secs(45)) {
+        rlog(&format!("AFTER_PREVIOUS waited={:.1}s", waited.as_secs_f64()));
+    }
+    install::hold_window_lock();
+    self_update()
+}
+
+/// 写しへ渡す置き場（渡さないなら None）。入口（置き場の直下の DataRelay.exe）か、共有から直に動かしている形
+/// （共有のアプリのフォルダーの exe・install_local.cmd の手元の exe）で、置き場に配る版があるとき。
+fn handoff_target() -> Option<PathBuf> {
+    let exe = locate::exe().ok()?;
+    if let Some(dir) = install::shared_entry_dir(&exe) {
+        return Some(dir);
+    }
+    let (program, place) = locate::program_dir().ok()?;
+    if !matches!(place, locate::Place::Beside | locate::Place::Local { .. }) || program.join(".git").exists() {
+        return None;
+    }
+    let (dir, _) = release::update_dir(&program);
+    (install::is_release_dir(&dir) && matches!(release::release_version(&dir, release::REACH), Ok(Some(_)))).then_some(dir)
+}
+
 /// exe を手元に置いた形のとき、共有のアプリの版と食い違っていれば共有の exe で自分を入れ替えて起こし直す（update.rs）。
 /// 起こし直したら Some(終了コード)。窓を作る前に呼ぶ（1つだけ起動の仕組みに登録する前なので、新しい exe とぶつからない）。
 fn self_update() -> Option<i32> {
-    let exe = std::env::current_exe().ok()?;
+    let exe = locate::exe().ok()?;
     let (program, place) = locate::program_dir().ok()?;
     if !matches!(place, locate::Place::Local { .. }) {
         return None;
@@ -673,7 +846,13 @@ fn self_update() -> Option<i32> {
                 return None; // 入れ替えられなくても、いまの exe で動く
             }
             rlog(&format!("EXE_UPDATED from={own} to={shared} source={}", source.display()));
-            match std::process::Command::new(&exe).args(std::env::args_os().skip(1)).env("DATARELAY_UPDATED", &own).spawn() {
+            let relaunch = std::process::Command::new(&exe)
+                .args(std::env::args_os().skip(1))
+                .arg(install::AFTER_ARG)
+                .arg(std::process::id().to_string())
+                .env("DATARELAY_UPDATED", &own)
+                .spawn();
+            match relaunch {
                 Ok(_) => Some(0),
                 Err(e) => {
                     rlog(&format!("EXE_RELAUNCH_FAILED error={e}"));
@@ -685,7 +864,7 @@ fn self_update() -> Option<i32> {
 }
 
 fn main() {
-    if let Some(code) = self_update() {
+    if let Some(code) = early() {
         std::process::exit(code);
     }
     let shell: Arc<Shell> = Arc::default();

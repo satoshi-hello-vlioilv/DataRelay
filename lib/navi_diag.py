@@ -21,11 +21,17 @@ from pathlib import Path
 from navi_paths import is_pc_path,foreign_profile_path
 import app
 from app import (
-    BASE, LOCAL_LOGS, LOCAL_ROOT, LOCAL_RUNTIME, MASTER_SETTINGS_DB, SETTINGS_DB,
+    BASE, DATA_ROOT, DATA_ROOT_SOURCE, LOCAL_LOGS, LOCAL_ROOT, LOCAL_RUNTIME, MASTER_SETTINGS_DB, SETTINGS_DB,
     creds, dll_search_roots, job_extra_formats, job_schedule_preview, last_run_info,
     load, load_job_runs, log, normalize_output_format, resolve_path, schedule_gap_minutes,
     settings_connection,
 )
+
+# データの基準（相対パスと設定のマスターの基準）をどこで決めたか（navi_paths.data_root の出どころ）。
+DATA_ROOT_NOTES={'app':'相対パスと設定のマスターの基準。共有から直に動かしているので、アプリの場所と同じ',
+                 'install':'相対パスと設定のマスターの基準。配布の置き場から写したときに決まりました（config\\install.json）',
+                 'local':'相対パスと設定のマスターの基準。このPCだけの上書き（config\\local.json）',
+                 'env':'相対パスと設定のマスターの基準。環境変数 NAVI_DATA_ROOT（確かめるとき）'}
 
 # 予定を持たない対象にも「いつまでなら新しいと言えるか」の目安を持たせる。
 # 1.88.0まで、目安は予定からしか作っていなかった。そのため手動でしか実行しない対象は
@@ -295,7 +301,7 @@ def _dll_requirement(cfg=None):
 
 def nearby_search_roots():
  roots=[]
- for p in (BASE,BASE.parent,BASE.parent.parent):
+ for p in (BASE,BASE.parent,BASE.parent.parent,DATA_ROOT,DATA_ROOT.parent):
   if p.exists() and p not in roots:roots.append(p)
  for p in list(roots):
   try:
@@ -464,7 +470,8 @@ def machine_path_view():
                'exists':exists,'writable':writable,'role':role,'why':why,
                'portable':is_pc_path(raw) or not Path(raw).is_absolute() if raw else True,
                'foreign':foreign or '','state':state,'note':note})
- fixed=[{'label':'アプリの場所','path':str(BASE),'note':'このPCに置いてある実体'},
+ fixed=[{'label':'アプリの場所','path':str(BASE),'note':'動いているプログラムの実体'},
+        {'label':'データの基準','path':str(DATA_ROOT),'note':DATA_ROOT_NOTES.get(DATA_ROOT_SOURCE,'')},
         {'label':'このPCのローカル領域','path':str(LOCAL_ROOT),'note':'<PC> が指す先。作業・控え・ログ・キャッシュの親'},
         {'label':'作業フォルダー','path':str(LOCAL_ROOT/'work'),'note':'抽出の途中ファイル。起動時に空にします'},
         {'label':'ログ','path':str(LOCAL_LOGS),'note':'実行ログの実体'},

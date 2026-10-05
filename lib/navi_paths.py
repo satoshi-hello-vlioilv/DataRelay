@@ -9,7 +9,7 @@ app.py から分けてある。パスの読み替えは全体から呼ばれる�
 一切見ない。基準となる2つの場所（アプリの場所・このPCのローカル領域）だけを
 setup で受け取る。外から見える名前は分ける前と同じ（app からも読める）。
 """
-import os,re,shutil,threading,time
+import json,os,re,shutil,threading,time
 from datetime import datetime
 from pathlib import Path
 
@@ -52,11 +52,63 @@ def migrate_local_root(new_root,old_names,parent=None):
     except Exception:pass
  return moved
 
-BASE=None;LOCAL_ROOT=None
-def setup(base,local_root):
- """基準になる2つの場所を決める。app.py から一度だけ呼ぶ。"""
- global BASE,LOCAL_ROOT
- BASE=Path(base);LOCAL_ROOT=Path(local_root)
+DATA_ROOT=None;LOCAL_ROOT=None
+def setup(data_root,local_root):
+ """基準になる2つの場所（データの基準・このPCのローカル領域）を決める。app.py から一度だけ呼ぶ。"""
+ global DATA_ROOT,LOCAL_ROOT
+ DATA_ROOT=Path(data_root);LOCAL_ROOT=Path(local_root)
+
+# ==== データの基準（相対パスの基準・設定マスターの在りか） ==============
+# 設定に書いた相対パス（.\config\symnavim.conf・.\rne など）と設定のマスター（Config\app_settings.sqlite3）は、
+# 共有（BOX）のアプリのフォルダーを基準にしてきた。アプリを各PCへ写して動かす形（1.98.0・配布）では、
+# プログラムの場所（BASE）はこのPCの写しになるが、データの基準は共有のまま変えてはいけない ―― 変えると
+# 同じ設定がPCごとに違う場所を指し、symnavim.conf も登録した RNE も見えなくなる。
+# そこで「プログラムの場所」と「データの基準」を分ける。決める順（窓の release.rs と同じ）:
+#   1. 環境変数 NAVI_DATA_ROOT（確かめるとき）
+#   2. <アプリ>\config\local.json の data_root（このPCだけの上書き。書くのは人）
+#   3. <アプリ>\config\install.json の data_root（配布の置き場から写したとき、窓が書く）
+#   4. プログラムの場所（共有から直に動かす形・作る途中。これまでと同じ）
+DATA_KEY='data_root'
+LOCAL_FILE='local.json'
+SEED_FILE='install.json'
+
+def read_json(path):
+ """小さな設定ファイル（JSON の辞書）を読む。BOM は外す。無い・読めない・辞書でないなら空の辞書。"""
+ try:
+  data=json.loads(Path(path).read_text(encoding='utf-8-sig'))
+ except (OSError,ValueError):
+  return {}
+ return data if isinstance(data,dict) else {}
+
+def expand(value):
+ """%NAME% と $NAME と ~ を展開する。%NAME% は Windows 以外でも展開する（窓の release.rs と同じ読み方）。
+ 定義されていない名前はそのまま残す。"""
+ raw=re.sub(r'%([^%]+)%',lambda m:os.environ.get(m.group(1),m.group(0)),str(value or '').strip())
+ return os.path.expanduser(os.path.expandvars(raw))
+
+def data_root(base,env=None):
+ """データの基準と出どころ（env／local／install／app）。上の決める順のとおり。"""
+ env=os.environ if env is None else env
+ if str(env.get('NAVI_DATA_ROOT') or '').strip():
+  return Path(expand(env['NAVI_DATA_ROOT'])),'env'
+ conf=Path(base)/'config'
+ for source,name in (('local',LOCAL_FILE),('install',SEED_FILE)):
+  value=str(read_json(conf/name).get(DATA_KEY) or '').strip()
+  if value:return Path(expand(value)),source
+ return Path(base),'app'
+
+def portable(value,home=None):
+ r"""自分のプロファイルの下を指すパスを %USERPROFILE%\… へ直す（BOX Drive は利用者ごとに場所が違う）。
+ 共有の設定・新しいPCへ渡す値に書く前に通す。プロファイルの外・他人のプロファイルはそのまま返す。"""
+ raw=str(value or '').strip()
+ if not raw or raw.startswith('%'):return raw
+ home=home or Path.home()
+ mine=_profile_root(home) or '\\'.join(_split_any(home))
+ parts=_split_any(raw)
+ root=_profile_root(raw)
+ if not root or root.lower()!=str(mine).lower():return raw
+ rest=parts[len(_split_any(root)):]
+ return '\\'.join(['%USERPROFILE%']+rest)
 
 # ==== PCごとに実体が変わる場所 ==========================================
 # 設定は BOX 上のマスターを通じて別のPCへも配られる。そこへ絶対パスのまま
@@ -117,9 +169,9 @@ def _looks_generated_backup(value):
 def resolve_path(value,base=None):
  """Resolve absolute, UNC, or app-relative paths without changing stored values.
 
- base の既定は setup で決めたアプリの場所。定義時ではなく呼ばれた時点で解決する
+ base の既定は setup で決めたデータの基準（共有のアプリのフォルダー）。定義時ではなく呼ばれた時点で解決する
  （既定引数に入れると、setup より前の値で固定されてしまう）。"""
- if base is None:base=BASE
+ if base is None:base=DATA_ROOT
  if value is None:return base
  raw=str(value).strip()
  # <PC> は、いま動いているPCのローカル領域へ直す。設定にはPC固有の値を残さない。

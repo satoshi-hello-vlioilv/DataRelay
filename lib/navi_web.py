@@ -27,9 +27,13 @@ import navi_join     # キーの見当を付けるところだけ、直接呼ぶ
 import navi_order    # 結合の順番と待ち合わせの判断
 import navi_book     # マスタをEXCELで出し入れする
 import navi_crosstab # RNEの配置（表側・表頭・データ項目）を読む。ファイルを読むだけでAPIは使わない
+import navi_release  # 配布の置き場（版を置く・配る版・各PCの版）
+import navi_paths
+import navi_shortcut # 起動アイコン（このPCの写しへ向ける）
 
 from app import (
-    APP_ID, APP_NAME, APP_RELEASED_AT, APP_VERSION, APP_VERSION_TITLE, BASE, BUILD_VERSION, CHANGELOG,
+    APP_ID, APP_NAME, APP_RELEASED_AT, APP_VERSION, APP_VERSION_TITLE, BASE, BUILD_VERSION, CHANGELOG, CONFIG_DIR, DATA_ROOT,
+    DATA_ROOT_SOURCE, LOCAL_ROOT, RELEASE_WATCH, release_check, release_place, release_shared, restart_block_reason,
     DEFAULT_DLL_SEARCH_ROOTS, DOCS, INSPECT_ALL_ORDER, INSPECT_ALL_SPEC,
     INSPECT_TASK_SPECS, INSTANCE_ID, LOCAL_RUNTIME, LOG_FILTERS, LOG_PATH, LOG_READ_BYTES,
     Path, ROW_AXIS_MODE_LABEL, SPLIT_BATCH_MAX, _api_diag_cache_path, _dll_requirement,
@@ -1022,7 +1026,7 @@ def navigator_api_status():
   try:
    from navigator_api import candidate_dlls,pe_bits,pe_exports
    pybits=struct.calcsize('P')*8;attempts=[]
-   for p in candidate_dlls(resolve_path(c.get('symnavi_exe','')),resolve_path(c.get('navigator_api_dll')) if c.get('navigator_api_dll') else None,[BASE/'Config'/'NAVIAP',BASE/'NAVIAP'],search_roots=dll_search_roots(c)):
+   for p in candidate_dlls(resolve_path(c.get('symnavi_exe','')),resolve_path(c.get('navigator_api_dll')) if c.get('navigator_api_dll') else None,[CONFIG_DIR/'NAVIAP',BASE/'config'/'NAVIAP',DATA_ROOT/'NAVIAP'],search_roots=dll_search_roots(c)):
     exists=p.is_file();bits=pe_bits(p) if exists else None;attempts.append({'path':str(p),'exists':exists,'dll_bits':bits,'python_bits':pybits,'result':'bit_mismatch' if exists and bits and bits!=pybits else 'not_found'})
     # DLLを読み込めなくても、エクスポート表はファイルを読むだけで分かる。
     # 読み込みに失敗する端末こそ、そのDLLに何ができるのかを知りたい。
@@ -1178,15 +1182,15 @@ def delete_old_log():
 @app.post('/api/path-convert')
 def path_convert():
  data=request.get_json(silent=True) or {}; value=str(data.get('value') or '').strip(); mode=data.get('mode','absolute')
- if not value:return jsonify(value='',resolved=str(BASE),base=str(BASE),is_relative=False)
+ if not value:return jsonify(value='',resolved=str(DATA_ROOT),base=str(DATA_ROOT),is_relative=False)
  resolved=resolve_path(value).resolve()
  if mode=='relative':
-  try:converted='.\\'+str(resolved.relative_to(BASE.resolve())).replace('/','\\')
+  try:converted='.\\'+str(resolved.relative_to(DATA_ROOT.resolve())).replace('/','\\')
   except ValueError:
-   try:converted=os.path.relpath(str(resolved),str(BASE.resolve())).replace('/','\\')
+   try:converted=os.path.relpath(str(resolved),str(DATA_ROOT.resolve())).replace('/','\\')
    except ValueError:return jsonify(error='別ドライブまたはUNC経路のため、このアプリ基準の相対パスへ変換できません。絶対パスを使用してください。'),400
  else:converted=str(resolved)
- return jsonify(value=converted,resolved=str(resolved),base=str(BASE.resolve()),is_relative=not Path(converted).is_absolute())
+ return jsonify(value=converted,resolved=str(resolved),base=str(DATA_ROOT.resolve()),is_relative=not Path(converted).is_absolute())
 
 @app.get('/api/output-capabilities')
 def output_capabilities():
@@ -1209,6 +1213,113 @@ def output_capabilities():
 @app.get('/api/machine-paths')
 def machine_paths():
  return jsonify(**machine_path_view())
+
+# ==== 配布と更新（1.98.0・判断は navi_release／navi_shortcut。ここは受け渡しだけ） ====
+def _release_base():
+ return navi_release.dir_choice(BASE,release_shared())[0]
+
+def _shortcut_shell():
+ return navi_shortcut.WindowsShell() if navi_shortcut.available() else None
+
+def _shortcut_offer():
+ try:return navi_shortcut.offer(_shortcut_shell(),BASE/navi_release.ENTRY_EXE,LOCAL_ROOT,release_place()=='installed')
+ except Exception as e:
+  log.warning('SHORTCUT_OFFER_FAILED error=%s',e);return {'show':False,'available':False,'ours':[],'old':[],'error':str(e)}
+
+@app.get('/api/release/status')
+def release_status():
+ """画面「配布と更新」の全部（置き場・配る版・置いてある版・入口・各PCの版）。置き場に届かなければ 3 秒で打ち切る。"""
+ out=navi_release.status(BASE,DATA_ROOT,APP_VERSION,release_shared(),release_place())
+ out.update(dataRootSource=DATA_ROOT_SOURCE,restartBlock=restart_block_reason(),shortcut=_shortcut_offer(),
+            progress=navi_release.progress())
+ return jsonify(ok=True,**out)
+
+@app.get('/api/release/brief')
+def release_brief():
+ """画面の上の帯が見る短い答え（最後に読んだ配る版・開き直してよいか・起動アイコンを聞くか）。置き場は読まない。"""
+ snap=RELEASE_WATCH.snapshot(APP_VERSION)
+ return jsonify(ok=True,version=APP_VERSION,place=release_place(),pending=snap['pending'],want=snap['want'],
+                checked=snap['checked'],restartBlock=restart_block_reason(),shortcut=_shortcut_offer())
+
+@app.post('/api/release/check')
+def release_check_now():
+ """配る版をいま読み直す（画面の「確かめる」）。"""
+ snap=release_check()
+ return jsonify(ok=True,**snap)
+
+@app.post('/api/release/publish')
+def release_publish():
+ """ZIP から版を置く（裏で進め、画面は /api/release/progress を問い合わせて描く）。ZIP は窓のダイアログで選んだ道で受け取る
+ （数十MBの中身を窓口に通さない）。"""
+ data=request.get_json(silent=True) or {}
+ path=str(data.get('path') or '').strip()
+ if not path:return jsonify(ok=False,error='ZIP が選ばれていません'),400
+ out=navi_release.start_publish(path,_release_base(),navi_release.who())
+ if out.get('ok'):log.info('RELEASE_PUBLISH_START zip=%s dir=%s',path,_release_base())
+ return jsonify(out),(200 if out.get('ok') else 409 if out.get('busy') else 400)
+
+@app.get('/api/release/progress')
+def release_progress():
+ p=navi_release.progress()
+ if p.get('state') in ('done','failed') and p.get('endedAt') and not p.get('logged'):
+  r=p.get('result') or {}
+  log.info('RELEASE_PUBLISH_END state=%s version=%s files=%s error=%s',p['state'],r.get('version'),r.get('files'),p.get('error',''))
+  navi_release._set_progress(logged=True)
+ return jsonify(ok=True,**p)
+
+@app.post('/api/release/set')
+def release_set():
+ """配る版を決める（前の版へ戻すのも同じ）。"""
+ data=request.get_json(silent=True) or {}
+ version=str(data.get('version') or '').strip()
+ if not navi_release.safe_version(version):return jsonify(ok=False,error='版の字が正しくありません: %r'%version),400
+ out=navi_release.set_release(version,_release_base(),DATA_ROOT,navi_release.who())
+ log.info('RELEASE_SET version=%s previous=%s ok=%s notes=%s',version,out.get('previous'),out.get('ok'),out.get('notes') or out.get('error'))
+ if out.get('ok'):
+  try:release_check()
+  except Exception:log.exception('RELEASE_CHECK_AFTER_SET_FAILED')
+ return jsonify(out),(200 if out.get('ok') else 400)
+
+@app.post('/api/release/dir')
+def release_dir():
+ """置き場を変える（共有の設定・全PCが同じ値を見る）。空にすると既定（アプリのフォルダー・入れた元）へ戻る。
+ 自分のプロファイルの下なら %USERPROFILE% へ直して書く（BOX Drive は利用者ごとに場所が違う）。"""
+ data=request.get_json(silent=True) or {}
+ value=navi_paths.portable(str(data.get('value') or '').strip())
+ if value:
+  ok,why=navi_release.reachable(navi_paths.expand(value))
+  if not ok:return jsonify(ok=False,error=why),400
+ with settings_sync_lock:
+  c=load()
+  if str(c.get('update_dir') or '')==value:return jsonify(ok=True,value=value,changed=False)
+  c['update_dir']=value
+  rev=save(c,quiet=True)
+ navi_release.remember(BASE,value)
+ log.info('RELEASE_DIR value=%s',value or '(既定)')
+ return jsonify(ok=True,value=value,changed=True,settings_revision=rev)
+
+@app.get('/api/release/restart-check')
+def release_restart_check():
+ """窓が開き直す前に聞く（実行中・キュー・影実行・版を置いている最中なら断る）。"""
+ why=restart_block_reason()
+ return jsonify(ok=not why,reason=why)
+
+@app.post('/api/shortcut/make')
+def shortcut_make():
+ """起動アイコンをこのPCの写しへ向ける（前からある DataRelay のアイコンは向け直し、無ければデスクトップに作る）。"""
+ # 作るのは配布の置き場から写したアプリだけ（画面が聞くのもそのときだけ）。作る途中の木・共有から直に動かす形・試験では
+ # 本物のデスクトップを触らない（全ルートを呼ぶ突き合わせの試験が、CI のデスクトップにアイコンを作っていた）
+ if release_place()!='installed':return jsonify(ok=False,error='起動アイコンを作るのは、配布の置き場からこのPCへ写したアプリだけです'),400
+ shell=_shortcut_shell()
+ if shell is None:return jsonify(ok=False,error='このPCでは起動アイコンを作れません（Windows と pywin32 が要ります）'),400
+ out=navi_shortcut.ensure(shell,BASE/navi_release.ENTRY_EXE)
+ log.info('SHORTCUT_MAKE made=%s retargeted=%s errors=%s',out['made'],out['retargeted'],out['errors'])
+ return jsonify(ok=not out['errors'],**out)
+
+@app.post('/api/shortcut/decline')
+def shortcut_decline():
+ navi_shortcut.decline(LOCAL_ROOT,BASE/navi_release.ENTRY_EXE)
+ return jsonify(ok=True)
 
 @app.get('/api/alerts')
 def get_alerts():
@@ -1258,7 +1369,7 @@ def apply_path_suggestion():
  if not candidate or not Path(candidate).is_file():return jsonify(error='修正候補が存在しません'),400
  with settings_sync_lock:
   c=load()
-  try:stored=str(Path(candidate).resolve().relative_to(BASE.resolve()))
+  try:stored=str(Path(candidate).resolve().relative_to(DATA_ROOT.resolve()))
   except ValueError:stored=str(Path(candidate).resolve())
   if not stored.startswith('.') and not Path(stored).is_absolute():stored='.\\'+stored.replace('/','\\')
   if item in ('symnavim_conf','symnavim_def','accdb_template'):c[item]=stored
@@ -1345,7 +1456,7 @@ def validate():
    import struct
    pybits=struct.calcsize('P')*8
    roots=dll_search_roots(c)
-   dll_candidates=candidate_dlls(resolve_path(c.get('symnavi_exe','')),resolve_path(c.get('navigator_api_dll')) if c.get('navigator_api_dll') else None,[BASE/'Config'/'NAVIAP',BASE/'NAVIAP'],search_roots=roots)
+   dll_candidates=candidate_dlls(resolve_path(c.get('symnavi_exe','')),resolve_path(c.get('navigator_api_dll')) if c.get('navigator_api_dll') else None,[CONFIG_DIR/'NAVIAP',BASE/'config'/'NAVIAP',DATA_ROOT/'NAVIAP'],search_roots=roots)
    found=[x for x in dll_candidates if x.is_file()]
    usable=[x for x in found if pe_bits(x)==pybits];selected=usable[0] if usable else None
    # bit数の話は必ず添える。別のPCで詰まるのはたいていここ。
@@ -1374,7 +1485,7 @@ def validate():
   else:add('接続設定',label,role!='required',f'未設定です。{why}',level='error' if role=='required' else 'warning',item=key,needs_reselect=role=='required')
  # RNE基本フォルダーは補助設定。各ジョブの実ファイルが解決できればフォルダー不足をNGにしない。
  configured_root=resolve_path(c.get('rne_folder','.\\rne'))
- standard_roots=[configured_root,BASE/'Config'/'rne',BASE/'config'/'rne',BASE/'rne']
+ standard_roots=[configured_root,CONFIG_DIR/'rne',DATA_ROOT/'config'/'rne',DATA_ROOT/'rne',BASE/'config'/'rne']
  existing_roots=[]
  for root in standard_roots:
   try:

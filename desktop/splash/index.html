@@ -18,6 +18,7 @@ li i{font-style:normal;font-weight:900;text-align:center}
 li[data-state=now]{color:var(--blue);border-color:#9cd5db;background:#eaf6f8}
 li[data-state=ok]{color:var(--ok);border-color:#cce8db;background:#edf8f3}
 li[data-state=bad]{color:var(--bad);border-color:#efc4bf;background:#fff1ef}
+li[data-state=skip]{color:var(--muted);border-style:dashed;background:#fff}
 #fail{display:none;margin-top:16px;padding:12px 14px;border-left:4px solid var(--bad);background:#fff1ef;border-radius:7px}
 #fail b{display:block;color:var(--bad);margin-bottom:6px}
 #fail pre{margin:0;white-space:pre-wrap;font:12px/1.6 "Yu Gothic UI",Meiryo,sans-serif;color:#5c2a25}
@@ -28,7 +29,8 @@ li[data-state=bad]{color:var(--bad);border-color:#efc4bf;background:#fff1ef}
   <h1>DataRelay</h1>
   <p class="sub">起動しています。ブラウザやポートは使いません。</p>
   <ol>
-    <li id="python" data-state="now"><i>…</i><div><b>Python を探す</b><small>ブラウザ版と同じ Python を使います</small></div></li>
+    <li id="update" data-state="now"><i>…</i><div><b>配る版にそろえる</b><small>配布の置き場から写したアプリだけ、起動のたびに確かめます</small></div></li>
+    <li id="python" data-state="wait"><i>○</i><div><b>Python を探す</b><small>ブラウザ版と同じ Python を使います</small></div></li>
     <li id="backend" data-state="wait"><i>○</i><div><b>中身を読み込む</b><small></small></div></li>
     <li id="open" data-state="wait"><i>○</i><div><b>画面を開く</b><small></small></div></li>
   </ol>
@@ -41,7 +43,7 @@ window.splash = {
     const li = document.getElementById(id);
     if (!li) return;
     li.dataset.state = state;
-    li.querySelector('i').textContent = { now: '…', ok: '✓', bad: '!', wait: '○' }[state] || '○';
+    li.querySelector('i').textContent = { now: '…', ok: '✓', bad: '!', wait: '○', skip: '–' }[state] || '○';
     if (detail !== undefined) li.querySelector('small').textContent = detail;
   },
   fail(title, detail) {

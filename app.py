@@ -43,7 +43,7 @@ if WORKER_MODE:
  DOCS=[];CHANGELOG=[]
 else:
  from navi_changelog import DOCS,CHANGELOG
-BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'DataRelay'; import navi_paths as _paths0; MIGRATED_LOCAL=_paths0.migrate_local_root(LOCAL_ROOT,LEGACY_LOCAL_NAMES); LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; CONFIG_DIR=Path(os.environ['NAVI_CONFIG_DIR']) if os.environ.get('NAVI_CONFIG_DIR') else BASE/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=BASE/'app_settings.sqlite3'; LEGACY_CFG=BASE/'config.json'
+BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'DataRelay'; import navi_paths as _paths0; MIGRATED_LOCAL=_paths0.migrate_local_root(LOCAL_ROOT,LEGACY_LOCAL_NAMES); LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; DATA_ROOT,DATA_ROOT_SOURCE=_paths0.data_root(BASE); CONFIG_DIR=Path(os.environ['NAVI_CONFIG_DIR']) if os.environ.get('NAVI_CONFIG_DIR') else DATA_ROOT/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=DATA_ROOT/'app_settings.sqlite3'; LEGACY_CFG=DATA_ROOT/'config.json'
 def docs_dir():
  # Windowsでは Config と config は同じ場所を指す。Linuxでの検証時だけ綴りが分かれるので両方見る。
  for d in (CONFIG_DIR/'docs',BASE/'config'/'docs'):
@@ -2144,7 +2144,7 @@ def resolve_text_path(job,cfg):
  raw=os.path.expandvars(os.path.expanduser(value))
  p=Path(raw)
  if p.is_absolute() or raw.startswith('\\\\'):return p
- if raw.startswith(('.\\','..\\','./','../')):return resolve_path(raw,BASE)
+ if raw.startswith(('.\\','..\\','./','../')):return resolve_path(raw,DATA_ROOT)
  return resolve_path(raw,root)
 
 def load():
@@ -2233,7 +2233,7 @@ def migrate_legacy_settings():
  init_settings_db()
  with settings_connection() as c:count=c.execute('SELECT COUNT(*) FROM app_settings').fetchone()[0]
  if count or not LEGACY_CFG.exists():return
- data=json.loads(LEGACY_CFG.read_text(encoding='utf-8')); save(data); backup=BASE/'config.migrated.json'
+ data=json.loads(LEGACY_CFG.read_text(encoding='utf-8')); save(data); backup=DATA_ROOT/'config.migrated.json'
  if not backup.exists():shutil.copy2(LEGACY_CFG,backup)
  LEGACY_CFG.unlink(); log.info('config.jsonをapp_settings.sqlite3へ移行しました backup=%s',backup)
 
@@ -2264,7 +2264,7 @@ def update_parallel_line(line,**v):
 
 # PCごとに実体が変わる場所（<PC> の読み替え・他人のプロファイル検出）は navi_paths.py。
 import navi_paths
-navi_paths.setup(BASE,LOCAL_ROOT)
+navi_paths.setup(DATA_ROOT,LOCAL_ROOT)
 from navi_paths import PC_TOKEN,pc_path,is_pc_path,foreign_profile_path,resolve_path,clean_work_folder,_split_any,_profile_root,_looks_generated_backup
 
 
@@ -2275,8 +2275,8 @@ def resolve_rne_path(job,cfg):
  raw=os.path.expandvars(os.path.expanduser(value))
  p=Path(raw)
  if p.is_absolute() or raw.startswith('\\\\'):return p
- # Explicit relative paths (./, ../, .\, ..\) are app-root relative.
- if raw.startswith(('.\\','..\\','./','../')):return resolve_path(raw,BASE)
+ # Explicit relative paths (./, ../, .\, ..\) are relative to the data root (the shared app folder).
+ if raw.startswith(('.\\','..\\','./','../')):return resolve_path(raw,DATA_ROOT)
  # Bare filename is relative to configured RNE base folder.
  return resolve_path(raw,resolve_path(cfg.get('rne_folder','.\\rne')))
 
@@ -4611,6 +4611,47 @@ def tray_status_text():
  if status.get('running'):
   return f'実行中 {status.get("completed_jobs",0)}/{status.get("total_jobs",0)}'
  return reason or '待機中'
+# ==== 配布（1.98.0・lib/navi_release.py） ===========================
+# 配る版を決めるのも、各PCを配る版へそろえるのも、ふだんは起動のとき（窓の release.rs）。ただし DataRelay は
+# 自動実行のために常駐したまま何日も開き直さないことがあるので、開いたままのPCにも新しい版が配られたことを
+# 知らせる（10分おきに配る版を読む・同じ版は1回だけ）。各PCの版の名乗り（置き場の fleet\）も同じ間隔で書く。
+import navi_release
+RELEASE_WATCH=navi_release.Watch(every=600)
+RELEASE_FIRST_CHECK_SEC=15     # 起動の直後は避ける（共有に届かない日に起動を遅く見せない）
+def release_place():
+ """このアプリの置き方。installed＝配布の置き場から写した／app＝共有から直に動かす／dev＝作る途中（.git がある）。"""
+ if navi_release.installed(BASE):return 'installed'
+ return 'dev' if (BASE/'.git').exists() else 'app'
+def release_shared():
+ """共有の設定の置き場（パス設定と同じマスターの update_dir）。読めなければ空。"""
+ try:return str(load().get('update_dir') or '').strip()
+ except Exception:return ''
+def _tell_release(want):
+ how=('DataRelay を開き直すと入れ替わります（実行中の処理が終わってから。画面の上の帯からも開き直せます）'
+      if release_place()=='installed' else '次に開くとき、このPCへ写して開きます')
+ add_alert('update',f'新しい版 {want} が配られました',f'いまの版は {APP_VERSION} です。{how}')
+def release_check():
+ """配る版を読み、控えと名乗りを書く。作る途中（dev）の木では名乗らない（試験が置き場を散らかさない）。"""
+ place=release_place()
+ return RELEASE_WATCH.check(BASE,DATA_ROOT,APP_VERSION,release_shared(),place,tell=_tell_release,
+                            announce_too=place!='dev')
+def release_watch_loop():
+ time.sleep(RELEASE_FIRST_CHECK_SEC)
+ while True:
+  try:
+   snap=release_check()
+   if snap.get('pending'):log.info('RELEASE_PENDING want=%s have=%s dir=%s',snap.get('want'),APP_VERSION,snap.get('dir'))
+  except Exception:log.exception('RELEASE_WATCH_FAILED')
+  time.sleep(RELEASE_WATCH.every)
+def restart_block_reason():
+ """いま開き直してはいけない理由（無ければ空文字）。自動実行の予定があるだけなら開き直してよい（窓がすぐ戻る）。"""
+ if status.get('running'):return '処理を実行中です'
+ queued=pending_queue_count()
+ if queued:return f'実行キュー {queued}件が待機中です'
+ if split_batch_state.get('running') or split_trial_state.get('running'):return '分け方を試しています'
+ if navi_release.publishing():return '版を置いている最中です'
+ return ''
+
 def prepare_exit(source,wait_seconds=30):
  """終わる前の後始末。画面の「終了」・通知領域の「終了」・× で終わるとき、どれも窓が /api/app-cleanup で頼む。
 
@@ -5415,6 +5456,8 @@ def boot_app(_spawn_at=0.0):
   faulthandler.enable(file=_crash_file,all_threads=True)
   log.info('APP_START_FAULTHANDLER path=%s',LOCAL_LOGS/'crash.log')
  except Exception:log.exception('FAULTHANDLER_UNAVAILABLE')
+ log.info('APP_START_PLACE place=%s data_root=%s source=%s config=%s',release_place(),DATA_ROOT,DATA_ROOT_SOURCE,CONFIG_DIR)
+ threading.Thread(target=release_watch_loop,daemon=True,name='release-watch').start()
  _t=time.perf_counter(); threading.Thread(target=scheduler,daemon=True,name='scheduler').start(); threading.Thread(target=command_dispatcher,daemon=True,name='command-dispatcher').start()
  log.info('APP_START_THREADS elapsed=%.2fs',time.perf_counter()-_t)
  log.info('APP_START_TOTAL boot_to_run=%.2fs total_since_spawn=%.2fs',time.perf_counter()-startup_clock,(time.time()-_spawn_at) if _spawn_at else -1)

@@ -19,3 +19,14 @@ Config/symnavim.conf
 
 # デスクトップ版の exe（desktop/ から作る。CI の Artifacts で配る）
 DataRelay.exe
+
+# 配布（1.98.0）。写したアプリの config\ に窓と中身が書く小さな控え（その PC のもの）と、
+# アプリのフォルダーを置き場に使ったときの版・配る版・各PCの名乗り（置き場のもの）。どれもリポジトリでは持たない。
+config/install.json
+config/update.json
+config/local.json
+/versions/
+/fleet/
+/release.json
+/install.json
+/.update/

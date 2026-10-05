@@ -11,6 +11,14 @@ use std::time::{Duration, Instant};
 /// `#` で始まる行と空の行は読まない。UTF-8 で書く。
 pub const POINTER_FILE: &str = "DataRelay.program.txt";
 
+/// 起こされたときの exe の道（最初に聞いた答えを持ち続ける）。配る版へそろえるとき、動いている exe は
+/// `.update\<版>.old\` へ名前を変えて退くので、そのあとで OS に聞くと退いた先を答えることがある（Linux で実測）。
+/// 開き直す・アプリのフォルダーを探す・アプリ監視に出すときは、退く前の道を使う。
+pub fn exe() -> Result<PathBuf, String> {
+    static EXE: std::sync::OnceLock<Result<PathBuf, String>> = std::sync::OnceLock::new();
+    EXE.get_or_init(|| env::current_exe().map_err(|e| e.to_string())).clone()
+}
+
 /// アプリのフォルダーをどこで知ったか。
 #[derive(Clone, Debug, PartialEq)]
 pub enum Place {
@@ -20,6 +28,8 @@ pub enum Place {
     Local { pointer: PathBuf },
     /// exe がアプリのフォルダーの中（配る zip を展開した形・作る途中の desktop/target/…）
     Beside,
+    /// 配布の置き場からこの PC へ写したアプリ（`config\install.json` がある・1.98.0）。起動のたびに配る版へそろえる
+    Installed,
 }
 
 impl Place {
@@ -28,6 +38,7 @@ impl Place {
             Place::Env => "env",
             Place::Local { .. } => "local",
             Place::Beside => "beside",
+            Place::Installed => "installed",
         }
     }
 }
@@ -36,6 +47,7 @@ impl Place {
 ///   1. DATARELAY_PROGRAM
 ///   2. exe の隣の DataRelay.program.txt（exe を手元に置いた形。中身は共有から読む）
 ///   3. exe の場所から上へたどって app.py と sidecar.py が並ぶ所（配る形: exe を app.py の隣に置く。作る途中: desktop/target/release/ から3つ上）
+///      そこに `config\install.json` があれば、配布の置き場から写したアプリ（`Place::Installed`）
 pub fn program_dir() -> Result<(PathBuf, Place), String> {
     if let Some(p) = env::var_os("DATARELAY_PROGRAM") {
         let p = PathBuf::from(p);
@@ -45,7 +57,7 @@ pub fn program_dir() -> Result<(PathBuf, Place), String> {
             Err(format!("DATARELAY_PROGRAM に app.py と sidecar.py がありません: {}", p.display()))
         };
     }
-    let exe = env::current_exe().map_err(|e| e.to_string())?;
+    let exe = exe()?;
     let pointer = exe.with_file_name(POINTER_FILE);
     if let Some(p) = read_pointer(&pointer)? {
         return if is_program(&p) {
@@ -60,13 +72,15 @@ pub fn program_dir() -> Result<(PathBuf, Place), String> {
             ))
         };
     }
-    find_program_from(&exe).map(|p| (p, Place::Beside)).ok_or_else(|| {
-        format!(
-            "アプリのフォルダ（app.py と sidecar.py がある所）が見つかりません。この exe を app.py と同じフォルダに置くか、\n\
+    find_program_from(&exe).map(|p| if crate::release::installed(&p) { (p, Place::Installed) } else { (p, Place::Beside) }).ok_or_else(
+        || {
+            format!(
+                "アプリのフォルダ（app.py と sidecar.py がある所）が見つかりません。この exe を app.py と同じフォルダに置くか、\n\
              アプリのフォルダの install_local.cmd で手元に置き直してください。\n探し始めた場所: {}",
-            exe.parent().unwrap_or(&exe).display()
-        )
-    })
+                exe.parent().unwrap_or(&exe).display()
+            )
+        },
+    )
 }
 
 /// DataRelay.program.txt を読む。無ければ None。あるのに読めない・何も書いていないときは理由を返す。

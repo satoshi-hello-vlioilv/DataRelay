@@ -7,6 +7,7 @@
   const by = (r) => r.headers.get('X-DR-By');
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const json = (b) => ({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) });
+  let r0;
   try {
     const info = await (await fetch('/__desktop/info')).json();
     const program = info.info.program;
@@ -30,6 +31,39 @@
       await fetch('/__desktop/selftest', json(result));
       return;
     }
+    if (info.mode === 'release-restart' && !info.relaunched) {
+      // 開き直しの型: 画面の「開き直して新しい版にする」と同じ道（窓が後始末を頼み、新しい自分を --after-pid 付きで起こして終わる）。
+      // 開き直した窓（relaunched）は、下の release の型の確かめを流す
+      const r1 = await fetch('/api/restart-app', { method: 'POST' });
+      const a = await r1.json();
+      await fetch('/__desktop/note', json({ restart: r1.status, answer: a }));
+      return;
+    }
+    if (info.mode === 'release' || info.mode === 'release-restart') {
+      // 配布の型（1.98.0）: 外の試験が置き場を作り、入口（置き場の DataRelay.exe）から写した／写しを配る版へそろえたあとに流れる。
+      // 写しの中身・データの基準・各PCの名乗りが、配布の決まりどおりかを確かめる（外の試験は版とファイルを確かめる）
+      const mon = await (await fetch('/api/desktop-status')).json();
+      ok('配布の置き場から写したアプリとして動く（アプリ監視）', mon.place === 'installed', `place=${mon.place} exe=${mon.exe} 入れ替え=${mon.release_note || 'なし'}`);
+      let painted = '';
+      for (let i = 0; i < 40 && painted !== '正常'; i++) { await sleep(250); painted = (document.getElementById('mon-state') || {}).textContent || ''; }
+      ok('画面の監視欄が「正常」と出す', painted === '正常', painted);
+      const st = await (await fetch('/api/release/status')).json();
+      ok('配る版と同じ版で動く', st.release && st.local === st.release.version && st.pending === false, `手元 ${st.local} ／ 配る版 ${st.release && st.release.version}`);
+      ok('置き場は入れた元（config\\install.json）から知る', st.installed && st.dirSource === 'install' && st.reachable, `${st.dirSource} ${st.dir} ${st.why || ''}`);
+      ok('データの基準は置き場（共有のアプリのフォルダー）', st.dataRoot === st.dir && st.dataRootSource === 'install', `${st.dataRootSource} ${st.dataRoot}`);
+      r0 = await fetch('/api/path-convert', json({ value: '.\\config\\symnavim.conf', mode: 'absolute' }));
+      const conv = await r0.json();
+      ok('相対パスは共有のアプリのフォルダー基準（写しではない）', typeof conv.resolved === 'string' && conv.resolved.toLowerCase().startsWith(st.dataRoot.toLowerCase()) && conv.base.toLowerCase().startsWith(st.dataRoot.toLowerCase()), `${conv.resolved}`);
+      await fetch('/api/release/check', { method: 'POST' });
+      const st2 = await (await fetch('/api/release/status')).json();
+      const me = (st2.fleet || []).find((f) => f.version === st.local);
+      ok('このPCが置き場へ版を名乗る（各PCの版）', !!me && me.place === 'installed' && me.outdated === false, me ? `${me.pc} ${me.version} ${me.place}` : JSON.stringify(st2.fleet));
+      const brief = await (await fetch('/api/release/brief')).json();
+      ok('上の帯の答え（新しい版なし・開き直してよい）', brief.place === 'installed' && brief.pending === false && brief.restartBlock === '', JSON.stringify({ pending: brief.pending, block: brief.restartBlock }));
+      await fetch('/__desktop/note', json({ version: st.local, release_note: mon.release_note || '', dataRoot: st.dataRoot }));
+      await fetch('/__desktop/selftest', json({ ok: checks.every((c) => c.ok), checks }));
+      return;
+    }
     if (info.mode === 'close') {
       // 閉じるだけの型: 常駐の理由が無いまま × を押す → 窓も中身も終わるはず（外の試験が終わり方を確かめる）
       const reason = (await (await fetch('/api/residency')).json()).reason;
@@ -45,10 +79,16 @@
     r = await fetch('/api/desktop-status');
     const mon = await r.json();
     ok('窓が中身の様子を答える（アプリ監視）', by(r) === 'shell' && mon.alive === true && mon.backend && mon.backend.pid === info.info.backend.pid, `${by(r)} alive=${mon.alive} pid=${mon.backend && mon.backend.pid}`);
-    ok('exe の置き場が分かる（アプリ監視）', ['local', 'beside', 'env'].includes(mon.place) && typeof mon.exe === 'string' && mon.exe.length > 0, `place=${mon.place} updated_from=${mon.updated_from || ''} exe=${mon.exe}`);
+    ok('exe の置き場が分かる（アプリ監視）', ['local', 'beside', 'env', 'installed'].includes(mon.place) && typeof mon.exe === 'string' && mon.exe.length > 0, `place=${mon.place} updated_from=${mon.updated_from || ''} exe=${mon.exe}`);
     let painted = '';
     for (let i = 0; i < 40 && painted !== '正常'; i++) { await sleep(250); painted = (document.getElementById('mon-state') || {}).textContent || ''; }
     ok('画面の監視欄が「正常」と出す', painted === '正常' && (document.getElementById('mon-pid') || {}).textContent === String(info.info.backend.pid), `${painted} pid=${(document.getElementById('mon-pid') || {}).textContent}`);
+
+    // 配布と更新（1.98.0）: 作る途中の木では置き場＝アプリのフォルダー。配る版は無く、名乗らない
+    r = await fetch('/api/release/status');
+    const rel = await r.json();
+    ok('配布と更新の状態を答える', r.status === 200 && rel.ok && rel.place === 'dev' && rel.dirSource === 'app' && rel.pending === false, `${r.status} place=${rel.place} dir=${rel.dirSource} reachable=${rel.reachable}`);
+    ok('相対パスの基準（データの基準）は、作る途中ではアプリのフォルダー', rel.dataRoot === rel.appRoot && rel.dataRootSource !== 'install', `${rel.dataRootSource} ${rel.dataRoot}`);
 
     r = await fetch('/static/app.js');
     ok('静的ファイルは Rust が返す', r.status === 200 && by(r) === 'shell', `${r.status} ${by(r)}`);

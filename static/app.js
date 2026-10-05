@@ -1278,7 +1278,7 @@ function bindV29LogWorkspace(){['log-filter-text','log-filter-kind','log-filter-
 bindV29LogWorkspace();
 
 /* V30: categorized settings navigation and in-app version management */
-function bindSettingsNav(){$$('#settings-nav .settings-navbtn').forEach(b=>b.onclick=()=>{$$('#settings-nav .settings-navbtn').forEach(x=>x.classList.remove('on'));b.classList.add('on');$$('.settings-pane').forEach(x=>x.classList.remove('on'));document.querySelector(`.settings-pane[data-cat="${b.dataset.cat}"]`)?.classList.add('on');if(b.dataset.cat==='docs')loadDocs();if(b.dataset.cat==='conn')refreshMachinePaths(0);if(b.dataset.cat==='bundle')loadBundleInfo()})}
+function bindSettingsNav(){$$('#settings-nav .settings-navbtn').forEach(b=>b.onclick=()=>{$$('#settings-nav .settings-navbtn').forEach(x=>x.classList.remove('on'));b.classList.add('on');$$('.settings-pane').forEach(x=>x.classList.remove('on'));document.querySelector(`.settings-pane[data-cat="${b.dataset.cat}"]`)?.classList.add('on');if(b.dataset.cat==='docs')loadDocs();if(b.dataset.cat==='conn')refreshMachinePaths(0);if(b.dataset.cat==='bundle')loadBundleInfo();if(b.dataset.cat==='release')loadRelease()})}
 /* ============================================================
    仕様書ビュー。同梱のMarkdownをアプリの中で読む。
    外部ライブラリは使えないので、この文書に実際に出てくる記法だけを自前で描く
@@ -1679,8 +1679,9 @@ function paintMonitor(st,latency){
  $('#mon-restarts').textContent=`${st?st.restarts||0:0}回`;
  $('#mon-last-restart').textContent=monTime(st&&st.last_restart);
  // exe の置き場: 手元（共有のアプリの中身を読む）か、アプリのフォルダーの中か。問い合わせのとき最初に聞くことなので、言葉で出す
- let place={local:'手元（共有の中身を読む）',beside:'アプリのフォルダー',env:'指定の場所'}[st&&st.place]||'—';
+ let place={local:'手元（共有の中身を読む）',beside:'アプリのフォルダー',env:'指定の場所',installed:'このPCの写し（配布）'}[st&&st.place]||'—';
  if(st&&st.updated_from)place+=`・${st.updated_from} から入れ替え済み`;
+ if(st&&st.release_note)place+=`・${st.release_note} にそろえた`;
  $('#mon-place').textContent=place;
  $('#mon-place').title=st?[st.exe,st.pointer&&`指し先: ${st.pointer}`].filter(Boolean).join('\n'):'';
  $('#mon-checked').textContent=new Date().toLocaleTimeString('ja-JP',{hour12:false});
@@ -2096,7 +2097,7 @@ bgTimer=setInterval(loadBgTasks,2000);loadBgTasks();
    自動実行は誰も見ていない時間に走る。これまでは失敗しても記録が残るだけで、
    画面を開いて実績欄を見るまで気づけなかった。上の帯に常設の印を出し、
    押せば何が起きたか・いつ取り直すかが分かるようにする。 */
-const ALERT_KIND={error:['要対応','ab-error'],warn:['注意','ab-warn'],info:['お知らせ','ab-info']};
+const ALERT_KIND={error:['要対応','ab-error'],warn:['注意','ab-warn'],info:['お知らせ','ab-info'],update:['新しい版','ab-info']};
 let alertState={alerts:[],retries:[]};
 async function loadAlerts(){if(appExiting)return;
  let box=$('#alert-badge');if(!box)return;
@@ -2126,7 +2127,7 @@ function renderAlerts(){
  }
  // 重いものが上、同じ重さなら新しいものが上。溜まったときに「何が壊れているか」を
  // 探させない（このアプリの他の一覧と同じ並べ方）。
- let rank={error:0,warn:1,info:2};
+ let rank={error:0,warn:1,update:2,info:3};
  let list=$('#alert-list'),items=(alertState.alerts||[]).map((x,i)=>[rank[x.kind]??9,-i,x])
    .sort((a,b)=>a[0]-b[0]||a[1]-b[1]).map(x=>x[2]);
  if(!list)return;
@@ -4380,3 +4381,190 @@ async function fillRecipePicker(selected){
 }
 if($('#m-recipe'))$('#m-recipe').onchange=()=>{fillRecipePicker($('#m-recipe').value);dirty()};
 if($('#m-recipe-open'))$('#m-recipe-open').onclick=()=>{$('#editor').close();document.querySelector('[data-p="joins"]')?.click()};
+
+/* ==== 配布と更新（1.98.0） ===================================================
+   判断はすべて中身（lib/navi_release.py・navi_shortcut.py）。画面は答えを描くだけ。
+   - 設定の「配布と更新」: このPCの状態 → 配る版を決める → 版を置く → 新しいPCへの配り方 → 各PCの版 の順
+     （ふだん見る人が多いものほど上。メンテナンスする人の操作はその下）
+   - 上の帯: 短い答え（/api/release/brief）を5分おきに読み、新しい版が配られていれば知らせる（常駐したまま
+     開き直さないPCのため）。新しい版が無く、デスクトップに起動アイコンが無ければ「作りますか」と聞く */
+let relState=null,relBusy=false,relPoll=null,relBrief=null,relBannerDismissed='';
+const REL_PLACE={installed:'このPCの写し',app:'共有から直に動かす',dev:'作る途中（開発の木）'};
+const REL_SOURCE={local:'このPCの local.json',shared:'共有の設定',install:'このPCを入れた元',app:'アプリのフォルダー（既定）'};
+const REL_FLEET_PLACE={installed:'写し',app:'共有から直に',dev:'開発'};
+const REL_STAGE={check:'ZIP の中身を確かめています',copy:'置き場へ写しています',finish:'目録（manifest.json）を書いています'};
+const relPost=(url,b)=>fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})});
+const relKey=v=>String(v||'').split(/[.\-]/).map(x=>/^\d+$/.test(x)?Number(x):0);
+function relCmp(a,b){let x=relKey(a),y=relKey(b);for(let i=0;i<Math.max(x.length,y.length);i++){let d=(x[i]||0)-(y[i]||0);if(d)return d}return 0}
+function relBytes(n){n=Number(n||0);return n>=1048576?(n/1048576).toFixed(1)+' MB':n>=1024?Math.round(n/1024)+' KB':n+' B'}
+function relAge(sec){sec=Number(sec||0);return sec<90?'たった今':sec<5400?Math.round(sec/60)+'分前':sec<129600?Math.round(sec/3600)+'時間前':Math.round(sec/86400)+'日前'}
+/* 状態の見出し（言葉と色）。色は 緑＝そろっている・琥珀＝次の起動で変わる・赤＝届かない・灰＝まだ決めていない */
+function relVerdict(st){
+ if(!st||!st.ok)return ['読めません','is-bad'];
+ if(!st.reachable)return ['置き場に届きません','is-bad'];
+ if(!st.release)return ['配る版は未決定','is-idle'];
+ if(st.pending)return [st.installed?'次の起動で入れ替わります':'次の起動で写しへ移ります','is-warn'];
+ return ['配る版で動いています','is-ok'];
+}
+async function loadRelease(){
+ if(relBusy)return;relBusy=true;
+ try{relState=await fetch('/api/release/status',{cache:'no-store'}).then(r=>r.json())}catch{relState=null}
+ relBusy=false;renderRelease();
+ if(relState&&relState.progress&&relState.progress.state==='running')relWatchProgress();
+}
+function renderRelease(){
+ let st=relState,[label,tone]=relVerdict(st),pill=$('#rel-state');
+ if(pill){pill.textContent=label;pill.className='pill rel-pill '+tone}
+ if(!st||!st.ok){$('#rel-here').innerHTML='<p class="hint">状態を読めませんでした。少しおいて「配る版を確かめる」を押してください。</p>';return}
+ let want=st.release?.version||'';
+ let facts=[['動いている版',st.local,want&&st.local!==want?'is-warn':(want?'is-ok':'')],
+  ['配る版',want||'（未決定）',want?'':'is-idle'],
+  ['置き方',REL_PLACE[st.place]||st.place,''],
+  ['置き場',st.dir,'',`${REL_SOURCE[st.dirSource]||st.dirSource}で決まりました\n${st.dir}`],
+  ['データの基準',st.dataRoot,'',`相対パス（.\\…）と設定のマスターの基準\n${st.dataRoot}`]];
+ $('#rel-here').innerHTML=facts.map(([k,v,c,t])=>`<div class="${c}"><small>${E(k)}</small><b title="${E(t||v)}">${E(v)}</b></div>`).join('');
+ let note=!st.reachable?`置き場に届きません: ${st.why}。BOX Drive・ネットワークを確かめてください。届かない日も、いまの版のまま使えます。`
+  :st.place==='dev'?'作る途中の木（.git がある）では、配る版へそろえません。'
+  :!want?'配る版がまだ決まっていません。下の「版を置く」で ZIP を置いてから、「この版を配る」を押すと配り始めます。'
+  :st.pending&&st.installed?`開き直すと版 ${want} にそろいます（実行中の処理が終わってから）。`
+  :st.pending?'次に開くとき、このPCの写し（%USERPROFILE%\\DataRelay）へアプリを写して開きます。'
+  :st.installed?'起動のたびに配る版を確かめ、違えば自動でそろえます。':'';
+ $('#rel-here-note').textContent=note;
+ let rs=$('#rel-restart');
+ if(rs){rs.hidden=!(st.pending&&st.place!=='dev');rs.disabled=!!st.restartBlock;rs.title=st.restartBlock?`${st.restartBlock}。終わってから押してください`:'後始末をしてから開き直します（自動実行の予定はそのまま続きます）'}
+ let sc=$('#rel-shortcut'),so=st.shortcut||{};
+ if(sc){sc.hidden=!(st.installed&&so.available&&!(so.ours||[]).length);sc.textContent=(so.old||[]).length?'起動アイコンをこのPCの写しへ向け直す':'デスクトップに起動アイコンを作る'}
+ renderReleaseVersions(st,want);renderReleaseEntry(st);renderReleaseFleet(st,want);
+ let di=$('#rel-dir-input');if(di&&document.activeElement!==di)di.value=st.shared||'';
+ let pb=$('#rel-publish');if(pb){pb.disabled=!st.reachable||!!st.publishing;pb.title=st.reachable?'':'置き場に届かないので置けません'}
+}
+function renderReleaseVersions(st,want){
+ let box=$('#rel-versions');if(!box)return;
+ let vs=st.versions||[];
+ if(!st.reachable){box.innerHTML='<p class="rel-empty">置き場に届かないため、置いてある版を読めません。</p>';return}
+ if(!vs.length){box.innerHTML='<p class="rel-empty">まだ版を置いていません。下の「版を置く」から DataRelay.zip を選んでください。</p>';return}
+ let prev=st.release?.previous||'';
+ box.innerHTML=`<table class="rel-table"><thead><tr><th>版</th><th>置いた日時</th><th>置いた人</th><th>中身</th><th>状態</th><th></th></tr></thead><tbody>`
+  +vs.map(v=>{
+   let tags=[v.version===want?'<i class="rel-tag is-ok">配布中</i>':'',v.version===prev&&v.version!==want?'<i class="rel-tag is-idle">前に配った版</i>':'',v.version===st.local?'<i class="rel-tag is-here">このPC</i>':''].join('');
+   let back=want&&relCmp(v.version,want)<0;
+   let act=v.version===want?'<span class="rel-muted">配っています</span>'
+    :`<button type="button" class="${back?'secondary':''} rel-set" data-v="${E(v.version)}">${back?'この版へ戻す':'この版を配る'}</button>`;
+   return `<tr class="${v.version===want?'is-current':''}"><td><b>${E(v.version)}</b></td><td>${E(v.placedAt)}</td><td>${E(v.placedBy)}</td>`
+    +`<td title="${E(v.source)}">${v.files}ファイル・${relBytes(v.bytes)}</td><td>${tags||'<span class="rel-muted">—</span>'}</td><td class="rel-act">${act}</td></tr>`}).join('')
+  +'</tbody></table>';
+ box.querySelectorAll('.rel-set').forEach(b=>b.onclick=()=>relSetRelease(b.dataset.v));
+}
+function renderReleaseEntry(st){
+ let box=$('#rel-entry');if(!box)return;
+ if(!st.reachable||!st.entry){box.innerHTML='<p class="rel-empty">置き場に届くと、新しいPCへ渡すアドレスをここに出します。</p>';return}
+ let e=st.entry;
+ box.innerHTML=(e.exists?'':'<p class="rel-warn">配る版を決めると、置き場の直下に入口（DataRelay.exe）が置かれます。それまでは渡すアドレスがありません。</p>')
+  +`<ol class="rel-steps"><li><b>このアドレスを渡す</b><div class="rel-copy"><code>${E(e.path)}</code><button type="button" class="secondary" id="rel-copy-entry"${e.exists?'':' disabled'}>コピー</button></div><span>メール・チャットでアドレスだけを送ります（exe を添付しない）。</span></li>`
+  +`<li><b>ダブルクリックしてもらう</b><span>初回は、そのPCの <code>%USERPROFILE%\\DataRelay</code> へアプリを写して開きます（写すのは配る版だけ。数十秒）。設定のマスター・接続ファイル・登録した RNE は共有のまま使います。</span></li>`
+  +`<li><b>起動アイコンを作るか聞かれる</b><span>「作る」を選ぶと、次からはデスクトップのアイコンで開けます。版が変われば、起動のたびに自動でそろいます。</span></li></ol>`
+  +`<p class="rel-note">新しいPCへ渡すデータの基準: <code>${E(e.dataRoot||'（置き場そのもの）')}</code></p>`;
+ let cp=$('#rel-copy-entry');if(cp)cp.onclick=()=>navigator.clipboard?.writeText(e.path).then(()=>toast('入口のアドレスをコピーしました')).catch(()=>toast('コピーできませんでした'));
+}
+function renderReleaseFleet(st,want){
+ let box=$('#rel-fleet'),sum=$('#rel-fleet-sum');if(!box||!sum)return;
+ let f=(st.fleet||[]).slice().sort((a,b)=>(b.outdated-a.outdated)||(a.stale-b.stale)||(a.age-b.age));
+ if(!want){sum.innerHTML='';box.innerHTML='<p class="rel-empty">配り始めると、各PCが起動のたびに版を名乗り、ここに並びます。</p>';return}
+ let n={ok:f.filter(x=>!x.outdated&&!x.stale).length,old:f.filter(x=>x.outdated&&!x.stale).length,stale:f.filter(x=>x.stale).length};
+ sum.innerHTML=`<span class="rel-chip is-ok">配る版 ${n.ok}台</span><span class="rel-chip ${n.old?'is-warn':'is-idle'}">古い版 ${n.old}台</span><span class="rel-chip is-idle" title="7日より長く名乗っていないPC（使っていない・置き場に届かない）">しばらく名乗っていない ${n.stale}台</span>`;
+ box.innerHTML=f.length?`<table class="rel-table"><thead><tr><th>PC</th><th>利用者</th><th>版</th><th>置き方</th><th>最後に名乗った</th></tr></thead><tbody>`
+  +f.map(x=>`<tr class="${x.stale?'is-stale':x.outdated?'is-old':''}"><td><b>${E(x.pc)}</b></td><td>${E(x.user)}</td><td>${E(x.version)}${x.outdated?' <i class="rel-tag is-warn">古い</i>':''}</td><td>${E(REL_FLEET_PLACE[x.place]||x.place)}</td><td title="${E(x.at)}">${relAge(x.age)}</td></tr>`).join('')
+  +'</tbody></table>':'<p class="rel-empty">まだどのPCも名乗っていません（起動すると名乗ります）。</p>';
+}
+async function relSetRelease(v){
+ let want=relState?.release?.version||'',back=want&&relCmp(v,want)<0;
+ if(!confirm(`版 ${v} を配る版にしますか？\n全PCが次の起動でこの版にそろいます。${back?`\n（いま配っている版 ${want} より前の版へ戻します）`:''}`))return;
+ let r=await relPost('/api/release/set',{version:v}),d=await r.json().catch(()=>({}));
+ if(!r.ok){toast(d.error||'配る版を決められませんでした');return}
+ toast(`版 ${v} を配る版にしました`);
+ if((d.notes||[]).length)alert(d.notes.join('\n\n'));
+ await loadRelease();loadReleaseBrief();
+}
+async function relPublish(){
+ let r=await relPost('/api/pick-file',{types:[['DataRelay の ZIP','*.zip'],['すべてのファイル','*.*']]}),d=await r.json().catch(()=>({}));
+ if(!d.path)return;
+ let r2=await relPost('/api/release/publish',{path:d.path}),d2=await r2.json().catch(()=>({}));
+ if(!r2.ok){$('#rel-publish-note').textContent=d2.error||'置けませんでした';return}
+ $('#rel-publish-note').textContent='';relWatchProgress();
+}
+function relWatchProgress(){
+ clearInterval(relPoll);let box=$('#rel-progress'),res=$('#rel-publish-result');
+ if(box)box.hidden=false;if(res)res.hidden=true;$('#rel-publish').disabled=true;
+ relPoll=setInterval(async()=>{
+  let p;try{p=await fetch('/api/release/progress',{cache:'no-store'}).then(r=>r.json())}catch{return}
+  let pct=p.stage==='copy'&&p.total?Math.round((p.done||0)/p.total*100):p.stage==='finish'?100:3;
+  $('#rel-progress-stage').textContent=(REL_STAGE[p.stage]||'確かめています')+(p.version?`（版 ${p.version}）`:'');
+  $('#rel-progress-count').textContent=p.stage==='copy'?`${p.done||0}/${p.total||0}ファイル・${relBytes(p.bytes)} / ${relBytes(p.totalBytes)}`:'';
+  $('#rel-progress-bar').style.width=pct+'%';
+  if(p.state==='running')return;
+  clearInterval(relPoll);if(box)box.hidden=true;
+  if(res){res.hidden=false;let ok=p.state==='done',x=p.result||{};
+   res.className='rel-result '+(ok?'is-ok':'is-bad');
+   res.innerHTML=ok?`<b>版 ${E(x.version)} を置きました</b><span>${x.files}ファイル・${relBytes(x.bytes)}（${p.elapsed}秒）。配るには、上の一覧の「この版を配る」を押してください。</span>`
+    :`<b>置けませんでした</b><span>${E(p.error||'理由が分かりません')}</span>`}
+  loadRelease();
+ },500);
+}
+async function relSaveDir(value){
+ let r=await relPost('/api/release/dir',{value}),d=await r.json().catch(()=>({}));
+ if(!r.ok){$('#rel-dir-note').textContent=d.error||'変えられませんでした';return}
+ // 共有の設定（マスター）が変わったので、画面の写しの版も合わせる（あとの自動保存が「ほかの画面で変わった」と断られない）
+ if(cfg){cfg.update_dir=d.value;if(d.settings_revision!=null)cfg.settings_revision=d.settings_revision}
+ $('#rel-dir-note').textContent=d.changed?(d.value?`置き場を ${d.value} にしました。各PCは次の起動から見ます。`:'既定の置き場に戻しました。'):'変わっていません。';
+ loadRelease();
+}
+async function relMakeShortcut(){
+ let r=await relPost('/api/shortcut/make'),d=await r.json().catch(()=>({}));
+ if(!r.ok&&!(d.made||[]).length&&!(d.retargeted||[]).length){toast(d.error||(d.errors||[]).join(' / ')||'起動アイコンを作れませんでした');return}
+ toast((d.retargeted||[]).length?`起動アイコン ${d.retargeted.length}個をこのPCの写しへ向け直しました`:'デスクトップに起動アイコンを作りました');
+ loadReleaseBrief();if($('.settings-pane[data-cat="release"]')?.classList.contains('on'))loadRelease();
+}
+async function relRestart(){
+ let r=await fetch('/api/restart-app',{method:'POST'}),d=await r.json().catch(()=>({}));
+ if(!r.ok){toast(d.error||'いまは開き直せません');return}
+ appExiting=true;toast('開き直しています…（新しい窓が開くまで数秒かかります）');
+}
+/* 上の帯: 新しい版（いちばん大事）→ 起動アイコンの申し出 の順に1つだけ出す。「あとで」はその版・その申し出のあいだ出さない */
+async function loadReleaseBrief(){
+ if(appExiting)return;
+ try{relBrief=await fetch('/api/release/brief',{cache:'no-store'}).then(r=>r.json())}catch{return}
+ paintReleaseBanner();
+}
+function paintReleaseBanner(){
+ let b=$('#release-banner'),x=relBrief;if(!b)return;
+ let kind=x&&x.pending&&x.place!=='dev'?'update':(x&&x.shortcut&&x.shortcut.show?'shortcut':'');
+ let key=kind+':'+(kind==='update'?x.want:'');
+ if(kind&&relBannerDismissed===key)kind='';
+ b.hidden=!kind;b.dataset.kind=kind;if(!kind)return;
+ let p=$('#rb-primary'),s=$('#rb-secondary');
+ if(kind==='update'){
+  $('#rb-icon').textContent='↻';
+  $('#rb-title').textContent=`新しい版 ${x.want} が配られています`;
+  $('#rb-detail').textContent=x.place!=='installed'?`次に開くとき、このPCへ写して開きます（いまの版 ${x.version}）。`
+   :x.restartBlock?`${x.restartBlock}。終わったら開き直してください（いまの版 ${x.version}）。`
+   :`開き直すと入れ替わります（いまの版 ${x.version}）。自動実行の予定は開き直したあとも続きます。`;
+  p.textContent='開き直す';p.disabled=!!x.restartBlock;p.onclick=relRestart;
+  s.textContent='あとで';s.onclick=()=>{relBannerDismissed=key;paintReleaseBanner()};
+ }else{
+  let old=(x.shortcut.old||[]).length;
+  $('#rb-icon').textContent='⌂';
+  $('#rb-title').textContent=old?'起動アイコンを、このPCの DataRelay へ向け直しますか？':'デスクトップに DataRelay の起動アイコンを作りますか？';
+  $('#rb-detail').textContent=old?`前からあるアイコン ${old}個を、このPCの写しへ向け直します（名前と場所はそのまま）。`:'このPCへ写した DataRelay を開くアイコンです。次からはそのアイコンで開けます。';
+  p.textContent=old?'向け直す':'作る';p.disabled=false;p.onclick=relMakeShortcut;
+  s.textContent='今はしない';s.onclick=async()=>{await relPost('/api/shortcut/decline');relBannerDismissed=key;loadReleaseBrief()};
+ }
+}
+if($('#rel-check'))$('#rel-check').onclick=async()=>{await relPost('/api/release/check');await loadRelease();loadReleaseBrief();toast('配る版を確かめました')};
+if($('#rel-restart'))$('#rel-restart').onclick=relRestart;
+if($('#rel-shortcut'))$('#rel-shortcut').onclick=relMakeShortcut;
+if($('#rel-publish'))$('#rel-publish').onclick=relPublish;
+if($('#rel-dir-save'))$('#rel-dir-save').onclick=()=>relSaveDir($('#rel-dir-input').value.trim());
+if($('#rel-dir-reset'))$('#rel-dir-reset').onclick=()=>{$('#rel-dir-input').value='';relSaveDir('')};
+if($('#rel-dir-pick'))$('#rel-dir-pick').onclick=async()=>{let d=await relPost('/api/pick-folder',{initial:$('#rel-dir-input').value||''}).then(r=>r.json()).catch(()=>({}));if(d.path)$('#rel-dir-input').value=d.path};
+// 中身は起動の 15 秒後に初めて配る版を読む。その少しあとに帯を読み、あとは5分おき
+setTimeout(loadReleaseBrief,20000);setInterval(()=>{if(document.visibilityState==='visible')loadReleaseBrief()},300000);

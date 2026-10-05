@@ -106,7 +106,7 @@ def resolve_join_path(value,cfg):
  raw=os.path.expandvars(os.path.expanduser(raw))
  p=Path(raw)
  if p.is_absolute() or raw.startswith('\\\\'):return p
- if raw.startswith(('.\\','..\\','./','../')):return resolve_path(raw,app.BASE)
+ if raw.startswith(('.\\','..\\','./','../')):return resolve_path(raw,app.DATA_ROOT)
  return resolve_path(raw,resolve_path(str((cfg or {}).get('text_folder') or app.TEXT_FOLDER_DEFAULT)))
 
 def join_reader(cfg):
