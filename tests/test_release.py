@@ -86,6 +86,78 @@ class PublishTest(unittest.TestCase):
   p=R.progress();self.assertEqual(p['state'],'done');self.assertEqual(p['done'],p['total'])
 
 
+class NestingTest(unittest.TestCase):
+ """versions の中に versions を作らない（1.99.1）。現場で起きたこと: アプリを置き場の versions\\1.98.0 から直に動かしていて、
+ 既定の置き場（＝アプリのフォルダー）が版のフォルダーになり、ZIP を置くと versions\\1.98.0\\versions\\1.99.0 ができた。"""
+ def setUp(self):
+  self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
+  self.t=Path(self.tmp.name);self.share=self.t/'90_Releases'/'DataRelay';self.share.mkdir(parents=True)
+
+ def test_release_root(self):
+  s=self.share
+  self.assertEqual(R.release_root(s),(s,''),'置き場の根はそのまま')
+  root,why=R.release_root(s/'versions');self.assertEqual(root,s);self.assertIn('versions',why)
+  root,why=R.release_root(s/'Versions'/'1.98.0');self.assertEqual(root,s,'大文字小文字は問わない');self.assertIn('1.98.0',why)
+  self.assertEqual(R.release_root(s/'old'/'1.98.0')[0],s/'old'/'1.98.0','versions の下でなければ直さない')
+  self.assertEqual(R.release_root(s/'versions'/'作業')[0],s/'versions'/'作業','版の字でなければ直さない')
+
+ def test_running_from_a_version_folder_places_next_to_it(self):
+  app=self.share/'versions'/'1.98.0';(app/'config').mkdir(parents=True)
+  self.assertEqual(R.dir_choice(app,''),(self.share,'app'),'版のフォルダーから動かしたら2つ上が置き場')
+  self.assertIn('2つ上',R.dir_note(app,''))
+  self.assertEqual(R.dir_choice(app,str(self.share/'versions'))[0],self.share,'共有の設定が versions を指しても親')
+  base=R.dir_choice(app,'')[0]
+  out=R.publish_zip(make_zip(self.t/'a.zip','1.99.0'),base)
+  self.assertTrue(out['ok'],out);self.assertEqual(out['warnings'],[])
+  self.assertTrue((self.share/'versions'/'1.99.0'/'manifest.json').is_file(),'versions にきれいに並ぶ')
+  self.assertFalse((app/'versions').exists(),'版のフォルダーの中に versions を作らない')
+  out=R.publish_zip(make_zip(self.t/'b.zip','1.99.1'),self.share/'versions'/'1.99.0')
+  self.assertTrue((self.share/'versions'/'1.99.1').is_dir(),'版のフォルダーを渡されても根へ置く')
+
+ def test_nested_versions_are_reported(self):
+  (self.share/'versions'/'1.98.0'/'versions'/'1.99.0').mkdir(parents=True)
+  self.assertEqual([n['version'] for n in R.nested_versions(self.share)],['1.99.0'])
+  st=R.status(self.share,self.share,'1.98.0')
+  self.assertEqual([n['version'] for n in st['nested']],['1.99.0'],'画面に出す（動かしはしない）')
+  self.assertEqual(st['versionsDir'],str(self.share/'versions'))
+
+ def test_inspect_shows_destination_and_writes_nothing(self):
+  x=R.inspect_zip(make_zip(self.t/'a.zip','1.99.0'),self.share/'versions')
+  self.assertTrue(x['ok'],x);self.assertEqual(x['dest'],str(self.share/'versions'/'1.99.0'))
+  self.assertEqual(x['warnings'],[],'Release の ZIP には注意が無い')
+  self.assertFalse((self.share/'versions').exists(),'確かめるだけで書かない')
+  R.publish_zip(make_zip(self.t/'a.zip','1.99.0'),self.share)
+  x=R.inspect_zip(make_zip(self.t/'a.zip','1.99.0'),self.share)
+  self.assertFalse(x['ok']);self.assertTrue(x['exists']);self.assertIn('もう置いてあります',x['error'])
+
+ def test_zip_of_a_whole_app_folder_is_cleaned(self):
+  """アプリのフォルダー（＝既定の置き場）をまるごと ZIP にすると、版・各PCの名乗り・配る版・PCの控え・設定のマスターまで入る。"""
+  extra={'versions/1.98.0/lib/navi_version.py':"APP_VERSION='1.98.0'\n",'versions/1.98.0/app.py':'old','fleet/PC1.json':'{}',
+         'release.json':'{}','install.json':'{}','config/install.json':'{}','Config/local.json':'{}','Config/app_settings.sqlite3':'db'}
+  z=make_zip(self.t/'whole.zip','1.99.0',extra=extra)
+  with zipfile.ZipFile(z,'a') as zz:zz.writestr('メモ.txt','外')
+  x=R.inspect_zip(z,self.share)
+  self.assertTrue(x['ok'],x)
+  text='\n'.join(x['warnings'])
+  self.assertIn('2 つ入っています',text,'入れ子の DataRelay を知らせる')
+  self.assertIn('外にある 1 ファイル',text)
+  self.assertIn('versions\\（2ファイル）',text);self.assertIn('fleet\\（1ファイル）',text)
+  out=R.publish_zip(z,self.share)
+  self.assertTrue(out['ok'],out)
+  placed=sorted(str(p.relative_to(self.share/'versions'/'1.99.0')).replace('\\','/') for p in (self.share/'versions'/'1.99.0').rglob('*') if p.is_file())
+  for bad in ('versions/1.98.0/app.py','fleet/PC1.json','release.json','install.json','config/install.json','Config/local.json','Config/app_settings.sqlite3'):
+   self.assertNotIn(bad,placed,bad)
+  self.assertIn('app.py',placed);self.assertIn('config/rne/A.RNE',placed,'配る物は入る')
+  self.assertFalse((self.share/'versions'/'1.99.0'/'versions').exists(),'版の中に versions を作らない')
+
+ def test_zip_of_the_release_dir_is_warned(self):
+  """置き場をまるごと ZIP にした（DataRelay が versions/<版>/ の下にしか無い）。"""
+  z=make_zip(self.t/'rel.zip','1.98.0',head='DataRelay/versions/1.98.0/')
+  x=R.inspect_zip(z,self.share)
+  self.assertTrue(x['ok']);self.assertTrue(any('置き場' in w for w in x['warnings']),x['warnings'])
+  self.assertEqual(x['dest'],str(self.share/'versions'/'1.98.0'))
+
+
 class PlaceTest(unittest.TestCase):
  def setUp(self):
   self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
@@ -192,6 +264,12 @@ out['dir_bad']=c.post('/api/release/dir',json={'value':str(share/'無い')}).sta
 r=c.post('/api/release/dir',json={'value':str(share)});out['dir']=r.get_json()
 out['shared']=app.release_shared()
 out['mirror']=json.loads((app.BASE/'config'/'update.json').read_text(encoding='utf-8'))
+r=c.post('/api/release/dir',json={'value':str(share/'versions'),'dry':True});out['dry']=r.get_json()
+r=c.post('/api/release/dir',json={'value':str(share/'versions'/'8.0.0')});out['dir_norm']=r.get_json()
+out['shared_norm']=app.release_shared()
+r=c.post('/api/release/dir',json={'value':str(share)})
+out['inspect_none']=c.post('/api/release/inspect',json={}).status_code
+out['inspect']=c.post('/api/release/inspect',json={'path':str(z)}).get_json()
 out['pub_none']=c.post('/api/release/publish',json={}).status_code
 r=c.post('/api/release/publish',json={'path':str(z)});out['pub']=r.status_code
 for _ in range(100):
@@ -228,6 +306,11 @@ class RouteTest(unittest.TestCase):
    self.assertEqual(r.returncode,0,r.stderr[-3000:])
    v=json.loads(r.stdout.strip().splitlines()[-1])
   self.assertEqual(v['dir_bad'],400,'届かない置き場は断る')
+  self.assertEqual((v['dry']['dir'],v['dry']['versionsDir'],v['dry']['reachable']),(str(share),str(share/'versions'),True),'保存する前に実際の置き場を見せる')
+  self.assertIn('versions',v['dry']['note'])
+  self.assertEqual((v['dir_norm']['value'],v['shared_norm']),(str(share),str(share)),'版のフォルダーを選んでも根を書く')
+  self.assertEqual(v['inspect_none'],400)
+  self.assertEqual((v['inspect']['ok'],v['inspect']['dest']),(True,str(share/'versions'/'9.0.0')))
   self.assertTrue(v['dir']['changed']);self.assertEqual(v['shared'],str(share),'共有の設定（マスター）に入った')
   self.assertEqual(v['mirror'],{'update_dir':str(share)},'窓の読む控えも書いた')
   self.assertEqual((v['pub_none'],v['pub'],v['progress']),(400,200,'done'))

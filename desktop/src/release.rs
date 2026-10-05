@@ -116,15 +116,35 @@ pub fn installed(app_root: &Path) -> bool {
 
 /// 置き場と出どころ。`config\local.json`（この PC だけの上書き）→ `config\update.json`（共有の設定の控え）→
 /// `config\install.json` の `from`（この PC を入れた元）→ アプリのフォルダー。順は Python の `navi_release.dir_choice()` と同じ。
+/// どれも `release_root()` を通す（版のフォルダーから直に動かしても、`versions` の中に `versions` を作らない・1.99.1）。
 pub fn update_dir(app_root: &Path) -> (PathBuf, &'static str) {
     let conf = app_root.join("config");
     for (file, key, source) in [(LOCAL, CONFIG_KEY, "local"), (MIRROR, CONFIG_KEY, "shared"), (SEED, FROM_KEY, "install")] {
         let v = config_value(&conf.join(file), key);
         if !v.is_empty() {
-            return (PathBuf::from(v), source);
+            return (release_root(&PathBuf::from(v)), source);
         }
     }
-    (app_root.to_path_buf(), "app")
+    (release_root(app_root), "app")
+}
+
+/// 置き場として渡された場所を、`versions` が直下に並ぶ置き場の根へ直す（Python の `navi_release.release_root()` と同じ）。
+/// `…\versions` → その親、`…\versions\<版>` → 2つ上。それ以外はそのまま。
+pub fn release_root(p: &Path) -> PathBuf {
+    let named = |q: &Path, s: &str| q.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.eq_ignore_ascii_case(s));
+    if named(p, VERSIONS) {
+        if let Some(up) = p.parent() {
+            return up.to_path_buf();
+        }
+    }
+    if let (Some(name), Some(up)) = (p.file_name().and_then(|n| n.to_str()), p.parent()) {
+        if safe_version(name) && named(up, VERSIONS) {
+            if let Some(root) = up.parent() {
+                return root.to_path_buf();
+            }
+        }
+    }
+    p.to_path_buf()
 }
 
 /// 手元の版（`lib\navi_version.py` の `APP_VERSION`）。読めなければ空文字（まだ写していない）。
@@ -485,6 +505,16 @@ pub(crate) mod tests {
         fs::write(t.join("config").join(LOCAL), r#"{"update_dir":"  "}"#).unwrap();
         assert_eq!(update_dir(&t).1, "shared", "空は無いのと同じ");
         assert!(safe_version("1.98.0") && safe_version("1.98.0-st2") && !safe_version("../x") && !safe_version(""));
+        // 版のフォルダーから直に動かしても、versions の中に versions を作らない（Python の release_root と同じ答え）
+        let v = t.join("versions").join("1.98.0");
+        fs::create_dir_all(v.join("config")).unwrap();
+        assert_eq!(update_dir(&v), (t.clone(), "app"), "versions\\<版> から動かしたら2つ上が置き場");
+        fs::write(v.join("config").join(LOCAL), r#"{"update_dir":"/rel/Versions"}"#).unwrap();
+        assert_eq!(update_dir(&v), (PathBuf::from("/rel"), "local"), "versions そのものを指したら親（大文字小文字は問わない）");
+        fs::write(v.join("config").join(LOCAL), r#"{"update_dir":"/rel/versions/1.99.0"}"#).unwrap();
+        assert_eq!(update_dir(&v).0, PathBuf::from("/rel"), "版のフォルダーを指したら2つ上");
+        fs::write(v.join("config").join(LOCAL), r#"{"update_dir":"/rel/old/1.99.0"}"#).unwrap();
+        assert_eq!(update_dir(&v).0, PathBuf::from("/rel/old/1.99.0"), "versions の下でなければそのまま");
         std::env::set_var("DR_RELEASE_TEST", "/srv");
         assert_eq!(expand_vars("%DR_RELEASE_TEST%/a %NOPE_X%"), "/srv/a %NOPE_X%");
         fs::remove_dir_all(&t).ok();
