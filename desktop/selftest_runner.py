@@ -198,7 +198,11 @@ def run_release(exe,wrap,work):
  phase('install',share/'DataRelay.exe',v1,[('入口から写しへ渡した','INSTALL 置き場から写しへ渡しました'),
                                            ('中身の無い所へ配る版を写した',f'RELEASE_APPLIED from= to={v1} exe_changed=false')],note='')
  seed=json.loads((root/'config'/'install.json').read_text(encoding='utf-8')) if (root/'config'/'install.json').exists() else {}
- checks.append(('写しはデータの基準と入れた元を知っている（config/install.json）',seed.get('data_root')==str(share) and seed.get('from')==str(share),seed))
+ # データの基準は、置き場が利用者のプロファイルの下なら %USERPROFILE%\… の形で渡る（BOX Drive は利用者ごとに場所が違う・
+ # navi_paths.portable）。字のままではなく、展開して同じ場所かを比べる（Windows の CI で、字のまま比べて落ちた）
+ import navi_paths
+ same=lambda a,b:bool(a) and os.path.normcase(os.path.abspath(navi_paths.expand(a)))==os.path.normcase(os.path.abspath(str(b)))
+ checks.append(('写しはデータの基準と入れた元を知っている（config/install.json）',same(seed.get('data_root'),share) and same(seed.get('from'),share),seed))
  checks.append(('設定のマスターは共有のアプリのフォルダーに作られる',(share/'Config'/'app_settings.sqlite3').is_file(),share/'Config'))
  checks.append(('写しの中に設定のマスターを作らない',not any((root/d/'app_settings.sqlite3').exists() for d in ('Config','config')),root))
 
