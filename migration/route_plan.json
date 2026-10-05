@@ -241,6 +241,31 @@
    "to": "python",
    "note": ""
   },
+  "GET /api/login": {
+   "area": "接続情報",
+   "to": "python",
+   "note": "1.99.0 で足した。Navigator の接続情報の状態（出どころ・要るか・断ったか）。パスワードは返さない"
+  },
+  "POST /api/login": {
+   "area": "接続情報",
+   "to": "python",
+   "note": "1.99.0 で足した。接続情報をこのPCの置き場（資格情報マネージャー）へ登録・変更する"
+  },
+  "POST /api/login/decline": {
+   "area": "接続情報",
+   "to": "python",
+   "note": "1.99.0 で足した。初めて開いたときの登録の問いに「Navigator は使わない」と答えたことを覚える"
+  },
+  "POST /api/login/delete": {
+   "area": "接続情報",
+   "to": "python",
+   "note": "1.99.0 で足した。このPCの置き場から接続情報を消す"
+  },
+  "POST /api/login/import": {
+   "area": "接続情報",
+   "to": "python",
+   "note": "1.99.0 で足した。symnavim.conf の中身をこのPCの置き場へ取り込む"
+  },
   "GET /api/machine-paths": {
    "area": "設定・対象の登録",
    "to": "python",

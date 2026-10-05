@@ -98,7 +98,9 @@ def scenario_requests(tmp):
 def fresh_env(tmp,name,boot=False):
  """新しい置き場。突き合わせは窓口の違いを見るものなので、既定では裏の処理（スケジューラー等）を起こさない。"""
  d=Path(tmp)/name
- env=dict(os.environ,NAVI_LOCAL_ROOT=str(d/'local'),NAVI_CONFIG_DIR=str(d/'config'),PYTHONIOENCODING='utf-8')
+ # 接続情報の置き場もこの中のファイルへ（Windows の資格情報マネージャーを A と B で取り合わない・試験の外を汚さない）
+ env=dict(os.environ,NAVI_LOCAL_ROOT=str(d/'local'),NAVI_CONFIG_DIR=str(d/'config'),PYTHONIOENCODING='utf-8',
+          NAVI_SECRET_FILE=str(d/'local'/'secrets'/'navigator.json'))
  env.pop('DATARELAY_NO_BOOT',None)
  if not boot:env['DATARELAY_NO_BOOT']='1'
  return d,env

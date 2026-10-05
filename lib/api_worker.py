@@ -19,8 +19,17 @@ def atomic_json(path,data):
     p=Path(path);p.parent.mkdir(parents=True,exist_ok=True);tmp=p.with_suffix(p.suffix+'.tmp')
     tmp.write_text(json.dumps(data,ensure_ascii=False),encoding='utf-8');os.replace(tmp,p)
 
+def login(payload):
+    """Navigator への (利用者ID, パスワード, サーバー)。パスワードは payload.json に書かない（1.99.0。これまでは
+    平文で一時ファイルに書いていた）。ワーカーは本体と同じ利用者で動くので、同じ置き場から自分で読む。"""
+    from app import navi_login
+    user,pw,server,_=navi_login(payload.get('cfg'))
+    return user,pw,server
+
 def main():
     payload=json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
+    if 'user' in payload:
+        payload['user'],payload['password'],payload['server']=login(payload)
     if payload.get('diag'):
         # DLLの診断。読み込み(LoadLibrary)そのものが落ちることがあるので、ここに閉じ込める。
         from app import process_api_diag

@@ -35,7 +35,7 @@ function collectSettings(){if(!cfg||!cfg.settings)return;let s=cfg.settings,v=id
  if(v('#hide-profile'))s.symnavi_hide_profile=v('#hide-profile').value;
  if(v('#hide-action-duration'))s.symnavi_hide_action_duration_seconds=Math.max(.2,Number(v('#hide-action-duration').value)||.5);
  s.backup_generation_limit_enabled=s.backup_mode!=='days';s.stability_profile='balanced_api_parallel'}
-function settingsPayload(){collectSettings();let payload=structuredClone(cfg||{});delete payload.credential_status;return payload}
+function settingsPayload(){collectSettings();return structuredClone(cfg||{})}
 function scheduleSave(delay=450){clearTimeout(saveTimer);saveTimer=setTimeout(()=>saveSettingsNow(),delay)}
 function saveFailed(why){if(saveRetry<3){saveRetry++;saveState(`保存できません（${why}）／${saveRetry}回目の再試行をします`,'is-ng');scheduleSave(3000)}else saveState(`保存できません（${why}）／画面を再読込してやり直してください`,'is-ng');return false}
 async function saveSettingsNow(){clearTimeout(saveTimer);saveTimer=null;if(!cfg)return false;let payload=settingsPayload(),seq=++saveSeq;saveState('保存しています','is-saving');try{let r=await putConfig(payload);if(seq!==saveSeq)return true;if(!r.ok){let d=await r.json().catch(()=>({}));return saveFailed(d.error||('HTTP '+r.status))}saveRetry=0;saveState('自動保存しました '+new Date().toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit',second:'2-digit'}),'is-ok');return true}catch(e){if(seq!==saveSeq)return true;return saveFailed('サーバーへ届きませんでした')}}
@@ -87,7 +87,7 @@ function showPane(p){
 $$('nav button,#subnav button').forEach(b=>b.onclick=()=>showPane(b.dataset.p));
 // 一覧の「入力」欄が読取マスタの名前を出すので、最初に一度だけ読んでおく。
 Promise.all([loadLayouts(),loadJoins()]).then(()=>{if(typeof cfg!=='undefined'&&cfg)render()});
-const paths={navigator_api_dll:['Navigator API DLL','file',[['DLLファイル','*.dll'],['すべて','*.*']]],symnavi_exe:['SymNavi.exe','file',[['実行ファイル','*.exe'],['すべて','*.*']]],symnavim_conf:['symnavim.conf','file',[['CONFファイル','*.conf'],['すべて','*.*']]],symnavim_def:['symnavim.def','file',[['DEFファイル','*.def'],['すべて','*.*']]],accdb_template:['ACCDB空テンプレート','file',[['Access Database','*.accdb'],['すべて','*.*']]],rne_folder:['RNE基本フォルダー','folder'],text_folder:['固定長テキストの基本フォルダー','folder'],default_output_folder:['既定の出力先','folder'],backup_folder:['バックアップ先','folder']};
+const paths={navigator_api_dll:['Navigator API DLL','file',[['DLLファイル','*.dll'],['すべて','*.*']]],symnavi_exe:['SymNavi.exe','file',[['実行ファイル','*.exe'],['すべて','*.*']]],symnavim_conf:['symnavim.conf（取り込み元）','file',[['CONFファイル','*.conf'],['すべて','*.*']]],symnavim_def:['symnavim.def','file',[['DEFファイル','*.def'],['すべて','*.*']]],accdb_template:['ACCDB空テンプレート','file',[['Access Database','*.accdb'],['すべて','*.*']]],rne_folder:['RNE基本フォルダー','folder'],text_folder:['固定長テキストの基本フォルダー','folder'],default_output_folder:['既定の出力先','folder'],backup_folder:['バックアップ先','folder']};
 let waitingTimer=null,waitingStarted=0;function currentEngine(){return $('#extract-engine')?.value||cfg?.settings?.extract_engine||'api'}function waitingEngineLabel(context='common'){if(context==='api'||(context==='engine'&&currentEngine()==='api'))return 'NAVIGATOR API';if(context==='dde'||(context==='engine'&&currentEngine()==='dde'))return 'DDE COMPATIBILITY';return 'COMMON OPERATION'}function showWaiting(title='確認中',detail='処理を続行しています...',context='common'){let d=$('#waiting-dialog');$('#waiting-engine').textContent=waitingEngineLabel(context);$('#waiting-title').textContent=title;$('#waiting-detail').textContent=detail;waitingStarted=Date.now();clearInterval(waitingTimer);let tick=()=>{let sec=Math.floor((Date.now()-waitingStarted)/1000);$('#waiting-elapsed').textContent=`経過 ${String(Math.floor(sec/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`};tick();waitingTimer=setInterval(tick,1000);if(!d.open)d.showModal()}function updateWaiting(title,detail,context){if(title)$('#waiting-title').textContent=title;if(detail)$('#waiting-detail').textContent=detail;if(context)$('#waiting-engine').textContent=waitingEngineLabel(context)}function hideWaiting(){clearInterval(waitingTimer);waitingTimer=null;let d=$('#waiting-dialog');if(d?.open)d.close()}async function convertPath(input,mode){showWaiting('パス変換中',mode==='relative'?'アプリフォルダー基準へ変換しています...':'実際の絶対パスを解決しています...');try{let r=await fetch('/api/path-convert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({value:input.value,mode})}),d=await r.json();if(!r.ok)return toast(d.error);input.value=d.value;updatePathBadge(input);dirty()}finally{hideWaiting()}}function updatePathBadge(input){let badge=input.closest('label')?.querySelector('.path-badge');if(!badge)return;let relative=input.value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(input.value);badge.textContent=relative?'相対パス / 基準: アプリフォルダー':'絶対パス';badge.className='path-badge '+(relative?'path-kind-relative':'path-kind-absolute')}function isRelativePath(value){return !!value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(value)}function enhancePathInput(input,kind='folder'){if(!input||input.dataset.pathEnhanced)return;input.dataset.pathEnhanced='1';let tools=document.createElement('div');tools.className='path-tools compact-path-tools';tools.innerHTML='<button type="button" class="pathmode path-toggle" title="絶対パスと相対パスを切り替えます"></button><small class="path-badge"></small>';input.closest('label')?.appendChild(tools);let toggle=tools.querySelector('.path-toggle');function refresh(){let relative=isRelativePath(input.value);toggle.textContent=relative?'相対 → 絶対':'絶対 → 相対';toggle.dataset.mode=relative?'absolute':'relative';updatePathBadge(input)}toggle.onclick=async()=>{await convertPath(input,toggle.dataset.mode);refresh()};input.addEventListener('input',refresh);input._refreshPathControl=refresh;refresh()}async function browse(kind,initial,types){showWaiting('参照画面を準備中','設定中のパスを解決して、その場所から開きます...');try{let url=kind==='folder'?'/api/pick-folder':'/api/pick-file',r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({initial,types})}),d=await r.json();if(!r.ok)toast(d.error);return d.path||''}finally{hideWaiting()}}
 async function checkConfiguredPath(item,jobId){showWaiting('ファイル存在確認中','設定場所と周辺フォルダーを検索しています...');try{let r=await fetch('/api/path-check',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({item,job_id:jobId})}),d=await r.json();if(!r.ok)return toast(d.error);showPathResult(d)}finally{hideWaiting()}}function showPathResult(d){let box=$('#suggest-content');if(d.ok){box.innerHTML=`<p class="path-ok">存在を確認しました。</p><code>${E(d.resolved)}</code>`}else if(d.candidates?.length){box.innerHTML=`<p class="path-ng">設定先には存在しません。</p><p>設定値: <code>${E(d.configured)}</code></p><p>実在する修正候補:</p><div class="candidate-list">${d.candidates.map(x=>`<div class="candidate"><code>${E(x)}</code><button class="apply-suggestion" data-path="${E(x)}">このパスへ修正</button></div>`).join('')}</div>`;box.querySelectorAll('.apply-suggestion').forEach(b=>b.onclick=async()=>{let r=await fetch('/api/apply-path-suggestion',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({item:d.item,job_id:d.job_id,candidate:b.dataset.path})}),x=await r.json();if(r.ok){$('#path-suggestion').close();toast('設定を修正しました');await init()}else toast(x.error)})}else{box.innerHTML=`<p class="path-ng">ファイルが見つかりません。</p><p>確認先: <code>${E(d.resolved)}</code></p><p class="reselect">上2階層・下1階層の検索範囲にも候補がありません。参照ボタンから再指定してください。</p>`}if(!$('#path-suggestion').open)$('#path-suggestion').showModal()}
 
@@ -334,7 +334,7 @@ if($('#bulk-apply'))$('#bulk-apply').onclick=async()=>{
  $('#bulk-dialog').close();
  showWaiting('まとめて変更中',`${jobs.length}件へ適用しています...`);
  try{
-  let payload=structuredClone(cfg);delete payload.credential_status;
+  let payload=structuredClone(cfg);
   let r=await putConfig(payload);
   if(!r.ok)throw Error('保存できませんでした');
   await init();toast(`${jobs.length}件へ変更を適用しました`);
@@ -597,14 +597,14 @@ async function reorderJobs(srcId,targetId,after){
  // カラム並べ替え中の表示順と保存する問い合わせ順が食い違わないよう、ドロップ後は登録順へ戻す。
  if($('#sort'))$('#sort').value='order';sortDir=1;
  render();
- let payload=structuredClone(cfg);delete payload.credential_status;
+ let payload=structuredClone(cfg);
  try{let rp=await putConfig(payload);if(rp.ok){saveState('並び順を保存しました','is-ok');toast('問い合わせ順を更新しました')}else{dirty();toast('並び順を保存できませんでした。自動で再試行します')}}catch{dirty();toast('並び順を保存できませんでした。自動で再試行します')}
 }
 async function deleteJob(j){
  if(!confirm(`管理単位「${j.name}」を削除します。よろしいですか？\n登録内容と自動実行ルールが削除されます（この操作は元に戻せません）。`))return;
  let i=cfg.jobs.findIndex(x=>x.id===j.id);if(i<0)return;
  cfg.jobs.splice(i,1);render();
- let payload=structuredClone(cfg);delete payload.credential_status;
+ let payload=structuredClone(cfg);
  try{let r=await putConfig(payload);if(r.ok){saveState('管理単位を削除しました','is-ok');await init();toast(`「${j.name}」を削除しました`)}else{dirty();toast('削除を保存できませんでした。自動で再試行します')}}catch{dirty();toast('削除を保存できませんでした。自動で再試行します')}
 }
 function fillSuggestions(){let sets={names:cfg.jobs.map(j=>j.name),rne:cfg.jobs.map(j=>j.rne_path),output:[cfg.default_output_folder,...cfg.jobs.map(j=>j.output_folder)],'output-file':cfg.jobs.map(j=>j.output_file),table:cfg.jobs.map(j=>j.table),sheet:cfg.jobs.map(j=>j.sheet)};Object.entries(sets).forEach(([k,v])=>$('#suggest-'+k).innerHTML=[...new Set(v.filter(Boolean))].map(x=>`<option value="${E(x)}">`).join(''))}
@@ -768,7 +768,7 @@ async function applyJob(close=true,quiet=false){
  let i=cfg.jobs.findIndex(j=>j.id===updated.id);
  if(i<0)cfg.jobs.unshift(updated);else cfg.jobs[i]=updated;
  editing=structuredClone(updated);
- let payload=structuredClone(cfg);delete payload.credential_status;
+ let payload=structuredClone(cfg);
  if(!quiet)showWaiting('設定を保存中',`${formatName(updated.output_format)} / ${updated.output_file}`);
  try{
   let r=await putConfig(payload),d=await r.json();
@@ -975,7 +975,7 @@ if($('#join-wait-enabled'))$('#join-wait-enabled').onchange=()=>{updateJoinWaitO
 if($('#backup-enabled'))$('#backup-enabled').addEventListener('change',()=>refreshMachinePaths());
 ['retry-delay','retry-max','log-max-mb','log-keep'].forEach(id=>{let e=$('#'+id);if(e){e.addEventListener('input',dirty);e.addEventListener('change',dirty)}});
 if($('#retry-enabled'))$('#retry-enabled').addEventListener('change',()=>{updateRetryOptions();dirty()});
-function updateRetryOptions(){let on=$('#retry-enabled')?.checked;let box=$('#retry-options');if(box)box.style.display=on?'':'none'}$('#validate').onclick=async()=>{showWaiting(currentEngine()==='api'?'API実行前診断中':'DDE実行前診断中','実際の設定値と配置を統合して確認しています...','engine');try{let r=await fetch('/api/validate',{method:'POST'}),d=await r.json();if(!r.ok)throw Error(d.error||'診断に失敗しました');renderDiagnostics(d);let dlg=$('#diagnostic-dialog');if(dlg&&!dlg.open)dlg.showModal()}catch(e){toast(e.message)}finally{hideWaiting()}};function renderDiagnostics(d){$('#check-scope').textContent=d.search_scope||'';let state=$('#diagnostic-state');state.textContent=d.summary||'';state.className='diag-state '+(d.ok?'is-ok':'is-ng');let c=d.counts||{};$('#diagnostic-counts').innerHTML=`<span class="dc-ok">正常 ${c.ok||0}</span><span class="dc-warn">注意 ${c.warning||0}</span><span class="dc-ng">要修正 ${c.error||0}</span>`;let groups={};(d.checks||[]).forEach((x,i)=>(groups[x.group]||(groups[x.group]=[])).push({...x,_i:i}));$('#checks').innerHTML=Object.entries(groups).map(([g,items])=>`<section class="diag-group"><h3>${E(g)}<small>${items.length}項目</small></h3>${items.map(x=>`<div class="diag-row ${E(x.level)}"><i>${x.level==='ok'?'OK':x.level==='warning'?'注意':'要修正'}</i><div><b>${E(x.label)}</b><span>${E(x.detail)}</span></div>${x.candidates?.length?`<button class="fix secondary" data-i="${x._i}">候補 ${x.candidates.length}件</button>`:''}</div>`).join('')}</section>`).join('');$$('#checks .fix').forEach(b=>b.onclick=()=>showPathResult(d.checks[Number(b.dataset.i)]))}if($('#diagnostic-close'))$('#diagnostic-close').onclick=()=>$('#diagnostic-dialog').close();if($('#diagnostic-close-foot'))$('#diagnostic-close-foot').onclick=()=>$('#diagnostic-dialog').close();let commandQueueOpen=false;async function loadCommandQueue(){try{let d=await fetch('/api/execution-queue',{cache:'no-store'}).then(r=>r.json()),list=$('#cq-list'),summary=$('#cq-summary');applyRowQueueProgress(d);if(!list||!summary)return;
+function updateRetryOptions(){let on=$('#retry-enabled')?.checked;let box=$('#retry-options');if(box)box.style.display=on?'':'none'}$('#validate').onclick=async()=>{showWaiting(currentEngine()==='api'?'API実行前診断中':'DDE実行前診断中','実際の設定値と配置を統合して確認しています...','engine');try{let r=await fetch('/api/validate',{method:'POST'}),d=await r.json();if(!r.ok)throw Error(d.error||'診断に失敗しました');renderDiagnostics(d);let dlg=$('#diagnostic-dialog');if(dlg&&!dlg.open)dlg.showModal()}catch(e){toast(e.message)}finally{hideWaiting()}};function renderDiagnostics(d){$('#check-scope').textContent=d.search_scope||'';let state=$('#diagnostic-state');state.textContent=d.summary||'';state.className='diag-state '+(d.ok?'is-ok':'is-ng');let c=d.counts||{};$('#diagnostic-counts').innerHTML=`<span class="dc-ok">正常 ${c.ok||0}</span><span class="dc-warn">注意 ${c.warning||0}</span><span class="dc-ng">要修正 ${c.error||0}</span>`;let groups={};(d.checks||[]).forEach((x,i)=>(groups[x.group]||(groups[x.group]=[])).push({...x,_i:i}));$('#checks').innerHTML=Object.entries(groups).map(([g,items])=>`<section class="diag-group"><h3>${E(g)}<small>${items.length}項目</small></h3>${items.map(x=>`<div class="diag-row ${E(x.level)}"><i>${x.level==='ok'?'OK':x.level==='warning'?'注意':'要修正'}</i><div><b>${E(x.label)}</b><span>${E(x.detail)}</span></div>${x.candidates?.length?`<button class="fix secondary" data-i="${x._i}">候補 ${x.candidates.length}件</button>`:''}${x.item==='login'&&x.level!=='ok'?'<button class="login-go secondary" type="button">接続情報を開く</button>':''}</div>`).join('')}</section>`).join('');$$('#checks .fix').forEach(b=>b.onclick=()=>showPathResult(d.checks[Number(b.dataset.i)]));$$('#checks .login-go').forEach(b=>b.onclick=()=>{$('#diagnostic-dialog')?.close();openLoginDialog(false)})}if($('#diagnostic-close'))$('#diagnostic-close').onclick=()=>$('#diagnostic-dialog').close();if($('#diagnostic-close-foot'))$('#diagnostic-close-foot').onclick=()=>$('#diagnostic-dialog').close();let commandQueueOpen=false;async function loadCommandQueue(){try{let d=await fetch('/api/execution-queue',{cache:'no-store'}).then(r=>r.json()),list=$('#cq-list'),summary=$('#cq-summary');applyRowQueueProgress(d);if(!list||!summary)return;
  let st=latestStatus||{},running=!!st.running;
  // 実行中バッチの対象(job)単位の実状態。バッジ件数を実進捗に連動させる。
  let jobDone=running?(st.queue_completed_ids||[]).length:0,jobFail=running?(st.queue_failed_ids||[]).length:0;
@@ -1036,10 +1036,10 @@ function stripLogNoise(text){
   .map(x=>x.replace(/\s*｜\s*LOG_DEDUP [^\n]*$/,''))
   .join('\n');
 }
-function textToClipboard(text,msg){text=stripLogNoise(text);if(!text?.trim())return toast('コピー対象のログがありません');navigator.clipboard?.writeText(text).then(()=>toast(msg)).catch(()=>{let ta=document.createElement('textarea');ta.value=text;document.body.appendChild(ta);ta.select();document.execCommand('copy');ta.remove();toast(msg)})}function groupText(g,mode='full'){let lines=[];lines.push(...(g.lines||[]));(g.jobs||[]).forEach(j=>lines.push(...j.lines));if(mode==='summary')lines=lines.filter(x=>/処理開始|STARTUP_PHASE|RUN_ENVIRONMENT|EXECUTION_MODE|WORKER_READY|PIPELINE|STEP_END phase=(api_open_catalog|api_execute_catalog|api_save_csv|api_save_xlsx_direct|format_conversion|publish)|ACCDB_|SQLITE_|XLSX_|PUBLISH_|PENDING_APPLY|PENDING_SCAN|BATCH_ORDER|API_DIAG|JOB_RESULT|JOB_PROFILE|PARALLEL_BATCH_END|正常終了|異常終了/.test(x));return lines.join('\n').trim()}function copyAllLog(){textToClipboard(latestLogText,'表示中のログ全体をコピーしました')}async function copyReportLog(){await loadLog();let g=renderedLogGroups[0];if(g)return textToClipboard(groupText(g),'最新の実行指令ログをコピーしました');let lines=latestLogText.split(/\r?\n/),start=-1;for(let i=lines.length-1;i>=0;i--){if(lines[i].includes('処理開始 trigger=')){start=i;break}}textToClipboard((start>=0?lines.slice(start):lines).join('\n').trim(),'最新の実行指令ログをコピーしました')}async function clearLog(){if(!confirm('表示中の実行ログを消去しますか？'))return;let r=await fetch('/api/log/clear',{method:'POST'});if(r.ok){latestLogText='';renderLogTree('');toast('ログを消去しました')}}if($('#copy-all-log'))$('#copy-all-log').onclick=async()=>{await loadLog();copyAllLog()};if($('#copy-report-log'))$('#copy-report-log').onclick=copyReportLog;if($('#clear-log'))$('#clear-log').onclick=clearLog;if($('#reload'))$('#reload').onclick=loadLog;if($('#expand-logs'))$('#expand-logs').onclick=()=>$$('#log details').forEach(x=>x.open=true);if($('#collapse-logs'))$('#collapse-logs').onclick=()=>$$('#log details').forEach(x=>x.open=false);let lastRunning=false,lastTerminalShownKey='',activeRunId='',activeExecutionMode='serial',dismissedRunIds=new Set();
+function textToClipboard(text,msg){text=stripLogNoise(text);if(!text?.trim())return toast('コピー対象のログがありません');navigator.clipboard?.writeText(text).then(()=>toast(msg)).catch(()=>{let ta=document.createElement('textarea');ta.value=text;document.body.appendChild(ta);ta.select();document.execCommand('copy');ta.remove();toast(msg)})}function groupText(g,mode='full'){let lines=[];lines.push(...(g.lines||[]));(g.jobs||[]).forEach(j=>lines.push(...j.lines));if(mode==='summary')lines=lines.filter(x=>/処理開始|STARTUP_PHASE|RUN_ENVIRONMENT|EXECUTION_MODE|WORKER_READY|PIPELINE|STEP_END phase=(api_open_catalog|api_execute_catalog|api_save_csv|api_save_xlsx_direct|format_conversion|publish)|ACCDB_|SQLITE_|XLSX_|PUBLISH_|PENDING_APPLY|PENDING_SCAN|BATCH_ORDER|API_DIAG|JOB_RESULT|JOB_PROFILE|PARALLEL_BATCH_END|正常終了|異常終了/.test(x));return lines.join('\n').trim()}function copyAllLog(){textToClipboard(latestLogText,'表示中のログ全体をコピーしました')}async function copyReportLog(){await loadLog();let g=renderedLogGroups[0];if(g)return textToClipboard(groupText(g),'最新の実行指令ログをコピーしました');let lines=latestLogText.split(/\r?\n/),start=-1;for(let i=lines.length-1;i>=0;i--){if(lines[i].includes('処理開始 trigger=')){start=i;break}}textToClipboard((start>=0?lines.slice(start):lines).join('\n').trim(),'最新の実行指令ログをコピーしました')}async function clearLog(){if(!confirm('表示中の実行ログを消去しますか？'))return;let r=await fetch('/api/log/clear',{method:'POST'});if(r.ok){latestLogText='';renderLogTree('');toast('ログを消去しました')}}if($('#copy-all-log'))$('#copy-all-log').onclick=async()=>{await loadLog();copyAllLog()};if($('#copy-report-log'))$('#copy-report-log').onclick=copyReportLog;if($('#clear-log'))$('#clear-log').onclick=clearLog;if($('#reload'))$('#reload').onclick=loadLog;if($('#expand-logs'))$('#expand-logs').onclick=()=>$$('#log details').forEach(x=>x.open=true);if($('#collapse-logs'))$('#collapse-logs').onclick=()=>$$('#log details').forEach(x=>x.open=false);let lastRunning=false,activeRunId='',activeExecutionMode='serial';
 /* 画面を開いた最初の1回。ページを開いた時点ですでに走っていた実行だけ、進捗を畳んだ
    状態から始める（自分で押した実行まで畳むと、終わったときの結果が出てこない）。 */
-let firstPoll=true;/* 実際に流れる順番と同じ並びにする。ここが実行順とずれていると、進捗が
+/* 実際に流れる順番と同じ並びにする。ここが実行順とずれていると、進捗が
    「ファイル生成・安定確認」から「抽出画面を閉じる」へ戻ったように見える。 */
 const stepOrder=['prepare','launch','dde','ready','open','save','wait','close','export','publish','complete'];function showProgress(){let d=$('#progress-dialog');if(!d.open)d.showModal()}function hhmmss(v){v=Math.floor(Math.max(0,Number(v)||0));return [Math.floor(v/3600),Math.floor((v%3600)/60),v%60].map(x=>String(x).padStart(2,'0')).join(':')}
 /* 終わった対象の結果をその場で出す。ログを開かないと件数も所要も分からない、という状態にしない。
@@ -1055,11 +1055,11 @@ function renderRunResults(list){
 function laneColumns(n){return n<=4?n:n<=12?4:6}function applyProgressEngine(engine){let api=engine==='api';$$('#p-steps li[data-api]').forEach(li=>li.textContent=api?li.dataset.api:li.dataset.dde)}function updateProgress(s){if(activeRunId&&s.run_id!==activeRunId)return;let engine=s.extract_engine||cfg?.settings?.extract_engine||'api';applyProgressEngine(engine);let isParallel=(s.execution_mode==='parallel');$('#progress-dialog .progress-modal').classList.toggle('serial-mode',!isParallel);$('#progress-dialog .progress-modal').classList.toggle('parallel-mode',isParallel);let overall=s.total_jobs?Math.round(((Math.max(0,s.current_index-1)+(s.step_percent||0)/100)/s.total_jobs)*100):(s.step_percent||0);if(s.step==='complete'||s.step==='error')overall=100;$('#p-title').textContent=s.step_label||'処理中';$('#p-count').textContent=`全体 ${s.completed_jobs||0} / ${s.total_jobs||0}`;$('#p-percent').textContent=overall+'%';$('#p-bar').style.width=overall+'%';$('#p-job').textContent=s.current_job_name||'準備中';let j=cfg?.jobs?.find(x=>x.id===s.current_job_id),fmt=s.output_format||j?.output_format,file=s.output_file||j?.output_file,target=s.output_target||(j?`${j.output_folder||cfg.default_output_folder}\\${file}`:'');$('#p-output').textContent=fmt?`${formatName(fmt)} → ${target}`:'';let liveElapsed=s.started_at?Math.max(Number(s.elapsed_seconds)||0,Math.floor((Date.now()-new Date(s.started_at).getTime())/1000)):(s.elapsed_seconds||0);$('#p-elapsed').textContent='経過時間 '+hhmmss(liveElapsed);$('#p-activity span').textContent=[s.activity_detail,s.activity_value].filter(Boolean).join(' / ')||'処理を継続しています';$('#p-engine').textContent=(engine==='dde'?'DDE互換 / 1件ずつ直列':(s.execution_mode==='parallel'?`Navigator API 並列 ${s.requested_lines||1}ライン`:'Navigator API / 1件ずつ直列'))+' / '+(s.running?'処理中':'終了');let box=document.querySelector('#p-parallel-lines');if(!box){box=document.createElement('div');box.id='p-parallel-lines';box.className='parallel-lines fixed-lanes';document.querySelector('.current-box')?.after(box)}let pls=(s.parallel_lines||[]).slice().sort((a,b)=>Number(String(a.line).match(/\d+/)?.[0]||0)-Number(String(b.line).match(/\d+/)?.[0]||0));let total=Number(s.queue_total||0),waiting=Number(s.queue_waiting||0),active=Number(s.queue_active||0),completed=Number(s.queue_completed||0),lineCount=Number(s.parallel_max_lines||pls.length||0),parallel=(s.execution_mode==='parallel'&&s.run_id===activeRunId);if(lineCount)box.style.setProperty('--lane-cols',laneColumns(lineCount));let queue=$('#queue-summary');if(queue){queue.hidden=!parallel;
  /* 数値だけでは全体のどこまで進んだか掴みにくいため、実行キュー一覧の帯へデータバーを併記する。 */
  let qPct=total?Math.round(completed/total*100):0;
- queue.innerHTML=parallel?`<div><small>予約総数</small><strong>${total}</strong></div><div class="queue-arrow">→</div><div class="q-active"><small>実行中</small><strong>${active}</strong><span>${lineCount}ライン</span></div><div class="q-wait"><small>待機</small><strong>${waiting}</strong></div><div class="q-done"><small>完了</small><strong>${completed}</strong></div><div class="q-overall" title="完了 ${completed} / 実行中 ${active} / 待機 ${waiting} / 全体 ${total}"><small>実行キュー全体 ${completed} / ${total} 完了${active?`（実行中 ${active}）`:''}</small><b>${qPct}%</b><div class="q-overall-track"><i style="width:${qPct}%"></i></div></div>`:'';}document.querySelector('.current-box')?.classList.toggle('parallel-hidden',parallel);$('#p-steps')?.classList.toggle('parallel-hidden',parallel);box.hidden=!parallel;if(parallel){let byLine=new Map(pls.map(x=>[x.line,x]));let stable=[];for(let n=1;n<=lineCount;n++)stable.push(byLine.get(`ライン ${n}`)||{line:`ライン ${n}`,job:'',state:'待機',percent:0,detail:'次の予約を待機',elapsed:0});box.innerHTML=stable.map(x=>{let state=String(x.state||'待機'),cls=state.includes('完了')?'is-done':state.includes('失敗')?'is-error':state.includes('中断')?'is-error':state.includes('待機')||state.includes('終了')?'is-wait':'is-running';return `<article class="pline ${cls}"><header><b>${E(x.line)}</b><span>${E(state)}</span></header><strong title="${E(x.job||'')}">${E(x.job||'予約待ち')}</strong><div class="lane-progress"><i style="width:${Math.max(0,Math.min(100,Number(x.percent||0)))}%"></i></div><footer><small>${E(x.detail||'')}</small><time>${hhmmss(x.elapsed||0)}</time></footer></article>`}).join('')}else box.innerHTML='';let current=stepOrder.indexOf(s.step);$$('#p-steps li').forEach(li=>{let i=stepOrder.indexOf(li.dataset.step);li.className=s.step==='error'&&i===Math.max(0,current)?'error':i<current?'done':i===current?'active':''});let failed=s.step==='error',cancelled=s.step==='cancelled',done=s.step==='complete'||cancelled;$('#p-state').textContent=failed?'失敗':cancelled?'中断済み':done?'完了':'実行中';$('#p-state').classList.toggle('running',!failed&&!done);$('#p-activity i').style.display=(failed||done)?'none':'block';$('#p-state').style.background=failed?'#fff0ee':cancelled?'#f3eee0':done?'#e5f5ef':'#e6f4f6';renderRunResults(s.job_results||[]);$('#p-error').hidden=!failed;if(failed){let errs=s.job_errors||[];$('#p-error').innerHTML=errs.length?`<div class="perr-head">失敗した対象 ${errs.length}件</div>`+errs.map(x=>`<div class="perr-item"><b>${E(x.job||'対象')}</b><span>${E(x.error||'')}</span></div>`).join('')+`<div class="perr-foot">詳しい経過は「ログ・診断」で確認できます。</div>`:E(s.error_detail||s.last_result||'処理を完了できませんでした')}else $('#p-error').textContent='';$('#p-background').hidden=failed||done;$('#p-close').hidden=!(failed||done);let terminalKey=(s.started_at||'')+'|'+s.step;if((failed||done)&&!dismissedRunIds.has(activeRunId)&&terminalKey!==lastTerminalShownKey){lastTerminalShownKey=terminalKey;showProgress()}}$('#p-background').onclick=()=>{dismissedRunIds.add(activeRunId);$('#progress-dialog').close();toast('上部の処理インジケータから進捗を再表示できます')};$('#p-close').onclick=()=>{dismissedRunIds.add(activeRunId);$('#progress-dialog').close();resetProgressView()};/* 実行中でなくても開けるようにする。終わった実行の結果を見る手段がこれしかない。 */
-async function openProgressModal(){try{let s=await fetch('/api/status',{cache:'no-store'}).then(r=>r.json());if(s.run_id){activeRunId=s.run_id;activeExecutionMode=s.execution_mode||'serial';dismissedRunIds.delete(activeRunId);updateProgress(s);showProgress()}}catch{toast('進捗情報を取得できませんでした')}}$('.runtime').onclick=openProgressModal;async function poll(){if(appExiting)return;try{let s=await fetch('/api/status',{cache:'no-store'}).then(r=>r.json());statusFailCount=0;hideServerLost();latestStatus=s;lastRunning=s.running;/* activeRunId を空のときにしか入れ替えていなかったため、1回目の実行が終わっても
+ queue.innerHTML=parallel?`<div><small>予約総数</small><strong>${total}</strong></div><div class="queue-arrow">→</div><div class="q-active"><small>実行中</small><strong>${active}</strong><span>${lineCount}ライン</span></div><div class="q-wait"><small>待機</small><strong>${waiting}</strong></div><div class="q-done"><small>完了</small><strong>${completed}</strong></div><div class="q-overall" title="完了 ${completed} / 実行中 ${active} / 待機 ${waiting} / 全体 ${total}"><small>実行キュー全体 ${completed} / ${total} 完了${active?`（実行中 ${active}）`:''}</small><b>${qPct}%</b><div class="q-overall-track"><i style="width:${qPct}%"></i></div></div>`:'';}document.querySelector('.current-box')?.classList.toggle('parallel-hidden',parallel);$('#p-steps')?.classList.toggle('parallel-hidden',parallel);box.hidden=!parallel;if(parallel){let byLine=new Map(pls.map(x=>[x.line,x]));let stable=[];for(let n=1;n<=lineCount;n++)stable.push(byLine.get(`ライン ${n}`)||{line:`ライン ${n}`,job:'',state:'待機',percent:0,detail:'次の予約を待機',elapsed:0});box.innerHTML=stable.map(x=>{let state=String(x.state||'待機'),cls=state.includes('完了')?'is-done':state.includes('失敗')?'is-error':state.includes('中断')?'is-error':state.includes('待機')||state.includes('終了')?'is-wait':'is-running';return `<article class="pline ${cls}"><header><b>${E(x.line)}</b><span>${E(state)}</span></header><strong title="${E(x.job||'')}">${E(x.job||'予約待ち')}</strong><div class="lane-progress"><i style="width:${Math.max(0,Math.min(100,Number(x.percent||0)))}%"></i></div><footer><small>${E(x.detail||'')}</small><time>${hhmmss(x.elapsed||0)}</time></footer></article>`}).join('')}else box.innerHTML='';let current=stepOrder.indexOf(s.step);$$('#p-steps li').forEach(li=>{let i=stepOrder.indexOf(li.dataset.step);li.className=s.step==='error'&&i===Math.max(0,current)?'error':i<current?'done':i===current?'active':''});let failed=s.step==='error',cancelled=s.step==='cancelled',done=s.step==='complete'||cancelled;$('#p-state').textContent=failed?'失敗':cancelled?'中断済み':done?'完了':'実行中';$('#p-state').classList.toggle('running',!failed&&!done);$('#p-activity i').style.display=(failed||done)?'none':'block';$('#p-state').style.background=failed?'#fff0ee':cancelled?'#f3eee0':done?'#e5f5ef':'#e6f4f6';renderRunResults(s.job_results||[]);$('#p-error').hidden=!failed;if(failed){let errs=s.job_errors||[];$('#p-error').innerHTML=errs.length?`<div class="perr-head">失敗した対象 ${errs.length}件</div>`+errs.map(x=>`<div class="perr-item"><b>${E(x.job||'対象')}</b><span>${E(x.error||'')}</span></div>`).join('')+`<div class="perr-foot">詳しい経過は「ログ・診断」で確認できます。</div>`:E(s.error_detail||s.last_result||'処理を完了できませんでした')}else $('#p-error').textContent='';$('#p-background').hidden=failed||done;$('#p-close').hidden=!(failed||done);/* 終わっても進捗の窓は開かない（1.99.0）。成否は一覧の各行と上の状態に出ているので、毎回窓で遮らない。見たいときは上の状態を押す */}$('#p-background').onclick=()=>{$('#progress-dialog').close();toast('上部の処理インジケータから進捗を再表示できます')};$('#p-close').onclick=()=>{$('#progress-dialog').close();resetProgressView()};/* 実行中でなくても開けるようにする。終わった実行の結果を見る手段がこれしかない。 */
+async function openProgressModal(){try{let s=await fetch('/api/status',{cache:'no-store'}).then(r=>r.json());if(s.run_id){activeRunId=s.run_id;activeExecutionMode=s.execution_mode||'serial';updateProgress(s);showProgress()}}catch{toast('進捗情報を取得できませんでした')}}$('.runtime').onclick=openProgressModal;async function poll(){if(appExiting)return;try{let s=await fetch('/api/status',{cache:'no-store'}).then(r=>r.json());statusFailCount=0;hideServerLost();latestStatus=s;lastRunning=s.running;/* activeRunId を空のときにしか入れ替えていなかったため、1回目の実行が終わっても
     その run_id を握ったままになり、2回目以降は進捗が1回目の最終状態で止まっていた。
     新しい実行を見たら必ず張り替える。 */
- if(s.running&&s.run_id&&s.run_id!==activeRunId){activeRunId=s.run_id;activeExecutionMode=s.execution_mode||'serial';if(firstPoll)dismissedRunIds.add(activeRunId)}if(!$('#st'))return;$('#st').textContent=s.running?'処理中':s.step==='error'?'処理失敗':s.step==='cancelled'?'中断済み':'待機中';$('#sub').textContent=s.running?s.step_label:(s.last_finished_at||'実行待ち');$('#dot').style.background=s.running?'#f0b429':s.step==='error'?'#e45b50':s.step==='cancelled'?'#8a94a0':'#3ed1a0';$('.runtime').classList.toggle('processing',s.running);$('#run-all').disabled=false;updateSelCount();loadCommandQueue();applyRowLiveProgress(s);if(activeRunId&&s.run_id===activeRunId&&(s.running||s.step==='complete'||s.step==='error'||s.step==='cancelled'))updateProgress(s);firstPoll=false}catch{if(!$('#st'))return;$('#st').textContent='接続エラー';statusFailCount++;if(statusFailCount>=3)showServerLost()}}
+ if(s.running&&s.run_id&&s.run_id!==activeRunId){activeRunId=s.run_id;activeExecutionMode=s.execution_mode||'serial'}if(!$('#st'))return;$('#st').textContent=s.running?'処理中':s.step==='error'?'処理失敗':s.step==='cancelled'?'中断済み':'待機中';$('#sub').textContent=s.running?s.step_label:(s.last_finished_at||'実行待ち');$('#dot').style.background=s.running?'#f0b429':s.step==='error'?'#e45b50':s.step==='cancelled'?'#8a94a0':'#3ed1a0';$('.runtime').classList.toggle('processing',s.running);$('#run-all').disabled=false;updateSelCount();loadCommandQueue();applyRowLiveProgress(s);if(activeRunId&&s.run_id===activeRunId&&(s.running||s.step==='complete'||s.step==='error'||s.step==='cancelled'))updateProgress(s)}catch{if(!$('#st'))return;$('#st').textContent='接続エラー';statusFailCount++;if(statusFailCount>=3)showServerLost()}}
 
 /* ==== SymNaviA.dll の探索 ==================================================
    別のPCで環境を作るとき、いちばん詰まるのがこのDLL。必要な条件（bit数）、探す範囲、
@@ -1166,7 +1166,7 @@ if($('#dll-root-reset'))$('#dll-root-reset').onclick=async()=>{setDllRoots(DLL_D
 if($('#dll-depth'))$('#dll-depth').onchange=()=>saveDllRoots();
 async function testNavigatorApi(){
  let b=$('#api-test'),box=$('#api-attempts'),inp=$('#navigator-api-dll');
- if(inp&&cfg){cfg.navigator_api_dll=inp.value.trim();let payload=structuredClone(cfg);delete payload.credential_status;
+ if(inp&&cfg){cfg.navigator_api_dll=inp.value.trim();let payload=structuredClone(cfg);
   await putConfig(payload);}
  if(b)b.disabled=true;
  renderApiReadiness(null);
@@ -1187,7 +1187,7 @@ async function testNavigatorApi(){
   }
  }finally{hideWaiting();if(b)b.disabled=false}
 }
-$('#api-test').onclick=testNavigatorApi;$('#extract-engine').onchange=()=>{updateEngineUI();dirty();refreshMachinePaths()};$$('.engine-card').forEach(c=>c.onclick=()=>setExtractEngine(c.dataset.engine));setInterval(poll,1000);init().then(async()=>{poll();loadCommandQueue();try{
+$('#api-test').onclick=testNavigatorApi;$('#extract-engine').onchange=()=>{updateEngineUI();dirty();refreshMachinePaths()};$$('.engine-card').forEach(c=>c.onclick=()=>setExtractEngine(c.dataset.engine));setInterval(poll,1000);init().then(async()=>{poll();loadCommandQueue();loadLogin(true);try{
  let d=await fetch('/api/navigator-api-status',{cache:'no-store'}).then(r=>r.json());
  renderDllRequirement(d.requirement);
  renderApiReadiness(d.readiness,d.cached?'前回の確認結果です。「いま確認する」で取り直せます。':'');
@@ -2158,6 +2158,20 @@ function ageText(m){
  if(m<1440)return `${Math.floor(m/60)}時間${m%60?`${m%60}分`:''}前`;
  return `${Math.floor(m/1440)}日${Math.floor(m%1440/60)?`${Math.floor(m%1440/60)}時間`:''}前`;
 }
+/* 閉じた帯の控え。同じ対象でも、状態か実行の回（last_run）が変われば別の問題として扱う。
+   この PC の画面だけの好みなので localStorage に置く（読めない環境では、閉じてもその場限りになるだけ） */
+const FRESH_DISMISS_KEY='navi-fresh-dismissed';
+const freshKey=x=>[x.id,x.state,x.last_run||''].join('|');
+let freshDismissedMemo=null;
+function freshDismissed(){
+ if(!freshDismissedMemo){try{freshDismissedMemo=new Set(JSON.parse(localStorage.getItem(FRESH_DISMISS_KEY)||'[]'))}catch{freshDismissedMemo=new Set()}}
+ return freshDismissedMemo;
+}
+function freshDismiss(keys){
+ // いま出ているものだけを覚える（直った対象の控えは捨てる。控えが増え続けない）
+ freshDismissedMemo=new Set(keys);
+ try{localStorage.setItem(FRESH_DISMISS_KEY,JSON.stringify([...freshDismissedMemo]))}catch{}
+}
 async function loadFreshness(){if(appExiting)return;
  let box=$('#fresh-board');if(!box)return;
  try{
@@ -2167,13 +2181,18 @@ async function loadFreshness(){if(appExiting)return;
   freshInfo=Object.fromEntries((d.items||[]).map(x=>[x.id,x]));
   applyScheduleCells();
   let bad=(d.items||[]).filter(x=>x.state!=='ok');
-  box.hidden=!bad.length;
+  // 閉じた帯は、閉じたときに無かった問題（別の対象・別の状態・別の回の実行）が出るまで出さない（1.99.0）。
+  // 失敗と保留は「知らせ」の一覧に残り、一覧の各行の色も変わらないので、帯を閉じても事実は失われない
+  let seen=freshDismissed();
+  box.hidden=!bad.length||bad.every(x=>seen.has(freshKey(x)));
+  box.dataset.keys=JSON.stringify(bad.map(freshKey));
   if(box.hidden)return;
   // 全部が同じ状態のときに全部並べると、下の一覧と同じものを二度読ませることになり、
   // しかも「全部が印つき＝どれも目立たない」になる。重い順に数件だけ出し、残りは
   // 数で言う（並びは重い順・古い順に整えてある）。
   const FB_MAX=3,rest=Math.max(0,bad.length-FB_MAX);
-  box.innerHTML=`<div class="fb-head"><b>${E(d.summary)}</b><small>共有しているファイルが古くなっている対象です。押すとその対象を開きます</small></div>`
+  box.innerHTML=`<div class="fb-head"><b>${E(d.summary)}</b><small>共有しているファイルが古くなっている対象です。押すとその対象を開きます</small>`
+   +`<button type="button" class="fb-close" title="この帯を閉じます。新しい問題が起きたら、また出します（失敗は右上の「知らせ」に残ります）" aria-label="閉じる">×</button></div>`
    +`<div class="fb-rows">`+bad.slice(0,FB_MAX).map(x=>{
     // 言い方は一覧の行と同じ関数から取る。同じ状態を2か所で別々に名づけない。
     let [,tone]=FRESH_STATE[x.state]||FRESH_STATE.ok,word=freshWord(x);
@@ -2198,6 +2217,10 @@ async function loadFreshness(){if(appExiting)return;
      +`<span>${when}</span><small>${note}</small>${why}</button>`}).join('')
    +(rest?`<div class="fb-more">ほか ${rest}件 ―― 下の一覧で「経過」の色が付いている行が同じ状態です</div>`:'')
    +`</div>`;
+  box.querySelector('.fb-close').onclick=()=>{
+   freshDismiss(JSON.parse(box.dataset.keys||'[]'));box.hidden=true;
+   toast('閉じました。新しい問題が起きたら、また出します');
+  };
   box.querySelectorAll('.fb-row').forEach(b=>b.onclick=()=>{
    let j=cfg?.jobs?.find(x=>x.id===b.dataset.id);
    if(j)openEditor(j);
@@ -4382,6 +4405,100 @@ async function fillRecipePicker(selected){
 if($('#m-recipe'))$('#m-recipe').onchange=()=>{fillRecipePicker($('#m-recipe').value);dirty()};
 if($('#m-recipe-open'))$('#m-recipe-open').onclick=()=>{$('#editor').close();document.querySelector('[data-p="joins"]')?.click()};
 
+/* ==== Navigator の接続情報（1.99.0） ===========================================
+   正本はこのPCの置き場（Windows の資格情報マネージャー）。共有の symnavim.conf は、まだ取り込んでいないPCの読み手と取り込み元。
+   判断（出どころ・要るか・断ったか）はすべて中身（app.login_state）。画面は答えを描くだけ。パスワードは画面に来ない。
+   初めて開いたとき（未登録・断っていない）だけ、登録を聞く。共有の symnavim.conf が読めれば「取り込む」を先に出す
+   （打ち直させない）。「あとで」はこの起動のあいだだけ、「Navigator は使わない」はこのPCで覚える */
+const postJson=(url,b)=>fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})});
+let loginState=null,loginAsked=false;
+const LOGIN_ORIGIN={form:'画面から登録',conf:'symnavim.conf から取り込み'};
+function loginVerdict(x){
+ if(!x||!x.ok)return ['読めません','is-bad'];
+ if(x.saved)return ['このPCに登録済み','is-ok'];
+ if(x.error)return ['読めません','is-bad'];
+ if(x.source==='conf')return ['共有のファイルから読んでいます','is-warn'];
+ return x.needed?['未登録','is-bad']:['未登録（いまは不要）','is-idle'];
+}
+async function loadLogin(first){
+ try{loginState=await fetch('/api/login',{cache:'no-store'}).then(r=>r.json())}catch{loginState=null}
+ renderLogin();
+ let x=loginState;
+ if(first&&!loginAsked&&x&&x.ok&&!x.saved&&!x.declined&&!x.error){loginAsked=true;openLoginDialog(true)}
+ return x;
+}
+function renderLogin(){
+ let x=loginState,pill=$('#login-state');if(!pill)return;
+ let [label,tone]=loginVerdict(x),c=x&&x.conf;
+ pill.textContent=label;pill.className='pill rel-pill '+tone;
+ let facts=x&&x.saved?[['サーバー',x.server],['利用者ID',x.user],['パスワード',x.has_password?'●●●●●●（登録済み）':'（なし）'],
+   ['保存先',x.where],['登録',`${String(x.saved_at||'').replace('T',' ')}${LOGIN_ORIGIN[x.origin]?'（'+LOGIN_ORIGIN[x.origin]+'）':''}`]]
+  :c&&c.ok?[['サーバー',c.server],['利用者ID',c.user],['読んでいるファイル',c.path]]:[];
+ $('#login-facts').innerHTML=facts.map(([k,v])=>`<div><small>${E(k)}</small><b title="${E(v)}">${E(v)}</b></div>`).join('');
+ $('#login-facts').hidden=!facts.length;
+ $('#login-note').textContent=!x||!x.ok?'状態を読めませんでした。'
+  :x.saved?(c?'共有に symnavim.conf が残っています（平文のパスワード入り）。このPCでは読みません。ほかのPCの取り込みが済んだら、共有から消してください。'
+    :'Windows が、このPCのあなただけが読める形に暗号化して持ちます。抽出・RNEの調査・自動実行は、ここから読んでログインします。')
+  :x.error?x.error
+  :c&&c.ok?'このPCにはまだ登録していません。いまは共有の symnavim.conf から読んでいます。取り込むとこのPCに移り、ファイルは要らなくなります。'
+  :c?`symnavim.conf を読めません: ${c.error}`
+  :x.needed?'RNE の対象を実行するには、Navigator の接続情報が要ります。「登録する」から入れてください。'
+  :'固定長テキスト・結合だけなら要りません。RNE を使うときに登録してください。';
+ $('#login-edit').textContent=x&&x.saved?'変更する':'登録する';
+ $('#login-import').hidden=!(c&&c.ok&&!(x&&x.saved));
+ $('#login-delete').hidden=!(x&&x.saved);
+}
+function openLoginDialog(first){
+ let d=$('#login-dialog'),x=loginState||{},c=x.conf;if(!d)return;
+ $('#login-title').textContent=x.saved?'接続情報を変更':'接続情報を登録';
+ $('#login-lead').innerHTML=(first?'RNE で Navigator からデータを取り出すには、接続先と利用者ID・パスワードが要ります。<br>':'')
+  +'入れた内容は <b>このPCのあなただけ</b>が読める形で保存し、ログインのたびにそこから使います。共有のフォルダーには置きません。';
+ let box=$('#login-conf'),offer=!!(c&&c.ok&&!x.saved);
+ box.hidden=!offer;
+ box.innerHTML=offer?`<span>共有の symnavim.conf が見つかりました。この内容をそのまま取り込めます（打ち直す必要はありません）。</span>`
+  +`<code>${E(c.path)}</code><span>サーバー <b>${E(c.server)}</b> ／ 利用者ID <b>${E(c.user)}</b></span>`
+  +`<button type="button" id="login-conf-import">この内容で取り込む</button>`:'';
+ if(offer)$('#login-conf-import').onclick=()=>loginImport('');
+ $('#login-server').value=x.saved?x.server:(offer?c.server:'');
+ $('#login-user').value=x.saved?x.user:(offer?c.user:'');
+ $('#login-password').value='';
+ $('#login-password').placeholder=x.saved?'変えないときは空のまま':'';
+ $('#login-where').textContent=x.where||'このPCの保存場所';
+ $('#login-decline').hidden=!first;
+ $('#login-later').textContent=first?'あとで':'やめる';
+ loginError('');
+ if(!d.open)d.showModal();
+ setTimeout(()=>(offer?$('#login-conf-import'):(x.saved?$('#login-password'):$('#login-server')))?.focus(),30);
+}
+function loginError(msg){let e=$('#login-error');if(e){e.textContent=msg||'';e.hidden=!msg}}
+async function loginAfterSave(r,word){
+ let d=await r.json().catch(()=>({}));
+ if(!r.ok||!d.ok){loginError(d.error||'保存できませんでした');toast(d.error||'保存できませんでした');return false}
+ loginState=d;renderLogin();$('#login-dialog')?.close();toast(word);refreshMachinePaths(0);return true;
+}
+async function loginImport(path){
+ await loginAfterSave(await postJson('/api/login/import',{path}),'symnavim.conf の内容をこのPCに取り込みました');
+}
+if($('#login-form'))$('#login-form').onsubmit=async e=>{
+ e.preventDefault();
+ await loginAfterSave(await postJson('/api/login',{server:$('#login-server').value,user:$('#login-user').value,password:$('#login-password').value}),'接続情報をこのPCに保存しました');
+};
+if($('#login-later'))$('#login-later').onclick=()=>$('#login-dialog').close();
+if($('#login-x'))$('#login-x').onclick=()=>$('#login-dialog').close();
+if($('#login-decline'))$('#login-decline').onclick=async()=>{
+ let d=await postJson('/api/login/decline',{yes:true}).then(r=>r.json()).catch(()=>null);
+ if(d){loginState=d;renderLogin()}
+ $('#login-dialog').close();toast('このPCでは聞かないようにしました。使うときは 共通設定 →「接続とパス」から登録できます');
+};
+if($('#login-edit'))$('#login-edit').onclick=()=>openLoginDialog(false);
+if($('#login-import'))$('#login-import').onclick=()=>loginImport('');
+if($('#login-import-file'))$('#login-import-file').onclick=async()=>{let p=await browse('file',cfg?.symnavim_conf||'',paths.symnavim_conf[2]);if(p)loginImport(p)};
+if($('#login-delete'))$('#login-delete').onclick=async()=>{
+ if(!confirm('このPCに保存した Navigator の接続情報を消します。RNE の実行には、もう一度登録が要ります。よろしいですか？'))return;
+ let d=await postJson('/api/login/delete').then(r=>r.json()).catch(()=>null);
+ if(d&&d.ok){loginState=d;renderLogin();refreshMachinePaths(0);toast('このPCから接続情報を消しました')}else toast((d&&d.error)||'消せませんでした');
+};
+
 /* ==== 配布と更新（1.98.0） ===================================================
    判断はすべて中身（lib/navi_release.py・navi_shortcut.py）。画面は答えを描くだけ。
    - 設定の「配布と更新」: このPCの状態 → 配る版を決める → 版を置く → 新しいPCへの配り方 → 各PCの版 の順
@@ -4393,7 +4510,7 @@ const REL_PLACE={installed:'このPCの写し',app:'共有から直に動かす'
 const REL_SOURCE={local:'このPCの local.json',shared:'共有の設定',install:'このPCを入れた元',app:'アプリのフォルダー（既定）'};
 const REL_FLEET_PLACE={installed:'写し',app:'共有から直に',dev:'開発'};
 const REL_STAGE={check:'ZIP の中身を確かめています',copy:'置き場へ写しています',finish:'目録（manifest.json）を書いています'};
-const relPost=(url,b)=>fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})});
+const relPost=postJson;
 const relKey=v=>String(v||'').split(/[.\-]/).map(x=>/^\d+$/.test(x)?Number(x):0);
 function relCmp(a,b){let x=relKey(a),y=relKey(b);for(let i=0;i<Math.max(x.length,y.length);i++){let d=(x[i]||0)-(y[i]||0);if(d)return d}return 0}
 function relBytes(n){n=Number(n||0);return n>=1048576?(n/1048576).toFixed(1)+' MB':n>=1024?Math.round(n/1024)+' KB':n+' B'}
@@ -4533,8 +4650,25 @@ async function relRestart(){
 async function loadReleaseBrief(){
  if(appExiting)return;
  try{relBrief=await fetch('/api/release/brief',{cache:'no-store'}).then(r=>r.json())}catch{return}
- paintReleaseBanner();
+ paintReleaseBanner();paintUpdateBadge();
 }
+/* 版の隣の印: 配布の置き場に届かない（更新の仕組みから切り離されている）ときだけ出す（1.99.0）。
+   届かなくても、いまの版のまま普通に使える。だから帯（行動を求める）ではなく、控えめな印（状態を知らせる）にする。
+   まだ確かめていない（reachable が null）・作る途中の木では出さない。届くようになれば次に読んだとき消える */
+function paintUpdateBadge(){
+ let b=$('#update-badge'),x=relBrief;if(!b)return;
+ let off=!!(x&&x.place!=='dev'&&x.reachable===false);
+ b.hidden=!off;if(!off)return;
+ b.title=`配布の置き場に届かないため、新しい版の確認を休んでいます。\n`
+  +`アプリはいまの版 ${x.version} のまま、ふだんどおり使えます（自動実行も続きます）。\n`
+  +`届くようになれば、自動で確認を再開します。\n\n`
+  +(x.why?`理由: ${x.why}\n`:'')+(x.dir?`置き場: ${x.dir}\n`:'')+`\n押すと「配布と更新」を開きます`;
+}
+function openSettingsPane(cat){
+ document.querySelector('nav button[data-p="paths"]')?.click();
+ document.querySelector(`#settings-nav .settings-navbtn[data-cat="${cat}"]`)?.click();
+}
+if($('#update-badge'))$('#update-badge').onclick=()=>openSettingsPane('release');
 function paintReleaseBanner(){
  let b=$('#release-banner'),x=relBrief;if(!b)return;
  let kind=x&&x.pending&&x.place!=='dev'?'update':(x&&x.shortcut&&x.shortcut.show?'shortcut':'');

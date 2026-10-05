@@ -267,7 +267,7 @@ def run_api_process_batch(jobs,cfg,user,pw,server,dde_work,backup,max_lines,trig
  def start_one(slot):
   index,job=queue.popleft();line=f'ライン {slot}'
   job_dir=runtime/f'line_{slot}_{index}';job_dir.mkdir(parents=True,exist_ok=True)
-  payload={'job':job,'job_index':index,'total_jobs':total,'cfg':cfg,'user':user,'password':pw,'server':server,'dde_work':str(job_dir/'work'),'backup':str(backup),'line':line}
+  payload={'job':job,'job_index':index,'total_jobs':total,'cfg':cfg,'user':user,'server':server,'dde_work':str(job_dir/'work'),'backup':str(backup),'line':line}
   Path(payload['dde_work']).mkdir(parents=True,exist_ok=True)
   payload_path=job_dir/'payload.json';result_path=job_dir/'result.json';status_path=job_dir/'status.json'
   payload_path.write_text(json.dumps(payload,ensure_ascii=False),encoding='utf-8')

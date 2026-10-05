@@ -22,10 +22,11 @@ from navi_paths import is_pc_path,foreign_profile_path
 import app
 from app import (
     BASE, DATA_ROOT, DATA_ROOT_SOURCE, LOCAL_LOGS, LOCAL_ROOT, LOCAL_RUNTIME, MASTER_SETTINGS_DB, SETTINGS_DB,
-    creds, dll_search_roots, job_extra_formats, job_schedule_preview, last_run_info,
+    NAVI_VAULT, dll_search_roots, job_extra_formats, job_schedule_preview, last_run_info,
     load, load_job_runs, log, normalize_output_format, resolve_path, schedule_gap_minutes,
     settings_connection,
 )
+import navi_secret
 
 # データの基準（相対パスと設定のマスターの基準）をどこで決めたか（navi_paths.data_root の出どころ）。
 DATA_ROOT_NOTES={'app':'相対パスと設定のマスターの基準。共有から直に動かしているので、アプリの場所と同じ',
@@ -405,17 +406,25 @@ def path_setting_roles(c):
  else:
   roles['text_folder']=('fallback','ファイル名だけで登録したときの基準です。いまはすべて個別のパスで解決できています')
  # 接続に関わる3つは、まとめて「DDEのもの」にはできない。使われ方がそれぞれ違う。
- # v1.60.0では3つ一括でDDE専用にしてしまい、API方式のときに symnavim.conf まで
- # 「いまは不要」と出ていた。実際にはこれが唯一の認証情報の出どころで、無ければ
- # APIセッションを開けない（起動ログの credential_load はこの読み取り）。
- roles['symnavim_conf']=('required','接続先と認証情報（利用者ID・パスワード・サーバー）をここから読みます。API・DDEのどちらでも要ります')
+ # symnavim.conf は 1.99.0 から認証情報の「取り込み元」になった。正本はこのPCの置き場（資格情報マネージャー）で、
+ # 登録済みならこのファイルは読まない。未登録のあいだだけ読む（配った日に抽出を止めないため）。
+ # 無いことは赤くしない ―― 足りないのは「接続情報」で、それは事前診断の「Navigator の接続情報」が言う。
+ try:saved=bool(NAVI_VAULT.load())
+ except Exception:saved=False
+ roles['symnavim_conf']=(('unused','接続情報はこのPCに登録済みのため、このファイルは読みません。共有に置いたままなら消してかまいません')
+   if saved else ('fallback','接続情報がこのPCに未登録のあいだだけ、ここから読みます。「Navigator の接続情報」で取り込めば要らなくなります'))
  # SymNavi.exe：DDEでは起動する本体そのもの。APIでは起動しないが、SymNaviA.dllが
  # 検索範囲で見つからなかったときに限り、この隣を最後に探す（candidate_dllsの終端）。
  roles['symnavi_exe']=('required','SymfoNaviを起動してDDEでつなぎます') if engine=='dde' else \
    ('fallback','APIでは起動しません。SymNaviA.dllが見つからないときだけ、この隣を探す手がかりに使います')
- # symnavim.def：このアプリは一度も読んでいない。DDEではSymfoNavi側が使う。
- roles['symnavim_def']=('required','DDE互換方式でSymfoNavi側が使います') if engine=='dde' else \
-   ('unused','いまの抽出方式（Navigator API）では使いません')
+ # symnavim.def：このアプリは中身を一度も読まず、SymfoNavi へ場所を渡してもいない（SymNavi.exe へは利用者ID・
+ # パスワード・サーバーを引数で渡す）。DDEで指定してあれば「在ること」だけを実行前に確かめる。
+ # 1.99.0 から空にできる ―― 空なら確かめない（アプリのフォルダーへ同梱しなくてよい）。
+ if engine!='dde':roles['symnavim_def']=('unused','いまの抽出方式（Navigator API）では使いません')
+ elif str(c.get('symnavim_def') or '').strip():
+  roles['symnavim_def']=('required','DDE互換方式で、ここに在ることを実行前に確かめます（中身はアプリは読まず、SymfoNavi 側が使います）')
+ else:
+  roles['symnavim_def']=('fallback','未設定のため確かめません。アプリはこのファイルを読みません（SymfoNavi 側が自分の置き場で使います）')
  roles['navigator_api_dll']=(('fallback','手動で指定したときだけ使います。空なら探す範囲から自動で選びます')
    if engine=='api' else ('unused','いまの抽出方式（DDE互換）では使いません'))
  roles['accdb_template']=(('required',f'{len(accdb)}件の対象がACCDBで出力します') if accdb
@@ -455,8 +464,11 @@ def machine_path_view():
    elif key=='symnavim_conf':
     # 認証ファイルは「在る」だけでは足りない。読めて、必要な3項目が揃っていて初めて接続できる。
     # 値そのものは出さない ―― どのセクションを使うかだけを言う。
-    try:*_,sec=creds(real);note=f'読み取れます（[{sec}] の利用者ID・パスワード・サーバーを使います）'
-    except Exception as e:state='ng';note=f'ファイルはありますが、読み取れません: {e}'
+    # 登録済みのPCで残っているなら、平文のパスワードが共有に置きっぱなしという注意（読まないので赤ではない）。
+    if role=='unused':state='warn';note='接続情報はこのPCに登録済みです。このファイルには平文のパスワードが入っているので、共有から消してください'
+    else:
+     try:sec=navi_secret.read_conf(real)['section'];note=f'読み取れます（[{sec}] の利用者ID・パスワード・サーバー）。'+why
+     except Exception as e:state='ng';note=f'ファイルはありますが、読み取れません: {e}'
   elif role=='required':
    state='ng';note=('フォルダーがありません。'+why if kind=='folder' else 'ファイルがありません。'+why)
   elif role=='unused':

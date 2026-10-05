@@ -30,7 +30,7 @@ def _borrow(name):
  実体で受け取ると、検査が app.X を差し替えてもこちらは古いままになる。
  v1.65.0で受け口を分けたときは、これに気づかず8本の検査が黙って素通りした。
  v1.71.0でここを分けたときも、影実行の検査が同じ理由で落ちている
- （app.creds などを差し替えても効かず、列の判定で止まった）。
+ （app.creds（いまの navi_login）などを差し替えても効かず、列の判定で止まった）。
  差し替えは検査だけの話ではなく、将来どこかで挿し替える余地でもあるので、
  借りる側で塞いでおく。1回の呼び出しにつき属性を1つ引くだけで、この処理は
  実際の抽出（数十秒）が支配的なため測れるほどの差にはならない。
@@ -48,13 +48,13 @@ for _n in ('_mark_settings_dirty',
            'axis_value_weights',
            'block_row_axis',
            'blocked_row_axes',
-           'creds',
            'crosstab_split_reason',
            'duplicate_columns',
            'load_column_cache',
            'load_rne_timing',
            'merge_column_parts',
            'merge_row_parts',
+           'navi_login',
            'normalize_output_format',
            'normalize_row_axis_mode',
            'normalize_split_mode',
@@ -869,7 +869,7 @@ def _split_trial_run(data,c,job):
     return stop(f'「{row_axis["name"]}」は{opt["why"]}。別の軸か、別の片数でお試しください。',
                 forecast=fc,axis=row_axis.get('name'),blank_rows=opt.get('blank_rows') or 0)
  work=LOCAL_RUNTIME/('split_trial_'+datetime.now().strftime('%Y%m%d_%H%M%S'));work.mkdir(parents=True,exist_ok=True)
- user,pw,server,_=creds(resolve_path(c['symnavim_conf']))
+ user,pw,server,_=navi_login(c)
  # 基準は分け方を持たない。mode= に column と出ると「列分割を試して失敗した」と読めてしまう。
  log.info('SPLIT_TRIAL_START rne=%s job=%s mode=%s 列%s分割 行%s分割 columns=%s removable=%s keys=%s transfer_ratio=%.2f',
           rp,job['name'],('normal（分割なしの基準）' if measure=='normal' else mode),

@@ -195,6 +195,11 @@ main>nav,main>section.on{align-self:stretch}
 .changelog-entry li{font-size:11.5px;color:#526670;line-height:1.5}
 .version-badge{background:#ffffff14;color:#d9f0f2;border:1px solid #ffffff35;border-radius:999px;padding:5px 13px;font-size:11px;font-weight:900;letter-spacing:.04em;cursor:pointer}
 .version-badge:hover{background:#ffffff26}
+/* 更新の休止（1.99.0）。故障ではない（いまの版のまま普通に使える）ので、赤や琥珀にしない。版の印より一段控えめな灰青で、点だけを鈍い琥珀にして「つながっていない」を伝える。文字の濃さで重さを伝えない（目に留まるが、注意を奪わない） */
+.update-badge{display:inline-flex;align-items:center;gap:6px;background:transparent;color:#b9d3db;border:1px dashed #ffffff40;border-radius:999px;padding:4px 11px;font-size:10.5px;font-weight:700;letter-spacing:.03em;cursor:pointer;white-space:nowrap}
+.update-badge[hidden]{display:none}
+.update-badge i{width:6px;height:6px;border-radius:50%;background:#d9a54a;opacity:.85}
+.update-badge:hover{background:#ffffff14;color:#e3f1f4}
 .version-modal{width:min(560px,92vw);max-height:86vh;display:flex;flex-direction:column;background:#fff}
 .version-modal .modalbody{overflow:auto}
 @media(max-width:900px){.settings-shell{grid-template-columns:1fr;grid-template-rows:auto minmax(0,1fr)}.settings-nav{flex-direction:row;overflow-x:auto;overflow-y:hidden;align-content:normal}.settings-navbtn{flex:none}.settings-navtext small{display:none}}
@@ -2112,6 +2117,8 @@ body>main{width:var(--app-shell);max-width:var(--app-shell);
 .fb-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
 .fb-head b{font-size:12.5px;color:#7a5a18}
 .fb-head small{font-size:10.5px;color:#93a4ab}
+.fb-close{margin-left:auto;align-self:center;background:transparent;color:#9a8a68;font-size:17px;line-height:1;padding:2px 8px;border-radius:6px}
+.fb-close:hover{background:#f3ead8;color:#6d5418}
 .fb-rows{display:grid;gap:5px}
 .fb-row{display:grid;grid-template-columns:102px minmax(120px,1fr) minmax(0,1.4fr) minmax(0,1fr);gap:10px;
  align-items:center;text-align:left;padding:7px 10px;border:1px solid #e2eaee;border-radius:8px;
@@ -2570,6 +2577,20 @@ body>main{width:var(--app-shell);max-width:var(--app-shell);
    バッジの色は保守の操作を表す藍（ほかの設定の青緑と見分ける）。 */
 .settings-badge.cat-release{background:#ecebfa;color:#4a3fa3}
 .rel-block{max-width:900px!important}
+/* Navigator の接続情報（1.99.0）。配布と更新と同じ「事実の札＋状態の丸札」の形にそろえる（同じ種類の情報は同じ見た目）。
+   色の意味も同じ: 緑＝このPCに登録済み／琥珀＝共有のファイルから読んでいる（動くが、移すべき）／赤＝要るのに無い／灰＝いまは要らない */
+.login-block{max-width:900px!important;padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:#fff;margin:12px 0 4px}
+.login-head{display:flex;align-items:center;gap:10px}.login-head b{font-size:14px;color:#203f4d}
+.login-delete{margin-left:auto;color:#a4463d}
+.login-modal{width:min(560px,94vw)}
+.login-lead{margin:0 0 10px;font-size:12.5px;line-height:1.65;color:#38505c}
+.login-fields{display:grid;gap:9px}.login-fields label{display:grid;gap:4px;font-size:12px;font-weight:700;color:#425661}
+.login-conf{margin:0 0 12px;padding:10px 12px;border:1px solid #cfe3d9;background:#f2f9f5;border-radius:8px;font-size:12px;color:#2b4f40;display:grid;gap:6px}
+.login-conf[hidden],#login-facts[hidden]{display:none}
+.login-conf code{font:11.5px Consolas,monospace;overflow-wrap:anywhere}.login-conf button{justify-self:start}
+.login-safe{display:flex;gap:8px;align-items:baseline;margin:12px 0 0;font-size:11px;color:#647581}.login-safe b{flex:none;color:#4b6470}
+.login-error{margin:10px 0 0;padding:8px 10px;border-left:4px solid #c9574c;background:#fdf0ee;border-radius:6px;color:#8f352c;font-size:12px}
+.login-decline{margin-right:auto;color:#647581}
 .rel-block.rel-wide{max-width:1100px!important}
 .rel-pill.is-ok{background:#e5f5ef;color:var(--ok)}
 .rel-pill.is-warn{background:#fbf0dc;color:#8a5200}
