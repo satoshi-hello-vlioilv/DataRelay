@@ -4551,6 +4551,13 @@ function renderRelease(){
  if(rs){rs.hidden=!(st.pending&&st.place!=='dev');rs.disabled=!!st.restartBlock;rs.title=st.restartBlock?`${st.restartBlock}。終わってから押してください`:'後始末をしてから開き直します（自動実行の予定はそのまま続きます）'}
  let sc=$('#rel-shortcut'),so=st.shortcut||{};
  if(sc){sc.hidden=!(st.installed&&so.available&&!(so.ours||[]).length);sc.textContent=(so.old||[]).length?'起動アイコンをこのPCの写しへ向け直す':'デスクトップに起動アイコンを作る'}
+ let pd=$('#rel-publish-dest');
+ if(pd){pd.className='rel-dest'+(st.dirNote?' is-warn':'');
+  pd.innerHTML=`置く先: <code>${E(st.versionsDir||'')}\\&lt;版&gt;</code>`+(st.dirNote?`　${E(st.dirNote)}`:'')}
+ let ns=$('#rel-nested'),nested=st.nested||[];
+ if(ns){ns.hidden=!nested.length;
+  ns.innerHTML=nested.length?`<b>版のフォルダーの中に紛れた版があります（1.99.0 までの置き方）</b><br>`+nested.map(n=>`${E(n.version)}: <code>${E(n.path)}</code>`).join('<br>')
+   +`<br>この版は一覧に出ず、配れません。同じ ZIP をもう一度「ZIP を選んで確かめる」から置けば ${E(st.versionsDir)} に並びます（紛れたフォルダーは、置き直したあと消してかまいません）。`:''}
  renderReleaseVersions(st,want);renderReleaseEntry(st);renderReleaseFleet(st,want);
  let di=$('#rel-dir-input');if(di&&document.activeElement!==di)di.value=st.shared||'';
  let pb=$('#rel-publish');if(pb){pb.disabled=!st.reachable||!!st.publishing;pb.title=st.reachable?'':'置き場に届かないので置けません'}
@@ -4602,13 +4609,50 @@ async function relSetRelease(v){
  if((d.notes||[]).length)alert(d.notes.join('\n\n'));
  await loadRelease();loadReleaseBrief();
 }
+/* 版を置く（1.99.1）: ZIP を選ぶ → 中身を確かめて「置く先」と警告を見せる → 押してから置く。
+   置く先はいつも <置き場>\versions\<版>。入れ子（ZIP の中の DataRelay が複数・置き場ごとの ZIP）や置き場の物は、
+   中身（navi_release.inspect_zip）が見つけて外し、ここでは理由を読ませるだけ */
+let relInspected=null;
 async function relPublish(){
  let r=await relPost('/api/pick-file',{types:[['DataRelay の ZIP','*.zip'],['すべてのファイル','*.*']]}),d=await r.json().catch(()=>({}));
  if(!d.path)return;
- let r2=await relPost('/api/release/publish',{path:d.path}),d2=await r2.json().catch(()=>({}));
+ $('#rel-publish-note').textContent='ZIP の中身を確かめています…';
+ let x=await relPost('/api/release/inspect',{path:d.path}).then(r=>r.json()).catch(()=>({ok:false,error:'確かめられませんでした'}));
+ $('#rel-publish-note').textContent='';
+ relInspected=x.version?{path:d.path,...x}:null;
+ let box=$('#rel-inspect');
+ if(!x.version){box.hidden=true;$('#rel-publish-note').textContent=x.error||'この ZIP は置けません';return}
+ box.hidden=false;box.className='rel-inspect'+(x.ok?'':' is-bad');
+ $('#rel-inspect-title').textContent=x.ok?`版 ${x.version} をこの内容で置きます`:`版 ${x.version} は置けません`;
+ $('#rel-inspect-meta').textContent=`${x.files}ファイル・${relBytes(x.bytes)}`+(x.warnings?.length?`・注意 ${x.warnings.length}件`:'');
+ $('#rel-inspect-dest').textContent=x.dest;
+ let w=[...(x.warnings||[]),...(x.ok?[]:[x.error])];
+ $('#rel-inspect-warn').hidden=!w.length;
+ $('#rel-inspect-warn').innerHTML=w.map(t=>`<li>${E(t)}</li>`).join('');
+ $('#rel-inspect-go').hidden=!x.ok;
+ $('#rel-inspect-go').textContent=x.warnings?.length?'注意を読んだうえで置く':'この内容で置く';
+}
+async function relPublishGo(){
+ let x=relInspected;if(!x)return;
+ $('#rel-inspect').hidden=true;relInspected=null;
+ let r2=await relPost('/api/release/publish',{path:x.path}),d2=await r2.json().catch(()=>({}));
  if(!r2.ok){$('#rel-publish-note').textContent=d2.error||'置けませんでした';return}
  $('#rel-publish-note').textContent='';relWatchProgress();
 }
+if($('#rel-inspect-go'))$('#rel-inspect-go').onclick=relPublishGo;
+if($('#rel-inspect-cancel'))$('#rel-inspect-cancel').onclick=()=>{$('#rel-inspect').hidden=true;relInspected=null};
+/* 置き場の入力: 押す前に「実際の置き場」と「版が並ぶ場所」を見せる（直す決まりは中身の release_root だけが持つ） */
+let relDirTimer=null;
+async function relDirPreview(){
+ let box=$('#rel-dir-preview'),v=$('#rel-dir-input').value.trim();if(!box)return;
+ let d=await relPost('/api/release/dir',{value:v,dry:true}).then(r=>r.json()).catch(()=>null);
+ if(!d||!d.ok){box.hidden=true;return}
+ box.hidden=false;
+ box.innerHTML=`<span>${v?'置き場':'既定の置き場'}: <code>${E(d.dir)}</code></span><span>版が並ぶ場所: <code>${E(d.versionsDir)}\\&lt;版&gt;</code></span>`
+  +(d.note?`<span class="is-warn">${E(d.note)}</span>`:'')+(d.reachable?'':`<span class="is-bad">いまは届きません: ${E(d.why||'')}</span>`);
+}
+if($('#rel-dir-input'))$('#rel-dir-input').addEventListener('input',()=>{clearTimeout(relDirTimer);relDirTimer=setTimeout(relDirPreview,450)});
+if($('.rel-dir'))$('.rel-dir').addEventListener('toggle',e=>{if(e.target.open)relDirPreview()});
 function relWatchProgress(){
  clearInterval(relPoll);let box=$('#rel-progress'),res=$('#rel-publish-result');
  if(box)box.hidden=false;if(res)res.hidden=true;$('#rel-publish').disabled=true;
@@ -4632,8 +4676,9 @@ async function relSaveDir(value){
  if(!r.ok){$('#rel-dir-note').textContent=d.error||'変えられませんでした';return}
  // 共有の設定（マスター）が変わったので、画面の写しの版も合わせる（あとの自動保存が「ほかの画面で変わった」と断られない）
  if(cfg){cfg.update_dir=d.value;if(d.settings_revision!=null)cfg.settings_revision=d.settings_revision}
- $('#rel-dir-note').textContent=d.changed?(d.value?`置き場を ${d.value} にしました。各PCは次の起動から見ます。`:'既定の置き場に戻しました。'):'変わっていません。';
- loadRelease();
+ $('#rel-dir-note').textContent=(d.changed?(d.value?`置き場を ${d.value} にしました。各PCは次の起動から見ます。`:'既定の置き場に戻しました。'):'変わっていません。')+(d.note?` ${d.note}`:'');
+ if(d.value&&$('#rel-dir-input'))$('#rel-dir-input').value=d.value;
+ loadRelease();relDirPreview();
 }
 async function relMakeShortcut(){
  let r=await relPost('/api/shortcut/make'),d=await r.json().catch(()=>({}));

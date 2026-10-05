@@ -88,9 +88,21 @@ def installed(app_root):
     return (Path(app_root) / 'config' / SEED).is_file()
 
 
-def dir_choice(app_root, shared=''):
-    """→ (置き場, 出どころ)。決める順（窓の release.rs の update_dir と同じ）:
-       local（このPCの config\\local.json）→ shared（共有の設定）→ install（このPCを入れた元）→ app（アプリのフォルダー）。"""
+def release_root(path):
+    """置き場として渡された場所を、versions が直下に並ぶ「置き場の根」へ直す。→ (根, 直した理由。直さなければ空)。
+    窓の release.rs の release_root と同じ答え。
+      …\\versions        → その親（versions そのものを選ぶと versions\\versions\\<版> になる）
+      …\\versions\\<版>   → 2つ上（版のフォルダーから直に動かすと、その中に versions\\<次の版> ができる）"""
+    p = Path(path)
+    if p.name.lower() == VERSIONS and p.parent != p:
+        return p.parent, '「%s」フォルダーそのものではなく、その親（%s）を置き場にします' % (p.name, p.parent)
+    if safe_version(p.name) and p.parent.name.lower() == VERSIONS and p.parent.parent != p.parent:
+        root = p.parent.parent
+        return root, '版のフォルダー（%s\\%s）の中ではなく、2つ上（%s）を置き場にします' % (p.parent.name, p.name, root)
+    return p, ''
+
+
+def _raw_dir_choice(app_root, shared=''):
     conf = Path(app_root) / 'config'
     local = str(navi_paths.read_json(conf / LOCAL).get(CONFIG_KEY) or '').strip()
     if local:
@@ -101,6 +113,36 @@ def dir_choice(app_root, shared=''):
     if origin:
         return Path(navi_paths.expand(origin)), 'install'
     return Path(app_root), 'app'
+
+
+def dir_choice(app_root, shared=''):
+    """→ (置き場, 出どころ)。決める順（窓の release.rs の update_dir と同じ）:
+       local（このPCの config\\local.json）→ shared（共有の設定）→ install（このPCを入れた元）→ app（アプリのフォルダー）。
+    どれも release_root() を通す（1.99.1。版のフォルダーから直に動かしても versions の中に versions を作らない）。"""
+    raw, source = _raw_dir_choice(app_root, shared)
+    return release_root(raw)[0], source
+
+
+def dir_note(app_root, shared=''):
+    """置き場を直したときの理由（画面に出す）。直していなければ空。"""
+    return release_root(_raw_dir_choice(app_root, shared)[0])[1]
+
+
+def nested_versions(base):
+    """版のフォルダーの中に紛れた版（versions\\<版>\\versions\\<別の版>）。1.99.0 までは、版のフォルダーから直に動かすと
+    ここへ置いていた。→ [{'version', 'path'}]。動かしはしない（共有のフォルダーを勝手に組み替えない）。"""
+    out = []
+    try:
+        outer = [d for d in (Path(base) / VERSIONS).iterdir() if d.is_dir() and not d.name.startswith('.')]
+    except OSError:
+        return out
+    for d in outer:
+        try:
+            inner = [x for x in (d / VERSIONS).iterdir() if x.is_dir() and not x.name.startswith('.')]
+        except OSError:
+            continue
+        out += [{'version': x.name, 'path': str(x)} for x in inner if safe_version(x.name)]
+    return sorted(out, key=lambda v: version_key(v['version']), reverse=True)
 
 
 def remember(app_root, shared=''):
@@ -182,13 +224,61 @@ def pc_name():
 
 
 # ==== ZIP を検めて版を置く ====
+_MARKER = 'lib/navi_version.py'
+# 版に入れない物（頭を外した道・小文字で比べる）。置き場の物（版・各PCの名乗り・配る版）と、そのPC・その現場の物
+# （窓と中身が書く控え・設定のマスター）。アプリのフォルダーをそのまま ZIP にすると入ってくる。入れると、置き場の中に
+# もう1つ置き場ができたり（versions\<版>\versions\…）、写したPCの設定を配る版で上書きしたりする。
+_NOT_PAYLOAD_DIRS = (VERSIONS, FLEET, '.update')
+_NOT_PAYLOAD_FILES = (RELEASE, SEED, 'config/' + SEED, 'config/' + MIRROR, 'config/' + LOCAL,
+                      'config/app_settings.sqlite3', 'app_settings.sqlite3')
+
+
+def _zip_heads(names):
+    """ZIP の中でアプリのフォルダーにあたる頭の候補（浅い順）。Release の DataRelay.zip は `DataRelay/` が1つだけ。"""
+    heads = {n[:-len(_MARKER)] for n in names if n == _MARKER or n.endswith('/' + _MARKER)}
+    return sorted(heads, key=lambda h: (h.count('/'), h))
+
+
 def _zip_root(names):
-    """ZIP の中でアプリのフォルダーにあたる頭（Release の DataRelay.zip は `DataRelay/` が付く）。無ければ None。"""
-    marker = 'lib/navi_version.py'
-    for n in names:
-        if n == marker or n.endswith('/' + marker):
-            return n[:-len(marker)]
-    return None
+    """いちばん浅い頭。無ければ None。"""
+    heads = _zip_heads(names)
+    return heads[0] if heads else None
+
+
+def _not_payload(rel):
+    """置き場・PCごとの物で、版に入れない道か（→ その理由の見出し。入れてよければ空）。"""
+    low = rel.lower()
+    top = low.split('/', 1)[0]
+    if top in _NOT_PAYLOAD_DIRS and '/' in low:
+        return top + '\\'
+    return rel if low in _NOT_PAYLOAD_FILES else ''
+
+
+def _zip_warnings(names, head, rel):
+    """ZIP の形で、意図しない置き方になりそうなところ。→ (警告の文の並び, 外す道の集まり)。"""
+    warns, drop = [], set()
+    heads = _zip_heads(names)
+    if len(heads) > 1:
+        shown = '・'.join((h or '（ZIP の直下）') for h in heads[:4]) + ('…' if len(heads) > 4 else '')
+        warns.append('ZIP の中に DataRelay が %d つ入っています（%s）。いちばん浅い「%s」だけを使います。'
+                     'アプリのフォルダーや置き場をまるごと ZIP にしていないか確かめてください。' % (len(heads), shown, head or 'ZIP の直下'))
+    if '%s/' % VERSIONS in '/' + head.lower():
+        warns.append('DataRelay が ZIP の「%s」の下に入っています。置き場（versions のある場所）を ZIP にしていませんか。'
+                     'Release の DataRelay.zip をそのまま選ぶのが確実です。' % head.rstrip('/'))
+    outside = [n for n in names if not n.startswith(head) and not n.endswith('/')]
+    if outside:
+        warns.append('DataRelay のフォルダー（%s）の外にある %d ファイルは入れません（例: %s）。'
+                     % (head.rstrip('/') or 'ZIP の直下', len(outside), outside[0]))
+    groups = {}
+    for r in rel:
+        why = _not_payload(r)
+        if why:
+            drop.add(r)
+            groups[why] = groups.get(why, 0) + 1
+    if groups:
+        warns.append('置き場や各PCの物は版に入れません: ' + '・'.join('%s（%dファイル）' % (k, v) for k, v in sorted(groups.items()))
+                     + '。入れると置き場の中に置き場ができたり、写したPCの設定を上書きしたりします。')
+    return warns, drop
 
 
 def _payload_name(rel):
@@ -240,7 +330,8 @@ def sweep_partial(base, older=STALE_SEC):
 
 
 def _open_zip(source):
-    """ZIP を検める。→ (ZipFile, 頭を外した道→ZIPの名前, 版, None) か (None, None, None, 断る理由)。"""
+    """ZIP を検める。→ (ZipFile, 頭を外した道→ZIPの名前, 版, 警告の並び) か (None, None, None, 断る理由)。
+    断る理由は文字列、通ったときの4つ目は警告の並び（空なら警告なし）。"""
     try:
         zf = zipfile.ZipFile(source)
     except (zipfile.BadZipFile, OSError) as e:
@@ -251,6 +342,8 @@ def _open_zip(source):
         zf.close()
         return None, None, None, 'DataRelay の ZIP ではありません（lib/navi_version.py が入っていません）。'
     rel = {n[len(head):]: n for n in names if n.startswith(head) and not n.endswith('/')}
+    warns, drop = _zip_warnings(names, head, rel)
+    rel = {r: n for r, n in rel.items() if r not in drop}
     lack = [r for r in REQUIRED if r not in rel]
     version = version_in(zf.read(rel['lib/navi_version.py']).decode('utf-8', 'replace')) if not lack else ''
     why = ('欠かせない物が入っていません: ' + '・'.join(lack) if lack
@@ -258,7 +351,7 @@ def _open_zip(source):
     if why:
         zf.close()
         return None, None, None, why
-    return zf, {r: n for r, n in rel.items() if _payload_name(r)}, version, None
+    return zf, {r: n for r, n in rel.items() if _payload_name(r)}, version, warns
 
 
 def _copy_payload(zf, rel, tmp, tick):
@@ -290,12 +383,13 @@ def publish_zip(source, base, uid='', tick=_quiet_tick):
     断る: ZIP でない・DataRelay の物でない・欠かせない物が無い・**同じ版がもう在る**（版を上げずに置き直すと、
     もうその版を写したPCと中身が食い違う）。途中のフォルダーへ書いてから名前を変える（半端な版を残さない）。
     `tick(stage=…)` へ進み具合を渡す（check → copy（done/total・bytes/totalBytes）→ finish）。"""
-    base = Path(base)
+    base = release_root(base)[0]          # 置き場の根へ（versions の中に versions を作らない）
     tick(stage='check')
     sweep_partial(base)
     zf, rel, version, why = _open_zip(source)
-    if why:
+    if zf is None:
         return {'ok': False, 'error': why}
+    warns = why
     with zf:
         dest = base / VERSIONS / version
         if dest.exists():
@@ -315,7 +409,26 @@ def publish_zip(source, base, uid='', tick=_quiet_tick):
         except OSError as e:
             shutil.rmtree(tmp, ignore_errors=True)
             return {'ok': False, 'error': '置き場へ書けません（%s）: %s' % (base, e)}
-    return {'ok': True, 'version': version, 'files': len(man['files']), 'bytes': man['bytes']}
+    return {'ok': True, 'version': version, 'files': len(man['files']), 'bytes': man['bytes'], 'warnings': warns,
+            'dest': str(dest)}
+
+
+def inspect_zip(source, base):
+    """置く前の確かめ（画面が「ここに置きます」と見せる）。書かない。→ {ok, version, dest, files, bytes, warnings, exists}
+    か {ok: False, error}。置く先はいつも <置き場>\\versions\\<版>（置き場は release_root を通した物）。"""
+    zf, rel, version, why = _open_zip(source)
+    if zf is None:
+        return {'ok': False, 'error': why}
+    with zf:
+        size = sum(zf.getinfo(n).file_size for n in rel.values())
+    base = release_root(base)[0]
+    dest = Path(base) / VERSIONS / version
+    exists = dest.exists()
+    out = {'ok': not exists, 'version': version, 'dest': str(dest), 'versionsDir': str(Path(base) / VERSIONS),
+           'files': len(rel), 'bytes': size, 'warnings': why, 'exists': exists}
+    if exists:
+        out['error'] = '版 %s はもう置いてあります（%s）。版を上げた ZIP を選んでください。' % (version, dest)
+    return out
 
 
 # ---- いま置いている版の進み具合（このPCで1本だけ・画面が問い合わせて描く） ----
@@ -496,7 +609,9 @@ def status(app_root, data_root, version, shared='', place=''):
     rel = release(base) if ok else None
     want = (rel or {}).get('version', '')
     is_installed = installed(app_root)
-    return {'dir': str(base), 'dirSource': source, 'shared': str(shared or ''), 'reachable': ok, 'why': why,
+    return {'dir': str(base), 'dirSource': source, 'dirNote': dir_note(app_root, shared),
+            'versionsDir': str(base / VERSIONS), 'nested': nested_versions(base) if ok else [],
+            'shared': str(shared or ''), 'reachable': ok, 'why': why,
             'local': version, 'place': place or ('installed' if is_installed else 'app'), 'installed': is_installed,
             'appRoot': str(app_root), 'dataRoot': str(data_root),
             'release': rel, 'versions': versions(base) if ok else [],

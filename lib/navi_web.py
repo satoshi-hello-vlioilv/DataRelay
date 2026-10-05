@@ -1259,6 +1259,16 @@ def release_publish():
  if out.get('ok'):log.info('RELEASE_PUBLISH_START zip=%s dir=%s',path,_release_base())
  return jsonify(out),(200 if out.get('ok') else 409 if out.get('busy') else 400)
 
+@app.post('/api/release/inspect')
+def release_inspect():
+ """ZIP を置く前に確かめる（書かない）。画面は答えの「置く先」と警告を見せ、確かめてから /api/release/publish を呼ぶ。"""
+ data=request.get_json(silent=True) or {}
+ path=str(data.get('path') or '').strip()
+ if not path:return jsonify(ok=False,error='ZIP が選ばれていません'),400
+ out=navi_release.inspect_zip(path,_release_base())
+ log.info('RELEASE_INSPECT zip=%s version=%s ok=%s warnings=%s',path,out.get('version'),out.get('ok'),len(out.get('warnings') or []))
+ return jsonify(out)
+
 @app.get('/api/release/progress')
 def release_progress():
  p=navi_release.progress()
@@ -1286,18 +1296,27 @@ def release_dir():
  """置き場を変える（共有の設定・全PCが同じ値を見る）。空にすると既定（アプリのフォルダー・入れた元）へ戻る。
  自分のプロファイルの下なら %USERPROFILE% へ直して書く（BOX Drive は利用者ごとに場所が違う）。"""
  data=request.get_json(silent=True) or {}
- value=navi_paths.portable(str(data.get('value') or '').strip())
+ raw=str(data.get('value') or '').strip()
+ # versions そのもの・versions\<版> を選んでも、versions が直下に並ぶ場所へ直して書く（1.99.1）
+ root,note=navi_release.release_root(navi_paths.expand(raw)) if raw else (None,'')
+ value=navi_paths.portable(str(root)) if raw else ''
+ effective=Path(navi_paths.expand(value)) if value else navi_release.dir_choice(BASE,'')[0]
+ view=dict(value=value,note=note,dir=str(effective),versionsDir=str(effective/navi_release.VERSIONS))
+ if data.get('dry'):
+  # 保存する前に見せる（画面が入力のたびに聞く）。届くかどうかも添える
+  ok,why=navi_release.reachable(effective,wait=1.5)
+  return jsonify(ok=True,dry=True,reachable=ok,why=why,**view)
  if value:
-  ok,why=navi_release.reachable(navi_paths.expand(value))
+  ok,why=navi_release.reachable(effective)
   if not ok:return jsonify(ok=False,error=why),400
  with settings_sync_lock:
   c=load()
-  if str(c.get('update_dir') or '')==value:return jsonify(ok=True,value=value,changed=False)
+  if str(c.get('update_dir') or '')==value:return jsonify(ok=True,changed=False,**view)
   c['update_dir']=value
   rev=save(c,quiet=True)
  navi_release.remember(BASE,value)
- log.info('RELEASE_DIR value=%s',value or '(既定)')
- return jsonify(ok=True,value=value,changed=True,settings_revision=rev)
+ log.info('RELEASE_DIR value=%s note=%s',value or '(既定)',note)
+ return jsonify(ok=True,changed=True,settings_revision=rev,**view)
 
 @app.get('/api/release/restart-check')
 def release_restart_check():

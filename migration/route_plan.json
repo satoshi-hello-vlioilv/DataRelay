@@ -356,6 +356,11 @@
    "to": "python",
    "note": "1.98.0 で足した。置き場を変える（共有の設定）"
   },
+  "POST /api/release/inspect": {
+   "area": "配布と更新",
+   "to": "python",
+   "note": "1.99.1 で足した。ZIP を置く前に、置く先（<置き場>\\versions\\<版>）と警告（入れ子・置き場の物）を見せる。書かない"
+  },
   "GET /api/release/progress": {
    "area": "配布と更新",
    "to": "python",
