@@ -4690,11 +4690,12 @@ async function loadShortcuts(){
  }
  const base=t=>String(t||'').split(/[\\/]/).pop();
  box.innerHTML=x.places.map(p=>{let on=p.links.length,old=(p.old||[]).length,tone=on?' is-on':old?' is-old':'';
-  let note=on?E(base(p.links[0]))+(p.links.length>1?` ほか${p.links.length-1}個`:'')
-   :old?`${E(base(p.old[0].path))}（古い場所を指しています）`:'ありません';
+  // 字組みは「このPC」欄の事実の札と同じ: 上に小さく場所、大きく状態、下にファイル名（5案＋複合案から選んだ F・1.99.2）
+  let word=on?'あります':old?'古い場所を指しています':'ありません';
+  let file=on?E(base(p.links[0]))+(p.links.length>1?` ほか${p.links.length-1}個`:''):old?E(base(p.old[0].path)):'';
   let tip=on?p.links.join('\n'):old?p.old.map(o=>`${o.path}\n  → いまの行き先 ${o.target}`).join('\n'):p.folder;
-  return `<div class="sc-place${tone}"><i aria-hidden="true">${on?'✓':old?'!':'○'}</i><div><b>${E(p.label)}</b>`
-   +`<small title="${E(tip)}">${note}</small></div>`
+  return `<div class="sc-place${tone}" title="${E(tip)}"><i aria-hidden="true">${on?'✓':old?'!':'○'}</i><div><small class="sc-where">${E(p.label)}</small>`
+   +`<b>${word}</b>${file?`<small>${file}</small>`:''}</div>`
    +(on?'':`<button type="button" class="sc-make${old?' secondary':''}" data-where="${E(p.where)}">${old?'ここへ向け直す':E(p.label)+'に作る'}</button>`)+`</div>`}).join('');
  box.querySelectorAll('.sc-make').forEach(b=>b.onclick=()=>relMakeShortcut([b.dataset.where]));   // その場所だけ作る・向け直す
  $('#sc-note').textContent=`開く exe: ${x.exe}`+(x.declined?'（上の帯での「今はしない」は、ここで作れば取り消されます）':'');
