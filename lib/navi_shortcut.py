@@ -111,26 +111,68 @@ def free_name(folder, base=LINK_NAME):
     return folder / ('%s (%d).lnk' % (base, os.getpid()))
 
 
-def ensure(shell, exe):
-    """アイコンをこのPCの写しへ向ける。前からある DataRelay のアイコンは向け直し、デスクトップに無ければ作る。
-    → {'made': [...], 'retargeted': [...], 'errors': [...]}"""
+WHERE = {'desktop': 'デスクトップ', 'programs': 'スタートメニュー'}
+
+
+def ensure(shell, exe, where=('desktop',), retarget=None):
+    """アイコンをこの exe へ向ける。前からある DataRelay のアイコンを向け直し（`retarget` の場所だけ。None はすべて）、
+    `where` の場所に無ければ作る。→ {'made': [...], 'retargeted': [...], 'errors': [...]}"""
     exe = Path(exe)
     found = scan(shell, exe)
     out = {'made': [], 'retargeted': [], 'errors': []}
     for item in found['old']:
+        if retarget is not None and item['where'] not in retarget:
+            continue
         try:
             shell.make(item['path'], exe, exe.parent, DESCRIPTION)
             out['retargeted'].append(item['path'])
         except Exception as e:
             out['errors'].append('%s: %s' % (item['path'], e))
-    on_desktop = any(x['where'] == 'desktop' for x in found['ours'] + found['old'])
-    if not on_desktop:
+    for kind in where:
+        if any(x['where'] == kind for x in found['ours'] + found['old']):
+            continue                           # その場所にはもうある（古い物は向け直す対象）。2つ並べない
         try:
-            link = free_name(shell.folder('desktop'))
+            link = free_name(shell.folder(kind))
             shell.make(link, exe, exe.parent, DESCRIPTION)
             out['made'].append(str(link))
         except Exception as e:
-            out['errors'].append('デスクトップ: %s' % e)
+            out['errors'].append('%s: %s' % (WHERE.get(kind, kind), e))
+    return out
+
+
+def target_exe(app_root, place, running=''):
+    """起動アイコンが指す exe と、作れないときの理由。→ (exe か None, 理由)。
+    配布から写した形（installed）はその写しの DataRelay.exe。それ以外は、いま動いている exe（窓が DATARELAY_EXE で渡す）――
+    共有から直に動かす形は共有の exe、exe だけ手元に置いた形は手元の exe。作る途中の木では作らない（試験が本物のデスクトップを汚さない）。"""
+    if place == 'dev':
+        return None, '作る途中の木（開発用のフォルダー）では起動アイコンを作りません'
+    if place == 'installed':
+        exe = Path(app_root) / EXE_NAME
+        return (exe, '') if exe.is_file() else (None, 'このPCの写しに %s が見つかりません（%s）' % (EXE_NAME, exe))
+    for cand in (str(running or '').strip(), str(Path(app_root) / EXE_NAME)):
+        if cand and _is_datarelay(cand) and Path(cand).is_file():
+            return Path(cand), ''
+    return None, 'DataRelay.exe の場所が分かりません（DataRelay.exe から開くと作れます）'
+
+
+def state(shell, exe, local_root, why=''):
+    """画面「起動アイコン」の答え。場所ごとに、この exe を指すアイコンがあるか・古い場所を指すアイコンがあるか。"""
+    out = {'available': bool(shell is not None and exe is not None), 'exe': str(exe or ''), 'why': why,
+           'declined': bool(exe is not None and declined(local_root, exe)), 'places': [], 'old': []}
+    if shell is None and not why:
+        out['why'] = 'このPCでは起動アイコンを作れません（Windows と pywin32 が要ります）'
+    if not out['available']:
+        return out
+    found = scan(shell, exe)
+    for kind, label in WHERE.items():
+        try:
+            folder = str(shell.folder(kind))
+        except Exception:
+            folder = ''
+        out['places'].append({'where': kind, 'label': label, 'folder': folder,
+                              'links': [x['path'] for x in found['ours'] if x['where'] == kind],
+                              'old': [{'path': x['path'], 'target': x['target']} for x in found['old'] if x['where'] == kind]})
+    out['old'] = [{'path': x['path'], 'where': WHERE.get(x['where'], x['where']), 'target': x['target']} for x in found['old']]
     return out
 
 
@@ -151,6 +193,11 @@ def decline(local_root, exe):
     p = _declined_path(local_root)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps({'declined': str(exe)}, ensure_ascii=False), encoding='utf-8')
+
+
+def undecline(local_root):
+    """断ったことを忘れる（あとから自分で作ったとき。断ったままだと、また消したときに聞けない）。"""
+    _declined_path(local_root).unlink(missing_ok=True)
 
 
 def offer(shell, exe, local_root, installed):

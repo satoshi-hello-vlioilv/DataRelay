@@ -1324,21 +1324,47 @@ def release_restart_check():
  why=restart_block_reason()
  return jsonify(ok=not why,reason=why)
 
+def _shortcut_target():
+ """起動アイコンが指す exe と、作れないときの理由（navi_shortcut.target_exe）。"""
+ return navi_shortcut.target_exe(BASE,release_place(),os.environ.get('DATARELAY_EXE',''))
+
+@app.get('/api/shortcut')
+def shortcut_state():
+ """画面「起動アイコン」（1.99.2）: 場所ごと（デスクトップ・スタートメニュー）にあるか・古い場所を指すアイコン・指す exe。
+ 断ったあとも・消したあとも、ここからいつでも作り直せる。"""
+ exe,why=_shortcut_target()
+ shell=_shortcut_shell() if exe is not None else None
+ try:out=navi_shortcut.state(shell,exe,LOCAL_ROOT,why)
+ except Exception as e:
+  log.warning('SHORTCUT_STATE_FAILED error=%s',e);out={'available':False,'why':str(e),'places':[],'old':[],'exe':str(exe or '')}
+ return jsonify(ok=True,place=release_place(),**out)
+
 @app.post('/api/shortcut/make')
 def shortcut_make():
- """起動アイコンをこのPCの写しへ向ける（前からある DataRelay のアイコンは向け直し、無ければデスクトップに作る）。"""
- # 作るのは配布の置き場から写したアプリだけ（画面が聞くのもそのときだけ）。作る途中の木・共有から直に動かす形・試験では
- # 本物のデスクトップを触らない（全ルートを呼ぶ突き合わせの試験が、CI のデスクトップにアイコンを作っていた）
- if release_place()!='installed':return jsonify(ok=False,error='起動アイコンを作るのは、配布の置き場からこのPCへ写したアプリだけです'),400
+ """起動アイコンを作る・向け直す。where（'desktop'／'programs'）を渡せばその場所に、無ければデスクトップに作る。
+ 前からある DataRelay のアイコン（古い場所の exe を指す物）は向け直す（同じアイコンを2つ並べない）。"""
+ # 作る途中の木では作らない（全ルートを呼ぶ突き合わせの試験が、CI のデスクトップにアイコンを作っていた）。target_exe が断る
+ exe,why=_shortcut_target()
+ if exe is None:return jsonify(ok=False,error=why),400
  shell=_shortcut_shell()
  if shell is None:return jsonify(ok=False,error='このPCでは起動アイコンを作れません（Windows と pywin32 が要ります）'),400
- out=navi_shortcut.ensure(shell,BASE/navi_release.ENTRY_EXE)
- log.info('SHORTCUT_MAKE made=%s retargeted=%s errors=%s',out['made'],out['retargeted'],out['errors'])
+ data=request.get_json(silent=True) or {}
+ where=data.get('where',['desktop'])    # 空の並び＝作らず、古いアイコンを向け直すだけ
+ where=[where] if isinstance(where,str) else list(where)
+ bad=[w for w in where if w not in navi_shortcut.WHERE]
+ if bad:return jsonify(ok=False,error='作る場所が正しくありません: %s'%'・'.join(map(str,bad))),400
+ # retarget（向け直す場所）: 画面の場所ごとのボタンはその場所だけ。渡さなければ（上の帯）すべて
+ retarget=data.get('retarget')
+ retarget=None if retarget is None else [r for r in ([retarget] if isinstance(retarget,str) else retarget) if r in navi_shortcut.WHERE]
+ out=navi_shortcut.ensure(shell,exe,where,retarget)
+ navi_shortcut.undecline(LOCAL_ROOT)     # 自分で作った＝断りを取り消した（また消したときに聞けるように）
+ log.info('SHORTCUT_MAKE exe=%s where=%s made=%s retargeted=%s errors=%s',exe,where,out['made'],out['retargeted'],out['errors'])
  return jsonify(ok=not out['errors'],**out)
 
 @app.post('/api/shortcut/decline')
 def shortcut_decline():
- navi_shortcut.decline(LOCAL_ROOT,BASE/navi_release.ENTRY_EXE)
+ exe,_why=_shortcut_target()
+ navi_shortcut.decline(LOCAL_ROOT,exe or BASE/navi_release.ENTRY_EXE)
  return jsonify(ok=True)
 
 # ==== Navigator への接続情報（1.99.0・置き場と読み方は navi_secret。ここは受け渡しだけ） ====

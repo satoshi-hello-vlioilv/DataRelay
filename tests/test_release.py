@@ -220,6 +220,47 @@ class ShortcutTest(unittest.TestCase):
   self.sh=FakeShell(self.tmp.name);self.exe=Path(self.tmp.name)/'home'/'DataRelay'/'DataRelay.exe'
   self.local=Path(self.tmp.name)/'local'
 
+ def test_remake_after_deleting_or_declining(self):
+  """消した・断ったあとも作り直せる（1.99.2）。これまでは、スタートメニューに1つ残っていると画面のボタンが出ず、
+  デスクトップのアイコンを消したら作り直す手段が無かった。"""
+  self.exe.parent.mkdir(parents=True);self.exe.write_text('exe')
+  S.ensure(self.sh,self.exe,['desktop','programs'])
+  st=S.state(self.sh,self.exe,self.local)
+  self.assertEqual([(p['where'],len(p['links'])) for p in st['places']],[('desktop',1),('programs',1)])
+  (self.sh.folder('desktop')/'DataRelay.lnk').unlink()                  # デスクトップから消した
+  S.decline(self.local,self.exe)                                          # 帯で「今はしない」とも答えた
+  st=S.state(self.sh,self.exe,self.local)
+  self.assertEqual([len(p['links']) for p in st['places']],[0,1],'消した場所は「無い」、残っている場所は「ある」と場所ごとに答える')
+  self.assertTrue(st['declined'])
+  out=S.ensure(self.sh,self.exe,['desktop'])
+  self.assertEqual(len(out['made']),1,'断ったあとでも、頼まれれば作る')
+  self.assertEqual(S.ensure(self.sh,self.exe,['desktop','programs'])['made'],[],'ある場所には2つ並べない')
+  S.undecline(self.local);self.assertFalse(S.declined(self.local,self.exe))
+
+ def test_only_retarget_when_no_place_is_asked(self):
+  self.exe.parent.mkdir(parents=True);self.exe.write_text('exe')
+  old=self.sh.folder('programs')/'DataRelay.lnk';self.sh.make(old,'\\\\srv\\DataRelay\\DataRelay.exe','','')
+  out=S.ensure(self.sh,self.exe,[])
+  self.assertEqual((out['made'],out['retargeted']),([],[str(old)]),'向け直すだけ（デスクトップに勝手に作らない）')
+  other=self.sh.folder('desktop')/'古い.lnk';self.sh.make(other,'C:\\old\\DataRelay.exe','','')
+  out=S.ensure(self.sh,self.exe,['programs'],retarget=['programs'])
+  self.assertEqual(out['retargeted'],[],'スタートメニューの物は向け直し済み。デスクトップの古い物は頼まれていないので触らない')
+  self.assertEqual(self.sh.target(other),'C:\\old\\DataRelay.exe')
+  self.assertEqual(S.ensure(self.sh,self.exe,['desktop'],retarget=['desktop'])['retargeted'],[str(other)],'その場所だけ向け直す')
+  st=S.state(self.sh,self.exe,self.local)
+  self.assertEqual([(p['where'],len(p['links']),len(p['old'])) for p in st['places']],[('desktop',1,0),('programs',1,0)])
+
+ def test_target_exe_by_place(self):
+  app=Path(self.tmp.name)/'app';app.mkdir()
+  self.assertIsNone(S.target_exe(app,'dev','')[0],'作る途中の木では作らない')
+  self.assertIn('写し',S.target_exe(app,'installed','')[1])
+  (app/'DataRelay.exe').write_text('x')
+  self.assertEqual(S.target_exe(app,'installed','')[0],app/'DataRelay.exe')
+  mine=Path(self.tmp.name)/'bin'/'DataRelay.exe';mine.parent.mkdir();mine.write_text('x')
+  self.assertEqual(S.target_exe(app,'app',str(mine))[0],mine,'exe だけ手元に置いた形は、動いている exe を指す')
+  self.assertEqual(S.target_exe(app,'app','')[0],app/'DataRelay.exe','分からなければアプリのフォルダーの exe')
+  self.assertEqual(S.target_exe(app,'app',str(Path(self.tmp.name)/'python.exe'))[0],app/'DataRelay.exe','DataRelay.exe でない物は指さない')
+
  def test_offer_make_and_decline(self):
   self.assertFalse(S.offer(self.sh,self.exe,self.local,installed=False)['show'],'写していないアプリでは聞かない')
   self.assertTrue(S.offer(self.sh,self.exe,self.local,installed=True)['show'])
