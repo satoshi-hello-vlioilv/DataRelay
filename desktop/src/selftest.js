@@ -104,6 +104,13 @@
     // 更新の休止の印（1.99.0）: 作る途中の木では出さない
     ok('作る途中の木では「更新 休止中」の印を出さない', (document.getElementById('update-badge') || {}).hidden === true, String((document.getElementById('update-badge') || {}).hidden));
 
+    // 起動アイコン（1.99.2）: 窓が exe の場所を渡す。作る途中の木では作らず、理由を答える（本物のデスクトップを汚さない）
+    r = await fetch('/api/shortcut');
+    const sc = await r.json();
+    ok('起動アイコンの状態を答える（作る途中の木では作らない）', r.status === 200 && sc.available === false && /作る途中/.test(sc.why || ''), `${sc.place} ${sc.why}`);
+    r = await fetch('/api/shortcut/make', json({ where: ['desktop'] }));
+    ok('作る途中の木では、頼まれても作らない', r.status === 400, r.status);
+
     // 配布と更新（1.98.0）: 作る途中の木では置き場＝アプリのフォルダー。配る版は無く、名乗らない
     r = await fetch('/api/release/status');
     const rel = await r.json();

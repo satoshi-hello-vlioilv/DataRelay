@@ -1278,7 +1278,7 @@ function bindV29LogWorkspace(){['log-filter-text','log-filter-kind','log-filter-
 bindV29LogWorkspace();
 
 /* V30: categorized settings navigation and in-app version management */
-function bindSettingsNav(){$$('#settings-nav .settings-navbtn').forEach(b=>b.onclick=()=>{$$('#settings-nav .settings-navbtn').forEach(x=>x.classList.remove('on'));b.classList.add('on');$$('.settings-pane').forEach(x=>x.classList.remove('on'));document.querySelector(`.settings-pane[data-cat="${b.dataset.cat}"]`)?.classList.add('on');if(b.dataset.cat==='docs')loadDocs();if(b.dataset.cat==='conn')refreshMachinePaths(0);if(b.dataset.cat==='bundle')loadBundleInfo();if(b.dataset.cat==='release')loadRelease()})}
+function bindSettingsNav(){$$('#settings-nav .settings-navbtn').forEach(b=>b.onclick=()=>{$$('#settings-nav .settings-navbtn').forEach(x=>x.classList.remove('on'));b.classList.add('on');$$('.settings-pane').forEach(x=>x.classList.remove('on'));document.querySelector(`.settings-pane[data-cat="${b.dataset.cat}"]`)?.classList.add('on');if(b.dataset.cat==='docs')loadDocs();if(b.dataset.cat==='conn')refreshMachinePaths(0);if(b.dataset.cat==='bundle')loadBundleInfo();if(b.dataset.cat==='release'){loadRelease();loadShortcuts()}})}
 /* ============================================================
    仕様書ビュー。同梱のMarkdownをアプリの中で読む。
    外部ライブラリは使えないので、この文書に実際に出てくる記法だけを自前で描く
@@ -4549,8 +4549,6 @@ function renderRelease(){
  $('#rel-here-note').textContent=note;
  let rs=$('#rel-restart');
  if(rs){rs.hidden=!(st.pending&&st.place!=='dev');rs.disabled=!!st.restartBlock;rs.title=st.restartBlock?`${st.restartBlock}。終わってから押してください`:'後始末をしてから開き直します（自動実行の予定はそのまま続きます）'}
- let sc=$('#rel-shortcut'),so=st.shortcut||{};
- if(sc){sc.hidden=!(st.installed&&so.available&&!(so.ours||[]).length);sc.textContent=(so.old||[]).length?'起動アイコンをこのPCの写しへ向け直す':'デスクトップに起動アイコンを作る'}
  let pd=$('#rel-publish-dest');
  if(pd){pd.className='rel-dest'+(st.dirNote?' is-warn':'');
   pd.innerHTML=`置く先: <code>${E(st.versionsDir||'')}\\&lt;版&gt;</code>`+(st.dirNote?`　${E(st.dirNote)}`:'')}
@@ -4680,11 +4678,34 @@ async function relSaveDir(value){
  if(d.value&&$('#rel-dir-input'))$('#rel-dir-input').value=d.value;
  loadRelease();relDirPreview();
 }
-async function relMakeShortcut(){
- let r=await relPost('/api/shortcut/make'),d=await r.json().catch(()=>({}));
+/* 起動アイコン（1.99.2）: 場所ごとの有無は中身（navi_shortcut.state）が数える。作る・向け直すも中身。
+   上の帯の「作る」とこの欄のボタンは同じ受け口を呼ぶ（where だけ違う） */
+let scState=null;
+async function loadShortcuts(){
+ try{scState=await fetch('/api/shortcut',{cache:'no-store'}).then(r=>r.json())}catch{scState=null}
+ let x=scState,box=$('#sc-places');if(!box)return;
+ if(!x||!x.available){
+  box.innerHTML='';
+  $('#sc-note').textContent=x?.why||'起動アイコンの状態を読めませんでした。';return;
+ }
+ const base=t=>String(t||'').split(/[\\/]/).pop();
+ box.innerHTML=x.places.map(p=>{let on=p.links.length,old=(p.old||[]).length,tone=on?' is-on':old?' is-old':'';
+  let note=on?E(base(p.links[0]))+(p.links.length>1?` ほか${p.links.length-1}個`:'')
+   :old?`${E(base(p.old[0].path))}（古い場所を指しています）`:'ありません';
+  let tip=on?p.links.join('\n'):old?p.old.map(o=>`${o.path}\n  → いまの行き先 ${o.target}`).join('\n'):p.folder;
+  return `<div class="sc-place${tone}"><i aria-hidden="true">${on?'✓':old?'!':'○'}</i><div><b>${E(p.label)}</b>`
+   +`<small title="${E(tip)}">${note}</small></div>`
+   +(on?'':`<button type="button" class="sc-make${old?' secondary':''}" data-where="${E(p.where)}">${old?'ここへ向け直す':E(p.label)+'に作る'}</button>`)+`</div>`}).join('');
+ box.querySelectorAll('.sc-make').forEach(b=>b.onclick=()=>relMakeShortcut([b.dataset.where]));   // その場所だけ作る・向け直す
+ $('#sc-note').textContent=`開く exe: ${x.exe}`+(x.declined?'（上の帯での「今はしない」は、ここで作れば取り消されます）':'');
+}
+async function relMakeShortcut(where){
+ let r=await relPost('/api/shortcut/make',Array.isArray(where)?{where,retarget:where}:{}),d=await r.json().catch(()=>({}));
  if(!r.ok&&!(d.made||[]).length&&!(d.retargeted||[]).length){toast(d.error||(d.errors||[]).join(' / ')||'起動アイコンを作れませんでした');return}
- toast((d.retargeted||[]).length?`起動アイコン ${d.retargeted.length}個をこのPCの写しへ向け直しました`:'デスクトップに起動アイコンを作りました');
- loadReleaseBrief();if($('.settings-pane[data-cat="release"]')?.classList.contains('on'))loadRelease();
+ let said=[(d.made||[]).length?`起動アイコンを作りました（${d.made.map(p=>p.split(/[\\/]/).slice(-2).join('\\')).join('・')}）`:'',
+  (d.retargeted||[]).length?`${d.retargeted.length}個をここへ向け直しました`:''].filter(Boolean).join('／');
+ toast(said||'起動アイコンはもうあります');
+ loadShortcuts();loadReleaseBrief();if($('.settings-pane[data-cat="release"]')?.classList.contains('on'))loadRelease();
 }
 async function relRestart(){
  let r=await fetch('/api/restart-app',{method:'POST'}),d=await r.json().catch(()=>({}));
@@ -4734,13 +4755,14 @@ function paintReleaseBanner(){
   $('#rb-icon').textContent='⌂';
   $('#rb-title').textContent=old?'起動アイコンを、このPCの DataRelay へ向け直しますか？':'デスクトップに DataRelay の起動アイコンを作りますか？';
   $('#rb-detail').textContent=old?`前からあるアイコン ${old}個を、このPCの写しへ向け直します（名前と場所はそのまま）。`:'このPCへ写した DataRelay を開くアイコンです。次からはそのアイコンで開けます。';
-  p.textContent=old?'向け直す':'作る';p.disabled=false;p.onclick=relMakeShortcut;
-  s.textContent='今はしない';s.onclick=async()=>{await relPost('/api/shortcut/decline');relBannerDismissed=key;loadReleaseBrief()};
+  p.textContent=old?'向け直す':'作る';p.disabled=false;p.onclick=()=>relMakeShortcut();
+  s.textContent='今はしない';s.onclick=async()=>{await relPost('/api/shortcut/decline');relBannerDismissed=key;loadReleaseBrief();
+   toast('あとで作るときは、共通設定 →「配布と更新」→「起動アイコン」から作れます')};
  }
 }
 if($('#rel-check'))$('#rel-check').onclick=async()=>{await relPost('/api/release/check');await loadRelease();loadReleaseBrief();toast('配る版を確かめました')};
 if($('#rel-restart'))$('#rel-restart').onclick=relRestart;
-if($('#rel-shortcut'))$('#rel-shortcut').onclick=relMakeShortcut;
+
 if($('#rel-publish'))$('#rel-publish').onclick=relPublish;
 if($('#rel-dir-save'))$('#rel-dir-save').onclick=()=>relSaveDir($('#rel-dir-input').value.trim());
 if($('#rel-dir-reset'))$('#rel-dir-reset').onclick=()=>{$('#rel-dir-input').value='';relSaveDir('')};

@@ -466,6 +466,11 @@
    "to": "python",
    "note": ""
   },
+  "GET /api/shortcut": {
+   "area": "配布と更新",
+   "to": "python",
+   "note": "1.99.2 で足した。起動アイコンの状態（デスクトップ・スタートメニューごと・古い場所を指す物・指す exe）。消した・断ったあとも作り直せる"
+  },
   "POST /api/shortcut/decline": {
    "area": "配布と更新",
    "to": "python",

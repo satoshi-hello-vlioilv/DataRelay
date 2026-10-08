@@ -68,6 +68,11 @@ impl Sidecar {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(stderr);
+        // 起動アイコンが指す exe（1.99.2）。exe だけ手元に置いた形・共有から直に動かす形では、アプリのフォルダーと
+        // exe の場所が違うので、中身はここから知る（配布から写した形では、どちらも写しの DataRelay.exe）
+        if let Ok(me) = crate::locate::exe() {
+            cmd.env("DATARELAY_EXE", me);
+        }
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
