@@ -191,12 +191,12 @@ function outputFileCell(j,noSub){
   let segs=j.output_file_segments||[];
   let body=segs.length?segmentHtml(segs):E(j.output_file_preview||'(実行時に決定)');
   return `<div class="primarytext" title="${E(j.output_pattern||'')}"><span class="name-var-badge">変数</span>${body}</div>`
-   +(noSub?'':`<div class="subtext" title="${E(j.output_pattern||'')}">${E(j.output_pattern||'')} / ${E(formatName(j.output_format))}${alsoBadge(j)}</div>`);
+   +(noSub?'':`<div class="subtext" title="${E(j.output_pattern||'')}">${E(j.output_pattern||'')} / ${E(formatName(j.output_format))}${alsoBadge(j)}${variantBadge(j)}</div>`);
  }
  // 読込形式（詳細データ／集計表）はRNEの読み方。テキストや結合には無い区別なので出さない。
  let how=(j.source||'rne')==='rne'?` / ${E(j.type)}`:'';
  return `<div class="primarytext" title="${E(j.output_file)}">${E(j.output_file)}</div>`
-  +(noSub?'':`<div class="subtext">${E(formatName(j.output_format))}${alsoBadge(j)}${how}</div>`);
+  +(noSub?'':`<div class="subtext">${E(formatName(j.output_format))}${alsoBadge(j)}${variantBadge(j)}${how}</div>`);
 }
 function alsoBadge(j){
  // 1回の実行で複数の形式が出る対象は、一覧の時点で分かるようにする。
@@ -735,7 +735,7 @@ function refreshTypeHint(){
   box.hidden=false;
  },250);
 }
-function openEditor(job){editing=structuredClone(job||{id:uid(),name:'新しい対象',enabled:true,rne:'NEW.RNE',rne_path:cfg.rne_folder+'\\NEW.RNE',output_folder:cfg.default_output_folder,output_format:'sqlite3',output_file:'NEW.sqlite3',extra_formats:[],table:'仕掛',sheet:'Page1',type:'詳細データ',naming_mode:'fixed',output_pattern:'',comment:'',split_mode:'auto',split_shape:'auto',source:'rne',text_path:'',layout_id:'',recipe_id:'',period:{enabled:false,control_point:'',unit:'month',from_offset:-1,to_offset:0},schedules:[]});$('#modal-title').textContent=job?'対象を編集':'対象を追加';$('#m-id').value=editing.id;$('#m-name').value=editing.name;$('#m-enabled').checked=editing.enabled;$('#m-rne-path').value=editing.rne_path||'';$('#m-output').value=editing.output_folder||cfg.default_output_folder;editing.output_format=normalizeFormat(editing.output_format);editing.extra_formats=(editing.extra_formats||[]).map(normalizeFormat);editing.index_columns=(editing.index_columns||[]).map(String);if($('#m-skip-unchanged'))$('#m-skip-unchanged').checked=!!editing.skip_if_unchanged;if($('#m-index-columns'))$('#m-index-columns').value=(editing.index_columns||[]).join(', ');$('#m-format').value=editing.output_format;$('#m-output-file').value=editing.output_file;$('#m-table').value=editing.table;$('#m-sheet').value=editing.sheet;releaseTypeHint(false);$('#m-type').value=editing.type;if($('#m-comment'))$('#m-comment').value=editing.comment||'';if($('#m-split-mode'))$('#m-split-mode').value=editing.split_mode||'auto';if($('#m-split-shape'))$('#m-split-shape').value=editing.split_shape||'auto';if($('#m-axis-mode'))$('#m-axis-mode').value=editing.row_axis_mode||'first';if($('#m-axis-index'))$('#m-axis-index').value=editing.row_axis_index||1;AXIS_PICK.forEach(g=>{if($(g.n))$(g.n).innerHTML=`<option value="${E(editing.row_axis_name||'')}">${E(editing.row_axis_name||'（先に「RNEを調査」）')}</option>`;if($(g.m))$(g.m).value=editing.row_axis_mode||'first';if($(g.i))$(g.i).value=editing.row_axis_index||1});syncAxisPick();setSource(editing.source||'rne');if($('#m-text-path'))$('#m-text-path').value=editing.text_path||'';fillLayoutPicker(editing.layout_id||'');fillRecipePicker(editing.recipe_id||'');syncOutputExtension();initNaming(editing);setPeriodUI(editing.period);renderRuntimeSplit(null);inspReset();refreshTypeHint();loadMaster(false);splitTrialPoll();rulesRender();updatePeriodBadge();loadJobTrend(editing.id);setEditorTab('basic');$('#editor').showModal()}
+function openEditor(job){editing=structuredClone(job||{id:uid(),name:'新しい対象',enabled:true,rne:'NEW.RNE',rne_path:cfg.rne_folder+'\\NEW.RNE',output_folder:cfg.default_output_folder,output_format:'sqlite3',output_file:'NEW.sqlite3',extra_formats:[],table:'仕掛',sheet:'Page1',type:'詳細データ',naming_mode:'fixed',output_pattern:'',comment:'',split_mode:'auto',split_shape:'auto',source:'rne',text_path:'',layout_id:'',recipe_id:'',period:{enabled:false,control_point:'',unit:'month',from_offset:-1,to_offset:0},schedules:[]});$('#modal-title').textContent=job?'対象を編集':'対象を追加';$('#m-id').value=editing.id;$('#m-name').value=editing.name;$('#m-enabled').checked=editing.enabled;$('#m-rne-path').value=editing.rne_path||'';$('#m-output').value=editing.output_folder||cfg.default_output_folder;editing.output_format=normalizeFormat(editing.output_format);editing.extra_formats=(editing.extra_formats||[]).map(normalizeFormat);editing.index_columns=(editing.index_columns||[]).map(String);if($('#m-skip-unchanged'))$('#m-skip-unchanged').checked=!!editing.skip_if_unchanged;if($('#m-index-columns'))$('#m-index-columns').value=(editing.index_columns||[]).join(', ');$('#m-format').value=editing.output_format;$('#m-output-file').value=editing.output_file;$('#m-table').value=editing.table;$('#m-sheet').value=editing.sheet;releaseTypeHint(false);$('#m-type').value=editing.type;if($('#m-comment'))$('#m-comment').value=editing.comment||'';if($('#m-split-mode'))$('#m-split-mode').value=editing.split_mode||'auto';if($('#m-split-shape'))$('#m-split-shape').value=editing.split_shape||'auto';if($('#m-axis-mode'))$('#m-axis-mode').value=editing.row_axis_mode||'first';if($('#m-axis-index'))$('#m-axis-index').value=editing.row_axis_index||1;AXIS_PICK.forEach(g=>{if($(g.n))$(g.n).innerHTML=`<option value="${E(editing.row_axis_name||'')}">${E(editing.row_axis_name||'（先に「RNEを調査」）')}</option>`;if($(g.m))$(g.m).value=editing.row_axis_mode||'first';if($(g.i))$(g.i).value=editing.row_axis_index||1});syncAxisPick();setSource(editing.source||'rne');if($('#m-text-path'))$('#m-text-path').value=editing.text_path||'';fillLayoutPicker(editing.layout_id||'');fillRecipePicker(editing.recipe_id||'');syncOutputExtension();initNaming(editing);setPeriodUI(editing.period);renderRuntimeSplit(null);inspReset();refreshTypeHint();loadMaster(false);splitTrialPoll();rulesRender();updatePeriodBadge();loadJobTrend(editing.id);fillVariants(editing);setEditorTab('basic');$('#editor').showModal()}
 $('#m-format').onchange=()=>{syncOutputExtension();if(currentNamingMode()==='template')refreshNamePreview();if($('#m-layout'))fillLayoutPicker($('#m-layout').value)};$('#m-rne-check').onclick=async()=>{showWaiting('RNEファイル確認中','設定場所と周辺フォルダーを検索しています...');try{let temp={item:'rne',job_id:editing.id,label:editing.rne,configured:$('#m-rne-path').value,resolved:$('#m-rne-path').value,candidates:[],ok:false};let r=await fetch('/api/path-check',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({item:'rne',job_id:editing.id,value:$('#m-rne-path').value,expected_name:$('#m-rne-path').value.split(/[\\/]/).pop()})}),d=await r.json();if(r.ok)showPathResult(d);else toast(d.error)}finally{hideWaiting()}};$('#m-rne-pick').onclick=async()=>{let p=await browse('file',$('#m-rne-path').value,[['RNEファイル','*.RNE'],['すべて','*.*']]);if(p){let i=$('#m-rne-path'),wasRel=i.value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(i.value);i.value=p;if(wasRel)await convertPath(i,'relative');updatePathBadge(i);i._refreshPathControl?.();refreshTypeHint()}};$('#m-output-pick').onclick=async()=>{let p=await browse('folder',$('#m-output').value);if(p){let i=$('#m-output'),wasRel=i.value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(i.value);i.value=p;if(wasRel)await convertPath(i,'relative');updatePathBadge(i)}};enhancePathInput($('#m-rne-path'),'file');enhancePathInput($('#m-output'),'folder');$('#m-rne-path').addEventListener('input',()=>{renderInspTarget();refreshTypeHint()});$('#m-name').addEventListener('input',()=>renderInspTarget());
 /* 有効・無効は押した瞬間に効かせる。「設定を反映」を押し忘れて閉じると
    黙って元へ戻る、という切れ目を作らない。まだ保存していない新規の対象だけは
@@ -761,7 +761,107 @@ function collectJob(){
   row_axis_mode:($('#m-axis-mode')?.value||'first'),row_axis_index:Number($('#m-axis-index')?.value||1)||1,
   row_axis_name:($('#m-axis-name')?.value||''),period:currentPeriod(),
   source:currentSource(),text_path:($('#m-text-path')?.value||'').trim(),
-  layout_id:($('#m-layout')?.value||''),recipe_id:($('#m-recipe')?.value||'')};
+  layout_id:($('#m-layout')?.value||''),recipe_id:($('#m-recipe')?.value||''),variants:currentVariants()};
+}
+/* 条件の値ごとに分けて出す（2.1.0。案 K: タブ「5 値ごとに分ける」＝番号順に決めて右にできあがるファイル、上に1文、1ページ目に札）。
+   RNE の条件欄の項目といまのキーを先に読み、項目と値を先回りして出す（RNE の中身を思い出させない）。
+   出し先の決まり（名前・置き場・同じ名前の断り）はバックエンドの navi_variants が持ち、画面は見込みを受け取って並べるだけ。 */
+let varValues=[],varPreviewTimer=0,varPreviewSeq=0,varLast=null;
+const varOn=j=>!!(j&&j.variants&&j.variants.enabled&&j.variants.item&&(j.variants.values||[]).length);
+function variantBadge(j){
+ if(!varOn(j))return '';
+ let v=j.variants;
+ return ` <span class="var-badge" title="${E(v.item)} = ${E(v.values.join('・'))}">値ごと ×${v.values.length}</span>`;
+}
+function currentVariants(){
+ return {enabled:!!$('#m-var-enabled')?.checked,item:($('#m-var-item')?.value||'').trim(),values:varValues.slice(),
+  pattern:($('#m-var-pattern')?.value||'').trim(),folder:($('#m-var-folder')?.value||'').trim()};
+}
+function fillVariants(job){
+ let v=job.variants||{};
+ $('#m-var-enabled').checked=!!v.enabled;$('#m-var-item').value=v.item||'';
+ $('#m-var-pattern').value=v.pattern||'';$('#m-var-folder').value=v.folder||'';
+ varValues=(v.values||[]).map(String);varLast=null;renderVarChips();varPreview(true);
+}
+function renderVarChips(){
+ let box=$('#m-var-values'),add=$('#m-var-add');if(!box)return;
+ box.querySelectorAll('em').forEach(x=>x.remove());
+ varValues.forEach((v,i)=>{let em=document.createElement('em');em.innerHTML=`${E(v)}<button type="button" aria-label="${E(v)} を外す">×</button>`;
+  em.querySelector('button').onclick=()=>{varValues.splice(i,1);renderVarChips();varPreview()};box.insertBefore(em,add)});
+}
+function addVarValues(text){
+ let got=String(text||'').split(/[,、，\s\t\r\n]+/).map(s=>s.trim()).filter(Boolean),added=0;
+ got.forEach(s=>{if(!varValues.includes(s)&&varValues.length<50){varValues.push(s);added++}});
+ if(added){renderVarChips();varPreview()}
+ return added;
+}
+/* 見込みを取り直す。編集中の値をそのまま渡す（保存前に見せる）。入力の連打は 250ms まとめる */
+function varPreview(now){
+ clearTimeout(varPreviewTimer);
+ varPreviewTimer=setTimeout(async()=>{
+  let seq=++varPreviewSeq,j=collectJob();
+  let body={rne:j.rne,rne_path:j.rne_path,name:j.name,table:j.table,output_format:j.output_format,output_file:j.output_file,
+   naming_mode:j.naming_mode,output_pattern:j.output_pattern,output_folder:j.output_folder,variants:j.variants};
+  let d;try{d=await postJson('/api/variants/preview',body).then(r=>r.json())}catch{d=null}
+  if(seq!==varPreviewSeq)return;   // あとから頼んだ見込みが先に返っていれば、古いほうは捨てる
+  varLast=d;paintVariants();
+ },now?0:250);
+}
+function paintVariants(){
+ let d=varLast||{},v=currentVariants(),conds=(d.conditions||[]),on=v.enabled&&v.item&&v.values.length;
+ let src=currentSource();
+ // 1 分ける項目: RNE の条件欄の項目を候補にし、いまのキーを添えて押せば入るようにする
+ $('#suggest-var-item').innerHTML=conds.map(c=>`<option value="${E(c.name)}">${E(c.keys.length?'いま '+c.keys.join('・'):'条件なし')}</option>`).join('');
+ let keyed=conds.filter(c=>c.keys.length);
+ $('#m-var-detect').innerHTML=src!=='rne'?'':d.conditions==null?'RNE を読めないため、条件欄の項目を出せません。項目名を入れてください。'
+  :!conds.length?'この RNE の条件欄にはデータ項目がありません。値ごとに分けるには、RNE の条件に項目を置いてください。'
+  :'RNE の条件欄: '+conds.map(c=>`<button type="button" class="var-pick" data-name="${E(c.name)}">${E(c.name)}${c.keys.length?`<small>いま ${E(c.keys.join('・'))}</small>`:''}</button>`).join('');
+ $$('#m-var-detect .var-pick').forEach(b=>b.onclick=()=>{$('#m-var-item').value=b.dataset.name;let c=conds.find(x=>x.name===b.dataset.name);if(c&&!varValues.length)addVarValues(c.keys.join(','));varPreview()});
+ // 3 ファイル名の拡張子と、空のときの型
+ let fmt=normalizeFormat($('#m-format').value);$('#m-var-ext').textContent=expectedExt(fmt);
+ let base=($('#m-output-file').value||'').replace(/\.[^.]+$/,'')||'出力';
+ $('#m-var-pattern').placeholder=`${base}_{値}（空のときの名前）`;
+ $('#m-var-folder').placeholder=`${$('#m-output').value||cfg.default_output_folder||''}（出力フォルダー）`;
+ // 右: できあがるファイル
+ let files=d.files||[],cur=(conds.find(c=>c.name===v.item)||{}).keys||[];
+ $('#m-var-count').textContent=files.length?`（${files.length}）`:'';
+ $('#m-var-files').innerHTML=d.error?`<p class="var-error">${E(d.error)}</p>`
+  :!v.values.length?'<p class="var-empty">値を足すと、ここに値ごとのファイルの名前と置き場が並びます。</p>'
+  :`<table class="rel-table var-table"><thead><tr><th>値</th><th>できあがるファイル</th></tr></thead><tbody>${files.map(f=>`<tr><td><b>${E(f.value)}</b>${cur.includes(f.value)?'<i class="rel-tag is-here">RNE の今の値</i>':''}</td><td><code title="${E(f.path)}">${E(f.path)}</code></td></tr>`).join('')}</tbody></table>`;
+ // 上の1文: いまの設定を読める形で（入っていないときは、入れると何が起きるか）
+ $('#m-var-say').innerHTML=on?`<b>${E(v.item)}</b> が <b>${v.values.map(E).join('・')}</b> のそれぞれについて問い合わせ、<b>${v.values.length}ファイル</b>を作ります。`
+  :v.enabled?'項目と値を決めると、値ごとのファイルができます。':`切っています。入れると、${E(v.item||'条件の項目')}の値ごとに別のファイルを作ります（いまは1ファイル）。`;
+ $('#m-var-say').classList.toggle('is-off',!on);
+ let warn=src!=='rne'?'値ごとに分けて出せるのは RNE の対象だけです。'
+  :(cfg.settings?.extract_engine==='dde'?'いまの抽出方式は DDE です。値ごとに分けて出すのは API 方式でだけ動きます（DDE では実行時に止めます）。':'');
+ $('#m-var-warn').hidden=!warn;$('#m-var-warn').textContent=warn;
+ let cnt=$('#etab-variant-count');cnt.hidden=!on;cnt.textContent=v.values.length;
+ // 1ページ目の札: 入なら何ファイルできるか、切ってあっても RNE が条件で絞っていれば先回りして知らせる
+ let card=$('#m-var-card'),hint=keyed[0];
+ card.hidden=src!=='rne'||!(on||hint);
+ card.innerHTML=on?`<span class="var-card-t"><span class="var-card-k">値ごとに分けて出す</span><b>入 · ${v.values.length}ファイル</b></span><span class="var-card-v">${E(v.item)} = ${v.values.map(E).join('・')}</span><button type="button" class="textbtn var-open">設定を開く ›</button>`
+  :hint?`<span class="var-card-t"><span class="var-card-k">値ごとに分けて出せます</span><b>この RNE は「${E(hint.name)} = ${E(hint.keys.join('・'))}」で絞っています</b></span><span class="var-card-v">ほかの値の分も、値ごとに別のファイルで作れます</span><button type="button" class="textbtn var-open">設定を開く ›</button>`:'';
+ card.classList.toggle('is-on',!!on);
+ card.querySelector('.var-open')?.addEventListener('click',()=>setEditorTab('variant'));
+}
+if($('#m-var-add')){
+ let add=$('#m-var-add');
+ add.addEventListener('keydown',e=>{
+  if((e.key==='Enter'||e.key===','||e.key==='、')&&add.value.trim()){e.preventDefault();addVarValues(add.value);add.value=''}
+  else if(e.key==='Backspace'&&!add.value&&varValues.length){varValues.pop();renderVarChips();varPreview()}
+ });
+ add.addEventListener('paste',e=>{let t=e.clipboardData?.getData('text')||'';if(/[,、\s]/.test(t.trim())){e.preventDefault();addVarValues(t)}});
+ add.addEventListener('blur',()=>{if(add.value.trim()){addVarValues(add.value);add.value=''}});
+ $('#m-var-values').addEventListener('click',e=>{if(e.target===e.currentTarget)add.focus()});
+ // 入にしたとき項目も値も空なら、RNE がいま絞っている条件（例: BOX実績_設備名 = LS4）から始める（探させない）
+ $('#m-var-enabled').addEventListener('change',()=>{
+  let c=((varLast||{}).conditions||[]).find(x=>x.keys.length);
+  if($('#m-var-enabled').checked&&c&&!$('#m-var-item').value.trim()&&!varValues.length){$('#m-var-item').value=c.name;addVarValues(c.keys.join(','));$('#m-var-add').focus()}
+ });
+ ['#m-var-enabled','#m-var-item','#m-var-pattern','#m-var-folder'].forEach(s=>{$(s).addEventListener('input',()=>varPreview());$(s).addEventListener('change',()=>varPreview())});
+ // 名前・形式・出力先・RNE を変えたら、値ごとの見込みも変わる
+ ['#m-rne-path','#m-output','#m-output-file','#m-output-pattern','#m-format','#m-name'].forEach(s=>$(s)?.addEventListener('change',()=>varPreview()));
+ $('#m-var-folder-pick').onclick=async()=>{let p=await browse('folder',$('#m-var-folder').value||$('#m-output').value);if(p){$('#m-var-folder').value=p;varPreview()}};
 }
 async function applyJob(close=true,quiet=false){
  const updated=collectJob();
@@ -1050,7 +1150,9 @@ function renderRunResults(list){
  let ok=list.filter(x=>x.status!=='failed').length,ng=list.length-ok;
  box.hidden=false;
  box.innerHTML=`<div class="pres-head"><b>できあがったファイル ${ok}件</b>${ng?`<span class="pres-ng">失敗 ${ng}件</span>`:''}</div>`+
-  list.map(x=>`<div class="pres-row ${x.status==='failed'?'is-error':'is-ok'}"><i>${x.status==='failed'?'×':'✓'}</i><b title="${E(x.job||'')}">${E(x.job||'')}</b><span>${E(x.detail||'')}</span>${x.target?`<small title="${E(x.target)}">${E(String(x.target).split(/[\\/]/).pop())}</small>`:''}</div>`).join('');
+  list.map(x=>`<div class="pres-row ${x.status==='failed'?'is-error':'is-ok'}"><i>${x.status==='failed'?'×':'✓'}</i><b title="${E(x.job||'')}">${E(x.job||'')}</b><span>${E(x.detail||'')}</span>${x.target&&!x.variants?`<small title="${E(x.target)}">${E(String(x.target).split(/[\\/]/).pop())}</small>`:''}</div>`
+   // 値ごとに分けて出した対象は、値ごとのファイルと成否を下に並べる（どの値が失敗したかを探させない）
+   +(x.variants?`<ul class="pres-vars">${x.variants.map(v=>`<li class="${v.ok?'is-ok':'is-error'}"><i>${v.ok?'✓':'×'}</i><b>${E(v.value)}</b><span title="${E(v.target||v.error||'')}">${E(v.ok?String(v.target).split(/[\\/]/).pop()+` · ${Number(v.rows||0).toLocaleString()}件`+(v.checked===false?'（絞れたかは確かめられません）':''):v.error)}</span></li>`).join('')}</ul>`:'')).join('');
 }
 function laneColumns(n){return n<=4?n:n<=12?4:6}function applyProgressEngine(engine){let api=engine==='api';$$('#p-steps li[data-api]').forEach(li=>li.textContent=api?li.dataset.api:li.dataset.dde)}function updateProgress(s){if(activeRunId&&s.run_id!==activeRunId)return;let engine=s.extract_engine||cfg?.settings?.extract_engine||'api';applyProgressEngine(engine);let isParallel=(s.execution_mode==='parallel');$('#progress-dialog .progress-modal').classList.toggle('serial-mode',!isParallel);$('#progress-dialog .progress-modal').classList.toggle('parallel-mode',isParallel);let overall=s.total_jobs?Math.round(((Math.max(0,s.current_index-1)+(s.step_percent||0)/100)/s.total_jobs)*100):(s.step_percent||0);if(s.step==='complete'||s.step==='error')overall=100;$('#p-title').textContent=s.step_label||'処理中';$('#p-count').textContent=`全体 ${s.completed_jobs||0} / ${s.total_jobs||0}`;$('#p-percent').textContent=overall+'%';$('#p-bar').style.width=overall+'%';$('#p-job').textContent=s.current_job_name||'準備中';let j=cfg?.jobs?.find(x=>x.id===s.current_job_id),fmt=s.output_format||j?.output_format,file=s.output_file||j?.output_file,target=s.output_target||(j?`${j.output_folder||cfg.default_output_folder}\\${file}`:'');$('#p-output').textContent=fmt?`${formatName(fmt)} → ${target}`:'';let liveElapsed=s.started_at?Math.max(Number(s.elapsed_seconds)||0,Math.floor((Date.now()-new Date(s.started_at).getTime())/1000)):(s.elapsed_seconds||0);$('#p-elapsed').textContent='経過時間 '+hhmmss(liveElapsed);$('#p-activity span').textContent=[s.activity_detail,s.activity_value].filter(Boolean).join(' / ')||'処理を継続しています';$('#p-engine').textContent=(engine==='dde'?'DDE互換 / 1件ずつ直列':(s.execution_mode==='parallel'?`Navigator API 並列 ${s.requested_lines||1}ライン`:'Navigator API / 1件ずつ直列'))+' / '+(s.running?'処理中':'終了');let box=document.querySelector('#p-parallel-lines');if(!box){box=document.createElement('div');box.id='p-parallel-lines';box.className='parallel-lines fixed-lanes';document.querySelector('.current-box')?.after(box)}let pls=(s.parallel_lines||[]).slice().sort((a,b)=>Number(String(a.line).match(/\d+/)?.[0]||0)-Number(String(b.line).match(/\d+/)?.[0]||0));let total=Number(s.queue_total||0),waiting=Number(s.queue_waiting||0),active=Number(s.queue_active||0),completed=Number(s.queue_completed||0),lineCount=Number(s.parallel_max_lines||pls.length||0),parallel=(s.execution_mode==='parallel'&&s.run_id===activeRunId);if(lineCount)box.style.setProperty('--lane-cols',laneColumns(lineCount));let queue=$('#queue-summary');if(queue){queue.hidden=!parallel;
  /* 数値だけでは全体のどこまで進んだか掴みにくいため、実行キュー一覧の帯へデータバーを併記する。 */

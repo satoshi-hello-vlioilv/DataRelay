@@ -176,6 +176,7 @@
 <button type="button" class="editor-tab" data-etab="naming" role="tab"><i class="etab-badge eb-name">2</i><span class="etab-text"><b>ファイル名</b><small>形式・命名パターン</small></span></button>
 <button type="button" class="editor-tab" data-etab="period" role="tab"><i class="etab-badge eb-period">3</i><span class="etab-text"><b>抽出期間</b><small>動的な日付指定</small></span><span id="etab-period-on" class="etab-count" hidden>ON</span></button>
 <button type="button" class="editor-tab" data-etab="schedule" role="tab"><i class="etab-badge eb-sched">4</i><span class="etab-text"><b>自動実行</b><small>スケジュール</small></span><span id="etab-rule-count" class="etab-count" hidden>0</span></button>
+<button type="button" class="editor-tab" data-etab="variant" role="tab"><i class="etab-badge eb-variant">5</i><span class="etab-text"><b>値ごとに分ける</b><small>条件の値ごとに別ファイル</small></span><span id="etab-variant-count" class="etab-count etab-count-variant" hidden>0</span></button>
 <span class="editor-tabsep" aria-hidden="true"></span>
 <button type="button" class="editor-tab etab-tool" data-etab="inspect" role="tab"><i class="etab-badge eb-tool">調</i><span class="etab-text"><b>RNEを調べる</b><small>列と管理ポイント</small></span></button>
 </div>
@@ -213,6 +214,7 @@
 <div class="fieldgrid one"><label>出力フォルダー<div class="browse"><input id="m-output" list="suggest-output"><button id="m-output-pick" type="button" class="secondary">参照</button></div></label></div>
 <div class="fieldgrid one"><label>テーブル名<input id="m-table" list="suggest-table"></label></div>
 <p class="hint">出力形式（拡張子）とファイル名は、タブ<b>「2 ファイル名」</b>でまとめて設定します。</p>
+<div id="m-var-card" class="var-card" hidden></div>
 <div class="trendbox"><span class="settings-subhead">これまでの実績</span><div id="m-trend" class="trend"></div></div>
 </div>
 </div>
@@ -307,6 +309,22 @@
 </div></div>
 <div class="editor-pane" data-etab="schedule">
 <div class="sectiontitle schedule-title"><div><span>自動実行ルール</span><small>複数条件を組み合わせて登録できます。実行時刻・曜日・間隔などを個別に設定できます。</small></div><button id="add-rule" type="button" class="secondary">ルール追加</button></div><div id="m-rules" class="rules"></div></div>
+<div class="editor-pane" data-etab="variant">
+<div class="var-box">
+<div class="var-toggle"><label><input id="m-var-enabled" type="checkbox"><b>条件の値ごとに分けて出す</b></label><span>RNE の条件のキーだけを値ごとに差し替えて問い合わせ、値ごとに別のファイルを作ります（API 方式。RNE ファイルは書き換えません）</span></div>
+<p id="m-var-say" class="var-say"></p>
+<p id="m-var-warn" class="var-warn" hidden></p>
+<div class="var-two">
+<div class="var-col">
+<label class="var-f"><span class="var-l"><i>1</i>分ける項目<small>RNE の条件欄にある項目</small></span><input id="m-var-item" list="suggest-var-item" placeholder="例: BOX実績_設備名" spellcheck="false"><datalist id="suggest-var-item"></datalist><span id="m-var-detect" class="var-detect"></span></label>
+<div class="var-f"><span class="var-l"><i>2</i>値<small>値の数だけファイルができます。Enter・読点で足し、× で外します</small></span><div id="m-var-values" class="var-chips"><input id="m-var-add" placeholder="値を足す（Enter）" spellcheck="false" aria-label="値を足す"></div></div>
+<label class="var-f"><span class="var-l"><i>3</i>ファイル名<small><code>{値}</code> が値に置き換わります。空なら「2 ファイル名」の名前_値</small></span><span class="var-name"><input id="m-var-pattern" spellcheck="false"><em id="m-var-ext">.xlsx</em></span></label>
+<label class="var-f"><span class="var-l"><i>4</i>置き場<small>空なら出力フォルダー。<code>{値}</code> を入れると値ごとのフォルダー</small></span><span class="browse"><input id="m-var-folder" spellcheck="false"><button id="m-var-folder-pick" type="button" class="secondary">参照</button></span></label>
+</div>
+<div class="var-col"><h4 class="var-h">できあがるファイル<span id="m-var-count"></span></h4><div id="m-var-files" class="var-files"></div></div>
+</div>
+</div>
+</div>
 <div class="editor-pane" data-etab="inspect">
 <div class="sectiontitle sect-inspect"><i class="sect-badge sb-inspect">調</i>RNEを調べる<span class="period-optional" title="この画面のどの操作も、RNEファイルと出力ファイルを書き換えません。影実行の結果も公開しません。">RNEも出力も変更しません</span></div>
 <div class="insp">
