@@ -2687,3 +2687,52 @@ body>main{width:var(--app-shell);max-width:var(--app-shell);
 .release-banner[data-kind=shortcut] .rb-text span{color:#4b6a7a}
 .rb-actions{display:flex;gap:7px;flex:none}
 .rb-actions button{padding:7px 13px}
+
+/* 既定の設定（2.0.0）。3択は当て方を替えても窓の高さが変わらないよう、説明の枠に最低の高さを持たせる（窓が上下に跳ねない）
+   : 起動時の3択（案 F: カードで選ぶ＋下に何が起きるか）・配布と更新の欄（案 H: 札と項目・外す）・作る窓 */
+.def-modal{width:min(760px,94vw)}
+.def-pick-modal{width:min(820px,94vw)}
+.dv-lead{margin:0 0 12px;font-size:12.5px;line-height:1.65;color:#38505c}
+.dv-lead code{font:11.5px Consolas,monospace;background:#eef3f5;border-radius:4px;padding:1px 5px}
+.dv-safe{margin:10px 0 0;font-size:11px;color:#647581}
+.def-cards{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.def-card{display:grid;gap:6px;align-content:start;text-align:left;padding:14px;border:1.5px solid var(--line);border-radius:10px;background:#fff;color:#203f4d;font-weight:400}
+.def-card b{font-size:15px}.def-card small{font-size:12px;color:#4f6772;line-height:1.55}
+.def-card:hover{border-color:#9fcdd5;filter:none}
+.def-card.on{border-color:#0b7e8f;box-shadow:0 0 0 3px #cdeef1;background:#f4fbfc}
+.def-card:focus-visible{outline:3px solid #ccebef}
+.def-what{margin-top:10px;min-height:190px;align-content:start;border:1px solid #dce6ea;border-radius:9px;background:#f8fbfc;padding:10px 14px;display:grid;gap:6px;font-size:12.5px;color:#263d48}
+.def-what h4{margin:0;font-size:12px;color:#647581}
+.def-eff{display:grid;grid-template-columns:110px 1fr;gap:8px;align-items:baseline}
+.def-eff>span{overflow-wrap:anywhere;line-height:1.55}.def-eff small{grid-column:2;color:#7a8a92;font-size:11px}
+.def-eff i{font-style:normal;font-weight:800;font-size:11px;color:#647581}
+.def-eff.add i{color:#0a6b4c}.def-eff.chg i{color:#8a5200}
+.def-more{font-style:normal;margin-left:6px;color:#7a8a92;font-size:11px}
+.def-facts{margin-bottom:8px}
+.def-memo{margin:0 0 8px;font-size:12px;color:#3c5662}
+.def-parts{display:grid;gap:7px;margin-bottom:10px}
+.def-row{display:grid;grid-template-columns:120px 1fr;gap:8px;align-items:start;font-size:12px}
+.def-row>b{color:#4f6772;font-size:11px;padding-top:8px}
+.def-row>b .n{display:inline-block;min-width:18px;padding:0 5px;border-radius:999px;background:#e7f4f6;color:#216177;font-size:10px;text-align:center}
+.def-row>span{display:flex;flex-wrap:wrap;gap:5px;min-width:0}
+.def-row .z{color:#93a4ab;font-size:12px;padding-top:3px}
+.def-row em{font-style:normal;display:inline-flex;align-items:center;gap:4px;padding:2px 2px 2px 9px;border:1px solid #d5e1e6;border-radius:999px;background:#fff;color:#263d48;max-width:100%}
+.def-row em button,.def-out-set{background:transparent;font-size:11px;font-weight:700;color:#8a5f5a;border-left:1px solid #e3eaee;border-radius:0 999px 999px 0;padding:6px 10px;margin-left:2px}
+.def-row em button:hover,.def-out-set:hover{color:#a4463d;background:#fdf0ee;filter:none}
+.def-set{align-items:center}.def-out-set{border:1px solid #e3eaee;border-radius:999px}
+.def-danger{color:#a4463d;padding:8px 10px}
+.def-empty{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:12px 14px;border:1px dashed #c9d7dc;border-radius:9px;background:#fbfcfd;margin-bottom:6px}
+.def-empty p{margin:0;flex:1;min-width:280px;font-size:12.5px;color:#3c5662}
+.def-pick-sec{border-top:1px solid #e7edf0;padding:10px 0}
+.def-pick-head{display:flex;align-items:center;gap:8px;margin-bottom:6px}.def-pick-head b{font-size:13px;color:#203d4a}
+.def-pick-count{font:11px Consolas,monospace;color:#647581;margin-right:auto}
+.def-pick-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:4px 12px;max-height:190px;overflow:auto}
+.def-pick-list label,.def-pick-opts>label{display:flex;gap:7px;align-items:flex-start;font-size:12.5px;color:#263d48;cursor:pointer}
+.def-pick-list input,.def-pick-opts input[type=checkbox]{width:16px;height:16px;flex:none;margin-top:2px}
+.def-pick-list span{overflow-wrap:anywhere}
+.def-pick-sec .z{margin:0;color:#93a4ab;font-size:12px}
+.def-pick-opts{display:grid;gap:10px}
+.def-pick-opts>label>span{display:grid;gap:2px}.def-pick-opts small{color:#647581;font-size:11.5px}
+.def-pick-opts .def-pick-note{display:grid;gap:4px}.def-pick-note>span{font-size:12px;color:#425661;font-weight:700}
+.def-pick-sum{margin-right:auto;font-size:12px;color:#425661;align-self:center}
+.rel-table td.rel-act .rel-del{margin-left:6px}

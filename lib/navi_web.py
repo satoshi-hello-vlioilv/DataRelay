@@ -1465,6 +1465,11 @@ def defaults_tick():
   if pend and pend.get('id')==d['manifest'].get('id') and not status.get('running'):
    r=_apply_defaults(d,pend.get('mode') or 'add','pending')
    navi_defaults.write_mark(DATA_ROOT,pending=None,ack=d['manifest'].get('id'),lastMode=r['mode'])
+  elif mark.get('ack')!=d['manifest'].get('id') and navi_defaults.has_data(_local_payloads()):
+   # 既定が新しくなっても、手元との違いが1つも無ければ聞かない（選ぶ意味のない3択を出さない）
+   dif=navi_defaults.diff(d,_local_payloads(),DATA_ROOT/navi_defaults.RNE_DIR)
+   if not any(dif[p]['add'] or dif[p]['change'] for p in navi_defaults.PARTS+('rne',)):
+    navi_defaults.write_mark(DATA_ROOT,ack=d['manifest'].get('id'),lastMode='same')
   elif mark.get('ack')!=d['manifest'].get('id') and not navi_defaults.has_data(_local_payloads()) and not status.get('running'):
    r=_apply_defaults(d,'overwrite','first')
    navi_defaults.write_mark(DATA_ROOT,ack=d['manifest'].get('id'),lastMode='first')

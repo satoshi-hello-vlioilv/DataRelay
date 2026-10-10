@@ -1187,7 +1187,7 @@ async function testNavigatorApi(){
   }
  }finally{hideWaiting();if(b)b.disabled=false}
 }
-$('#api-test').onclick=testNavigatorApi;$('#extract-engine').onchange=()=>{updateEngineUI();dirty();refreshMachinePaths()};$$('.engine-card').forEach(c=>c.onclick=()=>setExtractEngine(c.dataset.engine));setInterval(poll,1000);init().then(async()=>{poll();loadCommandQueue();loadLogin(true);try{
+$('#api-test').onclick=testNavigatorApi;$('#extract-engine').onchange=()=>{updateEngineUI();dirty();refreshMachinePaths()};$$('.engine-card').forEach(c=>c.onclick=()=>setExtractEngine(c.dataset.engine));setInterval(poll,1000);init().then(async()=>{poll();loadCommandQueue();loadLogin(true).then(()=>setTimeout(checkDefaultsOffer,400));try{
  let d=await fetch('/api/navigator-api-status',{cache:'no-store'}).then(r=>r.json());
  renderDllRequirement(d.requirement);
  renderApiReadiness(d.readiness,d.cached?'前回の確認結果です。「いま確認する」で取り直せます。':'');
@@ -1278,7 +1278,7 @@ function bindV29LogWorkspace(){['log-filter-text','log-filter-kind','log-filter-
 bindV29LogWorkspace();
 
 /* V30: categorized settings navigation and in-app version management */
-function bindSettingsNav(){$$('#settings-nav .settings-navbtn').forEach(b=>b.onclick=()=>{$$('#settings-nav .settings-navbtn').forEach(x=>x.classList.remove('on'));b.classList.add('on');$$('.settings-pane').forEach(x=>x.classList.remove('on'));document.querySelector(`.settings-pane[data-cat="${b.dataset.cat}"]`)?.classList.add('on');if(b.dataset.cat==='docs')loadDocs();if(b.dataset.cat==='conn')refreshMachinePaths(0);if(b.dataset.cat==='bundle')loadBundleInfo();if(b.dataset.cat==='release'){loadRelease();loadShortcuts()}})}
+function bindSettingsNav(){$$('#settings-nav .settings-navbtn').forEach(b=>b.onclick=()=>{$$('#settings-nav .settings-navbtn').forEach(x=>x.classList.remove('on'));b.classList.add('on');$$('.settings-pane').forEach(x=>x.classList.remove('on'));document.querySelector(`.settings-pane[data-cat="${b.dataset.cat}"]`)?.classList.add('on');if(b.dataset.cat==='docs')loadDocs();if(b.dataset.cat==='conn')refreshMachinePaths(0);if(b.dataset.cat==='bundle')loadBundleInfo();if(b.dataset.cat==='release'){loadRelease();loadShortcuts();loadDefaults()}})}
 /* ============================================================
    仕様書ビュー。同梱のMarkdownをアプリの中で読む。
    外部ライブラリは使えないので、この文書に実際に出てくる記法だけを自前で描く
@@ -4568,14 +4568,17 @@ function renderReleaseVersions(st,want){
  let prev=st.release?.previous||'';
  box.innerHTML=`<table class="rel-table"><thead><tr><th>版</th><th>置いた日時</th><th>置いた人</th><th>中身</th><th>状態</th><th></th></tr></thead><tbody>`
   +vs.map(v=>{
-   let tags=[v.version===want?'<i class="rel-tag is-ok">配布中</i>':'',v.version===prev&&v.version!==want?'<i class="rel-tag is-idle">前に配った版</i>':'',v.version===st.local?'<i class="rel-tag is-here">このPC</i>':''].join('');
+   let on=(st.fleet||[]).filter(f=>f.version===v.version&&!f.stale).map(f=>f.pc);
+   let tags=[v.version===want?'<i class="rel-tag is-ok">配布中</i>':'',v.version===prev&&v.version!==want?'<i class="rel-tag is-idle">前に配った版</i>':'',v.version===st.local?'<i class="rel-tag is-here">このPC</i>':'',
+    v.version!==want&&on.length?`<i class="rel-tag is-warn" title="${E(on.join('\n'))}">${E(on.slice(0,3).join('・'))}${on.length>3?` ほか${on.length-3}台`:''} が使用中</i>`:''].join('');
    let back=want&&relCmp(v.version,want)<0;
-   let act=v.version===want?'<span class="rel-muted">配っています</span>'
-    :`<button type="button" class="${back?'secondary':''} rel-set" data-v="${E(v.version)}">${back?'この版へ戻す':'この版を配る'}</button>`;
+   let act=v.version===want?'<span class="rel-muted">配っています（消せません）</span>'
+    :`<button type="button" class="${back?'secondary':''} rel-set" data-v="${E(v.version)}">${back?'この版へ戻す':'この版を配る'}</button><button type="button" class="secondary rel-del" data-v="${E(v.version)}" title="置き場からこの版を消します">消す</button>`;
    return `<tr class="${v.version===want?'is-current':''}"><td><b>${E(v.version)}</b></td><td>${E(v.placedAt)}</td><td>${E(v.placedBy)}</td>`
     +`<td title="${E(v.source)}">${v.files}ファイル・${relBytes(v.bytes)}</td><td>${tags||'<span class="rel-muted">—</span>'}</td><td class="rel-act">${act}</td></tr>`}).join('')
   +'</tbody></table>';
  box.querySelectorAll('.rel-set').forEach(b=>b.onclick=()=>relSetRelease(b.dataset.v));
+ box.querySelectorAll('.rel-del').forEach(b=>b.onclick=()=>relRemoveVersion(b.dataset.v));
 }
 function renderReleaseEntry(st){
  let box=$('#rel-entry');if(!box)return;
@@ -4583,9 +4586,9 @@ function renderReleaseEntry(st){
  let e=st.entry;
  box.innerHTML=(e.exists?'':'<p class="rel-warn">配る版を決めると、置き場の直下に入口（DataRelay.exe）が置かれます。それまでは渡すアドレスがありません。</p>')
   +`<ol class="rel-steps"><li><b>このアドレスを渡す</b><div class="rel-copy"><code>${E(e.path)}</code><button type="button" class="secondary" id="rel-copy-entry"${e.exists?'':' disabled'}>コピー</button></div><span>メール・チャットでアドレスだけを送ります（exe を添付しない）。</span></li>`
-  +`<li><b>ダブルクリックしてもらう</b><span>初回は、そのPCの <code>%USERPROFILE%\\DataRelay</code> へアプリを写して開きます（写すのは配る版だけ。数十秒）。設定のマスター・接続ファイル・登録した RNE は共有のまま使います。</span></li>`
+  +`<li><b>ダブルクリックしてもらう</b><span>初回は、そのPCの <code>%USERPROFILE%\\DataRelay</code> へ配る版を写し、上の「既定の設定」を手元（<code>DataRelay\\data</code>）へ入れて開きます（数十秒）。設定はPCごとに持つので、ほかのPCの変更は混ざりません。</span></li>`
   +`<li><b>起動アイコンを作るか聞かれる</b><span>「作る」を選ぶと、次からはデスクトップのアイコンで開けます。版が変われば、起動のたびに自動でそろいます。</span></li></ol>`
-  +`<p class="rel-note">新しいPCへ渡すデータの基準: <code>${E(e.dataRoot||'（置き場そのもの）')}</code></p>`;
+  +`<p class="rel-note">接続の認証情報は渡りません。各PCで初めて RNE を使うときに、そのPCで登録します。</p>`;
  let cp=$('#rel-copy-entry');if(cp)cp.onclick=()=>navigator.clipboard?.writeText(e.path).then(()=>toast('入口のアドレスをコピーしました')).catch(()=>toast('コピーできませんでした'));
 }
 function renderReleaseFleet(st,want){
@@ -4597,6 +4600,16 @@ function renderReleaseFleet(st,want){
  box.innerHTML=f.length?`<table class="rel-table"><thead><tr><th>PC</th><th>利用者</th><th>版</th><th>置き方</th><th>最後に名乗った</th></tr></thead><tbody>`
   +f.map(x=>`<tr class="${x.stale?'is-stale':x.outdated?'is-old':''}"><td><b>${E(x.pc)}</b></td><td>${E(x.user)}</td><td>${E(x.version)}${x.outdated?' <i class="rel-tag is-warn">古い</i>':''}</td><td>${E(REL_FLEET_PLACE[x.place]||x.place)}</td><td title="${E(x.at)}">${relAge(x.age)}</td></tr>`).join('')
   +'</tbody></table>':'<p class="rel-empty">まだどのPCも名乗っていません（起動すると名乗ります）。</p>';
+}
+/* 置いた版を消す。配る版は消せない（各PCが起動のたびにそろえる先）。その版でまだ動いているPCがあれば名前を出して確かめる
+   （消しても、そのPCは手元の写しで動き続け、次の起動で配る版へそろう） */
+async function relRemoveVersion(v){
+ let on=(relState?.fleet||[]).filter(f=>f.version===v&&!f.stale).map(f=>f.pc);
+ if(!confirm(`版 ${v} を置き場から消しますか？\n消した版へは戻せなくなります（同じ ZIP を置き直せば戻せます）。`
+  +(on.length?`\n\nこの版で動いているPC: ${on.join('・')}\nそのPCは手元の写しで動き続け、次の起動で配る版へそろいます。`:'')))return;
+ let r=await relPost('/api/release/remove-version',{version:v}),d=await r.json().catch(()=>({}));
+ if(!r.ok){toast(d.error||'消せませんでした');return}
+ toast(`版 ${v} を消しました`);await loadRelease();
 }
 async function relSetRelease(v){
  let want=relState?.release?.version||'',back=want&&relCmp(v,want)<0;
@@ -4713,6 +4726,170 @@ async function relRestart(){
  if(!r.ok){toast(d.error||'いまは開き直せません');return}
  appExiting=true;toast('開き直しています…（新しい窓が開くまで数秒かかります）');
 }
+/* 既定の設定（2.0.0）。置き場の defaults\ に置く「新しいPCが最初に持つ設定」。設定は各PCの手元（写しの data\）にあり、
+   新しいPCは初回の起動でこれを手元へ入れる。すでに設定のあるPCには、既定が新しくなった次の起動で合わせ方を3択で聞く。
+   画面は2つ: 配布と更新の「新しいPCへ渡す既定の設定」の欄（作る・外す・消す）と、起動時の3択（案 F: カード＋下に何が起きるか）。 */
+const DEF_ORDER=['jobs','schedules','layouts','recipes','rne'];
+const DEF_PART={jobs:'対象の登録',schedules:'自動実行の予定',layouts:'読取マスタ',recipes:'結合マスタ',rne:'RNE',settings:'共通設定'};
+const DEF_MODES=[['add','差分追加','足りない物だけ足す'],['overwrite','上書き','既定にある物は既定の中身へ'],['keep','今のまま','何も変えない']];
+let defState=null,defOffer=null,defMode='add',defOfferAsked=false;
+const defWhen=s=>String(s||'').replace('T',' ').slice(0,16);
+/* 名前の並びを短く見せる（多いときは「ほか n件」）。全部は title で読める */
+function defNames(list,max=8,suffix=''){
+ let a=(list||[]).map(String);if(!a.length)return '';
+ let shown=a.slice(0,max).map(E).join('・');
+ return `<span title="${E(a.join('\n'))}">${shown}${a.length>max?`<em class="def-more">ほか ${a.length-max}件</em>`:''}${E(suffix)}</span>`;
+}
+async function loadDefaults(){
+ try{defState=await fetch('/api/defaults',{cache:'no-store'}).then(r=>r.json())}catch{defState=null}
+ renderDefaults();
+}
+function renderDefaults(){
+ let box=$('#def-body');if(!box)return;
+ let x=defState;
+ if(!x||!x.ok){box.innerHTML='<p class="rel-empty">既定の設定を読めませんでした。少しおいて「配る版を確かめる」を押してください。</p>';return}
+ if(!x.reachable){box.innerHTML=`<p class="rel-empty">置き場に届かないため、既定の設定を読めません: ${E(x.why)}</p>`;return}
+ let d=x.defaults||{},block=x.writeBlock||'',lock=block?' disabled':'',lockTitle=block?` title="${E(block)}"`:'';
+ let how='<div class="setting-intro"><b>新しいPCは、初回の起動でこの設定を手元へ入れて始めます</b><span>すでに設定のあるPCには、既定を置き直した次の起動で、合わせ方（差分追加・上書き・今のまま）を聞きます。'
+  +'接続の認証情報と置き場は入りません（PCごと・人ごとに違うため）。</span></div>';
+ let warn=block?`<p class="rel-warn">${E(block)}</p>`:'';
+ if(!d.exists){
+  box.innerHTML=how+warn+`<div class="def-empty"><p><b>まだ既定の設定がありません。</b>新しいPCは、対象も予定も無い空の状態で始まります。</p>`
+   +`<button type="button" id="def-make"${lock}${lockTitle}>このPCの設定から作る…</button></div><p class="rel-note">置く先: <code>${E(x.dir)}</code></p>`;
+ }else{
+  let c=d.counts||{};
+  let facts=[['置いた日時',defWhen(d.savedAt)],['置いた人・PC',`${d.savedBy||'—'}・${d.pc||'—'}`],['対象',`${c.jobs||0}件`],['予定',`${c.schedules||0}件`],['RNE',`${c.rne||0}個`]];
+  let chip=(p,n)=>`<em>${E(n)}<button type="button" class="def-out" data-part="${p}" data-name="${E(n)}"${lock} title="${E(block||'既定から外す')}" aria-label="${E(n)} を既定から外す">外す</button></em>`;
+  let rows=DEF_ORDER.filter(p=>(d.parts[p]||[]).length).map(p=>`<div class="def-row"><b>${DEF_PART[p]} <span class="n">${d.parts[p].length}</span></b><span>${d.parts[p].map(n=>chip(p,n)).join('')}</span></div>`).join('');
+  let none=DEF_ORDER.filter(p=>!(d.parts[p]||[]).length).map(p=>DEF_PART[p]);
+  let st=d.settings?`<span class="z">入っています（${(d.settingsKeys||[]).length}項目: 出力先・RNE のフォルダー・抽出方式 など）</span><button type="button" class="def-out def-out-set" data-part="settings" data-name="共通設定"${lock}${lockTitle}>外す</button>`
+   :'<span class="z">入っていない（各PCの共通設定はアプリの標準のまま始まります）</span>';
+  box.innerHTML=how+warn+`<div class="rel-facts def-facts">${facts.map(([k,v])=>`<div><small>${E(k)}</small><b title="${E(v)}">${E(v)}</b></div>`).join('')}</div>`
+   +(d.note?`<p class="def-memo">メモ: ${E(d.note)}</p>`:'')
+   +`<div class="def-parts">${rows}${none.length?`<div class="def-row"><b>入っていない</b><span class="z">${none.join('・')}</span></div>`:''}<div class="def-row"><b>共通設定</b><span class="def-set">${st}</span></div></div>`
+   +`<div class="rel-actions"><button type="button" id="def-make"${lock}${lockTitle}>このPCの設定から作り直す…</button><button type="button" id="def-delete" class="textbtn def-danger"${lock}${lockTitle}>既定を消す</button>`
+   +`<span class="rel-note">置き場: <code>${E(x.dir)}</code></span></div>`;
+ }
+ let mk=$('#def-make');if(mk)mk.onclick=openDefaultsPicker;
+ let dl=$('#def-delete');if(dl)dl.onclick=defDelete;
+ box.querySelectorAll('.def-out').forEach(b=>b.onclick=()=>defRemove(b.dataset.part,b.dataset.name));
+}
+async function defRemove(part,name){
+ let more=part==='jobs'?'\nこの対象の自動実行の予定と、ほかの対象が使っていない RNE も一緒に外します。':part==='settings'?'\n新しいPCの共通設定は、アプリの標準のまま始まります。':'';
+ if(!confirm(`「${name}」を既定の設定から外しますか？${more}\n（このPCの設定は変わりません。外したものは、新しいPCへ渡らなくなります）`))return;
+ let r=await relPost('/api/defaults/remove-items',{part,names:[name]}),d=await r.json().catch(()=>({}));
+ if(!r.ok){toast(d.error||'外せませんでした');return}
+ toast(`「${name}」を既定から外しました`);loadDefaults();
+}
+async function defDelete(){
+ if(!confirm('既定の設定を消しますか？\n新しいPCは、対象も予定も無い空の状態で始まります。すでに設定のあるPCは、そのまま変わりません。'))return;
+ let r=await relPost('/api/defaults/delete'),d=await r.json().catch(()=>({}));
+ if(!r.ok){toast(d.error||'消せませんでした');return}
+ toast('既定の設定を消しました');loadDefaults();
+}
+/* 作る・作り直す: このPCの登録から選んで置く。最初は、既定があればその中身・無ければ全部に印を付けておく（選び直す手間を減らす） */
+async function openDefaultsPicker(){
+ await loadDefaults();let x=defState;if(!x||!x.ok)return;
+ let d=x.defaults||{},had=!!d.exists,parts=['jobs','layouts','recipes'];
+ let checked=(p,n)=>!had||(d.parts[p]||[]).includes(n);
+ let list=p=>{let names=x.local[p]||[];
+  if(!names.length)return `<p class="z">このPCに${DEF_PART[p]}はありません</p>`;
+  return `<div class="def-pick-list">${names.map(n=>`<label><input type="checkbox" data-part="${p}" value="${E(n)}"${checked(p,n)?' checked':''}><span>${E(n)}</span></label>`).join('')}</div>`};
+ $('#def-pick-body').innerHTML=`<div class="modalhead"><div><small>既定の設定</small><h2>${had?'このPCの設定から作り直す':'このPCの設定から作る'}</h2></div><button type="button" class="iconbtn" id="def-pick-x" aria-label="閉じる">×</button></div>`
+  +`<div class="modalbody"><p class="dv-lead">印を付けたものを、置き場の既定の設定にします。${had?'<b>いまの既定はまるごと入れ替わります。</b>':''}対象が使う RNE は一緒に入れます（新しいPCでは手元の <code>.\\rne</code> から読みます）。</p>`
+  +parts.map(p=>`<div class="def-pick-sec"><div class="def-pick-head"><b>${DEF_PART[p]}</b><span class="def-pick-count" data-count="${p}"></span>${(x.local[p]||[]).length?`<button type="button" class="textbtn" data-all="${p}">すべて</button><button type="button" class="textbtn" data-none="${p}">印を外す</button>`:''}</div>${list(p)}</div>`).join('')
+  +`<div class="def-pick-sec def-pick-opts"><label><input type="checkbox" id="def-pick-sch"${!had||(d.counts||{}).schedules?' checked':''}><span><b>自動実行の予定も入れる</b><small>選んだ対象の予定だけが入ります。新しいPCは入れた時点から、その予定で自動実行します</small></span></label>`
+  +`<label><input type="checkbox" id="def-pick-set"${!had||d.settings?' checked':''}><span><b>共通設定も入れる</b><small>出力先・RNE のフォルダー・抽出方式・控えなど。接続の認証情報と置き場は入りません</small></span></label>`
+  +`<label class="def-pick-note"><span>メモ（任意。各PCで3択を聞くとき、何を変えたかとして見せます）</span><input id="def-pick-note" maxlength="120" value="${E(had?d.note||'':'')}" placeholder="例: 10月の棚卸し用の対象を足した"></label></div></div>`
+  +`<div class="modalfoot"><span id="def-pick-sum" class="def-pick-sum"></span><button type="button" class="secondary" id="def-pick-cancel">やめる</button><button type="button" id="def-pick-go">この内容で既定を置く</button></div>`;
+ let dlg=$('#def-pick-dialog'),body=$('#def-pick-body');
+ let count=()=>{let n={};parts.forEach(p=>{n[p]=body.querySelectorAll(`input[data-part="${p}"]:checked`).length;let el=body.querySelector(`[data-count="${p}"]`);if(el)el.textContent=`${n[p]} / ${(x.local[p]||[]).length}`});
+  $('#def-pick-sum').textContent=`対象 ${n.jobs}件・読取マスタ ${n.layouts}件・結合マスタ ${n.recipes}件`;return n};
+ body.querySelectorAll('input[data-part]').forEach(i=>i.onchange=count);
+ body.querySelectorAll('[data-all],[data-none]').forEach(b=>b.onclick=()=>{let p=b.dataset.all||b.dataset.none;body.querySelectorAll(`input[data-part="${p}"]`).forEach(i=>i.checked=!!b.dataset.all);count()});
+ count();
+ let close=()=>dlg.close();$('#def-pick-x').onclick=close;$('#def-pick-cancel').onclick=close;
+ $('#def-pick-go').onclick=async()=>{
+  let pick=p=>[...body.querySelectorAll(`input[data-part="${p}"]:checked`)].map(i=>i.value),n=count();
+  if(!n.jobs&&!n.layouts&&!n.recipes&&!confirm('何も選んでいません。対象の無い既定（共通設定だけ）を置きますか？'))return;
+  let go=$('#def-pick-go');go.disabled=true;go.textContent='置いています…';
+  let r=await relPost('/api/defaults/save',{jobs:pick('jobs'),layouts:pick('layouts'),recipes:pick('recipes'),schedules:$('#def-pick-sch').checked,settings:$('#def-pick-set').checked,note:$('#def-pick-note').value.trim()}),
+   res=await r.json().catch(()=>({}));
+  go.disabled=false;go.textContent='この内容で既定を置く';
+  if(!r.ok){toast(res.error||'既定を置けませんでした');return}
+  close();toast(had?'既定の設定を作り直しました':'既定の設定を置きました');
+  if((res.notes||[]).length)alert(res.notes.join('\n'));
+  loadDefaults();
+ };
+ if(!dlg.open)dlg.showModal();
+}
+/* ---- 起動時の3択（案 F）。ログインの窓が開いていれば、閉じてから出す（2つの窓を重ねない） ---- */
+async function checkDefaultsOffer(){
+ if(defOfferAsked||appExiting)return;
+ let lg=$('#login-dialog');if(lg&&lg.open){lg.addEventListener('close',()=>setTimeout(checkDefaultsOffer,300),{once:true});return}
+ let o;try{o=await fetch('/api/defaults/offer',{cache:'no-store'}).then(r=>r.json())}catch{return}
+ if(o.auto){defWaitFirst(0);return}   // 新しく写したPC: 聞かずに既定を入れている最中。入ったら画面を読み直す
+ if(!o.show)return;
+ defOfferAsked=true;defOffer=o;defMode='add';paintDefaultsOffer();
+ let dlg=$('#def-dialog');if(dlg&&!dlg.open)dlg.showModal();
+}
+async function defWaitFirst(n){
+ if(n>30)return;
+ let o;try{o=await fetch('/api/defaults/offer',{cache:'no-store'}).then(r=>r.json())}catch{o={auto:true}}
+ if(o.auto){setTimeout(()=>defWaitFirst(n+1),2000);return}
+ await init();toast('既定の設定から始めました');
+}
+/* 選んだ当て方で「何が起きるか」を、項目の名前で見せる（件数だけでは、自分の対象が消えないか分からない） */
+function defEffect(o,mode){
+ let dif=o.diff||{},take=(k,parts=['jobs','layouts','recipes','rne'])=>parts.flatMap(p=>((dif[p]||{})[k]||[]).map(n=>parts.length>1&&p!=='jobs'?`${n}（${DEF_PART[p]}）`:n));
+ let migrate=o.kind==='migrate',localJobs=(dif.jobs||{}).local||[];
+ // suffix は名前の続き（「の予定」）、note は2行目の補足
+ let row=(label,tone,list,suffix='',note='')=>list.length?`<div class="def-eff ${tone}"><i>${label}</i>${defNames(list,8,suffix)}${note?`<small>${E(note)}</small>`:''}</div>`:'';
+ if(mode==='keep')return migrate?row('写す','add',[`いまの共有の設定（対象 ${o.localCounts?.jobs||0}件・予定 ${o.localCounts?.schedules||0}件）をこのPCの手元へ写して、そのまま使います`])
+  :row('変えない','keep',['すべて（この既定はもう聞きません）']);
+ if(migrate&&mode==='overwrite'){
+  let all=['jobs','layouts','recipes','rne'].flatMap(p=>(o.defaults?.parts?.[p]||[]).map(n=>p==='jobs'?n:`${n}（${DEF_PART[p]}）`));
+  return row('入れる','add',all.length?all:['（既定は空です）'])+row('写さない','keep',localJobs,'','共有には残ります')
+   +(o.defaults?.settings?row('共通設定','chg',['既定の値で始めます']):'');
+ }
+ let addJobs=(dif.jobs||{}).add||[],schAdd=(dif.schedules||{}).add||[],schChg=(dif.schedules||{}).change||[];
+ if(mode==='add')return (migrate?row('写す','add',['いまの共有の設定をこのPCの手元へ写します']):'')
+  +row('足す','add',take('add'))+row('予定を足す','add',schAdd.filter(n=>addJobs.includes(n)),' の予定')
+  +row('触らない','keep',take('change'),'','中身が違っても手元のまま')+row('残す','keep',localJobs)
+  ||row('変わらない','keep',['足りない物はありません']);
+ return row('足す','add',take('add'))+row('置き換える','chg',take('change'))+row('予定を合わせる','chg',[...schAdd,...schChg],' の予定')
+  +((dif.settings||{}).change||[]).map(()=>row('共通設定','chg',['既定の値にします'])).join('')+row('残す','keep',localJobs,'','既定に無い物は消しません')
+  ||row('変わらない','keep',['手元はすでに既定と同じです']);
+}
+function paintDefaultsOffer(){
+ let o=defOffer,d=o.defaults||{},migrate=o.kind==='migrate',label=(DEF_MODES.find(m=>m[0]===defMode)||[])[1];
+ let title=migrate?'この版から、設定はこのPCの手元に置きます':'置き場の既定の設定が新しくなりました';
+ let lead=migrate?'これまでは共有の設定を全PCで使っていました。この版からは各PCが手元に持ちます。置き場の既定の設定との合わせ方を選んでください。'
+  :`${E(defWhen(d.savedAt))} に ${E(d.savedBy||'')}（${E(d.pc||'')}）が置きました。${d.note?'「'+E(d.note)+'」':''}`;
+ let block=o.restartBlock||'';
+ $('#def-dialog-body').innerHTML=`<div class="modalhead"><div><small>既定の設定</small><h2>${title}</h2></div></div>`
+  +`<div class="modalbody"><p class="dv-lead">${lead}</p><div class="def-cards" role="radiogroup" aria-label="合わせ方">`
+  +DEF_MODES.map(([m,l,s])=>`<button type="button" class="def-card${m===defMode?' on':''}" role="radio" aria-checked="${m===defMode}" data-mode="${m}"><b>${l}</b><small>${s}</small></button>`).join('')+'</div>'
+  +`<div class="def-what"><h4>${label}を選ぶと</h4>${defEffect(o,defMode)}</div>`
+  +`<p class="dv-safe">どれを選んでも、変える前に手元の設定の控えを取ります${migrate?'。選ぶと一度開き直します':''}。</p>`
+  +(block?`<p class="rel-warn">${E(block)}。終わってから選んでください（あとで決めても、次の起動でまた聞きます）。</p>`:'')+'</div>'
+  +`<div class="modalfoot"><button type="button" class="secondary" id="def-later">あとで決める</button><button type="button" id="def-go"${block?' disabled':''}>${label}で進める</button></div>`;
+ $$('#def-dialog-body .def-card').forEach(b=>b.onclick=()=>{defMode=b.dataset.mode;paintDefaultsOffer();$(`#def-dialog-body .def-card[data-mode="${defMode}"]`)?.focus()});
+ $('#def-later').onclick=()=>{$('#def-dialog').close();toast('次の起動で、もう一度聞きます')};
+ $('#def-go').onclick=defApply;
+}
+async function defApply(){
+ let go=$('#def-go'),mode=defMode,label=(DEF_MODES.find(m=>m[0]===mode)||[])[1];
+ go.disabled=true;go.textContent='進めています…';
+ let r=await relPost('/api/defaults/apply',{mode}),d=await r.json().catch(()=>({}));
+ if(!r.ok||d.ok===false){go.disabled=false;go.textContent=`${label}で進める`;toast(d.error||'進められませんでした');return}
+ $('#def-dialog').close();
+ if(d.restart){toast('設定を手元へ移しました。開き直します…');relRestart();return}
+ let n=Object.values(d.done||{}).reduce((a,v)=>a+v.length,0);
+ toast(mode==='keep'?'今のままにしました（この既定はもう聞きません）':`${label}しました（${n}件）`);
+ await init();if($('.settings-pane[data-cat="release"]')?.classList.contains('on'))loadDefaults();
+}
+if($('#def-dialog'))$('#def-dialog').addEventListener('cancel',e=>{e.preventDefault();$('#def-later')?.click()});
 /* 上の帯: 新しい版（いちばん大事）→ 起動アイコンの申し出 の順に1つだけ出す。「あとで」はその版・その申し出のあいだ出さない */
 async function loadReleaseBrief(){
  if(appExiting)return;
@@ -4761,7 +4938,7 @@ function paintReleaseBanner(){
    toast('あとで作るときは、共通設定 →「配布と更新」→「起動アイコン」から作れます')};
  }
 }
-if($('#rel-check'))$('#rel-check').onclick=async()=>{await relPost('/api/release/check');await loadRelease();loadReleaseBrief();toast('配る版を確かめました')};
+if($('#rel-check'))$('#rel-check').onclick=async()=>{await relPost('/api/release/check');await loadRelease();loadReleaseBrief();loadDefaults();toast('配る版を確かめました')};
 if($('#rel-restart'))$('#rel-restart').onclick=relRestart;
 
 if($('#rel-publish'))$('#rel-publish').onclick=relPublish;

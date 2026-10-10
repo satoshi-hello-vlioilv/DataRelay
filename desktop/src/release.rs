@@ -612,7 +612,11 @@ pub(crate) mod tests {
         assert_eq!(mirror_seed(&root, &share), Ok(false), "同じなら書かない");
         fs::write(root.join("config").join(SEED), r#"{"data_root":"\\\\srv\\old","from":"x"}"#).unwrap();
         assert_eq!(mirror_seed(&root, &share), Ok(true));
-        assert_eq!(read_json(&root.join("config").join(SEED))[DATA_KEY], "\\\\srv\\old", "前の写しのデータの基準（共有）は、手元へ移すまで残す");
+        assert_eq!(
+            read_json(&root.join("config").join(SEED))[DATA_KEY],
+            "\\\\srv\\old",
+            "前の写しのデータの基準（共有）は、手元へ移すまで残す"
+        );
         fs::write(root.join("config").join(SEED), "{}").unwrap();
         fs::write(share.join(SEED), r#"{"data_root":"%USERPROFILE%\\Box\\DataRelay"}"#).unwrap();
         assert_eq!(mirror_seed(&root, &share), Ok(true));
