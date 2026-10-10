@@ -27,6 +27,7 @@ import navi_join     # キーの見当を付けるところだけ、直接呼ぶ
 import navi_order    # 結合の順番と待ち合わせの判断
 import navi_book     # マスタをEXCELで出し入れする
 import navi_crosstab # RNEの配置（表側・表頭・データ項目）を読む。ファイルを読むだけでAPIは使わない
+import navi_variants # 条件の値ごとに分けて出す（2.1.0）の決まり
 import navi_release  # 配布の置き場（版を置く・配る版・各PCの版）
 import navi_paths
 import navi_shortcut # 起動アイコン（このPCの写しへ向ける）
@@ -34,6 +35,7 @@ import navi_secret   # Navigator への接続情報（このPCの置き場・1.9
 import navi_defaults # 置き場の既定の設定（新しいPCへ渡す最初の設定・2.0.0）
 
 from app import (
+    variant_jobs,
     APP_ID, APP_NAME, APP_RELEASED_AT, APP_VERSION, APP_VERSION_TITLE, BASE, BUILD_VERSION, CHANGELOG, CONFIG_DIR, DATA_ROOT,
     DATA_ROOT_SOURCE, LOCAL_ROOT, RELEASE_WATCH, release_check, release_place, release_shared, restart_block_reason,
     DEFAULT_DLL_SEARCH_ROOTS, DOCS, INSPECT_ALL_ORDER, INSPECT_ALL_SPEC,
@@ -317,6 +319,27 @@ def delete_run_history():
   log.exception('RUN_HISTORY_DELETE_FAILED'); return jsonify(error=str(e)),500
  log.info('RUN_HISTORY_DELETE ids=%s date=%s job_id=%s removed=%s',ids,date or '-',job_id or '-',removed)
  return jsonify(ok=True,removed=removed)
+
+@app.post('/api/variants/preview')
+def variants_preview():
+ """値ごとに分けて出す（2.1.0）の見込み: RNE の条件欄の項目といまのキー（画面が項目と値を先回りして出す材料）と、
+ 値ごとに実際に作るファイルの道。編集中の対象をそのまま受け取る（保存前に見せる）。"""
+ data=request.get_json(silent=True) or {}
+ c=load();job={k:data.get(k) for k in ('rne','rne_path','name','table','output_format','output_file','naming_mode','output_pattern','output_folder','variants')}
+ job['source']='rne'
+ conditions=None
+ try:
+  rp=resolve_rne_path(job,c)
+  if rp and Path(rp).is_file():conditions=navi_crosstab.read_conditions(rp)
+ except Exception:conditions=None
+ files=[];error=''
+ if navi_variants.normalize(job.get('variants'))['values']:
+  try:
+   for one in variant_jobs({**job,'variants':{**navi_variants.normalize(job.get('variants')),'enabled':True}},c):
+    folder=str(resolve_path(one.get('output_folder') or c['default_output_folder']))
+    files.append({'value':one['_variant_value'],'file':one['output_file'],'folder':folder,'path':str(Path(folder)/one['output_file'])})
+  except Exception as e:error=str(e)
+ return jsonify(ok=not error,error=error,conditions=conditions,files=files,tokens=list(navi_variants.TOKENS))
 
 @app.post('/api/preview-filename')
 def preview_filename():
