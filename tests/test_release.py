@@ -60,12 +60,12 @@ class PublishTest(unittest.TestCase):
   R.publish_zip(make_zip(self.t/'a.zip','1.98.0'),self.base)
   R.publish_zip(make_zip(self.t/'b.zip','1.99.0'),self.base)
   self.assertEqual([v['version'] for v in R.versions(self.base)],['1.99.0','1.98.0'])
-  self.assertFalse(R.set_release('2.0.0',self.base,'/data')['ok'],'置いていない版は選べない')
-  out=R.set_release('1.99.0',self.base,'/share/DataRelay',uid='me')
+  self.assertFalse(R.set_release('2.0.0',self.base)['ok'],'置いていない版は選べない')
+  out=R.set_release('1.99.0',self.base,uid='me')
   self.assertTrue(out['ok'],out);self.assertEqual(out['notes'],[])
   self.assertEqual((self.base/'DataRelay.exe').read_text(),'exe 1.99.0','配る入口はその版の exe')
-  self.assertEqual(json.loads((self.base/'install.json').read_text(encoding='utf-8')),{'data_root':'/share/DataRelay'})
-  back=R.set_release('1.98.0',self.base,'/share/DataRelay')
+  self.assertEqual(json.loads((self.base/'install.json').read_text(encoding='utf-8')),{},'2.0.0 から、新しいPCへデータの基準は渡さない（写しの data に持つ）')
+  back=R.set_release('1.98.0',self.base)
   self.assertEqual((back['version'],back['previous']),('1.98.0','1.99.0'),'前の版へ戻す＝選び直すだけ（前の版を控える）')
   self.assertEqual((self.base/'DataRelay.exe').read_text(),'exe 1.98.0')
 
@@ -188,7 +188,7 @@ class PlaceTest(unittest.TestCase):
  def test_status_fleet_and_watch(self):
   share=Path(self.tmp.name)/'share';share.mkdir()
   R.publish_zip(make_zip(Path(self.tmp.name)/'a.zip','1.98.0'),share)
-  R.set_release('1.98.0',share,share)
+  R.set_release('1.98.0',share)
   told=[]
   w=R.Watch()
   snap=w.check(self.app,share,'1.97.0',str(share),'installed',tell=told.append)

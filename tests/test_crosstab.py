@@ -118,7 +118,7 @@ class CrosstabLayoutTest(unittest.TestCase):
  def test_detail_rnes_are_not_crosstab(self):
   """既存の明細RNEは表頭を持たない。読み方が変わらないことの裏付け。"""
   import navi_crosstab
-  for p in sorted((ROOT/'config'/'rne').glob('*.RNE')):
+  for p in sorted((ROOT/'samples'/'defaults'/'rne').glob('*.RNE')):
    lay=navi_crosstab.read_rne_layout(p)
    self.assertIsNotNone(lay,p.name)
    self.assertEqual(lay['head'],[],p.name)
@@ -275,7 +275,7 @@ class CrosstabExportTest(unittest.TestCase):
   import app
   why=app.crosstab_split_reason(SAMPLE)
   self.assertIn('集計表',why)
-  self.assertEqual(app.crosstab_split_reason(ROOT/'config'/'rne'/'SIKAODRNOW.RNE'),'')
+  self.assertEqual(app.crosstab_split_reason(ROOT/'samples'/'defaults'/'rne'/'SIKAODRNOW.RNE'),'')
 
 def scorecard():
  """観点ごとの合否を、形のバリエーション別に表で出す。"""

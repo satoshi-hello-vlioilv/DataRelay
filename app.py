@@ -242,6 +242,21 @@ def settings_connection():
  c.execute('PRAGMA foreign_keys=ON')
  return c
 
+# 作業用の写し（cache）が、どのマスターの写しか。データの基準が変わる（2.0.0 で共有の設定から写しの data\ へ移す・
+# local.json で置き場を変える）と、前のマスターの写しが残る。そのまま使うと、版の比べ方しだいで前のマスターの中身が
+# 新しいマスターへ書き戻される。だから起動時、まだ何も開いていないうちに退ける（動いている最中に名前を替えると、
+# Windows では開いているファイルの名前を替えられず失敗する）。
+SETTINGS_OWNER=SETTINGS_DB.with_name(SETTINGS_DB.stem+'.master.txt')
+def _settings_owner():
+ return os.path.normcase(os.path.abspath(str(MASTER_SETTINGS_DB)))
+def _settings_drop_foreign_cache():
+ try:had=SETTINGS_OWNER.read_text(encoding='utf-8').strip()
+ except OSError:return        # 記録の無い写し（2.0.0 より前）は、これまでどおり版で比べる
+ if had==_settings_owner() or not SETTINGS_DB.is_file():return
+ aside=SETTINGS_DB.with_name(SETTINGS_DB.stem+'.other.bak'+SETTINGS_DB.suffix)
+ try:os.replace(SETTINGS_DB,aside);log.info('SETTINGS_CACHE_FOREIGN moved_to=%s was=%s now=%s（別のマスターの写しなので取り直します）',aside,had,_settings_owner())
+ except OSError:log.exception('SETTINGS_CACHE_FOREIGN_MOVE_FAILED')
+
 def init_settings_db():
  # 起動時に一度だけ: BOXマスター→ローカルへ取り込み、スキーマ整備はローカルに対して行う（BOXのfsync遅延を回避）。
  global _settings_initialized
@@ -263,6 +278,7 @@ def init_settings_db():
   # BOXマスター → ローカル作業DB。開けるかどうかを両側で確かめてから、版で新旧を決める。
   global _settings_pulled_revision
   _t=time.perf_counter()
+  _settings_drop_foreign_cache()
   try:
    local_ok=sqlite_readable(SETTINGS_DB); master_ok=sqlite_readable(MASTER_SETTINGS_DB)
    if MASTER_SETTINGS_DB.is_file() and not master_ok:
@@ -289,6 +305,8 @@ def init_settings_db():
     log.info('SETTINGS_PULL skip(local up-to-date) elapsed=%.2fs',time.perf_counter()-_t)
    _settings_pulled_revision=settings_revision(SETTINGS_DB) if SETTINGS_DB.is_file() else 0
   except Exception:log.exception('SETTINGS_PULL_FAILED')
+  try:SETTINGS_OWNER.write_text(_settings_owner(),encoding='utf-8')
+  except OSError:log.exception('SETTINGS_OWNER_WRITE_FAILED')
   try:
    _settings_schema()
   except Exception:
@@ -2264,7 +2282,7 @@ def update_parallel_line(line,**v):
 
 # PCごとに実体が変わる場所（<PC> の読み替え・他人のプロファイル検出）は navi_paths.py。
 import navi_paths
-navi_paths.setup(DATA_ROOT,LOCAL_ROOT)
+navi_paths.setup(DATA_ROOT,LOCAL_ROOT,BASE)
 from navi_paths import PC_TOKEN,pc_path,is_pc_path,foreign_profile_path,resolve_path,clean_work_folder,_split_any,_profile_root,_looks_generated_backup
 
 
@@ -4661,6 +4679,10 @@ def release_watch_loop():
    snap=release_check()
    if snap.get('pending'):log.info('RELEASE_PENDING want=%s have=%s dir=%s',snap.get('want'),APP_VERSION,snap.get('dir'))
   except Exception:log.exception('RELEASE_WATCH_FAILED')
+  # 既定の設定（2.0.0）: 新しく写したPCへ既定を入れる・開き直す前に選んだ当て方を当てる（聞かずに済むこと）
+  try:
+   if not WORKER_MODE:navi_web.defaults_tick()
+  except Exception:log.exception('DEFAULTS_TICK_FAILED')
   time.sleep(RELEASE_WATCH.every)
 def restart_block_reason():
  """いま開き直してはいけない理由（無ければ空文字）。自動実行の予定があるだけなら開き直してよい（窓がすぐ戻る）。"""
@@ -5473,6 +5495,7 @@ def boot_app(_spawn_at=0.0):
   log.info('APP_START_FAULTHANDLER path=%s',LOCAL_LOGS/'crash.log')
  except Exception:log.exception('FAULTHANDLER_UNAVAILABLE')
  log.info('APP_START_PLACE place=%s data_root=%s source=%s config=%s',release_place(),DATA_ROOT,DATA_ROOT_SOURCE,CONFIG_DIR)
+ threading.Thread(target=navi_web.defaults_tick,daemon=True,name='defaults-first').start()   # 新しく写したPCへ既定をすぐ入れる
  threading.Thread(target=release_watch_loop,daemon=True,name='release-watch').start()
  _t=time.perf_counter(); threading.Thread(target=scheduler,daemon=True,name='scheduler').start(); threading.Thread(target=command_dispatcher,daemon=True,name='command-dispatcher').start()
  log.info('APP_START_THREADS elapsed=%.2fs',time.perf_counter()-_t)

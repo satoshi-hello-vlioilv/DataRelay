@@ -52,25 +52,31 @@ def migrate_local_root(new_root,old_names,parent=None):
     except Exception:pass
  return moved
 
-DATA_ROOT=None;LOCAL_ROOT=None
-def setup(data_root,local_root):
- """基準になる2つの場所（データの基準・このPCのローカル領域）を決める。app.py から一度だけ呼ぶ。"""
- global DATA_ROOT,LOCAL_ROOT
- DATA_ROOT=Path(data_root);LOCAL_ROOT=Path(local_root)
+DATA_ROOT=None;LOCAL_ROOT=None;PROGRAM_ROOT=None
+def setup(data_root,local_root,program_root=None):
+ """基準になる場所（データの基準・このPCのローカル領域・プログラムの場所）を決める。app.py から一度だけ呼ぶ。"""
+ global DATA_ROOT,LOCAL_ROOT,PROGRAM_ROOT
+ DATA_ROOT=Path(data_root);LOCAL_ROOT=Path(local_root);PROGRAM_ROOT=Path(program_root) if program_root else None
 
 # ==== データの基準（相対パスの基準・設定マスターの在りか） ==============
 # 設定に書いた相対パス（.\config\symnavim.conf・.\rne など）と設定のマスター（Config\app_settings.sqlite3）は、
 # 共有（BOX）のアプリのフォルダーを基準にしてきた。アプリを各PCへ写して動かす形（1.98.0・配布）では、
 # プログラムの場所（BASE）はこのPCの写しになるが、データの基準は共有のまま変えてはいけない ―― 変えると
 # 同じ設定がPCごとに違う場所を指し、symnavim.conf も登録した RNE も見えなくなる。
-# そこで「プログラムの場所」と「データの基準」を分ける。決める順（窓の release.rs と同じ）:
+# そこで「プログラムの場所」と「データの基準」を分ける。決める順:
 #   1. 環境変数 NAVI_DATA_ROOT（確かめるとき）
 #   2. <アプリ>\config\local.json の data_root（このPCだけの上書き。書くのは人）
-#   3. <アプリ>\config\install.json の data_root（配布の置き場から写したとき、窓が書く）
+#   3. 配布から写したアプリ（config\install.json がある）:
+#      a. <写し>\data に印（data.json）があれば、そこ（2.0.0 から。設定は各PCの手元に持つ）
+#      b. 印が無く install.json に data_root があれば、そこ（2.0.0 より前に写したPC。共有の設定を使っている。
+#         手元へ移すかを画面が聞き、選ぶまではこれまでどおり）
+#      c. どちらも無ければ <写し>\data（新しく写したPC。置き場の「既定の設定」から始める）
 #   4. プログラムの場所（共有から直に動かす形・作る途中。これまでと同じ）
 DATA_KEY='data_root'
 LOCAL_FILE='local.json'
 SEED_FILE='install.json'
+DATA_DIR='data'          # 写しの中の、このPCのデータ（版の入れ替えでは触らない）
+DATA_MARK='data.json'    # 手元のデータとして使い始めた印（いつ・どこから作ったか・どの既定まで見たか）
 
 def read_json(path):
  """小さな設定ファイル（JSON の辞書）を読む。BOM は外す。無い・読めない・辞書でないなら空の辞書。"""
@@ -92,9 +98,14 @@ def data_root(base,env=None):
  if str(env.get('NAVI_DATA_ROOT') or '').strip():
   return Path(expand(env['NAVI_DATA_ROOT'])),'env'
  conf=Path(base)/'config'
- for source,name in (('local',LOCAL_FILE),('install',SEED_FILE)):
-  value=str(read_json(conf/name).get(DATA_KEY) or '').strip()
-  if value:return Path(expand(value)),source
+ value=str(read_json(conf/LOCAL_FILE).get(DATA_KEY) or '').strip()
+ if value:return Path(expand(value)),'local'
+ if (conf/SEED_FILE).is_file():
+  mine=Path(base)/DATA_DIR
+  if (mine/DATA_MARK).is_file():return mine,'pc'
+  value=str(read_json(conf/SEED_FILE).get(DATA_KEY) or '').strip()
+  if value:return Path(expand(value)),'install'
+  return mine,'pc'
  return Path(base),'app'
 
 def portable(value,home=None):
@@ -181,7 +192,16 @@ def resolve_path(value,base=None):
  raw=os.path.expandvars(os.path.expanduser(raw))
  p=Path(raw)
  if p.is_absolute() or raw.startswith('\\'):return p
- return (Path(base)/p).resolve()
+ # 設定は Windows で書く（.\rne\X.RNE）。Windows 以外（手元の試験・自己診断）でも同じ場所を指すよう区切りを読み替える
+ if os.sep=='/':p=Path(raw.replace('\\','/'))
+ got=(Path(base)/p).resolve()
+ # データの基準がプログラムの場所と別のとき（2.0.0 の写し: <写し>\data）、プログラムに付いてくる物
+ # （.\assets\empty.accdb・.\Config\NAVIAP\… など）はデータの基準には無い。プログラムの場所にあればそちらを使う。
+ # どちらにも無ければデータの基準の道を返す（作る物・まだ無い物は、これまでどおりデータの基準に作る）
+ if base is DATA_ROOT and PROGRAM_ROOT is not None and PROGRAM_ROOT!=DATA_ROOT and not got.exists():
+  alt=(PROGRAM_ROOT/p).resolve()
+  if alt.exists():return alt
+ return got
 
 # ==== このPCのローカル領域の後始末 =====================================
 def clean_work_folder(work=None):

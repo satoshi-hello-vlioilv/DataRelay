@@ -45,7 +45,9 @@ const APPLIED: &str = "applied.json";
 /// データと配る物が同居するフォルダー。項目は1段下で数える（Python の `MIXED` と同じ）。
 const MIXED: &str = "config";
 /// 入れ替えの項目にしてはいけない名前。
-const FORBIDDEN: [&str; 3] = [WORK, ".git", "__pycache__"];
+/// 写しの中の、この PC のデータ（2.0.0・lib/navi_paths.py の `DATA_DIR`）。版の項目にはならない（入れ替えで消さない）。
+pub const DATA_DIR: &str = "data";
+const FORBIDDEN: [&str; 4] = [WORK, ".git", "__pycache__", DATA_DIR];
 
 /// 何が起きたか（起動画面と記録が言う）。
 #[derive(Debug, PartialEq)]
@@ -189,7 +191,8 @@ pub fn release_version(dir: &Path, wait: Duration) -> Result<Option<String>, Str
 }
 
 /// 置き場の「新しい PC へ渡す設定」を、写しの `config\install.json`（`data_root`・`from`）へ写す。**書き手は窓だけ**。
-/// データの基準は置き場の `install.json` の値、無ければ置き場そのもの（既定の置き場＝共有のアプリのフォルダー）。
+/// データの基準は置き場の `install.json` の値。無ければ前の写しの値を残し、それも無ければ書かない（2.0.0 から、
+/// 写しのデータは `<写し>\data` に持つ。前の値は、共有の設定を使ってきた PC が手元へ移すまで要る ―― 消すと選ぶ前に移ってしまう）。
 /// 届かない・置き場の設定が読めないときは前の写しのまま（触らない）。変わったときだけ書く。→ 書いたか。
 pub fn mirror_seed(app_root: &Path, dir: &Path) -> Result<bool, String> {
     let src = dir.join(SEED);
@@ -198,12 +201,14 @@ pub fn mirror_seed(app_root: &Path, dir: &Path) -> Result<bool, String> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound && dir.is_dir() => Value::Null,
         Err(e) => return Err(format!("置き場の渡す設定を読めません（{}）: {e}", src.display())),
     };
-    let data_root =
-        seed[DATA_KEY].as_str().map(str::trim).filter(|s| !s.is_empty()).map(str::to_owned).unwrap_or_else(|| dir.display().to_string());
-    let text =
-        serde_json::to_string_pretty(&serde_json::json!({ DATA_KEY: data_root, FROM_KEY: dir.display().to_string() })).unwrap_or_default();
     let conf = app_root.join("config");
     let dst = conf.join(SEED);
+    let text_of = |v: &Value| v[DATA_KEY].as_str().map(str::trim).filter(|s| !s.is_empty()).map(str::to_owned);
+    let mut out = serde_json::json!({ FROM_KEY: dir.display().to_string() });
+    if let Some(data_root) = text_of(&seed).or_else(|| text_of(&read_json(&dst))) {
+        out[DATA_KEY] = Value::String(data_root);
+    }
+    let text = serde_json::to_string_pretty(&out).unwrap_or_default();
     if std::fs::read_to_string(&dst).ok().as_deref() == Some(text.as_str()) {
         return Ok(false);
     }
@@ -525,7 +530,7 @@ pub(crate) mod tests {
         for ok in ["lib", "app.py", "config/rne", "config/README.md", "DataRelay.exe"] {
             assert!(valid_item(ok), "{ok}");
         }
-        for bad in ["config", "Config", "a/b", "config/a/b", "..", "", ".update", "lib/__pycache__", "c:x", "a\\b"] {
+        for bad in ["config", "Config", "a/b", "config/a/b", "..", "", ".update", "lib/__pycache__", "c:x", "a\\b", "data", "Data"] {
             assert!(!valid_item(bad), "{bad}");
         }
     }
@@ -602,9 +607,17 @@ pub(crate) mod tests {
         fs::create_dir_all(&share).unwrap();
         assert_eq!(mirror_seed(&root, &share), Ok(true));
         let v = read_json(&root.join("config").join(SEED));
-        assert_eq!(v[DATA_KEY], share.display().to_string(), "置き場に渡す設定が無ければ、置き場そのものがデータの基準");
+        assert!(v[DATA_KEY].is_null(), "置き場に渡す設定が無ければ、データの基準は書かない（写しの data に持つ・2.0.0）");
         assert_eq!(v[FROM_KEY], share.display().to_string());
         assert_eq!(mirror_seed(&root, &share), Ok(false), "同じなら書かない");
+        fs::write(root.join("config").join(SEED), r#"{"data_root":"\\\\srv\\old","from":"x"}"#).unwrap();
+        assert_eq!(mirror_seed(&root, &share), Ok(true));
+        assert_eq!(
+            read_json(&root.join("config").join(SEED))[DATA_KEY],
+            "\\\\srv\\old",
+            "前の写しのデータの基準（共有）は、手元へ移すまで残す"
+        );
+        fs::write(root.join("config").join(SEED), "{}").unwrap();
         fs::write(share.join(SEED), r#"{"data_root":"%USERPROFILE%\\Box\\DataRelay"}"#).unwrap();
         assert_eq!(mirror_seed(&root, &share), Ok(true));
         assert_eq!(read_json(&root.join("config").join(SEED))[DATA_KEY], "%USERPROFILE%\\Box\\DataRelay", "書いたまま写す（展開は読む側）");

@@ -50,10 +50,17 @@
       const st = await (await fetch('/api/release/status')).json();
       ok('配る版と同じ版で動く', st.release && st.local === st.release.version && st.pending === false, `手元 ${st.local} ／ 配る版 ${st.release && st.release.version}`);
       ok('置き場は入れた元（config\\install.json）から知る', st.installed && st.dirSource === 'install' && st.reachable, `${st.dirSource} ${st.dir} ${st.why || ''}`);
-      ok('データの基準は置き場（共有のアプリのフォルダー）', st.dataRoot === st.dir && st.dataRootSource === 'install', `${st.dataRootSource} ${st.dataRoot}`);
-      r0 = await fetch('/api/path-convert', json({ value: '.\\config\\symnavim.conf', mode: 'absolute' }));
+      // 2.0.0: 写したPCは自分の手元（写しの data）にデータを持ち、中身は置き場の既定の設定から入る
+      const sep = st.appRoot.includes('\\') ? '\\' : '/';
+      ok('データの基準はこのPCの手元（写しの data）', st.dataRoot === st.appRoot + sep + 'data' && st.dataRootSource === 'pc', `${st.dataRootSource} ${st.dataRoot}`);
+      r0 = await fetch('/api/path-convert', json({ value: '.\\rne\\SIKAODRNOW.RNE', mode: 'absolute' }));
       const conv = await r0.json();
-      ok('相対パスは共有のアプリのフォルダー基準（写しではない）', typeof conv.resolved === 'string' && conv.resolved.toLowerCase().startsWith(st.dataRoot.toLowerCase()) && conv.base.toLowerCase().startsWith(st.dataRoot.toLowerCase()), `${conv.resolved}`);
+      ok('相対パスは手元の data 基準', typeof conv.resolved === 'string' && conv.resolved.toLowerCase().startsWith(st.dataRoot.toLowerCase()), `${conv.resolved}`);
+      let got = null;
+      for (let i = 0; i < 40; i++) { got = await (await fetch('/api/config')).json(); if ((got.jobs || []).length) break; await sleep(500); }
+      ok('置き場の既定の設定から、対象が手元に入った（聞かずに）', (got.jobs || []).length === 6, `${(got.jobs || []).map((j) => j.name).join('・')}`);
+      const offer = await (await fetch('/api/defaults/offer')).json();
+      ok('入れた既定は、もう聞かない', offer.show === false, JSON.stringify({ show: offer.show, kind: offer.kind }));
       await fetch('/api/release/check', { method: 'POST' });
       const st2 = await (await fetch('/api/release/status')).json();
       const me = (st2.fleet || []).find((f) => f.version === st.local);
@@ -171,6 +178,8 @@
 
     // 常駐: 自動実行の予定を入れてから × を押す → 窓は隠れ、通知領域に残る（終わらない）
     const cur = await (await fetch('/api/config')).json();
+    // 2.0.0 から雛形は空（対象は置き場の既定の設定から入る）。試す対象を1件足してから予定を入れる
+    if (!cur.jobs.length) cur.jobs.push({ id: 'selftest-job', name: '自己診断', enabled: true, source: 'rne', rne: 'SIKAODRNOW.RNE', rne_path: `${program}/samples/defaults/rne/SIKAODRNOW.RNE`, output_folder: '<PC>\\selftest', output_file: 'selftest.csv', output_format: 'csv', schedules: [] });
     cur.jobs[0].schedules = [{ id: 'selftest', enabled: true, name: '毎朝', type: 'daily', time: '06:00' }];
     r = await fetch('/api/config', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cur) });
     const reason = (await (await fetch('/api/residency')).json()).reason;

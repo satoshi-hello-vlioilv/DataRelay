@@ -228,7 +228,7 @@ _MARKER = 'lib/navi_version.py'
 # 版に入れない物（頭を外した道・小文字で比べる）。置き場の物（版・各PCの名乗り・配る版）と、そのPC・その現場の物
 # （窓と中身が書く控え・設定のマスター）。アプリのフォルダーをそのまま ZIP にすると入ってくる。入れると、置き場の中に
 # もう1つ置き場ができたり（versions\<版>\versions\…）、写したPCの設定を配る版で上書きしたりする。
-_NOT_PAYLOAD_DIRS = (VERSIONS, FLEET, '.update')
+_NOT_PAYLOAD_DIRS = (VERSIONS, FLEET, '.update', navi_paths.DATA_DIR, 'defaults')
 _NOT_PAYLOAD_FILES = (RELEASE, SEED, 'config/' + SEED, 'config/' + MIRROR, 'config/' + LOCAL,
                       'config/app_settings.sqlite3', 'app_settings.sqlite3')
 
@@ -502,6 +502,27 @@ def versions(base):
     return sorted(out, key=lambda v: version_key(v['version']), reverse=True)
 
 
+def remove_version(version, base):
+    """置いた版を消す（versions\\<版>）。配る版は消せない（各PCが起動のたびにそろえる先なので）。
+    → {'ok', 'version', 'pcs'（まだその版で動いている・最後に名乗ったPC）} か {'ok': False, 'error'}。"""
+    if not safe_version(version):
+        return {'ok': False, 'error': '版の字が正しくありません: %r' % version}
+    base = Path(base)
+    if (release(base) or {}).get('version') == version:
+        return {'ok': False, 'error': '版 %s はいま配っている版なので消せません。先に別の版を配ってください。' % version}
+    dest = base / VERSIONS / version
+    if not dest.is_dir():
+        return {'ok': False, 'error': '版 %s は置き場にありません。' % version}
+    pcs = [f['pc'] for f in fleet(base) if f.get('version') == version]
+    trash = base / VERSIONS / ('.%s.%d.del' % (version, os.getpid()))
+    try:
+        os.replace(dest, trash)                # 名前を替えてから消す（途中で止まっても一覧に半端な版を出さない）
+        shutil.rmtree(trash)
+    except OSError as e:
+        return {'ok': False, 'error': '版 %s を消せません（どこかのPCが開いているかもしれません）: %s' % (version, e)}
+    return {'ok': True, 'version': version, 'pcs': pcs}
+
+
 def release(base):
     """配る版（release.json）。決めていなければ None。"""
     r = _read_json(Path(base) / RELEASE)
@@ -527,19 +548,21 @@ def place_entry(version, base):
                 '少しおいて、もう一度「この版を配る」を押してください。' % (dst, e))
 
 
-def place_seed(base, data_root):
+def place_seed(base, data_root=None):
     """新しいPCへ渡す最初の設定（置き場の install.json）を書く。→ 書けなかった理由（書けたら空）。
-    渡すのはデータの基準だけ（そのPCの物は渡さない）。自分のプロファイルの下なら %USERPROFILE% へ直して書く
-    （BOX Drive は利用者ごとに場所が違う）。"""
+    2.0.0 から、データの基準は渡さない ―― 写したPCは自分の手元（写しの data）にデータを持ち、中身は置き場の
+    「既定の設定」（navi_defaults）から作る。前の版が書いた data_root は消す（新しいPCを共有の設定に結ばない）。
+    `data_root` を渡したときだけ書く（確かめる・特別に共有の設定を使わせるとき）。"""
     base = Path(base)
+    body = {DATA_KEY: navi_paths.portable(str(data_root))} if data_root else {}
     try:
-        _write_text(base / SEED, json.dumps({DATA_KEY: navi_paths.portable(str(data_root))}, ensure_ascii=False, indent=1))
+        _write_text(base / SEED, json.dumps(body, ensure_ascii=False, indent=1))
         return ''
     except OSError as e:
         return '新しいPCへ渡す設定を書けませんでした（%s）: %s' % (base / SEED, e)
 
 
-def set_release(version, base, data_root, uid=''):
+def set_release(version, base, uid=''):
     """配る版を決める（前の版も控える）。**置いてある版だけ**選べる。前の版へ戻すのも同じ（選び直すだけ）。
     あわせて配る入口と新しいPCへ渡す設定を置く。この2つが置けなくても配る版は決まっている（各PCの更新は進む）。"""
     base = Path(base)
@@ -552,7 +575,7 @@ def set_release(version, base, data_root, uid=''):
         _write_text(base / RELEASE, json.dumps(doc, ensure_ascii=False, indent=1))
     except OSError as e:
         return {'ok': False, 'error': '配る版を書けません（%s）: %s' % (base, e)}
-    notes = [x for x in (place_entry(version, base), place_seed(base, data_root)) if x]
+    notes = [x for x in (place_entry(version, base), place_seed(base)) if x]
     return {'ok': True, **doc, 'notes': notes}
 
 
