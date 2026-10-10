@@ -193,7 +193,9 @@ def run_release(exe,wrap,work):
   left=[x for x in backend_pids(local) if alive(x)]
   checks.append((f'[{name}] 終わったあと Python が残っていない',not left,f'残り {left}'))
 
- out=R.set_release(v1,share,share,uid='selftest')
+ # 2.0.0: 置き場に既定の設定を置く（見本＝配る版から外した雛形の対象6件と RNE）。写したPCはここから手元を作る
+ shutil.copytree(ROOT/'samples'/'defaults',share/'defaults')
+ out=R.set_release(v1,share,uid='selftest')
  checks.append((f'配る版を {v1} に決めた',out.get('ok') and not out.get('notes'),out.get('notes') or out.get('error') or ''))
  checks.append(('配る入口が置き場の直下にある',(share/'DataRelay.exe').is_file(),share/'DataRelay.exe'))
  phase('install',share/'DataRelay.exe',v1,[('入口から写しへ渡した','INSTALL 置き場から写しへ渡しました'),
@@ -203,17 +205,19 @@ def run_release(exe,wrap,work):
  # navi_paths.portable）。字のままではなく、展開して同じ場所かを比べる（Windows の CI で、字のまま比べて落ちた）
  import navi_paths
  same=lambda a,b:bool(a) and os.path.normcase(os.path.abspath(navi_paths.expand(a)))==os.path.normcase(os.path.abspath(str(b)))
- checks.append(('写しはデータの基準と入れた元を知っている（config/install.json）',same(seed.get('data_root'),share) and same(seed.get('from'),share),seed))
- checks.append(('設定のマスターは共有のアプリのフォルダーに作られる',(share/'Config'/'app_settings.sqlite3').is_file(),share/'Config'))
- checks.append(('写しの中に設定のマスターを作らない',not any((root/d/'app_settings.sqlite3').exists() for d in ('Config','config')),root))
+ checks.append(('写しは入れた元を知っていて、共有のデータの基準は渡されない（config/install.json）',same(seed.get('from'),share) and not seed.get('data_root'),seed))
+ checks.append(('設定のマスターはこのPCの手元（写しの data）に作られる',(root/'data'/'Config'/'app_settings.sqlite3').is_file(),root/'data'/'Config'))
+ checks.append(('置き場（共有）に設定のマスターを作らない',not any((share/d/'app_settings.sqlite3').exists() for d in ('Config','config')),share))
+ checks.append(('既定の RNE が手元に入った',sorted(p.name for p in (root/'data'/'rne').glob('*.RNE'))==sorted(p.name for p in (share/'defaults'/'rne').glob('*.RNE')),root/'data'/'rne'))
+ checks.append(('手元の印（data/data.json）が既定を見たことを持つ',bool((json.loads((root/'data'/'data.json').read_text(encoding='utf-8')) if (root/'data'/'data.json').exists() else {}).get('ack')),root/'data'/'data.json'))
 
- R.set_release(v2,share,share,uid='selftest')
+ R.set_release(v2,share,uid='selftest')
  phase('update',root/'DataRelay.exe',v2,[('配る版へそろえた（exe も変わった）',f'RELEASE_APPLIED from={v1} to={v2} exe_changed=true'),
                                          ('新しい exe が、前の窓の終わりを待ってから開いた','AFTER_PREVIOUS waited=')],note=f'{v1} → {v2}')
  checks.append(('前の版は写しの控えに残る',(root/'.update'/f'{v1}.old'/'app.py').is_file(),root/'.update'))
  checks.append(('exe も配る版の物になった',(root/'DataRelay.exe').read_bytes()==(share/'versions'/v2/'DataRelay.exe').read_bytes(),root/'DataRelay.exe'))
 
- R.set_release(v1,share,share,uid='selftest')
+ R.set_release(v1,share,uid='selftest')
  phase('rollback',root/'DataRelay.exe',v1,[('前の版へ戻した（配る版を選び直しただけ）',f'RELEASE_APPLIED from={v2} to={v1}')],note=f'{v2} → {v1}')
  # 画面の「開き直して新しい版にする」と同じ道（配る版は変えない。開き直した窓が確かめを流す）
  phase('restart',root/'DataRelay.exe',v1,[('画面から開き直しを頼まれ、後始末をしてから開き直した','QUIT source=ui-restart restart=true'),

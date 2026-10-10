@@ -1,0 +1,17 @@
+{
+ "kind": "datarelay-defaults",
+ "id": "063849d1efa34293a4d7c60c99b4223c",
+ "savedAt": "2026-10-10T14:24:27",
+ "savedBy": "見本",
+ "pc": "-",
+ "appVersion": "1.99.2",
+ "note": "2.0.0 で配る版から外した、雛形の対象6件と RNE（試験の見本・置き場の既定の手本）",
+ "counts": {
+  "jobs": 6,
+  "schedules": 0,
+  "layouts": 0,
+  "recipes": 0,
+  "rne": 4
+ },
+ "settings": true
+}

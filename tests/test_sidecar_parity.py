@@ -74,7 +74,7 @@ def scenario_requests(tmp):
          'columns':[{'name':'番号','start':1,'length':6},{'name':'用途','start':7,'length':10},{'name':'値','start':17,'length':4}]}
  reqs=[
   j('RNEの形（集計表の見本）','POST','/api/rne-shape',{'rne_path':str(SAMPLE_RNE)}),
-  j('RNEの形（明細）','POST','/api/rne-shape',{'rne_path':str(ROOT/'config'/'rne'/'SIKAODRNOW.RNE')}),
+  j('RNEの形（明細）','POST','/api/rne-shape',{'rne_path':str(ROOT/'samples'/'defaults'/'rne'/'SIKAODRNOW.RNE')}),
   j('ファイル名の試算（日本語）','POST','/api/preview-filename',{'pattern':'仕掛_{yyyy}{mm}{dd}','name':'集計表','format':'csv','output_file':'x.csv','table':'仕掛','rne_path':str(SAMPLE_RNE)}),
   j('期間の試算','POST','/api/period-preview',{'period':{'enabled':True,'unit':'month','from_offset':-1,'to_offset':0}}),
   j('日本語の問い合わせ文字列','GET','/api/log',query='q=%E9%9B%86%E8%A8%88%E8%A1%A8&limit=50'),

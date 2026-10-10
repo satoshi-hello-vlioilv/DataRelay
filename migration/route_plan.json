@@ -91,6 +91,36 @@
    "to": "python",
    "note": ""
   },
+  "GET /api/defaults": {
+   "area": "配布と更新",
+   "to": "python",
+   "note": "2.0.0 で足した。置き場の既定の設定の中身と、このPCの登録（既定へ入れる候補）"
+  },
+  "POST /api/defaults/apply": {
+   "area": "配布と更新",
+   "to": "python",
+   "note": "2.0.0 で足した。3択の答えを当てる（共有の設定を使ってきた写しは手元へ移して開き直す）"
+  },
+  "POST /api/defaults/delete": {
+   "area": "配布と更新",
+   "to": "python",
+   "note": "2.0.0 で足した。既定の設定を消す"
+  },
+  "GET /api/defaults/offer": {
+   "area": "配布と更新",
+   "to": "python",
+   "note": "2.0.0 で足した。起動時に3択（上書き／差分追加／今のまま）を聞くか"
+  },
+  "POST /api/defaults/remove-items": {
+   "area": "配布と更新",
+   "to": "python",
+   "note": "2.0.0 で足した。既定の設定から項目を外す"
+  },
+  "POST /api/defaults/save": {
+   "area": "配布と更新",
+   "to": "python",
+   "note": "2.0.0 で足した。このPCの今の設定から、選んだ項目で既定の設定を作る（RNE も入れる）"
+  },
   "GET /api/desktop-status": {
    "area": "起動・常駐・終了",
    "to": "rust",
@@ -370,6 +400,11 @@
    "area": "配布と更新",
    "to": "python",
    "note": "1.98.0 で足した。ZIP から版を置く。ZIP は窓のダイアログで選んだ道で受け取る"
+  },
+  "POST /api/release/remove-version": {
+   "area": "配布と更新",
+   "to": "python",
+   "note": "2.0.0 で足した。置いた版を消す（配る版は消せない）"
   },
   "GET /api/release/restart-check": {
    "area": "配布と更新",

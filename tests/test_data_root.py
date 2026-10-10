@@ -33,7 +33,18 @@ class DataRootOrderTest(unittest.TestCase):
  def test_broken_or_empty_files_are_skipped(self):
   (self.app/'config'/'local.json').write_text('{壊れている',encoding='utf-8')
   self.write('install.json',{'data_root':'  '})
-  self.assertEqual(navi_paths.data_root(self.app,env={}),(self.app,'app'),'読めない・空の値は無いのと同じ')
+  self.assertEqual(navi_paths.data_root(self.app,env={}),(self.app/'data','pc'),'読めない・空の値は無いのと同じ（写しなので手元の data）')
+
+ def test_copies_keep_their_data_at_hand(self):
+  """2.0.0: 写したPCは自分の手元（写しの data）にデータを持つ。共有の設定を使ってきたPCは、手元へ移すまで共有のまま。"""
+  self.write('install.json',{'from':'/share'})
+  self.assertEqual(navi_paths.data_root(self.app,env={}),(self.app/'data','pc'),'新しく写したPC＝手元の data（既定の設定から始める）')
+  self.write('install.json',{'from':'/share','data_root':'/share/DataRelay'})
+  self.assertEqual(navi_paths.data_root(self.app,env={}),(Path('/share/DataRelay'),'install'),'前から使っているPCは、選ぶまで共有の設定のまま')
+  (self.app/'data').mkdir();(self.app/'data'/'data.json').write_text('{}',encoding='utf-8')
+  self.assertEqual(navi_paths.data_root(self.app,env={}),(self.app/'data','pc'),'手元へ移した印があれば手元')
+  self.write('local.json',{'data_root':'/mine'})
+  self.assertEqual(navi_paths.data_root(self.app,env={})[1],'local','このPCの上書きはいつも先')
 
  def test_percent_variables_expand_everywhere(self):
   os.environ['DR_TEST_SHARE']='/srv/box'
@@ -56,6 +67,17 @@ class ResolveAgainstDataRootTest(unittest.TestCase):
   self.assertEqual(navi_paths.resolve_path('.\\config\\symnavim.conf'.replace('\\','/')),share/'config'/'symnavim.conf')
   self.assertEqual(navi_paths.resolve_path('rne'),share/'rne')
   self.assertEqual(navi_paths.resolve_path('<PC>\\backup'),local/'backup','<PC> はこのPCのまま')
+
+ def test_program_files_are_found_when_data_is_elsewhere(self):
+  """データの基準が写しの data のとき、プログラムに付いてくる物（.\\assets\\empty.accdb など）はプログラムの場所から読む。"""
+  with tempfile.TemporaryDirectory() as t:
+   prog=Path(t).resolve()/'DataRelay';data=prog/'data'
+   (prog/'assets').mkdir(parents=True);(prog/'assets'/'empty.accdb').write_bytes(b'x');data.mkdir()
+   (data/'rne').mkdir();(data/'rne'/'A.RNE').write_text('r');(prog/'rne').mkdir();(prog/'rne'/'A.RNE').write_text('old')
+   navi_paths.setup(data,Path(t)/'local',prog)
+   self.assertEqual(navi_paths.resolve_path('assets/empty.accdb'),prog/'assets'/'empty.accdb','データの基準に無く、プログラムにある物')
+   self.assertEqual(navi_paths.resolve_path('rne/A.RNE'),data/'rne'/'A.RNE','両方にあればデータの基準が先')
+   self.assertEqual(navi_paths.resolve_path('rne/B.RNE'),data/'rne'/'B.RNE','どちらにも無ければデータの基準（作る物はそこへ）')
 
 
 class PortableTest(unittest.TestCase):

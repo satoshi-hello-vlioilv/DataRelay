@@ -31,6 +31,7 @@ import navi_release  # 配布の置き場（版を置く・配る版・各PCの�
 import navi_paths
 import navi_shortcut # 起動アイコン（このPCの写しへ向ける）
 import navi_secret   # Navigator への接続情報（このPCの置き場・1.99.0）
+import navi_defaults # 置き場の既定の設定（新しいPCへ渡す最初の設定・2.0.0）
 
 from app import (
     APP_ID, APP_NAME, APP_RELEASED_AT, APP_VERSION, APP_VERSION_TITLE, BASE, BUILD_VERSION, CHANGELOG, CONFIG_DIR, DATA_ROOT,
@@ -46,6 +47,7 @@ from app import (
     run_api_diag_worker,
     cancel_requested, check_path_item, clamp_parallel_lines, clear_row_axis_blocks,
     column_cache_state, column_weights, command_queue, command_queue_lock, compute_period,
+    add_alert, flush_local_to_master, shutil,
     NAVI_VAULT, NO_LOGIN_MESSAGE, legacy_conf_path, login_state, navi_login, csv, datetime, dll_diagnostic_issues, dll_search_roots, docs_dir, duplicate_columns,
     enqueue_command, expand_rule_occurrences, find_nearby_file, freshness_view,
     has_template_variables, inspect_task_blank,
@@ -1284,11 +1286,20 @@ def release_set():
  data=request.get_json(silent=True) or {}
  version=str(data.get('version') or '').strip()
  if not navi_release.safe_version(version):return jsonify(ok=False,error='版の字が正しくありません: %r'%version),400
- out=navi_release.set_release(version,_release_base(),DATA_ROOT,navi_release.who())
+ out=navi_release.set_release(version,_release_base(),navi_release.who())
  log.info('RELEASE_SET version=%s previous=%s ok=%s notes=%s',version,out.get('previous'),out.get('ok'),out.get('notes') or out.get('error'))
  if out.get('ok'):
   try:release_check()
   except Exception:log.exception('RELEASE_CHECK_AFTER_SET_FAILED')
+ return jsonify(out),(200 if out.get('ok') else 400)
+
+@app.post('/api/release/remove-version')
+def release_remove_version():
+ """置いた版を消す（配る版は消せない）。"""
+ data=request.get_json(silent=True) or {}
+ version=str(data.get('version') or '').strip()
+ out=navi_release.remove_version(version,_release_base())
+ log.info('RELEASE_REMOVE version=%s ok=%s pcs=%s error=%s',version,out.get('ok'),out.get('pcs'),out.get('error',''))
  return jsonify(out),(200 if out.get('ok') else 400)
 
 @app.post('/api/release/dir')
@@ -1317,6 +1328,258 @@ def release_dir():
  navi_release.remember(BASE,value)
  log.info('RELEASE_DIR value=%s note=%s',value or '(既定)',note)
  return jsonify(ok=True,changed=True,settings_revision=rev,**view)
+
+# ==== 既定の設定（2.0.0・置き場の defaults\。決まりは navi_defaults、取り込みは持ち込みと同じ道） ====
+# 設定は各PCの手元（写しの data）に持つ。置き場には新しいPCへ渡す最初の設定を1つ置き、各PCは「どの既定まで見たか」を
+# 手元の印（data\data.json）に持つ。既定が新しくなる・共有の設定を使ってきたPCが上がる、と画面が3択を聞く。
+DEFAULTS_LOCK=threading.Lock()
+
+def _defaults_where():
+ """既定を置く置き場と、その出どころ（配る版と同じ置き場）。"""
+ return navi_release.dir_choice(BASE,release_shared())
+
+def _defaults_base():
+ return _defaults_where()[0]
+
+def _defaults_write_block():
+ """既定を書いてはいけない理由（無ければ空）。作る途中の木で置き場を変えていなければ、置き場＝リポジトリそのものなので書かない
+ （全ルートを呼ぶ突き合わせの試験が、リポジトリの直下に defaults\ を作っていた）。"""
+ base,source=_defaults_where()
+ if release_place()=='dev' and source=='app':
+  return '作る途中の木（開発用のフォルダー）では、既定の設定を書きません。「置き場を変える」で置き場を決めてから使ってください'
+ ok,why=navi_release.reachable(base)
+ return '' if ok else why
+
+def _defaults_read(wait=3.0):
+ """置き場の既定（届かなければ None と理由）。"""
+ base=_defaults_base()
+ ok,why=navi_release.reachable(base,wait=wait)
+ if not ok:return None,why
+ try:return navi_defaults.read(base),''
+ except Exception as e:return None,str(e)
+
+def _local_payloads(c=None):
+ return _bundle_payloads(list(navi_defaults.PARTS),c)
+
+def _offer_kind():
+ """いま聞くこと。'migrate'＝共有の設定を使ってきた写し、'update'＝手元の写しで既定が新しくなった、''＝聞かない。"""
+ if release_place()!='installed':return ''
+ if DATA_ROOT_SOURCE=='install':return 'migrate'
+ if DATA_ROOT_SOURCE=='pc':return 'update'
+ return ''
+
+def _defaults_offer(d=None):
+ """画面が聞くかどうかと、聞くときの材料（既定の中身・手元との差）。"""
+ kind=_offer_kind()
+ if not kind:return {'show':False,'kind':''}
+ if d is None:d,_why=_defaults_read()
+ if not d:return {'show':False,'kind':kind}
+ mark=navi_defaults.read_mark(DATA_ROOT) if kind=='update' else None
+ if kind=='update' and (mark or {}).get('ack')==d['manifest'].get('id'):return {'show':False,'kind':kind}
+ c=load();local=_local_payloads(c)
+ # 手元が空の写しには聞かない（defaults_tick が聞かずに入れる。入れる前に画面が先に問い合わせても3択を出さない）
+ if kind=='update' and not navi_defaults.has_data(local):return {'show':False,'kind':kind,'auto':True}
+ dif=navi_defaults.diff(d,local,DATA_ROOT/navi_defaults.RNE_DIR)
+ return {'show':True,'kind':kind,'defaults':navi_defaults.summary(d),'diff':dif,
+         'localCounts':{p:len(navi_defaults.names_of(p,local.get(p))) for p in navi_defaults.PARTS},
+         'restartBlock':restart_block_reason()}
+
+def _apply_defaults(d,mode,label):
+ """既定 d を、いまの手元の設定へ mode で当てる（DATA_ROOT が手元のときだけ）。当てる前に控えを取る。→ 何をしたか。"""
+ c=load();local=_local_payloads(c)
+ dif=navi_defaults.diff(d,local,DATA_ROOT/navi_defaults.RNE_DIR)
+ pick=navi_defaults.picks(mode,dif)
+ done={p:list(v) for p,v in pick.items()}
+ if mode=='keep':return {'mode':mode,'done':done}
+ flush_local_to_master('defaults-backup')
+ kept=navi_defaults.backup(DATA_ROOT,{'app_settings.sqlite3':CONFIG_DIR/'app_settings.sqlite3','rne':DATA_ROOT/navi_defaults.RNE_DIR},label)
+ def only(part,body,names):
+  key='jobs' if part=='schedules' else navi_bundle.PART_LIST_KEY[part]
+  field='job_name' if part=='schedules' else 'name'
+  return dict(body,**{key:[x for x in (body or {}).get(key) or [] if str(x.get(field) or '') in set(names)]})
+ with settings_sync_lock:
+  # 順番が要る。対象は読取マスタ・結合マスタを名前で引き、予定は対象を名前で引く（持ち込みと同じ）
+  if pick['layouts'] and d.get('layouts'):_import_layouts(only('layouts',d['layouts'],pick['layouts']))
+  if pick['recipes'] and d.get('recipes'):_import_recipes(only('recipes',d['recipes'],pick['recipes']))
+  c=load()
+  if pick['jobs'] and d.get('jobs'):
+   items,_bad=navi_bundle.jobs_import(only('jobs',d['jobs'],pick['jobs']))
+   _merge_jobs(c,items)
+  # 予定: 上書きは既定にある予定へ置き換える。差分追加は、いま足した対象の予定だけ（手元の対象へ勝手に自動実行を足さない）
+  sch=pick['schedules'] if mode=='overwrite' else [n for n in dif['jobs']['add'] if n in set(navi_defaults.names_of('schedules',d.get('schedules')))]
+  done['schedules']=sch
+  if sch and d.get('schedules'):
+   items,_bad=navi_bundle.schedules_import(only('schedules',d['schedules'],sch))
+   if items:_merge_schedules(c,items)
+  if mode=='overwrite' and d.get('settings'):
+   for k,v in (d['settings'].get('top') or {}).items():
+    if k in navi_defaults.COMMON_KEYS:c[k]=v
+   c['settings'].update(d['settings'].get('settings') or {})
+  else:done['settings']=[]
+  save(c)
+ rne_dir=DATA_ROOT/navi_defaults.RNE_DIR;rne_dir.mkdir(parents=True,exist_ok=True)
+ for name in pick['rne']:
+  src=(d.get('rne') or {}).get(name)
+  if src:shutil.copyfile(src,rne_dir/name)
+ log.info('DEFAULTS_APPLIED mode=%s id=%s backup=%s done=%s',mode,d['manifest'].get('id'),kept,{p:len(v) for p,v in done.items()})
+ return {'mode':mode,'done':done,'backup':str(kept)}
+
+def _migrate_to_local(d,mode):
+ """共有の設定を使ってきた写しを、手元（写しの data）へ移す支度をする。データの基準が変わるので、開き直して効く。
+ 今のまま／差分追加＝今の設定（共有）を手元へ写す。上書き＝空から始める。既定を当てるのは開き直したあと（印の pending）。"""
+ dest=BASE/navi_paths.DATA_DIR
+ if (dest/navi_defaults.MARK).is_file():return {'ok':False,'error':'もう手元へ移してあります（開き直すと効きます）'}
+ (dest/'Config').mkdir(parents=True,exist_ok=True)
+ copied=[]
+ if mode in ('keep','add'):
+  flush_local_to_master('defaults-migrate')
+  shutil.copy2(SETTINGS_DB if SETTINGS_DB.is_file() else CONFIG_DIR/'app_settings.sqlite3',dest/'Config'/'app_settings.sqlite3')
+  c=load()
+  # 対象が相対の道で指している RNE（共有のアプリのフォルダーの .\rne など）も、同じ相対の場所へ写す
+  for j in c['jobs']:
+   if str(j.get('source') or 'rne')!='rne':continue
+   raw=str(j.get('rne_path') or '').strip()
+   if not raw or Path(raw).is_absolute() or raw.startswith('\\'):continue
+   try:src=resolve_rne_path(j,c);rel=src.relative_to(DATA_ROOT)
+   except Exception:continue
+   if src.is_file() and rel.as_posix() not in copied:   # 同じ RNE を使う対象が複数あっても1回だけ写す
+    (dest/rel).parent.mkdir(parents=True,exist_ok=True);shutil.copy2(src,dest/rel);copied.append(rel.as_posix())
+ pending={'mode':mode,'id':d['manifest'].get('id')} if (d and mode!='keep') else None
+ navi_defaults.write_mark(dest,origin='shared' if mode in ('keep','add') else 'defaults',movedFrom=str(DATA_ROOT),
+                          pending=pending,ack=(d or {}).get('manifest',{}).get('id',''))
+ # 作業用の写し（cache）は共有の正本の写し。残すと、開き直したとき手元の正本へ書き戻されてしまう
+ if SETTINGS_DB.is_file():os.replace(SETTINGS_DB,SETTINGS_DB.with_suffix('.shared.bak'))
+ log.info('DEFAULTS_MIGRATE mode=%s from=%s to=%s rne=%s',mode,DATA_ROOT,dest,len(copied))
+ return {'ok':True,'restart':True,'copied':copied,'to':str(dest)}
+
+def defaults_tick():
+ """起動の少しあとと、配る版を確かめるたびに呼ぶ（app.release_watch_loop）。手元の写しで、聞かずに済むことをする:
+ 新しく写した（手元が空）なら既定をそのまま当てる。開き直す前に選んだ当て方（pending）があれば当てる。"""
+ if _offer_kind()!='update' or not DEFAULTS_LOCK.acquire(blocking=False):return
+ try:
+  mark=navi_defaults.read_mark(DATA_ROOT)
+  if mark is None:mark=navi_defaults.write_mark(DATA_ROOT,origin='new')
+  d,why=_defaults_read()
+  if not d:return
+  pend=mark.get('pending')
+  if pend and pend.get('id')==d['manifest'].get('id') and not status.get('running'):
+   r=_apply_defaults(d,pend.get('mode') or 'add','pending')
+   navi_defaults.write_mark(DATA_ROOT,pending=None,ack=d['manifest'].get('id'),lastMode=r['mode'])
+  elif mark.get('ack')!=d['manifest'].get('id') and not navi_defaults.has_data(_local_payloads()) and not status.get('running'):
+   r=_apply_defaults(d,'overwrite','first')
+   navi_defaults.write_mark(DATA_ROOT,ack=d['manifest'].get('id'),lastMode='first')
+   add_alert('info','既定の設定から始めました',f"置き場の既定の設定（{d['manifest'].get('savedAt','')}）を、このPCの手元に入れました")
+ except Exception:log.exception('DEFAULTS_TICK_FAILED')
+ finally:DEFAULTS_LOCK.release()
+
+@app.get('/api/defaults')
+def defaults_state():
+ """画面「既定の設定」: 置き場の既定の中身と、このPCの登録（既定へ入れる候補）。"""
+ base=_defaults_base();d,why=_defaults_read()
+ c=load();local=_local_payloads(c)
+ mark=navi_defaults.read_mark(DATA_ROOT) if DATA_ROOT_SOURCE=='pc' else None
+ return jsonify(ok=True,dir=str(navi_defaults.folder(base)),reachable=not why,why=why,defaults=navi_defaults.summary(d),
+                writeBlock=_defaults_write_block(),
+                local={p:navi_defaults.names_of(p,local.get(p)) for p in navi_defaults.PARTS},
+                dataRoot=str(DATA_ROOT),dataRootSource=DATA_ROOT_SOURCE,mark=mark or {},
+                labels=navi_defaults.PART_LABEL,commonKeys=list(navi_defaults.COMMON_KEYS))
+
+@app.post('/api/defaults/save')
+def defaults_save():
+ """このPCの今の設定から、選んだ項目で既定を作る（置き場の既定をまるごと入れ替える）。
+ jobs／layouts／recipes は名前の並び（null＝全部）。対象が使う RNE は一緒に入れ、rne_path を .\rne\<名前> に直す。"""
+ data=request.get_json(silent=True) or {}
+ base=_defaults_base()
+ why=_defaults_write_block()
+ if why:return jsonify(ok=False,error=why),400
+ c=load()
+ def chosen(part,all_names):
+  v=data.get(part)
+  return list(all_names) if v is None else [n for n in v if n in set(all_names)]
+ jnames=chosen('jobs',[j['name'] for j in c['jobs']])
+ ids=[j['id'] for j in c['jobs'] if j['name'] in set(jnames)]
+ payloads=_bundle_payloads(list(navi_defaults.PARTS),c,ids or ['-none-'])
+ if not ids:payloads['jobs']=navi_bundle.jobs_export([]);payloads['schedules']=navi_bundle.schedules_export([])
+ if not data.get('schedules',True):payloads['schedules']=navi_bundle.schedules_export([])
+ for part,key in (('layouts','layouts'),('recipes','recipes')):
+  names=chosen(part,navi_defaults.names_of(part,_bundle_payloads([part],c)[part]))
+  full=_bundle_payloads([part],c)[part]
+  payloads[part]=dict(full,**{key:[x for x in full.get(key) or [] if x.get('name') in set(names)]})
+ # RNE を一緒に入れる（名前が重なれば _2 …）
+ rne_files={};notes=[];by_name={j['name']:j for j in c['jobs']}
+ for x in payloads['jobs'].get('jobs') or []:
+  if str(x.get('source') or 'rne')!='rne':continue
+  try:src=resolve_rne_path(by_name.get(x['name']) or x,c)
+  except Exception:src=None
+  if not src or not Path(src).is_file():notes.append(f"「{x['name']}」の RNE が見つからないため、道をそのまま入れました");continue
+  name=Path(src).name;stem,ext=os.path.splitext(name);n=2
+  while name in rne_files and Path(rne_files[name])!=Path(src):name=f'{stem}_{n}{ext}';n+=1
+  rne_files[name]=str(src);x['rne_path']='.\\rne\\'+name;x['rne']=name
+ settings=None
+ if data.get('settings',True):
+  settings={'top':{k:c.get(k) for k in navi_defaults.COMMON_KEYS if k in c},'settings':dict(c.get('settings') or {})}
+ for p in navi_defaults.PARTS:payloads[p]['count']=len(navi_defaults.names_of(p,payloads[p]))
+ try:man=navi_defaults.write(base,payloads,settings,rne_files,uid=navi_release.who(),pc=navi_release.pc_name(),
+                             app_version=APP_VERSION,note=str(data.get('note') or ''))
+ except OSError as e:return jsonify(ok=False,error=f'置き場へ書けません: {e}'),400
+ log.info('DEFAULTS_SAVED id=%s counts=%s notes=%s',man['id'],man['counts'],len(notes))
+ # 作ったPCは、この既定をもう聞かない（自分の今の設定そのものなので）
+ if DATA_ROOT_SOURCE=='pc':navi_defaults.write_mark(DATA_ROOT,ack=man['id'])
+ return jsonify(ok=True,manifest=man,notes=notes,defaults=navi_defaults.summary(navi_defaults.read(base)))
+
+@app.post('/api/defaults/remove-items')
+def defaults_remove_items():
+ """既定から項目を外す（対象を外すと、その予定と、使われなくなった RNE も外す）。"""
+ data=request.get_json(silent=True) or {}
+ part=str(data.get('part') or '');names=[str(x) for x in data.get('names') or []]
+ if part not in navi_defaults.ALL_PARTS:return jsonify(ok=False,error='部分が分かりません: %r'%part),400
+ why=_defaults_write_block()
+ if why:return jsonify(ok=False,error=why),400
+ base=_defaults_base();d,why=_defaults_read()
+ if not d:return jsonify(ok=False,error=why or '既定の設定がありません'),400
+ payloads,settings,rne=navi_defaults.without(d,part,names)
+ m=d['manifest']
+ try:man=navi_defaults.write(base,payloads,settings,{k:str(v) for k,v in rne.items()},uid=navi_release.who(),
+                             pc=navi_release.pc_name(),app_version=APP_VERSION,note=m.get('note',''))
+ except OSError as e:return jsonify(ok=False,error=f'置き場へ書けません: {e}'),400
+ log.info('DEFAULTS_ITEMS_REMOVED part=%s names=%s id=%s',part,names,man['id'])
+ return jsonify(ok=True,defaults=navi_defaults.summary(navi_defaults.read(base)))
+
+@app.post('/api/defaults/delete')
+def defaults_delete():
+ base=_defaults_base()
+ why=_defaults_write_block()
+ if why:return jsonify(ok=False,error=why),400
+ removed=navi_defaults.remove(base)
+ log.info('DEFAULTS_DELETED removed=%s dir=%s',removed,base)
+ return jsonify(ok=True,removed=removed)
+
+@app.get('/api/defaults/offer')
+def defaults_offer():
+ """起動時に画面が見る: 3択を聞くか（既定が新しくなった・共有の設定を使ってきた写し）。"""
+ try:return jsonify(ok=True,**_defaults_offer())
+ except Exception as e:
+  log.warning('DEFAULTS_OFFER_FAILED error=%s',e);return jsonify(ok=True,show=False,kind='',error=str(e))
+
+@app.post('/api/defaults/apply')
+def defaults_apply():
+ """3択の答え（overwrite／add／keep）。共有の設定を使ってきた写しは手元へ移す支度をして、開き直しを頼む（restart）。"""
+ data=request.get_json(silent=True) or {}
+ mode=str(data.get('mode') or '')
+ if mode not in navi_defaults.MODES:return jsonify(ok=False,error='当て方が分かりません: %r'%mode),400
+ kind=_offer_kind()
+ if not kind:return jsonify(ok=False,error='このPCは配布から写したアプリではないので、既定の設定は当てません'),400
+ why=restart_block_reason()
+ if why:return jsonify(ok=False,error=f'{why}。終わってから選んでください'),409
+ d,rwhy=_defaults_read()
+ if kind=='migrate':
+  try:return jsonify(_migrate_to_local(d,mode))
+  except OSError as e:return jsonify(ok=False,error=f'手元へ移せません: {e}'),400
+ if not d:return jsonify(ok=False,error=rwhy or '既定の設定がありません'),400
+ with DEFAULTS_LOCK:
+  r=_apply_defaults(d,mode,mode)
+  navi_defaults.write_mark(DATA_ROOT,ack=d['manifest'].get('id'),lastMode=mode,pending=None)
+ return jsonify(ok=True,restart=False,**r)
 
 @app.get('/api/release/restart-check')
 def release_restart_check():

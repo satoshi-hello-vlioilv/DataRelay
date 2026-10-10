@@ -2264,7 +2264,7 @@ def update_parallel_line(line,**v):
 
 # PCごとに実体が変わる場所（<PC> の読み替え・他人のプロファイル検出）は navi_paths.py。
 import navi_paths
-navi_paths.setup(DATA_ROOT,LOCAL_ROOT)
+navi_paths.setup(DATA_ROOT,LOCAL_ROOT,BASE)
 from navi_paths import PC_TOKEN,pc_path,is_pc_path,foreign_profile_path,resolve_path,clean_work_folder,_split_any,_profile_root,_looks_generated_backup
 
 
@@ -4661,6 +4661,10 @@ def release_watch_loop():
    snap=release_check()
    if snap.get('pending'):log.info('RELEASE_PENDING want=%s have=%s dir=%s',snap.get('want'),APP_VERSION,snap.get('dir'))
   except Exception:log.exception('RELEASE_WATCH_FAILED')
+  # 既定の設定（2.0.0）: 新しく写したPCへ既定を入れる・開き直す前に選んだ当て方を当てる（聞かずに済むこと）
+  try:
+   if not WORKER_MODE:navi_web.defaults_tick()
+  except Exception:log.exception('DEFAULTS_TICK_FAILED')
   time.sleep(RELEASE_WATCH.every)
 def restart_block_reason():
  """いま開き直してはいけない理由（無ければ空文字）。自動実行の予定があるだけなら開き直してよい（窓がすぐ戻る）。"""
@@ -5473,6 +5477,7 @@ def boot_app(_spawn_at=0.0):
   log.info('APP_START_FAULTHANDLER path=%s',LOCAL_LOGS/'crash.log')
  except Exception:log.exception('FAULTHANDLER_UNAVAILABLE')
  log.info('APP_START_PLACE place=%s data_root=%s source=%s config=%s',release_place(),DATA_ROOT,DATA_ROOT_SOURCE,CONFIG_DIR)
+ threading.Thread(target=navi_web.defaults_tick,daemon=True,name='defaults-first').start()   # 新しく写したPCへ既定をすぐ入れる
  threading.Thread(target=release_watch_loop,daemon=True,name='release-watch').start()
  _t=time.perf_counter(); threading.Thread(target=scheduler,daemon=True,name='scheduler').start(); threading.Thread(target=command_dispatcher,daemon=True,name='command-dispatcher').start()
  log.info('APP_START_THREADS elapsed=%.2fs',time.perf_counter()-_t)

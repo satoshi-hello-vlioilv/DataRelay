@@ -159,7 +159,7 @@ class AppTest(unittest.TestCase):
    self.assertEqual(r.returncode,0,r.stderr[-3000:])
    v=json.loads(r.stdout.strip().splitlines()[-1])
   self.assertIn('接続とパス',v['none'],'どこにも無ければ、どこで登録するかを言って止める')
-  self.assertEqual(v['state_none'],{'saved':False,'source':'','needed':True,'declined':False},'雛形には RNE の対象があるので要る')
+  self.assertEqual(v['state_none'],{'saved':False,'source':'','needed':False,'declined':False},'雛形は空（2.0.0）なので、まだ要らない')
   self.assertEqual(v['conf'],['利用者01','p@ss;word','NAVISV01','conf'],'まだ取り込んでいないPCは symnavim.conf から読む')
   self.assertEqual(v['profiles_conf'],[['oracle','']],'明示した ApiOracle を使う（流用しない）')
   self.assertEqual((v['get_conf']['source'],v['get_conf']['conf']['user']),('conf','利用者01'))
