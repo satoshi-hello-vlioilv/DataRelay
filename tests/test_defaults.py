@@ -204,7 +204,12 @@ class AppFlowTest(unittest.TestCase):
  def test_flow(self):
   with tempfile.TemporaryDirectory() as d:
    d=Path(d);share=d/'share';share.mkdir();shutil.copytree(SAMPLE/'defaults',share/'defaults')
-   data=d/'data';copy=d/'copy';copy.mkdir()
+   # データの基準を、正規化すると別の綴りになる道で渡す（Windows の CI の一時フォルダーは短い名前 RUNNER~1 で、
+   # resolve() すると長い名前になる。手元ではシンボリックリンクで同じ形を作る）
+   real=d/'data-real';real.mkdir();data=d/'data'
+   try:os.symlink(real,data,target_is_directory=True)
+   except (OSError,NotImplementedError):data=real
+   copy=d/'copy';copy.mkdir()
    env=dict(os.environ,NAVI_LOCAL_ROOT=str(d/'local'),NAVI_DATA_ROOT=str(data),NAVI_CONFIG_DIR=str(data/'Config'),
             NAVI_SECRET_FILE=str(d/'local'/'s.json'),DATARELAY_NO_BOOT='1',PYTHONIOENCODING='utf-8')
    r=subprocess.run([sys.executable,'-c',APP,str(ROOT),str(share),str(copy)],env=env,capture_output=True,text=True,encoding='utf-8',timeout=240)

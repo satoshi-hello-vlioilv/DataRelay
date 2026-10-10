@@ -1440,7 +1440,8 @@ def _migrate_to_local(d,mode):
    if str(j.get('source') or 'rne')!='rne':continue
    raw=str(j.get('rne_path') or '').strip()
    if not raw or Path(raw).is_absolute() or raw.startswith('\\'):continue
-   try:src=resolve_rne_path(j,c);rel=src.relative_to(DATA_ROOT)
+   # 両側を正規化して比べる（resolve_path は resolve() 済み。短い名前 RUNNER~1・リンクの道だと、そのままでは外と判定される）
+   try:src=resolve_rne_path(j,c);rel=src.resolve().relative_to(DATA_ROOT.resolve())
    except Exception:continue
    if src.is_file() and rel.as_posix() not in copied:   # 同じ RNE を使う対象が複数あっても1回だけ写す
     (dest/rel).parent.mkdir(parents=True,exist_ok=True);shutil.copy2(src,dest/rel);copied.append(rel.as_posix())
