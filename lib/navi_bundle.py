@@ -70,6 +70,10 @@ def job_export_one(job,layout_name='',recipe_name=''):
  out={k:v for k,v in dict(job or {}).items() if k not in JOB_DROP}
  # 読取マスタ・結合マスタの id は環境ごとに違う。名前で結び直せるようにしておく。
  out.pop('layout_id',None);out.pop('recipe_id',None)
+ # 値ごとに分けて出す（2.1.0）を使っていない対象は、その欄を書かない。2.0.0 までに書き出した物と同じ形にそろえる
+ # （書くと、既定の設定と手元を比べたとき、使っていない全部の対象が「中身が違う」になる）
+ v=out.get('variants')
+ if not (isinstance(v,dict) and (v.get('enabled') or v.get('item') or v.get('values'))):out.pop('variants',None)
  if layout_name:out['layout_name']=_text(layout_name,120)
  if recipe_name:out['recipe_name']=_text(recipe_name,120)
  return out

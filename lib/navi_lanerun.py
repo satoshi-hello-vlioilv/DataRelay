@@ -335,6 +335,8 @@ def run_api_process_batch(jobs,cfg,user,pw,server,dde_work,backup,max_lines,trig
         'detail':str(result.get('result') or result.get('error') or ''),'rows':result.get('rows'),'cols':result.get('columns'),
         'elapsed':round(float(result.get('elapsed') or 0),1),'target':str(result.get('target') or ''),
         'published':bool(result.get('published',True)),'pending':str(result.get('pending') or '')}
+   # 値ごとに分けて出した対象（2.1.0）は、値ごとのファイルと成否も画面へ渡す
+   if result.get('variant_results'):one['variants']=result['variant_results']
    batch_results.append(one)
    # 親が最後の状態を必ず上書きする。ワーカーが result.json を書く前に落ちた場合、
    # ラインの表示はワーカーが最後に書いた途中経過（例: 受信 60%）のまま残り、
@@ -354,7 +356,7 @@ def run_api_process_batch(jobs,cfg,user,pw,server,dde_work,backup,max_lines,trig
    else:
     set_status(job_results=seed(batch_results))
    record_job_run(item['job']['id'],item['job']['name'],'ok' if result.get('ok') else 'failed',trigger,detail=(result.get('result') or result.get('error') or ''),rows=result.get('rows'),cols=result.get('columns'),output_file=Path(result.get('target') or '').name,
-                  metrics={**{k:result.get(k) for k in ('elapsed','execute_seconds','save_seconds','merge_seconds','transfer_bytes','transfer_kbs','split_parts','split_shape','split_how','row_axis','axis_seconds','race_winner','format') if result.get(k) is not None},
+                  metrics={**{k:result.get(k) for k in ('elapsed','execute_seconds','save_seconds','merge_seconds','transfer_bytes','transfer_kbs','split_parts','split_shape','split_how','row_axis','axis_seconds','race_winner','format','variant_results') if result.get(k) is not None},
                            # 公開できたか。鮮度の判定がこれを見る（実行できても差し替わっていない場合がある）
                            'published':bool(result.get('published',True)),'pending':str(result.get('pending') or ''),
                            # 差し替えられなかったなら、その理由と、粘った時間と、次にすること。

@@ -397,6 +397,8 @@ def ensure_schema_upgrades():
   if 'layout_id' not in cols:c.execute("ALTER TABLE jobs ADD COLUMN layout_id TEXT NOT NULL DEFAULT ''")
   # 複数ファイルの結合。どの繋ぎ方（結合マスタ）で作るか。
   if 'recipe_id' not in cols:c.execute("ALTER TABLE jobs ADD COLUMN recipe_id TEXT NOT NULL DEFAULT ''")
+  # 条件の値ごとに分けて出す（2.1.0）。項目・値の並び・ファイル名と置き場の型を JSON で持つ。
+  if 'variants_json' not in cols:c.execute("ALTER TABLE jobs ADD COLUMN variants_json TEXT NOT NULL DEFAULT ''")
   rc=[r['name'] for r in c.execute('PRAGMA table_info(rne_columns)')]
   if rc and 'classify_json' not in rc:c.execute("ALTER TABLE rne_columns ADD COLUMN classify_json TEXT NOT NULL DEFAULT ''")
   # 条件欄のデータ項目。絞り込みの条件が付くのはここにある項目だけなので、行分割の判断に要る。
@@ -459,6 +461,8 @@ navi_localcopy.setup(LOCAL_ROOT)
 from navi_localcopy import read_copy
 # 結合の順番と待ち合わせの判断は navi_order.py（本体の状態は見ない）。
 import navi_order
+# 条件の値ごとに分けて出す（2.1.0）決まりは navi_variants.py（設定の形・出し先・絞れたかの確かめ）。
+import navi_variants
 from navi_join import (JOIN_TYPES,JOIN_TYPE_LABEL,JOIN_TYPE_NOTE,SOURCE_FORMATS,SOURCE_FORMAT_LABEL,
                        suggest_keys as suggest_join_keys,
                        MAX_SOURCES as JOIN_MAX_SOURCES,RECIPE_EXPORT_KIND,
@@ -575,8 +579,9 @@ def split_source_offset(key):
  if not m:return str(key or ''),''
  return m.group(1),(m.group(2) or '')
 
-def render_filename_template(template,job=None,rne_path=None,now=None):
- job=job or {};now=now or datetime.now()
+def _filename_tokens(job,rne_path,now):
+ """ファイル名の型で使える変数（日付の変数, 文字の変数）。テンプレートの展開と、一覧で色を付ける分解の両方がここを使う
+ （以前は同じ表を2か所に書いていた）。{値}・{value} は値ごとに分けて出すときのその回の値（2.1.0。無ければ空）。"""
  stem=Path(str(job.get('rne') or job.get('rne_path') or '')).stem
  mtime=ctime=None
  try:
@@ -586,24 +591,42 @@ def render_filename_template(template,job=None,rne_path=None,now=None):
  except Exception:pass
  date_tokens={'now':(now,'%Y%m%d_%H%M%S'),'exec':(now,'%Y%m%d_%H%M%S'),'datetime':(now,'%Y%m%d_%H%M%S'),'date':(now,'%Y%m%d'),'time':(now,'%H%M%S'),'rne_mtime':(mtime,'%Y%m%d'),'mtime':(mtime,'%Y%m%d'),'rne_ctime':(ctime,'%Y%m%d'),'ctime':(ctime,'%Y%m%d')}
  text_tokens={'rne':stem,'rne_name':stem,'rne_stem':stem,'name':str(job.get('name') or ''),'job':str(job.get('name') or ''),'table':str(job.get('table') or '')}
+ for t in navi_variants.TOKENS:text_tokens[t]=str(job.get('_variant_value') or '')
+ return date_tokens,text_tokens
+
+def _expand_token(raw,date_tokens,text_tokens):
+ """{…} の中身1つを展開する。→ (文字, 変数だったか)。知らない変数はそのまま残す（{…} ごと）。"""
+ raw=raw.strip();key=raw.split(':',1)[0].strip();arg=raw.split(':',1)[1] if ':' in raw else ''
+ base,offset=split_source_offset(key)
+ if base in date_tokens:
+  dt,default=date_tokens[base]
+  if not dt:return '',True
+  dt=apply_date_offset(dt,offset)
+  if _looks_like_custom_pattern(arg):return format_custom_datetime(dt,arg),True
+  try:return dt.strftime(arg or default),True
+  except Exception:return dt.strftime(default),True
+ if key in text_tokens:return _apply_text_op(text_tokens[key],arg),True
+ return '{'+raw+'}',False
+
+def render_path_template(template,job=None,rne_path=None,now=None):
+ """置き場の型（例: D:\\出力\\{値}）を展開する。ファイル名と違い、道の区切り（\\ / :）は残し、
+ 変数から展開した部分からだけファイル名に使えない文字を落とす（値に / が入っていても、道を勝手に深くしない）。"""
+ job=job or {};now=now or datetime.now()
+ date_tokens,text_tokens=_filename_tokens(job,rne_path,now)
  def repl(m):
-  raw=m.group(1).strip();key=raw.split(':',1)[0].strip();arg=raw.split(':',1)[1] if ':' in raw else ''
-  base,offset=split_source_offset(key)
-  if base in date_tokens:
-   dt,default=date_tokens[base]
-   if not dt:return ''
-   dt=apply_date_offset(dt,offset)
-   if _looks_like_custom_pattern(arg):return format_custom_datetime(dt,arg)
-   try:return dt.strftime(arg or default)
-   except Exception:return dt.strftime(default)
-  if key in text_tokens:return _apply_text_op(text_tokens[key],arg)
-  return m.group(0)
- rendered=re.sub(r'\{([^}]*)\}',repl,str(template or ''))
+  text,is_var=_expand_token(m.group(1),date_tokens,text_tokens)
+  return _ILLEGAL_FILENAME.sub('',text).strip() if is_var else text
+ return re.sub(r'\{([^}]*)\}',repl,str(template or '')).strip()
+
+def render_filename_template(template,job=None,rne_path=None,now=None):
+ job=job or {};now=now or datetime.now()
+ date_tokens,text_tokens=_filename_tokens(job,rne_path,now)
+ rendered=re.sub(r'\{([^}]*)\}',lambda m:_expand_token(m.group(1),date_tokens,text_tokens)[0],str(template or ''))
  rendered=_ILLEGAL_FILENAME.sub('',rendered);rendered=re.sub(r'\s+',' ',rendered).strip().strip('.')
  return rendered or 'output'
 
 # 命名で使用できる既知トークンのキー一覧。実際に展開できる（＝本当に変数である）ものだけを判定に使う。
-_KNOWN_TOKEN_KEYS={'now','exec','datetime','date','time','rne_mtime','mtime','rne_ctime','ctime','rne','rne_name','rne_stem','name','job','table'}
+_KNOWN_TOKEN_KEYS={'now','exec','datetime','date','time','rne_mtime','mtime','rne_ctime','ctime','rne','rne_name','rne_stem','name','job','table',*navi_variants.TOKENS}
 def _pattern_variable_keys(pattern):
  keys=set()
  for m in re.finditer(r'\{([^}]*)\}',str(pattern or '')):
@@ -618,27 +641,8 @@ def render_filename_segments(template,job=None,rne_path=None,now=None):
  """命名パターンを『固定部分』と『変数から展開された部分』へ分解する。
  一覧の出力ファイル名で、元が変数である箇所へ色を付けるために使用する。"""
  job=job or {};now=now or datetime.now()
- stem=Path(str(job.get('rne') or job.get('rne_path') or '')).stem
- mtime=ctime=None
- try:
-  p=Path(rne_path) if rne_path else None
-  if p and p.is_file():
-   st=p.stat();mtime=datetime.fromtimestamp(st.st_mtime);ctime=datetime.fromtimestamp(getattr(st,'st_ctime',st.st_mtime))
- except Exception:pass
- date_tokens={'now':(now,'%Y%m%d_%H%M%S'),'exec':(now,'%Y%m%d_%H%M%S'),'datetime':(now,'%Y%m%d_%H%M%S'),'date':(now,'%Y%m%d'),'time':(now,'%H%M%S'),'rne_mtime':(mtime,'%Y%m%d'),'mtime':(mtime,'%Y%m%d'),'rne_ctime':(ctime,'%Y%m%d'),'ctime':(ctime,'%Y%m%d')}
- text_tokens={'rne':stem,'rne_name':stem,'rne_stem':stem,'name':str(job.get('name') or ''),'job':str(job.get('name') or ''),'table':str(job.get('table') or '')}
- def expand(raw):
-  raw=raw.strip();key=raw.split(':',1)[0].strip();arg=raw.split(':',1)[1] if ':' in raw else ''
-  base,offset=split_source_offset(key)
-  if base in date_tokens:
-   dt,default=date_tokens[base]
-   if not dt:return '',True
-   dt=apply_date_offset(dt,offset)
-   if _looks_like_custom_pattern(arg):return format_custom_datetime(dt,arg),True
-   try:return dt.strftime(arg or default),True
-   except Exception:return dt.strftime(default),True
-  if key in text_tokens:return _apply_text_op(text_tokens[key],arg),True
-  return '{'+raw+'}',False
+ date_tokens,text_tokens=_filename_tokens(job,rne_path,now)
+ def expand(raw):return _expand_token(raw,date_tokens,text_tokens)
  pattern=str(template or '');segments=[];pos=0
  for m in re.finditer(r'\{([^}]*)\}',pattern):
   if m.start()>pos:segments.append({'text':pattern[pos:m.start()],'var':False})
@@ -2178,7 +2182,7 @@ def load():
     if x['month_days_json']:q['month_days']=json.loads(x['month_days_json'])
     if x['dates_json']:q['dates']=json.loads(x['dates_json'])
     rules.append(q)
-   fmt=normalize_output_format(r['output_format'],r['output_file']); jobs.append({'id':r['id'],'enabled':bool(r['enabled']),'name':r['name'],'rne':r['rne'],'rne_path':r['rne_path'],'output_folder':r['output_folder'],'output_format':fmt,'output_file':canonical_output_file(r['output_file'],fmt),'table':r['table_name'],'sheet':r['sheet_name'],'type':r['read_type'],'naming_mode':(r['naming_mode'] if 'naming_mode' in r.keys() else 'fixed'),'output_pattern':(r['output_pattern'] if 'output_pattern' in r.keys() else ''),'comment':(r['comment'] if 'comment' in r.keys() else ''),'split_mode':normalize_split_mode(r['split_mode'] if 'split_mode' in r.keys() else ''),'split_shape':normalize_split_shape(r['split_shape'] if 'split_shape' in r.keys() else ''),'row_axis_mode':normalize_row_axis_mode(r['row_axis_mode'] if 'row_axis_mode' in r.keys() else ''),'row_axis_index':int((r['row_axis_index'] if 'row_axis_index' in r.keys() else 1) or 1),'row_axis_name':str((r['row_axis_name'] if 'row_axis_name' in r.keys() else '') or ''),'extra_formats':job_extra_formats({'output_format':fmt,'output_file':r['output_file'],'extra_formats':(r['extra_formats'] if 'extra_formats' in r.keys() else '')}),'index_columns':_json_list(r['index_columns'] if 'index_columns' in r.keys() else ''),'skip_if_unchanged':bool(r['skip_if_unchanged'] if 'skip_if_unchanged' in r.keys() else 0),'source':normalize_job_source(r['source'] if 'source' in r.keys() else ''),'text_path':str((r['text_path'] if 'text_path' in r.keys() else '') or ''),'layout_id':str((r['layout_id'] if 'layout_id' in r.keys() else '') or ''),'recipe_id':str((r['recipe_id'] if 'recipe_id' in r.keys() else '') or ''),'period':_decode_period(r['period_json'] if 'period_json' in r.keys() else ''),'schedules':rules})
+   fmt=normalize_output_format(r['output_format'],r['output_file']); jobs.append({'id':r['id'],'enabled':bool(r['enabled']),'name':r['name'],'rne':r['rne'],'rne_path':r['rne_path'],'output_folder':r['output_folder'],'output_format':fmt,'output_file':canonical_output_file(r['output_file'],fmt),'table':r['table_name'],'sheet':r['sheet_name'],'type':r['read_type'],'naming_mode':(r['naming_mode'] if 'naming_mode' in r.keys() else 'fixed'),'output_pattern':(r['output_pattern'] if 'output_pattern' in r.keys() else ''),'comment':(r['comment'] if 'comment' in r.keys() else ''),'split_mode':normalize_split_mode(r['split_mode'] if 'split_mode' in r.keys() else ''),'split_shape':normalize_split_shape(r['split_shape'] if 'split_shape' in r.keys() else ''),'row_axis_mode':normalize_row_axis_mode(r['row_axis_mode'] if 'row_axis_mode' in r.keys() else ''),'row_axis_index':int((r['row_axis_index'] if 'row_axis_index' in r.keys() else 1) or 1),'row_axis_name':str((r['row_axis_name'] if 'row_axis_name' in r.keys() else '') or ''),'extra_formats':job_extra_formats({'output_format':fmt,'output_file':r['output_file'],'extra_formats':(r['extra_formats'] if 'extra_formats' in r.keys() else '')}),'index_columns':_json_list(r['index_columns'] if 'index_columns' in r.keys() else ''),'skip_if_unchanged':bool(r['skip_if_unchanged'] if 'skip_if_unchanged' in r.keys() else 0),'source':normalize_job_source(r['source'] if 'source' in r.keys() else ''),'text_path':str((r['text_path'] if 'text_path' in r.keys() else '') or ''),'layout_id':str((r['layout_id'] if 'layout_id' in r.keys() else '') or ''),'recipe_id':str((r['recipe_id'] if 'recipe_id' in r.keys() else '') or ''),'period':_decode_period(r['period_json'] if 'period_json' in r.keys() else ''),'variants':navi_variants.normalize(_json_or_empty(r['variants_json'] if 'variants_json' in r.keys() else '')),'schedules':rules})
   cfg['jobs']=jobs; cfg['text_layouts']=_load_text_layouts(c); cfg['join_recipes']=_load_join_recipes(c); cfg.setdefault('settings',{});
   # 設定の版。画面はこれをそのまま送り返し、ほかで変わっていたら保存を断れるようにする
   # （画面を2つ開いていると、あとから保存したほうが相手の追加した対象を消していた）。
@@ -2229,7 +2233,7 @@ def _save_local(v,quiet=False):
   keep=[]
   for order,j in enumerate(jobs):
    jid=j.get('id') or str(uuid.uuid4()); keep.append(jid)
-   fmt=normalize_output_format(j.get('output_format'),j.get('output_file')); output_file=canonical_output_file(j.get('output_file'),fmt); (None if quiet else log.info('設定保存 job=%s requested_format=%s saved_format=%s requested_file=%s saved_file=%s',j.get('name'),j.get('output_format'),fmt,j.get('output_file'),output_file)); c.execute('INSERT OR REPLACE INTO jobs (id,display_order,enabled,name,rne,rne_path,output_folder,output_format,output_file,table_name,sheet_name,read_type,naming_mode,output_pattern,comment,split_mode,split_shape,row_axis_mode,row_axis_index,row_axis_name,extra_formats,index_columns,skip_if_unchanged,period_json,source,text_path,layout_id,recipe_id,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',(jid,order,int(bool(j.get('enabled',True))),j.get('name',''),j.get('rne',''),j.get('rne_path',''),j.get('output_folder',''),fmt,output_file,job_table_name(j),j.get('sheet','Page1'),j.get('type','詳細データ'),str(j.get('naming_mode') or 'fixed'),str(j.get('output_pattern') or ''),str(j.get('comment') or ''),normalize_split_mode(j.get('split_mode')),normalize_split_shape(j.get('split_shape')),normalize_row_axis_mode(j.get('row_axis_mode')),max(1,min(200,int(j.get('row_axis_index') or 1))),str(j.get('row_axis_name') or ''),json.dumps(job_extra_formats({**j,'output_format':fmt}),ensure_ascii=False),json.dumps([str(x).strip() for x in (j.get('index_columns') or []) if str(x).strip()][:4],ensure_ascii=False),int(bool(j.get('skip_if_unchanged'))),json.dumps(_decode_period(json.dumps(j.get('period') or {},ensure_ascii=False)),ensure_ascii=False),normalize_job_source(j.get('source')),str(j.get('text_path') or ''),str(j.get('layout_id') or ''),str(j.get('recipe_id') or ''),now))
+   fmt=normalize_output_format(j.get('output_format'),j.get('output_file')); output_file=canonical_output_file(j.get('output_file'),fmt); (None if quiet else log.info('設定保存 job=%s requested_format=%s saved_format=%s requested_file=%s saved_file=%s',j.get('name'),j.get('output_format'),fmt,j.get('output_file'),output_file)); c.execute('INSERT OR REPLACE INTO jobs (id,display_order,enabled,name,rne,rne_path,output_folder,output_format,output_file,table_name,sheet_name,read_type,naming_mode,output_pattern,comment,split_mode,split_shape,row_axis_mode,row_axis_index,row_axis_name,extra_formats,index_columns,skip_if_unchanged,period_json,source,text_path,layout_id,recipe_id,variants_json,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',(jid,order,int(bool(j.get('enabled',True))),j.get('name',''),j.get('rne',''),j.get('rne_path',''),j.get('output_folder',''),fmt,output_file,job_table_name(j),j.get('sheet','Page1'),j.get('type','詳細データ'),str(j.get('naming_mode') or 'fixed'),str(j.get('output_pattern') or ''),str(j.get('comment') or ''),normalize_split_mode(j.get('split_mode')),normalize_split_shape(j.get('split_shape')),normalize_row_axis_mode(j.get('row_axis_mode')),max(1,min(200,int(j.get('row_axis_index') or 1))),str(j.get('row_axis_name') or ''),json.dumps(job_extra_formats({**j,'output_format':fmt}),ensure_ascii=False),json.dumps([str(x).strip() for x in (j.get('index_columns') or []) if str(x).strip()][:4],ensure_ascii=False),int(bool(j.get('skip_if_unchanged'))),json.dumps(_decode_period(json.dumps(j.get('period') or {},ensure_ascii=False)),ensure_ascii=False),normalize_job_source(j.get('source')),str(j.get('text_path') or ''),str(j.get('layout_id') or ''),str(j.get('recipe_id') or ''),json.dumps(navi_variants.normalize(j.get('variants')),ensure_ascii=False),now))
    c.execute('DELETE FROM schedules WHERE job_id=?',(jid,))
    for ro,q in enumerate(j.get('schedules',[])):
     c.execute('INSERT INTO schedules VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',(q.get('id') or str(uuid.uuid4()),jid,ro,int(bool(q.get('enabled',True))),q.get('name','実行ルール'),q.get('type','daily'),q.get('time','06:00'),normalize_interval_minutes(q.get('interval_minutes')),json.dumps(q.get('weekdays'),ensure_ascii=False) if 'weekdays' in q else None,json.dumps(q.get('month_days'),ensure_ascii=False) if 'month_days' in q else None,json.dumps(q.get('dates'),ensure_ascii=False) if 'dates' in q else None,now))
@@ -3875,7 +3879,57 @@ def finish_one_job(j,cfg,*,intermediate,db,target,backup,out_dir,local_export,st
          'hold_attempts':pub.get('attempts'),'hold_advice':list(pub.get('advice') or []),
          'extra_results':extra_results,'total':time.perf_counter()-job_started,'digest':digest}
 
+def variant_jobs(j,cfg,now=None):
+ """値ごとに分けて出す対象を、値ごとの「1回ぶんの対象」に展開する（条件・名前・置き場を決め打ちした写し）。
+ 名前と置き場の決まりは navi_variants.plan。日付の変数は全部の値で同じ時刻にそろえる（同じ回の4ファイルが別の日付にならない）。"""
+ now=now or datetime.now()
+ v=navi_variants.normalize(j.get('variants'))
+ try:rp=resolve_rne_path(j,cfg)
+ except Exception:rp=None
+ def render(template,value):return render_filename_template(template,job={**j,'_variant_value':value},rne_path=rp,now=now)
+ def render_folder(template,value):return render_path_template(template,job={**j,'_variant_value':value},rne_path=rp,now=now)
+ base=Path(resolve_output_filename({**j,'_variant_value':''},cfg,now=now)).stem
+ fmt=normalize_output_format(j.get('output_format'),j.get('output_file'))
+ out=[]
+ for x in navi_variants.plan(j,render,base,j.get('output_folder') or '',render_folder):
+  one={**j,'naming_mode':'fixed','output_pattern':'','output_file':canonical_output_file(x['stem'],fmt),
+       'output_folder':x['folder'],'variants':{},'_variant_value':x['value'],
+       '_cond_override':{'item':v['item'],'value':x['value']}}
+  out.append(one)
+ return out
+
 def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,backup):
+ """1つの対象を API で取る。値ごとに分けて出す対象（2.1.0）は、値の数だけ1回ぶんの実行を順に行い、結果を1つにまとめる。
+ 値ごとに控え・0件の確かめ・公開・同時に出す形式まで、ふだんの1回と同じ道を通る。1つの値が失敗しても残りの値は出す。"""
+ if not navi_variants.active(j):
+  return _process_api_job_once(j,job_index,total_jobs,cfg,user,pw,server,dde_work,backup)
+ started=time.perf_counter();line_name=os.environ.get('NAVI_WORKER_LINE') or threading.current_thread().name
+ try:parts=variant_jobs(j,cfg)
+ except Exception as e:
+  update_parallel_line(line_name,job=j.get('name',''),job_id=j.get('id',''),state='失敗',percent=100,detail=str(e))
+  return {'ok':False,'job':j.get('name',''),'elapsed':time.perf_counter()-started,'error':f'値ごとの出し先を決められません: {e}'}
+ v=navi_variants.normalize(j.get('variants'))
+ log.info('VARIANTS_START line=%s job=%s item=%s values=%s',line_name,j.get('name'),v['item'],v['values'])
+ results=[];rows=0
+ for one in parts:
+  r=_process_api_job_once(one,job_index,total_jobs,cfg,user,pw,server,dde_work,backup)
+  value=one['_variant_value']
+  results.append({'value':value,'ok':bool(r.get('ok')),'rows':int(r.get('rows') or 0),'target':str(r.get('target') or ''),
+                  'published':bool(r.get('published',r.get('ok'))),'pending':str(r.get('pending') or ''),
+                  'unchanged':bool(r.get('unchanged')),'checked':r.get('variant_checked'),'error':str(r.get('error') or ''),
+                  'form':str(r.get('variant_form') or '')})
+  rows+=int(r.get('rows') or 0)
+  log.info('VARIANT_RESULT line=%s job=%s value=%s ok=%s rows=%s target=%s error=%s',line_name,j.get('name'),value,r.get('ok'),r.get('rows'),r.get('target'),r.get('error',''))
+ total=time.perf_counter()-started;text=navi_variants.summary(results)
+ ok=all(x['ok'] for x in results)
+ update_parallel_line(line_name,job=j.get('name',''),job_id=j.get('id',''),state='完了' if ok else '一部失敗',percent=100,detail=text[:120],elapsed=round(total,1))
+ first=next((x['target'] for x in results if x['ok']),'')
+ base={'job':j.get('name',''),'elapsed':total,'rows':rows,'columns':0,'target':first,'variant_results':results,
+       'published':all(x['published'] for x in results if x['ok']),'pending':'・'.join(x['pending'] for x in results if x['pending'])}
+ if ok:return {**base,'ok':True,'result':f'{j.get("name","")}: {text} / {total:.1f}秒'}
+ return {**base,'ok':False,'error':text}
+
+def _process_api_job_once(j,job_index,total_jobs,cfg,user,pw,server,dde_work,backup):
  from navigator_api import NavigatorApi
  line_name=os.environ.get('NAVI_WORKER_LINE') or threading.current_thread().name
  job_started=time.perf_counter();api_client=None;api_csv=None;xls=None;db=None
@@ -3909,7 +3963,9 @@ def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,
   # 直列の経路では以前からやっていたが、並列ワーカーでは抜けていた。
   accdb_prewarm=prewarm_access_async('parallel_worker_accdb') if (fmt=='accdb' or 'accdb' in extras) else None
   # 集計表は見出しが段になる。直接受け取ったXLSXは段のまま公開されてしまうので、CSVを通して畳む。
-  allow_direct_xlsx=(fmt=='xlsx' and not extras and not crosstab)
+  # 値ごとに分けて出す回は、絞れたかを中身で確かめるため、必ずCSVを通す（受け取ったXLSXは読むのが重い）。
+  override=j.get('_cond_override') or None
+  allow_direct_xlsx=(fmt=='xlsx' and not extras and not crosstab and not override)
   common_intermediate='API_DIRECT_XLSX' if allow_direct_xlsx else 'CSV'
   planned=db if allow_direct_xlsx else dde_work/f'navi_{job_index}_{stamp}.csv'
   if extras:
@@ -3918,8 +3974,11 @@ def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,
   update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='開始',percent=line_percent('session',0),detail=fmt,phase='session');log.info('PARALLEL_JOB_START line=%s job=%s index=%s/%s format=%s target=%s',line_name,j['name'],job_index,total_jobs,fmt,target)
   log.info('PIPELINE job=%s engine=api parallel_line=%s common_intermediate=%s format=%s planned_intermediate=%s converted=%s target=%s',j['name'],line_name,common_intermediate,fmt,planned,db,target)
   # 分割して取るか、そのまま取るか。判断は保存済みの裏付けだけで行い、ここでは測定しない。
-  split_used=None;split_reason='';intermediate=None;api_direct_output=False;race_winner='';run_stats={}
-  try:split_used,split_reason=plan_run_split(rp,j,cfg,fmt,int(j.get('_split_budget') or 1),line_name)
+  split_used=None;split_reason='';intermediate=None;api_direct_output=False;race_winner='';run_stats={};variant_form=''
+  try:
+   # 値ごとの回は分けない（分割の各パートへ条件の差し替えを配るより、値ごとに1本で取るほうが確か）
+   if override:split_used,split_reason=None,'値ごとに分けて出す回のため分割しません'
+   else:split_used,split_reason=plan_run_split(rp,j,cfg,fmt,int(j.get('_split_budget') or 1),line_name)
   except Exception as se:
    split_used=None;split_reason=f'判断に失敗しました: {se}';log.warning('SPLIT_RUN_PLAN_FAILED line=%s job=%s error=%s',line_name,j.get('name'),se)
   if not split_used:log.info('SPLIT_RUN_SKIP line=%s job=%s rne=%s 理由=%s',line_name,j.get('name'),rp,split_reason)
@@ -3961,6 +4020,10 @@ def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,
      t=phase_log('api_open_catalog',job=j['name'],line=line_name);handle,api_elapsed=api_client.open_catalog(api_rne);phase_log('api_open_catalog',t,job=j['name'],line=line_name,handle=handle,api_elapsed=f'{api_elapsed:.2f}s',strategy='original_fullpath')
     finally:os.chdir(previous_cwd)
    if (j.get('period') or {}).get('enabled'):update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='期間指定',percent=line_percent('session',0.9),detail='相対期間を適用',phase='session');apply_dynamic_period(api_client,handle,j,datetime.now(),line=line_name)
+   if override:
+    update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='条件の差し替え',percent=line_percent('session',0.95),detail=f"{override['item']} = {override['value']}",phase='session')
+    got=api_client.apply_key_condition(handle,override['item'],override['value']);variant_form=got['form']
+    log.info('VARIANT_CONDITION line=%s job=%s item=%s value=%s form=%s tried=%s',line_name,j['name'],override['item'],override['value'],got['form'],got['tried'])
    # 前回の実績。工程ごとの見込みに使う（無ければ見当なしで、秒だけを刻む）。
    _tm=load_rne_timing(rp) or {};_lastrun=(load_job_runs().get(j['id']) or {}).get('metrics') or {}
    _expect_bytes=int(_lastrun.get('transfer_bytes') or 0) or split_expected_bytes(rp,j,cfg)
@@ -4011,6 +4074,15 @@ def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,
    if accdb_prewarm is not None:
     join_started=time.perf_counter();alive=accdb_prewarm.is_alive();accdb_prewarm.join(timeout=2.0)
     log.info('ACCDB_PREWARM_JOIN line=%s alive_before=%s alive_after=%s elapsed=%.2fs',line_name,alive,accdb_prewarm.is_alive(),time.perf_counter()-join_started)
+  variant_checked=None
+  if override:
+   # 本当にその値だけに絞れたか。出力に同じ名前の列があれば中身で確かめ、ほかの値が混じっていれば公開しない
+   chk=navi_variants.check_rows(intermediate,override['item'],override['value']) if not crosstab else {'checked':False,'rows':0,'other':[]}
+   variant_checked=bool(chk['checked'])
+   log.info('VARIANT_CHECK line=%s job=%s item=%s value=%s checked=%s rows=%s other=%s',line_name,j['name'],override['item'],override['value'],chk['checked'],chk['rows'],chk['other'])
+   if chk['other']:
+    raise ValueError(f"条件が効いていません: 「{override['item']}」を「{override['value']}」に絞ったのに、"
+                     f"{'・'.join(chk['other'])} の行が入っていました（公開していません）")
   fin=finish_one_job(j,cfg,intermediate=intermediate,db=db,target=target,backup=backup,out_dir=out_dir,
                      local_export=local_export,stamp=stamp,expected_rows=expected_rows,expected_cols=expected_cols,
                      fmt=fmt,extras=extras,api_direct_output=api_direct_output,job_started=job_started,
@@ -4024,7 +4096,7 @@ def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,
            'column_names':[],'rne_path':str(rp),'extra_formats':[],
            'split_parts':0,'split_shape':'','split_how':'','row_axis':'','axis_seconds':None,
            'split_reason':'','race_winner':'','execute_seconds':0,'save_seconds':0,
-           'total_seconds':round(total,2),'transfer_bytes':0,'merge_seconds':0,'transfer_kbs':None}
+           'total_seconds':round(total,2),'transfer_bytes':0,'merge_seconds':0,'transfer_kbs':None,'variant_checked':variant_checked}
   nr,nc=fin['rows'],fin['cols'];pub={'published':fin['published'],'pending':fin['pending'],'reason':fin.get('hold_reason') or '','waited':fin.get('hold_waited'),'attempts':fin.get('hold_attempts'),'advice':list(fin.get('hold_advice') or [])}
   extra_results=fin['extra_results'];total=fin['total']
   update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='完了',percent=100,detail=f'{nr}件/{nc}列',elapsed=round(total,1));log.info('PARALLEL_JOB_RESULT line=%s job=%s format=%s rows=%s columns=%s elapsed=%.2fs target=%s published=%s',line_name,j['name'],fmt,nr,nc,total,target,pub['published'])
@@ -4067,7 +4139,8 @@ def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,
           'split_reason':split_reason,'race_winner':race_winner,
           'execute_seconds':execute_s,'save_seconds':save_s,'total_seconds':round(total,2),
           'transfer_bytes':int(tbytes or 0),'merge_seconds':run_stats.get('merge_seconds',0),
-          'transfer_kbs':round((tbytes or 0)/1024/save_s,1) if save_s else None}
+          'transfer_kbs':round((tbytes or 0)/1024/save_s,1) if save_s else None,
+          'variant_checked':variant_checked,'variant_form':variant_form}
  except Exception as e:
   total=time.perf_counter()-job_started
   update_parallel_line(line_name,job=j.get('name',''),job_id=j.get('id',''),state='失敗',percent=100,detail=str(e),elapsed=round(total,1));log.error('PARALLEL_JOB_ERROR line=%s job=%s elapsed=%.2fs error=%s\n%s',line_name,j.get('name'),total,e,traceback.format_exc())
@@ -4142,6 +4215,10 @@ def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=No
     set_status(job_errors=[{'job':r.get('job'),'error':str(r.get('error') or '')} for r in text_failures],failed_jobs=len(text_failures))
     raise RuntimeError('手元のファイルからの作成で%d件失敗しました\n'%len(text_failures)+'\n'.join('・%s: %s'%(r.get('job'),r.get('error')) for r in text_failures))
    if cancel_requested.is_set():raise RunCancelled(f'{len(text_results)}/{total_all_jobs}件完了後に中断されました')
+  # 値ごとに分けて出す（2.1.0）は API で条件を差し替えて取る。DDE方式では差し替えられないので、黙って1本で
+  # 取らずに止める（取ると、条件が RNE のまま＝最初の値だけのファイルが、値ごとの名前で出てしまう）。
+  bad=[j['name'] for j in jobs if navi_variants.active(j)]
+  if bad:raise RuntimeError('値ごとに分けて出す対象は API 方式でだけ動きます（DDE方式では条件を差し替えられません）: '+'・'.join(bad))
   # ここから下はDDE方式（engine='dde'）専用の直列経路。API方式は上のラインで必ずreturnする。
   # engine=='api'の分岐は、DLLを直接読み込む設定に戻せるよう残してあるが通常は通らない。
   if engine=='api':

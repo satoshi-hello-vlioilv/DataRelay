@@ -82,6 +82,41 @@ def read_rne_layout(path):
  return {'side':side,'head':head,'data':data,'cond':cond,
          'crosstab':bool(head),'detail_only':detail_only}
 
+# 条件のデータ項目（WHERE の項目）の物の目印と、条件を書く位置の目印。
+# 条件の項目は「名前…（設定値）… 4294967295 → 条件の種類 → キーの並び（個数|値|値…）」と続く。
+COND_ITEM_TAG='LDDO'
+COND_MARK='4294967295'
+
+def read_conditions(path):
+ """RNEの条件欄にあるデータ項目と、いま入っているキー（例: BOX実績_設備名 = LS4）を返す。読めなければ None。
+
+ → [{'name': 項目名, 'keys': [値…], 'code': 条件の種類（RNEの中の数。API の定数とは別の数え方）, 'id': 物の番号}]。
+ 条件欄（配置表 LWT の2行目）に置いた、データ項目（LDDO）だけを見る。管理ポイントの条件（期間など）は含めない。
+ キーの並びは「個数|値|値…」（区切りの空は捨てる）。個数と合わなければ、その項目は読まない（推測で埋めない）。
+ """
+ try:lines=_lines(path)
+ except (OSError,ValueError):return None
+ if not lines or lines[0]!='NAVI>':return None
+ pos=max((i for i,x in enumerate(lines) if x=='LWT'),default=-1)
+ if pos<0:return None
+ ids=_ids(lines[pos+3]) if pos+3<len(lines) else None
+ if ids is None:return None
+ starts={}
+ for i,cls in enumerate(lines[:-2]):
+  if cls.startswith('CSymnaviObject::') and _is_number(lines[i+1]):starts.setdefault(int(lines[i+1]),i)
+ out=[]
+ for k in ids:
+  i=starts.get(k)
+  if i is None or lines[i+2]!=COND_ITEM_TAG:continue
+  name=next((x for x in lines[i+3:i+10] if x and not _is_number(x)),'')
+  end=next((j for j in range(i+3,min(len(lines),i+80)) if lines[j].startswith('CSymnaviObject::') or lines[j] in TABLE_TAGS),min(len(lines),i+80))
+  mark=next((j for j in range(i+3,end) if lines[j]==COND_MARK),None)
+  if mark is None or mark+2>=end or not _is_number(lines[mark+1]):continue
+  parts=[x for x in lines[mark+2].split('|') if x.strip()!='']
+  if not parts or not parts[0].isdigit() or len(parts)-1!=int(parts[0]):continue
+  out.append({'name':name,'keys':[x.strip() for x in parts[1:]],'code':int(lines[mark+1]),'id':k})
+ return out
+
 def describe(layout):
  """ログと画面に出す一言。"""
  if not layout:return 'RNEの形を読めませんでした'

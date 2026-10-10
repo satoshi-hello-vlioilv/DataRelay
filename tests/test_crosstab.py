@@ -132,6 +132,31 @@ class CrosstabLayoutTest(unittest.TestCase):
    self.assertIsNone(navi_crosstab.read_rne_layout(p))
    self.assertIsNone(navi_crosstab.read_rne_layout(Path(d)/'missing.RNE'))
 
+class ConditionReadTest(unittest.TestCase):
+ """RNEの条件欄のデータ項目と、いま入っているキー（2.1.0: 条件の値ごとに分けて出すときの手がかり）。"""
+ @classmethod
+ def setUpClass(cls):
+  global navi_crosstab
+  import navi_crosstab
+ def test_single_key(self):
+  got=navi_crosstab.read_conditions(ROOT/'samples'/'rne'/'LOTACH.RNE')
+  self.assertEqual([(x['name'],x['keys'],x['code']) for x in got],[('BOX実績_設備名',['LS4'],4)],
+                   'BOX実績_設備名 に LS4 が入っている（表示列の BOX実績_設備名 とは別の、条件欄の項目）')
+
+ def test_several_keys_and_empty_conditions(self):
+  got=navi_crosstab.read_conditions(ROOT/'samples'/'defaults'/'rne'/'SIKALOTNOW.RNE')
+  self.assertEqual([(x['name'],x['keys'],x['code']) for x in got],
+                   [('BOX設計_設備名',['NS1','LS4','LS3','TPA','VC','KEN'],4),('残仕掛設備ｺｰｽ',[],0),('BOX実績_設備名',[],0)],
+                   'キーが複数でも並びのまま。条件の無い項目は空の並び（コード 0）')
+
+ def test_no_condition_items_and_unreadable(self):
+  self.assertEqual(navi_crosstab.read_conditions(SAMPLE),[],'条件欄にデータ項目が無ければ空')
+  with tempfile.TemporaryDirectory() as d:
+   bad=Path(d)/'x.RNE';bad.write_bytes(b'not rne')
+   self.assertIsNone(navi_crosstab.read_conditions(bad))
+   self.assertIsNone(navi_crosstab.read_conditions(Path(d)/'none.RNE'))
+
+
 class CrosstabReadTest(unittest.TestCase):
  """中間CSVを、アプリの読み取り（read_extract）でリスト形式にできるか。"""
  @classmethod

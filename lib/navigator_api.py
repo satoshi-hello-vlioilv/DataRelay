@@ -1233,6 +1233,46 @@ class NavigatorApi:
         raise NavigatorApiError('行分割:条件の設定',NAVI_ERROR,
                                 f'列「{name}」に条件を設定できませんでした。試した形: '+' / '.join(tried))
 
+    def key_condition_forms(self,value):
+        """条件のキーを1つの値にする渡し方の候補（確からしい順）。
+
+        RNEでは「キーで絞る」条件（例: BOX実績_設備名 に LS4）は、値の並びを持つ一致の条件として書かれている。
+        APIでこれに当たるのは NAVI_MATCH（一致）＋ key。絞り込み方は完全一致（NAVI_COMPLETE）。
+        引数の細部は原本の宣言から読み切れないので、通る形を実測で見つける（行分割の row_condition_forms と同じ考え方）。
+        """
+        v=str(value)
+        return [
+            ('一致・完全一致',dict(condition=NAVI_MATCH,key=v,search=NAVI_COMPLETE,nonmatch=0)),
+            ('一致・完全一致(該当なしのカテゴリも読む)',dict(condition=NAVI_MATCH,key=v,search=NAVI_COMPLETE,nonmatch=NAVI_NONMATCH)),
+        ]
+
+    def apply_key_condition(self,h_catalog,item,value):
+        """条件欄のデータ項目 item のキーを value だけにする（値ごとに分けて出すとき。実行前に呼ぶ）。RNEファイルは変えない。
+
+        項目は条件欄（NAVI_COND）からだけ引く。データ欄の項目に条件を付けても rc=OK のまま絞られない
+        （行分割で実測 2026-08-10）ので、条件欄に無ければ止める。どの形でも通らなければ例外。
+        通った形は戻り値の form に入れて持ち帰る（ログに残し、どの渡し方が正解だったかを後から確かめる）。
+        """
+        if not self.supports_row_split():
+            raise RuntimeError('このDLLは NaviChangeConditionDI を公開していません')
+        try:
+            h=self.get_data_item(h_catalog,str(item),locate=NAVI_COND)
+        except Exception as e:
+            raise NavigatorApiError('値ごとの出力:条件の項目',NAVI_ERROR,
+                                    f'条件欄に「{item}」がありません（{e}）。RNEの条件に置いた項目名を指定してください') from e
+        if not h:
+            raise NavigatorApiError('値ごとの出力:条件の項目',NAVI_ERROR,
+                                    f'条件欄に「{item}」がありません（ハンドルが0）。RNEの条件に置いた項目名を指定してください')
+        tried=[]
+        for label,kw in self.key_condition_forms(value):
+            try:
+                self.change_condition_di(h,**kw)
+                return {'item':str(item),'value':str(value),'handle':h,'form':label,'tried':tried}
+            except Exception as e:
+                tried.append(f'{label}: {e}')
+        raise NavigatorApiError('値ごとの出力:条件の設定',NAVI_ERROR,
+                                f'「{item}」を「{value}」に絞れませんでした。試した形: '+' / '.join(tried))
+
     def apply_column_split(self,h_catalog,drop_names):
         """担当外の列をカタログから外す。実行前に呼ぶこと。
 
