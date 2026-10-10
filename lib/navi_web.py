@@ -1447,8 +1447,8 @@ def _migrate_to_local(d,mode):
  pending={'mode':mode,'id':d['manifest'].get('id')} if (d and mode!='keep') else None
  navi_defaults.write_mark(dest,origin='shared' if mode in ('keep','add') else 'defaults',movedFrom=str(DATA_ROOT),
                           pending=pending,ack=(d or {}).get('manifest',{}).get('id',''))
- # 作業用の写し（cache）は共有の正本の写し。残すと、開き直したとき手元の正本へ書き戻されてしまう
- if SETTINGS_DB.is_file():os.replace(SETTINGS_DB,SETTINGS_DB.with_suffix('.shared.bak'))
+ # 作業用の写し（cache）は共有の正本の写しのまま残す。開き直すと正本が手元へ変わるので、起動時に app が退ける
+ # （app._settings_drop_foreign_cache。ここで名前を替えると、Windows では開いているファイルとして失敗する）
  log.info('DEFAULTS_MIGRATE mode=%s from=%s to=%s rne=%s',mode,DATA_ROOT,dest,len(copied))
  return {'ok':True,'restart':True,'copied':copied,'to':str(dest)}
 

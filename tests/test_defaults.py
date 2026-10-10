@@ -159,12 +159,45 @@ D.write(share,pay,d['settings'],{p.name:str(p) for p in (Path(sys.argv[1])/'samp
 o=t.get('/api/defaults/offer').get_json();out['migrate_offer']=(o['show'],o['kind'])
 r=t.post('/api/defaults/apply',json={'mode':'add'}).get_json()
 m=D.read_mark(copy/'data')
+if not r.get('ok'):raise SystemExit('手元へ移す支度が失敗しました: %r'%r)
 out['migrate']={'ok':r['ok'],'restart':r['restart'],'db':(copy/'data'/'Config'/'app_settings.sqlite3').is_file(),
                 'rne':sorted(r['copied']),'pending':(m.get('pending') or {}).get('mode'),'origin':m['origin'],
-                'cache_moved':not app.SETTINGS_DB.exists()}
+                'cache_kept':app.SETTINGS_DB.exists()}   # 動いている最中は名前を替えない（開き直したとき app が退ける）
 out['migrate_again']=t.post('/api/defaults/apply',json={'mode':'add'}).get_json()['ok']
 print(json.dumps(out,ensure_ascii=False))
 """
+
+
+# 同じPC（同じ cache）で設定のマスターが変わる: 1回目は A、2回目は空の B、3回目は A に戻す
+BOOT=r"""
+import json,sys
+sys.path[:0]=[sys.argv[1],sys.argv[1]+'/lib']
+import app
+c=app.load()
+if sys.argv[2]=='add':
+ c['jobs'].append({'id':'a1','name':'Aの対象','source':'text','text_path':'x.txt','schedules':[]});app.save(c,quiet=True)
+ app.flush_local_to_master('test')
+print(json.dumps({'jobs':[j['name'] for j in app.load()['jobs']],'aside':app.SETTINGS_DB.with_name('app_settings.other.bak.sqlite3').is_file()},ensure_ascii=False))
+"""
+
+
+class ForeignCacheTest(unittest.TestCase):
+ """データの基準が変わったら、前のマスターの作業用の写しを使わない（2.0.0 で共有の設定から手元へ移すとき）。
+ 起動時、まだ何も開いていないうちに退ける。動いている最中に名前を替えると Windows では失敗するため。"""
+ def test_cache_follows_its_master(self):
+  with tempfile.TemporaryDirectory() as d:
+   d=Path(d)
+   def boot(master,what=''):
+    env=dict(os.environ,NAVI_LOCAL_ROOT=str(d/'local'),NAVI_DATA_ROOT=str(d/master),NAVI_CONFIG_DIR=str(d/master/'Config'),
+             NAVI_SECRET_FILE=str(d/'local'/'s.json'),DATARELAY_NO_BOOT='1',PYTHONIOENCODING='utf-8')
+    r=subprocess.run([sys.executable,'-c',BOOT,str(ROOT),what],env=env,capture_output=True,text=True,encoding='utf-8',timeout=120)
+    self.assertEqual(r.returncode,0,r.stderr[-3000:])
+    return json.loads(r.stdout.strip().splitlines()[-1])
+   self.assertEqual(boot('A','add')['jobs'],['Aの対象'])
+   b=boot('B')
+   self.assertEqual(b['jobs'],[],'空のマスター B に、A の写しの対象が混ざらない')
+   self.assertTrue(b['aside'],'前の写しは消さずに退ける')
+   self.assertEqual(boot('A')['jobs'],['Aの対象'],'A に戻せば A のマスターから取り直す')
 
 
 class AppFlowTest(unittest.TestCase):
@@ -194,7 +227,7 @@ class AppFlowTest(unittest.TestCase):
   self.assertTrue(v['delete']);self.assertFalse(v['state'])
   self.assertEqual(v['migrate_offer'],[True,'migrate'])
   self.assertEqual(v['migrate'],{'ok':True,'restart':True,'db':True,'rne':['rne/SIKAHIKINOW.RNE','rne/SIKALOTDEF.RNE','rne/SIKALOTNOW.RNE','rne/SIKAODRNOW.RNE'],
-                                 'pending':'add','origin':'shared','cache_moved':True},
+                                 'pending':'add','origin':'shared','cache_kept':True},
                    '手元へ移す支度: 今の設定と相対の RNE を写し、差分追加は開き直したあとに当てる')
   self.assertFalse(v['migrate_again'],'二度は移さない')
 

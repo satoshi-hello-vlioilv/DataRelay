@@ -242,6 +242,21 @@ def settings_connection():
  c.execute('PRAGMA foreign_keys=ON')
  return c
 
+# 作業用の写し（cache）が、どのマスターの写しか。データの基準が変わる（2.0.0 で共有の設定から写しの data\ へ移す・
+# local.json で置き場を変える）と、前のマスターの写しが残る。そのまま使うと、版の比べ方しだいで前のマスターの中身が
+# 新しいマスターへ書き戻される。だから起動時、まだ何も開いていないうちに退ける（動いている最中に名前を替えると、
+# Windows では開いているファイルの名前を替えられず失敗する）。
+SETTINGS_OWNER=SETTINGS_DB.with_name(SETTINGS_DB.stem+'.master.txt')
+def _settings_owner():
+ return os.path.normcase(os.path.abspath(str(MASTER_SETTINGS_DB)))
+def _settings_drop_foreign_cache():
+ try:had=SETTINGS_OWNER.read_text(encoding='utf-8').strip()
+ except OSError:return        # 記録の無い写し（2.0.0 より前）は、これまでどおり版で比べる
+ if had==_settings_owner() or not SETTINGS_DB.is_file():return
+ aside=SETTINGS_DB.with_name(SETTINGS_DB.stem+'.other.bak'+SETTINGS_DB.suffix)
+ try:os.replace(SETTINGS_DB,aside);log.info('SETTINGS_CACHE_FOREIGN moved_to=%s was=%s now=%s（別のマスターの写しなので取り直します）',aside,had,_settings_owner())
+ except OSError:log.exception('SETTINGS_CACHE_FOREIGN_MOVE_FAILED')
+
 def init_settings_db():
  # 起動時に一度だけ: BOXマスター→ローカルへ取り込み、スキーマ整備はローカルに対して行う（BOXのfsync遅延を回避）。
  global _settings_initialized
@@ -263,6 +278,7 @@ def init_settings_db():
   # BOXマスター → ローカル作業DB。開けるかどうかを両側で確かめてから、版で新旧を決める。
   global _settings_pulled_revision
   _t=time.perf_counter()
+  _settings_drop_foreign_cache()
   try:
    local_ok=sqlite_readable(SETTINGS_DB); master_ok=sqlite_readable(MASTER_SETTINGS_DB)
    if MASTER_SETTINGS_DB.is_file() and not master_ok:
@@ -289,6 +305,8 @@ def init_settings_db():
     log.info('SETTINGS_PULL skip(local up-to-date) elapsed=%.2fs',time.perf_counter()-_t)
    _settings_pulled_revision=settings_revision(SETTINGS_DB) if SETTINGS_DB.is_file() else 0
   except Exception:log.exception('SETTINGS_PULL_FAILED')
+  try:SETTINGS_OWNER.write_text(_settings_owner(),encoding='utf-8')
+  except OSError:log.exception('SETTINGS_OWNER_WRITE_FAILED')
   try:
    _settings_schema()
   except Exception:
