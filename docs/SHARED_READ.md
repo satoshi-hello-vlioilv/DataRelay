@@ -1,10 +1,11 @@
 # 共有の写し方の約束（第1版）
 
-DataRelay が共有の公開先へ出すファイルを、**WaveLog・Quality-Analysis・DataRelay のビュワー**が読むときの約束。
+DataRelay が共有の公開先へ出すファイルを、**WaveLog・LotScope・DataRelay のビュワー**が読むときの約束。
 同じ置き場で中を書き換える SQLite（WaveLog のほかの端末の測定データなど）を読むときも、読み手は同じ作法で読む。
 
-**3つのリポジトリに同じ文を置く**（DataRelay `docs/SHARED_READ.md`・Quality-Analysis `program/docs/SHARED_READ.md`・
-WaveLog `docs/SHARED_READ.md`）。変えるときは3つを同時に変え、題の版を上げる。基準にしたのは Quality-Analysis の写し方。
+**3つのリポジトリに同じ文を置く**（DataRelay `docs/SHARED_READ.md`・LotScope `program/docs/SHARED_READ.md`・
+WaveLog `docs/SHARED_READ.md`）。変えるときは3つを同時に変える。決まり（R・W・場面）を変えたら題の版を上げる（名前の直しのように、決まりが変わらないときは上げない）。
+基準にしたのは LotScope（旧 Quality-Analysis）の写し方。
 
 ## なぜ要るか
 
@@ -25,7 +26,7 @@ WaveLog `docs/SHARED_READ.md`）。変えるときは3つを同時に変え、�
 | W2 | 目印を出してから置き換えるまで、少なくとも **3秒**あける（目印を見る前に写し始めた読み手が写し終える間）。新しい版を目印へ写すのにそれ以上かかっていれば、待ち足さない |
 | W3 | 中は書き換えず、丸ごと置き換える。置き換えられなければ20秒まで粘り、だめなら `<名前>.pending_<日時>` に残して次の実行で入れる |
 
-## 読み手（WaveLog・Quality-Analysis・DataRelay のビュワー）
+## 読み手（WaveLog・LotScope・DataRelay のビュワー）
 
 | | 守ること |
 | --- | --- |
@@ -44,7 +45,7 @@ WaveLog `docs/SHARED_READ.md`）。変えるときは3つを同時に変え、�
 | アプリ | 書き手 | 読み手 |
 | --- | --- | --- |
 | DataRelay | `lib/navi_publish.py` の `publish()` | `lib/navi_localcopy.py` の `read_copy()`（ビュワー・出力の列の読み取り） |
-| Quality-Analysis | — | `program/app/services/db_mirror.py`・`desktop/src/mirror.rs`（同じ台帳） |
+| LotScope | — | `program/app/services/db_mirror.py`・`desktop/src/mirror.rs`（同じ台帳） |
 | WaveLog | — | `backend/db_mirror.py`（読み取り専用のデータソース・ほかの端末の測定データ） |
 
 ## 物差し（評価関数）
@@ -63,5 +64,5 @@ WaveLog `docs/SHARED_READ.md`）。変えるときは3つを同時に変え、�
 | S8 | 置き換えを許す開き方で開く | R4 |
 | S9 | 同じ元を同時に2本開かない | R9 |
 
-各リポジトリの網が、自分の読み手についてこの場面を確かめる（Quality-Analysis `program/tests/test_mirror_writer.py`・
+各リポジトリの網が、自分の読み手についてこの場面を確かめる（LotScope `program/tests/test_mirror_writer.py`・
 WaveLog `tests/test_dbmirror.py`・DataRelay `tests/test_shared_read.py`）。
