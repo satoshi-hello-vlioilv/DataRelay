@@ -1840,7 +1840,13 @@ def data_viewer(job_id):
   if limited:rows=rows[:keep]
   return jsonify(ok=True,name=job['name'],value=one['value'],format=fmt,path=str(path),modified=datetime.fromtimestamp(path.stat().st_mtime).isoformat(timespec='seconds'),headers=headers,rows=rows,total_rows=total,preview_limit=len(rows),truncated=total is not None and total>len(rows),
                  total_columns=total_cols,row_budget=keep,row_budget_limited=limited)
- except Exception as e:log.exception('DATA_VIEWER_FAILED job=%s path=%s',job.get('name'),path);return jsonify(ok=False,error=str(e)),200
+ except Exception as e:
+  import navi_localcopy
+  # まだ手元へ写せていない（公開の途中など）は、ふつうに起きることなので短く残して理由を返す（公開先は直接開かない）。
+  if isinstance(e,navi_localcopy.NotCopiedYet):
+   log.info('DATA_VIEWER_NOT_COPIED job=%s path=%s reason=%s',job.get('name'),path,e)
+   return jsonify(ok=False,error=str(e),kind='copying'),200
+  log.exception('DATA_VIEWER_FAILED job=%s path=%s',job.get('name'),path);return jsonify(ok=False,error=str(e)),200
 
 @app.post('/api/validate')
 def validate():
