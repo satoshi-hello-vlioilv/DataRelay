@@ -630,8 +630,7 @@ async function inspectNow(j){
 }
 function showJobLog(j){
  document.querySelector('[data-p="logs"]')?.click();
- setTimeout(()=>{let q=$('#log-filter-text');if(q){q.value=j.name;applyLogFilter()}
-  toast(`ログを「${j.name}」で絞り込みました`)},120);
+ showJobLogRun(j.name).then(()=>toast(`「${j.name}」が入った最新の実行を開き、名前で絞り込みました`));
 }
 async function moveJob(j,dir){
  let i=cfg.jobs.findIndex(x=>x.id===j.id),to=i+dir;
@@ -984,6 +983,8 @@ function mpWord(x){
    画面に2回出て、しかも役割の説明は片方にしか付いていない。1つの設定は1か所にまとめ、
    入力欄そのものに役割・実体・状態を添える。 */
 /* ==== 共通設定（2.1.2 で作り直し。案 H: tests/ui-proposals/2026-10-settings） ==============
+   2.1.3: 横幅の使い方を案 J に（tests/ui-proposals/2026-10-settings-width）。項目は表の行「項目｜設定｜説明と推奨」、
+   区分の見出しの下に帯（推奨と違う所・直すところ）。
    残す設定を1つの一覧（SETTING_FIELDS）にまとめ、欄の作成・値の反映・推奨と違うかの判定・まとめと左の欄の札を、
    すべてここから作る。推奨（既定値）の出どころはサーバーの SETTING_DEFAULTS（/api/config の setting_defaults）。
    設定を足すときは、サーバーの SETTING_DEFAULTS とこの一覧に1行ずつ足す。 */
@@ -1026,10 +1027,10 @@ function partHtml(p){
 }
 function fieldHtml(f,i){
  let first=f.parts[0],rest=f.parts.slice(1);
- return `<div class="sf" data-f="${i}"><div class="sf-l"><b>${E(f.label)}</b><i class="sf-rec"></i><small>${E(f.hint||'')}</small></div>`
+ return `<div class="sf" data-f="${i}"><div class="sf-l"><b>${E(f.label)}</b></div>`
   +`<div class="sf-c"><div class="sf-p" data-k="${first.key}">${partHtml(first)}</div>`
-  +(rest.length?`<div class="sf-row">${rest.map(p=>`<div class="sf-p" data-k="${p.key}">${partHtml(p)}</div>`).join('')}</div>`:'')
-  +`<button type="button" class="textbtn sf-reset" hidden></button></div></div>`;
+  +(rest.length?`<div class="sf-row">${rest.map(p=>`<div class="sf-p" data-k="${p.key}">${partHtml(p)}</div>`).join('')}</div>`:'')+`</div>`
+  +`<div class="sf-d"><i class="sf-rec"></i><small>${E(f.hint||'')}</small><button type="button" class="textbtn sf-reset" hidden></button></div></div>`;
 }
 function paintField(row){
  let f=SETTING_FIELDS[Number(row.dataset.f)],st=cfg.settings,dev=fieldDev(f);
@@ -1082,12 +1083,19 @@ function settingsStatus(){
  return st;
 }
 const SS_ORDER=[['conn','接続'],['place','場所'],['run','動かし方'],['safe','守り']];
+/* 区分の見出しの下の帯。直すところ・推奨と違う所があるかを、区分を開いた最初に言う */
+function settingsBanner(k,x){
+ if(x.tone==='n')return ['n','確認しています',''];
+ if(k==='run'||k==='safe')return (x.dev||[]).length?['warn',`推奨と違う所が ${x.dev.length} つあります`,`${x.dev.map(f=>f.label).join('・')}（行の右の「推奨に戻す」で戻せます）`]:['ok','推奨と違う所はありません','推奨と違う値にすると、その行に黄色の印と「推奨に戻す」が出ます'];
+ return x.tone==='ng'?['ng','直すところがあります',x.text]:['ok','直すところはありません',x.text];
+}
 function paintSettingsStatus(){
  if(!cfg?.settings||!$('#ss-cards'))return;
  let st=settingsStatus(),ng=SS_ORDER.filter(([k])=>st[k].tone==='ng'),dev=SS_ORDER.reduce((a,[k])=>a+(st[k].dev||[]).length,0);
  $$('[data-st]').forEach(el=>{let k=el.dataset.st,x=k==='summary'?(ng.length?{tone:'ng',chip:`要対応 ${ng.length}`}:dev?{tone:'warn',chip:`推奨と違う ${dev}`}:null):st[k];
   el.className='sn-st'+(x?' is-'+x.tone:'');el.textContent=x?x.chip:''});
  $$('[data-st-pill]').forEach(el=>{let x=st[el.dataset.stPill];if(!x)return;el.className='pill sn-pill is-'+x.tone;el.textContent=x.chip});
+ $$('[data-st-banner]').forEach(el=>{let x=st[el.dataset.stBanner];if(!x)return;let [tone,b,t]=settingsBanner(el.dataset.stBanner,x);el.className='sf-banner is-'+tone;el.innerHTML=`<b>${E(b)}</b>${t?`<span>${E(t)}</span>`:''}`});
  $('#ss-lead').textContent=ng.length?`直すところがあります: ${ng.map(x=>x[1]).join('・')}`:dev?`直すところはありません · 推奨と違う項目が ${dev} つあります`:'直すところはありません · すべて推奨どおりです';
  $('#ss-cards').innerHTML=SS_ORDER.map(([k,t])=>{let x=st[k];
   return `<button type="button" class="ss-card is-${x.tone}" data-go="${k}"><span class="sn-st is-${x.tone}">${E(x.chip)}</span><b>${t}</b><small>${E(x.text)}</small>`
@@ -1169,7 +1177,7 @@ renderSettingFields();Object.keys(paths).forEach(k=>enhancePathInput($('#'+k),pa
    let v=$('#api-readiness');if(v)v.className='api-readiness is-stale';};}let dllPick=$('#api-dll-pick');if(dllPick)dllPick.onclick=async()=>{let q=await browse('file',dllInput.value,paths.navigator_api_dll[2]);if(q){dllInput.value=q;cfg.navigator_api_dll=q;dirty();await testNavigatorApi()}};let dllCheck=$('#api-dll-check');if(dllCheck)dllCheck.onclick=()=>testNavigatorApi();if(!Array.isArray(cfg.navigator_api_search_roots))cfg.navigator_api_search_roots=DLL_DEFAULT_ROOTS.slice();renderDllRoots();loadDllRequirement();fillSuggestions();loadColumns();render();loadMachinePaths();loadFreshness();saveState('設定を読み込みました／変更はすべて自動で保存されます','');$$('.pathcheck').forEach(b=>b.onclick=()=>checkConfiguredPath(b.dataset.k))}
 ['search','filter-enabled','filter-schedule','sort'].forEach(k=>$('#'+k).addEventListener(k==='search'?'input':'change',render));$$('.sortable').forEach(h=>h.onclick=()=>{$('#sort').value=h.dataset.sort;sortDir*=-1;render()});$('#add').onclick=()=>openEditor(null);$('#select-visible').onclick=()=>{setAllSelected(true)};$('#clear-selection').onclick=()=>{setAllSelected(false)};if($('#export-selected'))$('#export-selected').onclick=()=>exportJobs($$('#jobs-body tr.selected').map(tr=>tr.dataset.id));function resetProgressView(){let q=$('#queue-summary');if(q){q.hidden=true;q.innerHTML=''}let pr=$('#p-results');if(pr){pr.hidden=true;pr.innerHTML=''}let b=$('#p-parallel-lines');if(b){b.hidden=true;b.innerHTML=''}document.querySelector('.current-box')?.classList.remove('parallel-hidden');$('#p-steps')?.classList.remove('parallel-hidden');$('#p-count').textContent='全体 0 / 0';$('#p-percent').textContent='0%';$('#p-bar').style.width='0%';$('#p-job').textContent='準備中';$('#p-output').textContent='';}async function runJobs(ids){resetProgressView();showWaiting('処理を開始しています','APIセッションと実行対象を準備しています...','engine');let r=await fetch('/api/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_ids:ids,parallel_lines:Math.max(1,Math.min(24,Number(cfg?.settings?.api_parallel_lines)||6))})}),d=await r.json();hideWaiting();if(r.ok){toast(`実行キュー ${d.position}番へ追加しました`);await loadCommandQueue()}else toast(d.error)}$('#run-all').onclick=()=>runJobs(null);$('#run-selected').onclick=()=>{let ids=$$('#jobs-body tr.selected').map(tr=>tr.dataset.id);if(ids.length)runJobs(ids)};/* 保存ボタンの代わりに、値が変わったところで保存する。数値欄は打っている途中に
    何度も飛ばさないよう、まとめて少し待ってから送る（scheduleSave）。 */
-$('#validate').onclick=async()=>{showWaiting('実行前診断中','実際の設定値と配置を統合して確認しています...','engine');try{let r=await fetch('/api/validate',{method:'POST'}),d=await r.json();if(!r.ok)throw Error(d.error||'診断に失敗しました');renderDiagnostics(d);let dlg=$('#diagnostic-dialog');if(dlg&&!dlg.open)dlg.showModal()}catch(e){toast(e.message)}finally{hideWaiting()}};function renderDiagnostics(d){$('#check-scope').textContent=d.search_scope||'';let state=$('#diagnostic-state');state.textContent=d.summary||'';state.className='diag-state '+(d.ok?'is-ok':'is-ng');let c=d.counts||{};$('#diagnostic-counts').innerHTML=`<span class="dc-ok">正常 ${c.ok||0}</span><span class="dc-warn">注意 ${c.warning||0}</span><span class="dc-ng">要修正 ${c.error||0}</span>`;let groups={};(d.checks||[]).forEach((x,i)=>(groups[x.group]||(groups[x.group]=[])).push({...x,_i:i}));$('#checks').innerHTML=Object.entries(groups).map(([g,items])=>`<section class="diag-group"><h3>${E(g)}<small>${items.length}項目</small></h3>${items.map(x=>`<div class="diag-row ${E(x.level)}"><i>${x.level==='ok'?'OK':x.level==='warning'?'注意':'要修正'}</i><div><b>${E(x.label)}</b><span>${E(x.detail)}</span></div>${x.candidates?.length?`<button class="fix secondary" data-i="${x._i}">候補 ${x.candidates.length}件</button>`:''}${x.item==='login'&&x.level!=='ok'?'<button class="login-go secondary" type="button">接続情報を開く</button>':''}</div>`).join('')}</section>`).join('');$$('#checks .fix').forEach(b=>b.onclick=()=>showPathResult(d.checks[Number(b.dataset.i)]));$$('#checks .login-go').forEach(b=>b.onclick=()=>{$('#diagnostic-dialog')?.close();openLoginDialog(false)})}if($('#diagnostic-close'))$('#diagnostic-close').onclick=()=>$('#diagnostic-dialog').close();if($('#diagnostic-close-foot'))$('#diagnostic-close-foot').onclick=()=>$('#diagnostic-dialog').close();let commandQueueOpen=false;async function loadCommandQueue(){try{let d=await fetch('/api/execution-queue',{cache:'no-store'}).then(r=>r.json()),list=$('#cq-list'),summary=$('#cq-summary');applyRowQueueProgress(d);if(!list||!summary)return;
+$('#validate').onclick=async()=>{showWaiting('実行前診断中','実際の設定値と配置を統合して確認しています...','engine');try{let r=await fetch('/api/validate',{method:'POST'}),d=await r.json();if(!r.ok)throw Error(d.error||'診断に失敗しました');renderDiagnostics(d);let dlg=$('#diagnostic-dialog');if(dlg&&!dlg.open)dlg.showModal()}catch(e){toast(e.message)}finally{hideWaiting()}};function renderDiagnostics(d){paintDiagChip(d);$('#check-scope').textContent=d.search_scope||'';let state=$('#diagnostic-state');state.textContent=d.summary||'';state.className='diag-state '+(d.ok?'is-ok':'is-ng');let c=d.counts||{};$('#diagnostic-counts').innerHTML=`<span class="dc-ok">正常 ${c.ok||0}</span><span class="dc-warn">注意 ${c.warning||0}</span><span class="dc-ng">要修正 ${c.error||0}</span>`;let groups={};(d.checks||[]).forEach((x,i)=>(groups[x.group]||(groups[x.group]=[])).push({...x,_i:i}));$('#checks').innerHTML=Object.entries(groups).map(([g,items])=>`<section class="diag-group"><h3>${E(g)}<small>${items.length}項目</small></h3>${items.map(x=>`<div class="diag-row ${E(x.level)}"><i>${x.level==='ok'?'OK':x.level==='warning'?'注意':'要修正'}</i><div><b>${E(x.label)}</b><span>${E(x.detail)}</span></div>${x.candidates?.length?`<button class="fix secondary" data-i="${x._i}">候補 ${x.candidates.length}件</button>`:''}${x.item==='login'&&x.level!=='ok'?'<button class="login-go secondary" type="button">接続情報を開く</button>':''}</div>`).join('')}</section>`).join('');$$('#checks .fix').forEach(b=>b.onclick=()=>showPathResult(d.checks[Number(b.dataset.i)]));$$('#checks .login-go').forEach(b=>b.onclick=()=>{$('#diagnostic-dialog')?.close();openLoginDialog(false)})}if($('#diagnostic-close'))$('#diagnostic-close').onclick=()=>$('#diagnostic-dialog').close();if($('#diagnostic-close-foot'))$('#diagnostic-close-foot').onclick=()=>$('#diagnostic-dialog').close();let commandQueueOpen=false;async function loadCommandQueue(){try{let d=await fetch('/api/execution-queue',{cache:'no-store'}).then(r=>r.json()),list=$('#cq-list'),summary=$('#cq-summary');applyRowQueueProgress(d);if(!list||!summary)return;
  let st=latestStatus||{},running=!!st.running;
  // 実行中バッチの対象(job)単位の実状態。バッジ件数を実進捗に連動させる。
  let jobDone=running?(st.queue_completed_ids||[]).length:0,jobFail=running?(st.queue_failed_ids||[]).length:0;
@@ -1202,7 +1210,7 @@ $('#validate').onclick=async()=>{showWaiting('実行前診断中','実際の設�
   `<span class="cq-badge cq-manual">即実行 ${manualJobs}件</span>`;}
  list.innerHTML=d.items.length?d.items.map(x=>{
   let stateInfo=x.state==='running'?(running?`処理中 ${jobRun} / 完了 ${jobDone}${jobFail?' / 失敗 '+jobFail:''} / 待機 ${batchWait}`:'処理中'):`${x.position}番目に実行予定`;
-  return `<div class="cq-row ${x.state}"><span class="cq-pos">${x.state==='running'?'実行中':x.position+'番'}</span><div class="cq-main"><b>${E((x.job_names||[]).join(' / '))}</b><small>${x.state==='running'?E(stateInfo):('登録 '+E(x.enqueued_at||'')+' / '+(x.count||0)+'対象')}</small></div><span class="cq-mode">${x.parallel_lines>1?x.parallel_lines+'ライン':'1ライン'}</span><div class="cq-actions">${x.state==='waiting'?`<button class="secondary cq-up" data-id="${x.id}">上へ</button><button class="secondary cq-down" data-id="${x.id}">下へ</button><button class="danger cq-delete" data-id="${x.id}">解除</button>`:'<span>処理中は変更不可</span>'}</div></div>`}).join(''):'<div class="cq-empty">実行待ちのキューはありません</div>';list.hidden=!commandQueueOpen;$$('.cq-up,.cq-down').forEach(b=>b.onclick=async()=>{await fetch(`/api/execution-queue/${b.dataset.id}/move`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({direction:b.classList.contains('cq-up')?'up':'down'})});loadCommandQueue()});$$('.cq-delete').forEach(b=>b.onclick=async()=>{let r=await fetch(`/api/execution-queue/${b.dataset.id}`,{method:'DELETE'});if(r.ok)toast('実行キューから解除しました');loadCommandQueue()})}catch{}}{const cqToggle=$('#cq-toggle');if(cqToggle)cqToggle.onclick=()=>{commandQueueOpen=!commandQueueOpen;cqToggle.textContent=commandQueueOpen?'閉じる':'一覧';loadCommandQueue()};}function logLevel(line){return line.includes('[ERROR]')?'error':line.includes('[WARNING]')?'warning':'info'}function buildLogTree(text){let lines=(text||'').split(/\r?\n/).filter(Boolean),groups=[],current=null,job=null;for(let line of lines){if(line.includes('処理開始 trigger=')){current={title:line.slice(0,19)+'  実行指令',lines:[],jobs:[]};groups.push(current);job=null}else if(line.includes('設定保存 job=')){current={title:line.slice(0,19)+'  設定保存',lines:[line],jobs:[]};groups.push(current);job=null;continue}if(!current){current={title:'その他のログ',lines:[],jobs:[]};groups.push(current)}let m=line.match(/(?:PIPELINE|JOB_RESULT) job=([^ ]+)/);if(m){job=current.jobs.find(x=>x.name===m[1])||{name:m[1],lines:[]};if(!current.jobs.includes(job))current.jobs.push(job)}if(job)job.lines.push(line);else current.lines.push(line);if(line.includes('正常終了')||line.includes('異常終了'))job=null}return groups}function logLines(lines){return `<div class="log-lines">${lines.map(x=>`<div class="log-line ${logLevel(x)}">${E(x)}</div>`).join('')}</div>`}function renderLogTree(text){let groups=buildLogTree(text);renderedLogGroups=groups.slice().reverse();$('#log').innerHTML=renderedLogGroups.length?renderedLogGroups.map((g,gi)=>`<details class="log-action" ${gi===0?'open':''} data-gi="${gi}"><summary><span><b>実行指令 ${renderedLogGroups.length-gi}</b> ${E(g.title)}</span><small>${g.jobs.length}ファイル</small><span class="log-summary-actions"><button class="secondary log-copy-full" data-gi="${gi}">全文コピー</button><button class="secondary log-copy-summary" data-gi="${gi}">要約コピー</button><button class="secondary danger-lite log-delete-group" data-gi="${gi}">削除</button></span></summary>${g.lines.length?logLines(g.lines):''}${g.jobs.map(j=>`<details class="log-job"><summary>${E(j.name)} <small>${j.lines.length}行</small></summary>${logLines(j.lines)}</details>`).join('')}</details>`).join(''):'<div class="empty">ログなし</div>';$$('.log-copy-full').forEach(b=>b.onclick=e=>{e.preventDefault();e.stopPropagation();let g=renderedLogGroups[Number(b.dataset.gi)];textToClipboard(groupText(g,'full'),'選択した実行指令ログをコピーしました')});$$('.log-copy-summary').forEach(b=>b.onclick=e=>{e.preventDefault();e.stopPropagation();let g=renderedLogGroups[Number(b.dataset.gi)];textToClipboard(groupText(g,'summary'),'選択した実行指令の要約ログをコピーしました')});$$('.log-delete-group').forEach(b=>b.onclick=async e=>{e.preventDefault();e.stopPropagation();let g=renderedLogGroups[Number(b.dataset.gi)],txt=groupText(g,'full');if(!confirm('この実行指令ログを削除しますか？'))return;let r=await fetch('/api/log/delete-lines',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({lines:txt.split(/\n/)})});if(r.ok){toast('選択した実行指令ログを削除しました');await loadLog()}})}let latestLogText='',renderedLogGroups=[];async function loadLog(){let d=await fetch('/api/log').then(r=>r.json());latestLogText=d.text||'';renderLogTree(latestLogText);renderLogSize(d)}
+  return `<div class="cq-row ${x.state}"><span class="cq-pos">${x.state==='running'?'実行中':x.position+'番'}</span><div class="cq-main"><b>${E((x.job_names||[]).join(' / '))}</b><small>${x.state==='running'?E(stateInfo):('登録 '+E(x.enqueued_at||'')+' / '+(x.count||0)+'対象')}</small></div><span class="cq-mode">${x.parallel_lines>1?x.parallel_lines+'ライン':'1ライン'}</span><div class="cq-actions">${x.state==='waiting'?`<button class="secondary cq-up" data-id="${x.id}">上へ</button><button class="secondary cq-down" data-id="${x.id}">下へ</button><button class="danger cq-delete" data-id="${x.id}">解除</button>`:'<span>処理中は変更不可</span>'}</div></div>`}).join(''):'<div class="cq-empty">実行待ちのキューはありません</div>';list.hidden=!commandQueueOpen;$$('.cq-up,.cq-down').forEach(b=>b.onclick=async()=>{await fetch(`/api/execution-queue/${b.dataset.id}/move`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({direction:b.classList.contains('cq-up')?'up':'down'})});loadCommandQueue()});$$('.cq-delete').forEach(b=>b.onclick=async()=>{let r=await fetch(`/api/execution-queue/${b.dataset.id}`,{method:'DELETE'});if(r.ok)toast('実行キューから解除しました');loadCommandQueue()})}catch{}}{const cqToggle=$('#cq-toggle');if(cqToggle)cqToggle.onclick=()=>{commandQueueOpen=!commandQueueOpen;cqToggle.textContent=commandQueueOpen?'閉じる':'一覧';loadCommandQueue()};}
 /* ログの大きさと、いま読んでいる範囲を出す。全文を読まなくなったので、
    「これで全部なのか」が分からないままにしない。 */
 function renderLogSize(d){
@@ -1230,7 +1238,8 @@ function stripLogNoise(text){
   .map(x=>x.replace(/\s*｜\s*LOG_DEDUP [^\n]*$/,''))
   .join('\n');
 }
-function textToClipboard(text,msg){text=stripLogNoise(text);if(!text?.trim())return toast('コピー対象のログがありません');navigator.clipboard?.writeText(text).then(()=>toast(msg)).catch(()=>{let ta=document.createElement('textarea');ta.value=text;document.body.appendChild(ta);ta.select();document.execCommand('copy');ta.remove();toast(msg)})}function groupText(g,mode='full'){let lines=[];lines.push(...(g.lines||[]));(g.jobs||[]).forEach(j=>lines.push(...j.lines));if(mode==='summary')lines=lines.filter(x=>/処理開始|STARTUP_PHASE|RUN_ENVIRONMENT|EXECUTION_MODE|WORKER_READY|PIPELINE|STEP_END phase=(api_open_catalog|api_execute_catalog|api_save_csv|api_save_xlsx_direct|format_conversion|publish)|ACCDB_|SQLITE_|XLSX_|PUBLISH_|PENDING_APPLY|PENDING_SCAN|BATCH_ORDER|API_DIAG|JOB_RESULT|JOB_PROFILE|PARALLEL_BATCH_END|正常終了|異常終了/.test(x));return lines.join('\n').trim()}function copyAllLog(){textToClipboard(latestLogText,'表示中のログ全体をコピーしました')}async function copyReportLog(){await loadLog();let g=renderedLogGroups[0];if(g)return textToClipboard(groupText(g),'最新の実行指令ログをコピーしました');let lines=latestLogText.split(/\r?\n/),start=-1;for(let i=lines.length-1;i>=0;i--){if(lines[i].includes('処理開始 trigger=')){start=i;break}}textToClipboard((start>=0?lines.slice(start):lines).join('\n').trim(),'最新の実行指令ログをコピーしました')}async function clearLog(){if(!confirm('表示中の実行ログを消去しますか？'))return;let r=await fetch('/api/log/clear',{method:'POST'});if(r.ok){latestLogText='';renderLogTree('');toast('ログを消去しました')}}if($('#copy-all-log'))$('#copy-all-log').onclick=async()=>{await loadLog();copyAllLog()};if($('#copy-report-log'))$('#copy-report-log').onclick=copyReportLog;if($('#clear-log'))$('#clear-log').onclick=clearLog;if($('#reload'))$('#reload').onclick=loadLog;if($('#expand-logs'))$('#expand-logs').onclick=()=>$$('#log details').forEach(x=>x.open=true);if($('#collapse-logs'))$('#collapse-logs').onclick=()=>$$('#log details').forEach(x=>x.open=false);let lastRunning=false,activeRunId='',activeExecutionMode='serial';
+function textToClipboard(text,msg){text=stripLogNoise(text);if(!text?.trim())return toast('コピー対象のログがありません');navigator.clipboard?.writeText(text).then(()=>toast(msg)).catch(()=>{let ta=document.createElement('textarea');ta.value=text;document.body.appendChild(ta);ta.select();document.execCommand('copy');ta.remove();toast(msg)})}
+let lastRunning=false,activeRunId='',activeExecutionMode='serial';
 /* 画面を開いた最初の1回。ページを開いた時点ですでに走っていた実行だけ、進捗を畳んだ
    状態から始める（自分で押した実行まで畳むと、終わったときの結果が出てこない）。 */
 /* 実際に流れる順番と同じ並びにする。ここが実行順とずれていると、進捗が
@@ -1456,22 +1465,185 @@ function resetEditorState(){editing=null;editingRule=null;$('#editor form')?.res
 
 
 
-/* V29: vertical progress and structured log workspace */
+/* ==== ログ・診断（2.1.3 案 K。tests/ui-proposals/2026-10-logs） ====================================
+   左に実行の記録（日ごと・失敗だけ）、右に選んだ実行のログ。上の帯にアプリ監視と事前診断。
+   ログの読み解き（logparse）は画面に触らない関数だけで書き、tests/test_frontend.py が node で確かめる。 */
+/* ---- logparse begin ---- */
+const LOG_HEAD=/^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)(?:,(\d{3}))? \[(\w+)\](?: \[pid (\d+)\])? ?([\s\S]*)$/;
+const LOG_TRIGGER={manual:'手動','manual-single':'手動（1件）','schedule-batch':'自動','schedule-retry':'自動の取り直し'};
+function logLevel(line){return line.includes('[ERROR]')?'error':line.includes('[WARNING]')?'warning':'info'}
+/* 1件の記録（行）にする。時刻で始まらない行（例外の続きなど）は、直前の記録の続きとしてまとめる */
+function parseLogEntries(text){
+ let out=[];
+ for(const raw of String(text||'').split(/\r?\n/)){
+  if(!raw)continue;
+  let m=raw.match(LOG_HEAD);
+  if(m)out.push({ts:m[1],ms:m[2]||'',level:m[3].toUpperCase(),pid:m[4]||'',msg:m[5],raw:[raw]});
+  else if(out.length){let e=out[out.length-1];e.msg+='\n'+raw;e.raw.push(raw)}
+  else out.push({ts:'',ms:'',level:'INFO',pid:'',msg:raw,raw:[raw]});
+ }
+ return out;
+}
+const logKV=(msg,key)=>{let m=String(msg).match(new RegExp('(?:^|\\s)'+key+'=([^\\s]+)'));return m?m[1]:null};
+const logIsIssue=e=>e.level==='ERROR'||e.level==='WARNING'||/^異常終了/.test(e.msg);
+function logTriggerName(t){let k=String(t||'').split(':')[0];return LOG_TRIGGER[k]||t||'不明'}
+/* 実行のまとまりにする。「処理開始」から「正常終了／異常終了」まで。その外の行（起動・設定の保存など）は「その他」へ */
+function buildLogRuns(entries){
+ let runs=[],cur=null,other=null,n=0;
+ const close=()=>{cur=null};
+ for(const e of entries){
+  if(/^処理開始 trigger=/.test(e.msg)){
+   other=null;n++;
+   cur={kind:'run',no:n,ts:e.ts,end:e.ts,trigger:logKV(e.msg,'trigger')||'',jobCount:Number(logKV(e.msg,'jobs')||0),entries:[],jobs:[],state:'running',variants:0};
+   runs.push(cur);
+  }
+  if(!cur){if(!other){other={kind:'other',no:0,ts:e.ts,end:e.ts,entries:[],jobs:[],state:'other',settings:0};runs.push(other)}
+   other.entries.push(e);if(e.ts)other.end=e.ts;if(/^設定保存 /.test(e.msg))other.settings++;continue}
+  cur.entries.push(e);if(e.ts)cur.end=e.ts;
+  let job=logKV(e.msg,'job'),find=name=>{let j=cur.jobs.find(x=>x.name===name);if(!j){j={name,state:'running',rows:null,elapsed:null,error:''};cur.jobs.push(j)}return j};
+  if(job&&/^(PIPELINE|WORKER_START|VARIANTS_START|PARALLEL_JOB_RESULT|PARALLEL_JOB_ERROR|JOB_RESULT|LOCAL_JOB_FAILED) /.test(e.msg)){
+   let j=find(job);
+   if(/^(PARALLEL_JOB_RESULT|JOB_RESULT) /.test(e.msg)){j.state='ok';j.rows=Number(logKV(e.msg,'rows'));j.elapsed=parseFloat(logKV(e.msg,'elapsed'))}
+   else if(/^(PARALLEL_JOB_ERROR|LOCAL_JOB_FAILED) /.test(e.msg)){j.state='ng';j.elapsed=parseFloat(logKV(e.msg,'elapsed'))||null;
+    let m=e.msg.match(/error=([^\n]*)/);j.error=m?m[1]:e.msg.split('\n')[0]}
+   else if(/^VARIANTS_START /.test(e.msg))cur.variants=(logKV(e.msg,'values')||'').split(',').filter(Boolean).length;
+  }
+  if(/^正常終了/.test(e.msg)){cur.state='ok';close()}
+  else if(/^異常終了/.test(e.msg)){cur.state=/中断/.test(e.msg)?'cancelled':'ng';cur.reason=e.msg.replace(/^異常終了:\s*/,'').split('\n')[0];close()}
+ }
+ let lastRun=[...runs].reverse().find(r=>r.kind==='run');
+ for(const r of runs){
+  if(r.kind==='run'&&r.state==='running'&&r!==lastRun)r.state='stopped';
+  r.issues=r.entries.filter(logIsIssue).length;
+  r.failed=r.jobs.filter(j=>j.state==='ng').length;
+  if(r.kind==='run'&&r.state==='ng'&&!r.failed&&r.jobs.length===1)r.jobs[0].state='ng';
+  r.rows=r.jobs.reduce((a,j)=>a+(Number.isFinite(j.rows)?j.rows:0),0);
+  r.seconds=logSeconds(r.ts,r.end);
+  r.key=`${r.ts}|${r.kind}|${r.entries.length?r.entries[0].raw[0]:''}`;
+ }
+ return runs.reverse();
+}
+function logSeconds(a,b){let t=s=>s?Date.parse(s.replace(' ','T')):NaN,d=(t(b)-t(a))/1000;return Number.isFinite(d)&&d>=0?Math.round(d):null}
+/* 実行の名前（左の一覧と見出し）。1件なら対象の名前、値ごとなら値の数、何件もなら件数と頭の2件 */
+function logRunTitle(r){
+ if(r.kind==='other')return r.settings?`起動・設定の保存など（設定の保存 ${r.settings}回）`:'起動・設定の保存など';
+ let names=r.jobs.map(j=>j.name);
+ if(names.length===1)return names[0]+(r.variants?`（値ごと ${r.variants}値）`:'');
+ if(!names.length)return `${r.jobCount||'?'}件`;
+ return `${names.length}件（${names.slice(0,2).join('・')}${names.length>2?' ほか':''}）`;
+}
+function logRunState(r){
+ if(r.kind==='other')return ['n','その他'];
+ if(r.state==='running')return ['run','実行中'];
+ if(r.state==='stopped')return ['warn','終わりの記録なし'];
+ if(r.state==='cancelled')return ['warn','中断'];
+ if(r.state==='ng'||r.failed)return ['ng',r.failed?`失敗 ${r.failed}`:'失敗'];
+ return r.issues?['warn','成功（注意あり）']:['ok','成功'];
+}
+/* 報告用の文。要約（結果・時間・対象ごと）、環境、エラーと注意の行（前後 ctx 行）、全文を選んで組む */
+function logReportText(r,parts,env,ctx=3){
+ let out=[],head=`${r.kind==='run'?`実行指令 ${r.no}`:'その他'} · ${r.ts}${r.kind==='run'?` · ${logTriggerName(r.trigger)}`:''} · ${logRunTitle(r)}`;
+ out.push(`■ ${head}`);
+ if(parts.summary){
+  let [,state]=logRunState(r);
+  out.push(`結果: ${state}${r.seconds!=null?` / ${r.seconds}秒`:''}${r.rows?` / ${r.rows.toLocaleString()}行`:''}`+(r.reason?` / 理由: ${r.reason}`:''));
+  r.jobs.forEach(j=>out.push(`  - ${j.name}: ${j.state==='ok'?'成功':j.state==='ng'?'失敗':'途中'}${Number.isFinite(j.rows)?` ${j.rows.toLocaleString()}行`:''}${Number.isFinite(j.elapsed)?` ${j.elapsed.toFixed(1)}秒`:''}${j.error?` / ${j.error}`:''}`));
+ }
+ if(parts.env&&env)out.push('■ 環境',...Object.entries(env).filter(([,v])=>v!=null&&v!=='').map(([k,v])=>`  ${k}: ${v}`));
+ if(parts.issues){
+  let idx=r.entries.map((e,i)=>logIsIssue(e)?i:-1).filter(i=>i>=0),keep=new Set();
+  idx.forEach(i=>{for(let k=Math.max(0,i-ctx);k<=Math.min(r.entries.length-1,i+ctx);k++)keep.add(k)});
+  out.push('■ エラーと注意の行'+(idx.length?`（${idx.length}件・前後${ctx}行）`:'（ありません）'));
+  let last=-2;[...keep].sort((a,b)=>a-b).forEach(k=>{if(k!==last+1&&last>=0)out.push('  …');out.push(...r.entries[k].raw);last=k});
+ }
+ if(parts.full)out.push('■ この実行のログの全文',...r.entries.flatMap(e=>e.raw));
+ return out.join('\n');
+}
+/* ---- logparse end ---- */
+
 function logKind(line){if(line.includes('[ERROR]')||line.includes('異常終了')||line.includes('FAILED')||line.includes('失敗'))return'error';if(line.includes('設定保存'))return'setting';if(line.includes('COMMAND_QUEUE'))return'queue';if(/PUBLISH_|phase=publish/.test(line))return'publish';if(/STARTUP_PHASE|STEP_END|elapsed=|SQLITE_|INTERMEDIATE_VALIDATION|PARALLEL_BATCH_END|JOB_RESULT|JOB_PROFILE|RUN_ENVIRONMENT|WORKER_READY/.test(line))return'performance';return'execution'}
-function logKindLabel(k){return{execution:'実行',setting:'設定',queue:'キュー',performance:'計測',publish:'公開',error:'エラー'}[k]||'実行'}
-function logMatches(line){let q=($('#log-filter-text')?.value||'').trim().toLowerCase(),k=$('#log-filter-kind')?.value||'all',lv=$('#log-filter-level')?.value||'all';return(!q||line.toLowerCase().includes(q))&&(k==='all'||logKind(line)===k)&&(lv==='all'||logLevel(line)===lv)}
-function logLines(lines){return`<div class="log-lines">${lines.map(x=>{let k=logKind(x);return`<div class="log-line ${logLevel(x)} kind-${k}${x.includes('LOG_DEDUP')?' dedup':''}${logMatches(x)?'':' hidden-by-filter'}" data-line="${E(x)}"><input class="log-select" type="checkbox" aria-label="このログ行を選択"><span class="log-kind">${logKindLabel(k)}</span><span class="log-text">${E(x)}</span></div>`}).join('')}</div>`}
-function filteredLogLines(){return $$('#log .log-line:not(.hidden-by-filter)').map(x=>x.dataset.line||'').filter(Boolean)}
-function selectedLogLines(){return $$('#log .log-select:checked').map(x=>x.closest('.log-line')?.dataset.line||'').filter(Boolean)}
-function updateLogSummary(){let a=$$('#log .log-line').length,v=$$('#log .log-line:not(.hidden-by-filter)').length,s=$$('#log .log-select:checked').length,g=$$('#log .log-group-select:checked').length;if($('#log-filter-summary'))$('#log-filter-summary').textContent=`表示 ${v}行 / 全体 ${a}行 / 選択 ${s}行`+(g?` / 実行指令 ${g}件`:'')}
-function applyLogFilter(){ $$('#log .log-line').forEach(x=>x.classList.toggle('hidden-by-filter',!logMatches(x.dataset.line||'')));$$('#log .log-job,#log .log-action').forEach(x=>x.style.display=x.querySelector('.log-line:not(.hidden-by-filter)')?'':'none');updateLogSummary() }
-function renderLogTree(text){let groups=buildLogTree(text);renderedLogGroups=groups.slice().reverse();$('#log').innerHTML=renderedLogGroups.length?renderedLogGroups.map((g,gi)=>`<details class="log-action" ${gi===0?'open':''} data-gi="${gi}"><summary><input class="log-group-select" type="checkbox" data-gi="${gi}" aria-label="この実行指令を選択"><span><b>実行指令 ${renderedLogGroups.length-gi}</b> ${E(g.title)}</span><small>${g.jobs.length}ファイル</small><span class="log-summary-actions"><button class="secondary log-copy-full" data-gi="${gi}">全文コピー</button><button class="secondary log-copy-summary" data-gi="${gi}">要約コピー</button><button class="secondary danger-lite log-delete-group" data-gi="${gi}">削除</button></span></summary>${g.lines.length?logLines(g.lines):''}${g.jobs.map(x=>`<details class="log-job"><summary>${E(x.name)} <small>${x.lines.length}行</small></summary>${logLines(x.lines)}</details>`).join('')}</details>`).join(''):'<div class="empty">ログなし</div>';$$('.log-copy-full').forEach(b=>b.onclick=e=>{e.preventDefault();e.stopPropagation();textToClipboard(groupText(renderedLogGroups[Number(b.dataset.gi)],'full'),'実行指令ログをコピーしました')});$$('.log-copy-summary').forEach(b=>b.onclick=e=>{e.preventDefault();e.stopPropagation();textToClipboard(groupText(renderedLogGroups[Number(b.dataset.gi)],'summary'),'要約ログをコピーしました')});$$('.log-delete-group').forEach(b=>b.onclick=async e=>{e.preventDefault();e.stopPropagation();let lines=groupText(renderedLogGroups[Number(b.dataset.gi)],'full').split(/\n/);if(confirm('この実行指令ログを削除しますか？'))await deleteLogRows(lines,'実行指令ログを削除しました')});$$('.log-select').forEach(x=>x.onchange=updateLogSummary);$$('.log-group-select').forEach(x=>{x.onclick=e=>e.stopPropagation();x.onchange=e=>{e.stopPropagation();x.closest('.log-action')?.classList.toggle('is-picked',x.checked);updateLogSummary()}});applyLogFilter()}
-/* 実行指令のまとまりごとに選ぶ。1行ずつ拾わなくても、まとめて消せるようにする。 */
-function selectedLogGroups(){return $$('#log .log-group-select:checked').map(x=>renderedLogGroups[Number(x.dataset.gi)]).filter(Boolean)}
-function selectedGroupLines(){let seen=new Set();selectedLogGroups().forEach(g=>groupText(g,'full').split(/\n/).forEach(l=>{if(l.trim())seen.add(l)}));return [...seen]}
-async function deleteLogRows(lines,message){if(!lines.length)return toast('対象ログがありません');let r=await fetch('/api/log/delete-lines',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({lines})});if(r.ok){toast(message);await loadLog()}else toast('ログを削除できませんでした')}
-function bindV29LogWorkspace(){['log-filter-text','log-filter-kind','log-filter-level'].forEach(id=>{let x=$('#'+id);if(x)x.addEventListener(id==='log-filter-text'?'input':'change',applyLogFilter)});if($('#select-filtered-log'))$('#select-filtered-log').onclick=()=>{$$('#log .log-line:not(.hidden-by-filter) .log-select').forEach(x=>x.checked=true);updateLogSummary()};if($('#clear-log-selection'))$('#clear-log-selection').onclick=()=>{$$('#log .log-select,#log .log-group-select').forEach(x=>x.checked=false);$$('#log .log-action').forEach(x=>x.classList.remove('is-picked'));updateLogSummary()};if($('#select-all-groups'))$('#select-all-groups').onclick=()=>{let box=$$('#log .log-group-select'),on=box.some(x=>!x.checked);box.forEach(x=>{x.checked=on;x.closest('.log-action')?.classList.toggle('is-picked',on)});updateLogSummary()};if($('#copy-selected-groups'))$('#copy-selected-groups').onclick=()=>{let g=selectedLogGroups();if(!g.length)return toast('実行指令が選ばれていません');textToClipboard(g.map(x=>groupText(x,'full')).join('\n\n'),`${g.length}件の実行指令ログをコピーしました`)};if($('#delete-selected-groups'))$('#delete-selected-groups').onclick=()=>{let g=selectedLogGroups();if(!g.length)return toast('実行指令が選ばれていません');let x=selectedGroupLines();if(confirm(`選択した${g.length}件の実行指令（${x.length}行）を削除しますか？`))deleteLogRows(x,`${g.length}件の実行指令ログを削除しました`)};if($('#copy-filtered-log'))$('#copy-filtered-log').onclick=()=>textToClipboard(filteredLogLines().join('\n'),'表示中のログをコピーしました');if($('#delete-selected-log'))$('#delete-selected-log').onclick=()=>{let x=selectedLogLines();if(x.length&&confirm(`選択した${x.length}行を削除しますか？`))deleteLogRows(x,'選択ログを削除しました')};if($('#delete-filtered-log'))$('#delete-filtered-log').onclick=()=>{let x=filteredLogLines();if(x.length&&confirm(`表示中の${x.length}行を削除しますか？`))deleteLogRows(x,'表示中のログを削除しました')};if($('#delete-old-log'))$('#delete-old-log').onclick=async()=>{let days=Number($('#log-retention-days')?.value||30);if(!confirm(`${days}日以前のログを一括削除しますか？`))return;let r=await fetch('/api/log/delete-old',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({days})}),d=await r.json();if(r.ok){toast(`${d.removed}行の古いログを削除しました`);await loadLog()}else toast(d.error||'古いログを削除できませんでした')}}
-bindV29LogWorkspace();
+function logMatches(e){let line=e.raw.join('\n'),q=($('#log-filter-text')?.value||'').trim().toLowerCase(),k=$('#log-filter-kind')?.value||'all',lv=$('#log-filter-level')?.value||'all';
+ return(!q||line.toLowerCase().includes(q))&&(k==='all'||logKind(line)===k)&&(lv==='all'||logLevel(line)===lv)}
+let latestLogText='',logRuns=[],logSelKey='',logIssueAt=-1;
+const logRunSel=()=>logRuns.find(r=>r.key===logSelKey)||null;
+async function loadLog(){
+ let d=await fetch('/api/log',{cache:'no-store'}).then(r=>r.json()).catch(()=>({text:''}));
+ latestLogText=d.text||'';logRuns=buildLogRuns(parseLogEntries(latestLogText));
+ if(!logRunSel())logSelKey=(logRuns.find(r=>r.kind==='run')||logRuns[0]||{}).key||'';
+ paintLogRuns();paintLogRun();renderLogSize(d);
+}
+function paintLogRuns(){
+ let box=$('#log-runs');if(!box)return;
+ let bad=$('#log-only-bad')?.checked,shown=logRuns.filter(r=>!bad||(r.kind==='run'&&(r.state==='ng'||r.failed||r.state==='cancelled')));
+ $('#log-runs-count').textContent=`${logRuns.filter(r=>r.kind==='run').length}件・新しい順`;
+ let day='',now=new Date(),today=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+ box.innerHTML=shown.length?shown.map(r=>{let d=(r.ts||'').slice(0,10),sep='';if(d!==day){day=d;sep=`<em class="lg-day">${d===today?'今日 ':''}${E(d.slice(5).replace('-','/')||'時刻なし')}</em>`}
+  let [tone,label]=logRunState(r);
+  return sep+`<button type="button" role="option" class="lg-run is-${tone}${r.key===logSelKey?' on':''}" data-key="${E(r.key)}" aria-selected="${r.key===logSelKey}">`
+   +`<span class="lg-rt"><time>${E((r.ts||'').slice(11,16))}</time><em>${r.kind==='run'?E(logTriggerName(r.trigger)):'記録'}</em><span class="pill is-${tone}">${E(label)}</span></span>`
+   +`<b>${E(logRunTitle(r))}</b>${r.kind==='run'?`<small>${r.seconds!=null?`${r.seconds}秒`:''}${r.rows?` · ${r.rows.toLocaleString()}行`:''}${r.issues?` · エラー・注意 ${r.issues}`:''}</small>`:`<small>${r.entries.length}行</small>`}</button>`}).join('')
+  :`<div class="lg-empty">${bad?'失敗した実行はありません':'ログはまだありません'}</div>`;
+ box.querySelectorAll('.lg-run').forEach(b=>b.onclick=()=>{logSelKey=b.dataset.key;logIssueAt=-1;paintLogRuns();paintLogRun()});
+}
+function paintLogRun(){
+ let r=logRunSel(),box=$('#log');if(!box)return;
+ ['log-report-open','log-copy-run','log-delete-run'].forEach(id=>{let b=$('#'+id);if(b)b.disabled=!r});
+ if(!r){$('#log-run-title').textContent='ログはまだありません';$('#log-run-sub').textContent='';$('#log-run-state').className='pill';$('#log-run-state').textContent='';$('#log-run-jobs').innerHTML='';box.innerHTML='';$('#log-filter-summary').textContent='';$('#log-next-issue').hidden=true;return}
+ let [tone,label]=logRunState(r);
+ $('#log-run-title').textContent=r.kind==='run'?`実行指令 ${r.no}`:'その他の記録';
+ $('#log-run-sub').textContent=[r.ts,r.kind==='run'?logTriggerName(r.trigger):'',logRunTitle(r),r.seconds!=null&&r.kind==='run'?`${r.seconds}秒`:''].filter(Boolean).join(' · ');
+ $('#log-run-state').className='pill is-'+tone;$('#log-run-state').textContent=label;
+ $('#log-run-jobs').innerHTML=r.jobs.map(j=>`<span class="lg-job is-${j.state}" title="${E(j.error||'')}"><i class="pill is-${j.state==='ok'?'ok':j.state==='ng'?'ng':'run'}">${j.state==='ok'?'成功':j.state==='ng'?'失敗':'途中'}</i><b>${E(j.name)}</b>${j.state==='ng'?`<small>${E(j.error)}</small>`:Number.isFinite(j.rows)?`<small>${j.rows.toLocaleString()}行</small>`:''}</span>`).join('');
+ $('#log-run-jobs').hidden=!r.jobs.length;
+ let shown=0;
+ box.innerHTML=r.entries.map((e,i)=>{let hit=logMatches(e);if(hit)shown++;let lv=e.level==='ERROR'?'error':e.level==='WARNING'?'warning':'info';
+  return `<div class="lg-ln is-${lv}${logIsIssue(e)?' is-issue':''}${e.msg.includes('LOG_DEDUP')?' dedup':''}" data-i="${i}"${hit?'':' hidden'}><time>${E((e.ts||'').slice(11))}${e.ms?','+e.ms:''}</time><b>${e.level==='INFO'?'':E(e.level)}</b><span>${E(e.msg)}</span></div>`}).join('');
+ $('#log-filter-summary').textContent=`${shown.toLocaleString()} / ${r.entries.length.toLocaleString()}行`;
+ let nb=$('#log-next-issue');nb.hidden=!r.issues;nb.textContent=`↓ エラー・注意へ（${r.issues}）`;
+ box.scrollTop=0;
+}
+/* 「エラー・注意へ」: 押すたびに次のエラー・注意の行へ移り、その行を光らせる */
+function gotoNextIssue(){let rows=[...$$('#log .lg-ln.is-issue:not([hidden])')];if(!rows.length)return;logIssueAt=(logIssueAt+1)%rows.length;let el=rows[logIssueAt];
+ $$('#log .lg-ln.is-focus').forEach(x=>x.classList.remove('is-focus'));el.classList.add('is-focus');el.scrollIntoView({block:'center'})}
+function logEnv(){
+ let st=mon.last||{},b=st.backend||{},s=cfg?.settings||{};
+ let ar=apiReadinessLast;
+ return {'版':b.version||$('#version-badge')?.textContent||'','PC':machinePathsLast?.host||'','exe の置き場':MON_PLACE[st.place]||st.place||'','Python':b.python?`${b.python}（${b.bits||'?'} bit）`:'',
+  'Navigator API':ar?(ar.headline||(ar.ok?'使えます':'使えません'))+(ar.detail?`（${ar.detail}）`:''):'','同時実行ライン':s.api_parallel_lines,'値ごとの既定の取り方':VAR_METHOD_NAME[s.variant_method]||s.variant_method};
+}
+const logReportParts=()=>Object.fromEntries($$('#log-report-pop input[data-part]').map(x=>[x.dataset.part,x.checked]));
+function paintReportSize(){let r=logRunSel(),el=$('#log-report-size');if(!el)return;let t=r?logReportText(r,logReportParts(),logEnv()):'';el.textContent=t?`約 ${(new Blob([t]).size/1024).toFixed(1)}KB`:''}
+async function deleteLogRows(lines,message){if(!lines.length)return toast('対象のログがありません');let r=await fetch('/api/log/delete-lines',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({lines})});if(r.ok){toast(message);await loadLog()}else toast('ログを消せませんでした')}
+const logVisibleLines=()=>{let r=logRunSel();return r?r.entries.filter(logMatches).flatMap(e=>e.raw):[]};
+/* 小窓（報告用にコピー・その他・アプリ監視の詳細・集計結果の出力）。開くボタンと中身の組で、外を押すと閉じる */
+function bindPopover(btn,pop,onOpen){btn=$(btn);pop=$(pop);if(!btn||!pop)return;
+ const set=on=>{pop.hidden=!on;btn.setAttribute('aria-expanded',String(!!on));if(on)onOpen?.()};
+ btn.onclick=e=>{e.stopPropagation();set(pop.hidden)};pop.addEventListener('click',e=>e.stopPropagation());
+ document.addEventListener('click',()=>{if(!pop.hidden)set(false)});document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!pop.hidden)set(false)});
+ return set}
+function bindLogWorkspace(){
+ ['log-filter-text','log-filter-kind','log-filter-level'].forEach(id=>$('#'+id)?.addEventListener(id==='log-filter-text'?'input':'change',()=>{logIssueAt=-1;paintLogRun()}));
+ $('#log-only-bad')?.addEventListener('change',paintLogRuns);
+ $('#log-next-issue').onclick=gotoNextIssue;
+ const report=bindPopover('#log-report-open','#log-report-pop',paintReportSize);
+ $$('#log-report-pop input[data-part]').forEach(x=>x.onchange=paintReportSize);
+ $('#log-report-copy').onclick=()=>{let r=logRunSel();if(!r)return;textToClipboard(logReportText(r,logReportParts(),logEnv()),'報告用にまとめて写しました。そのまま貼り付けて送れます');report(false)};
+ $('#log-copy-run').onclick=()=>{let r=logRunSel();if(r)textToClipboard(r.entries.flatMap(e=>e.raw).join('\n'),'この実行のログを写しました')};
+ $('#log-delete-run').onclick=()=>{let r=logRunSel();if(r&&confirm(`「${$('#log-run-title').textContent}」のログ（${r.entries.length}行）を消しますか？`))deleteLogRows(r.entries.flatMap(e=>e.raw),'この実行のログを消しました')};
+ const more=bindPopover('#log-more-open','#log-more-pop');
+ const menu=(id,fn)=>{let b=$('#'+id);if(b)b.onclick=async()=>{more(false);await fn()}};
+ menu('reload',loadLog);
+ menu('copy-all-log',async()=>{await loadLog();textToClipboard(latestLogText,'ログ全体を写しました')});
+ menu('copy-filtered-log',()=>textToClipboard(logVisibleLines().join('\n'),'表示中の行を写しました'));
+ menu('delete-filtered-log',()=>{let x=logVisibleLines();if(x.length&&confirm(`表示中の${x.length}行を消しますか？`))return deleteLogRows(x,'表示中の行を消しました')});
+ menu('delete-old-log',async()=>{let days=Number($('#log-retention-days')?.value||30);if(!confirm(`${days}日より古いログを消しますか？`))return;let r=await fetch('/api/log/delete-old',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({days})}),d=await r.json();if(r.ok){toast(`${d.removed}行の古いログを消しました`);await loadLog()}else toast(d.error||'古いログを消せませんでした')});
+ menu('clear-log',async()=>{if(!confirm('ログをすべて消しますか？'))return;let r=await fetch('/api/log/clear',{method:'POST'});if(r.ok){toast('ログを消しました');await loadLog()}});
+ bindPopover('#mon-more-open','#mon-more');
+ $('#log-more-pop')?.querySelector('select')?.addEventListener('click',e=>e.stopPropagation());
+}
+bindLogWorkspace();
+/* 対象の「ログを見る」: その対象が入った最新の実行を選び、対象の名前で絞る */
+async function showJobLogRun(name){await loadLog();let r=logRuns.find(x=>x.jobs.some(j=>j.name===name));if(r)logSelKey=r.key;let q=$('#log-filter-text');if(q)q.value=name;paintLogRuns();paintLogRun()}
 
 /* V30: categorized settings navigation and in-app version management */
 function bindSettingsNav(){$$('#settings-nav .settings-navbtn').forEach(b=>b.onclick=()=>{$$('#settings-nav .settings-navbtn').forEach(x=>x.classList.remove('on'));b.classList.add('on');$$('.settings-pane').forEach(x=>x.classList.remove('on'));document.querySelector(`.settings-pane[data-cat="${b.dataset.cat}"]`)?.classList.add('on');if(b.dataset.cat==='docs')loadDocs();if(b.dataset.cat==='conn')refreshMachinePaths(0);if(b.dataset.cat==='bundle')loadBundleInfo();if(b.dataset.cat==='release'){loadRelease();loadShortcuts();loadDefaults()}})}
@@ -1877,7 +2049,8 @@ setInterval(loadSchedulePreview,60000);loadSchedulePreview();
 /* アプリ監視: 窓と中身（Python）のつながり。窓（/api/desktop-status）は中身が止まっていても答える。
    往復時間は中身まで届く問い合わせ（/api/residency）で測る。中身が3回続けて答えないときだけ知らせを出す
    （起こし直しは数秒で済むので、1回の取りこぼしでは出さない）。 */
-let mon={fails:0,busy:false};
+let mon={fails:0,busy:false,last:null};
+const MON_PLACE={local:'手元（共有の中身を読む）',beside:'アプリのフォルダー',env:'指定の場所',installed:'このPCの写し（配布）'};
 function monTime(s){if(!s)return '—';let d=new Date(String(s).replace(' ','T'));return isNaN(d)?String(s):d.toLocaleString('ja-JP',{hour12:false,month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit'})}
 function paintMonitor(st,latency){
  let state=$('#mon-state');if(!state)return;
@@ -1892,12 +2065,14 @@ function paintMonitor(st,latency){
  $('#mon-restarts').textContent=`${st?st.restarts||0:0}回`;
  $('#mon-last-restart').textContent=monTime(st&&st.last_restart);
  // exe の置き場: 手元（共有のアプリの中身を読む）か、アプリのフォルダーの中か。問い合わせのとき最初に聞くことなので、言葉で出す
- let place={local:'手元（共有の中身を読む）',beside:'アプリのフォルダー',env:'指定の場所',installed:'このPCの写し（配布）'}[st&&st.place]||'—';
+ let place=MON_PLACE[st&&st.place]||'—';
  if(st&&st.updated_from)place+=`・${st.updated_from} から入れ替え済み`;
  if(st&&st.release_note)place+=`・${st.release_note} にそろえた`;
  $('#mon-place').textContent=place;
  $('#mon-place').title=st?[st.exe,st.pointer&&`指し先: ${st.pointer}`].filter(Boolean).join('\n'):'';
  $('#mon-checked').textContent=new Date().toLocaleTimeString('ja-JP',{hour12:false});
+ mon.last=st;
+ let facts=$('#mon-facts');if(facts)facts.textContent=alive?[b.pid&&`中身 pid ${b.pid}`,b.python&&`Python ${b.bits||'?'}bit`,latency!=null&&`往復 ${latency}ms`,`起こし直し ${st?st.restarts||0:0}回`].filter(Boolean).join(' · '):$('#mon-detail').textContent;
  $('#mon-detail').textContent=alive
   ?(st.resident_reason?`通知領域に常駐しています（${st.resident_reason}）。`:'窓が中身を見張っています。止まったときは自動で起こし直します。')
   :'中身が答えていません。窓が起こし直しています。';
@@ -1923,6 +2098,10 @@ if($('#server-lost-reload'))$('#server-lost-reload').onclick=()=>checkMonitor();
 if($('#mon-check'))$('#mon-check').onclick=()=>checkMonitor();
 setInterval(()=>{if(document.visibilityState==='visible')checkMonitor()},10000);checkMonitor();
 
+/* 事前診断の結果は帯にも残す（閉じたあとも、最後にいつ・どうだったかが分かる） */
+function paintDiagChip(d){let chip=$('#diag-chip'),f=$('#diag-facts');if(!chip)return;let c=d.counts||{};
+ chip.className='pill lg-diag is-'+(d.ok?(c.warning?'warn':'ok'):'ng');chip.textContent=d.ok?(c.warning?`事前診断 注意 ${c.warning}`:'事前診断 OK'):`事前診断 要修正 ${c.error||0}`;
+ if(f)f.textContent=`${new Date().toLocaleTimeString('ja-JP',{hour12:false,hour:'2-digit',minute:'2-digit'})} · 正常 ${c.ok||0} · 注意 ${c.warning||0} · 要修正 ${c.error||0}`}
 /* v1.2.0: カレンダービュー — 予定(自動実行)と実施履歴を月カレンダーへ色分け表示し、日単位で確認・編集導線を提供する */
 let calYM=null,calView='both',calData=null,calJobFilter='all',calBound=false;
 function openCalendar(){
@@ -3517,10 +3696,11 @@ tmApplyOptions();
 
 /* ============================================================
    v1.18.0 データビュワー：データ一覧 / 集計表 / グラフ の3タブ構成。
-   集計表・グラフはカラムリスト(左) + 行・列・値のドロップゾーン(右)で構成し、
    Excelピボット互換の階層集計（行/列の多段階層・小計・総計・件数/合計/平均/最小/最大）を提供する。
+   2.1.3: 組み立ては、左のカラムの札（行・列、数のカラムは値も）を押すと、上の文
+   「［行］ごとに、［列］別の［値］を出す」に入る形（案 J。tests/ui-proposals/2026-10-pivot）。D&D も残す。
    ============================================================ */
-let viewerData=null,viewerRows=[],viewerFiltered=[],viewerPage=1,viewerSort={col:-1,dir:1};
+let viewerData=null,viewerRows=[],viewerFiltered=[],viewerPage=1,viewerSort={col:-1,dir:1},viewerCols=[];
 let viewerView='list',pivotState={rows:[],columns:[],values:[],aggregate:'count',showSubtotals:true,showGrandTotal:true};
 const VIEWER_PAGE_SIZE=100,PSEP='\u001f',CSEP='\u001e';
 const CHART_COLORS=['#0d8191','#3a4d9c','#0b6b4c','#b5822a','#7658ae','#c9564a','#1f6aa8','#8a5f18','#5c8a2a','#a5372c','#5a6f77','#2c9c9c'];
@@ -3560,15 +3740,49 @@ function sortViewer(c){viewerSort=viewerSort.col===c?{col:c,dir:-viewerSort.dir}
 function renderViewerList(){if(!viewerData)return;let pages=Math.max(1,Math.ceil(viewerFiltered.length/VIEWER_PAGE_SIZE));viewerPage=Math.max(1,Math.min(pages,viewerPage));let start=(viewerPage-1)*VIEWER_PAGE_SIZE,rows=viewerFiltered.slice(start,start+VIEWER_PAGE_SIZE);$('#viewer-head').innerHTML='<tr><th class="viewer-rownum">No.</th>'+viewerData.headers.map((h,i)=>`<th class="viewer-sortable ${viewerSort.col===i?'sorted':''}" data-col="${i}">${E(h||'(空欄)')}<span>${viewerSort.col===i?(viewerSort.dir>0?'▲':'▼'):''}</span></th>`).join('')+'</tr>';$('#viewer-body').innerHTML=rows.length?rows.map((r,n)=>`<tr><td class="viewer-rownum">${start+n+1}</td>`+viewerData.headers.map((_,i)=>`<td title="${E(r[i]??'')}">${E(r[i]??'')}</td>`).join('')+'</tr>').join(''):`<tr><td class="viewer-nohit" colspan="${viewerData.headers.length+1}">一致するデータはありません</td></tr>`;$$('#viewer-head .viewer-sortable').forEach(x=>x.onclick=()=>sortViewer(+x.dataset.col));$('#viewer-page').textContent=`${viewerPage} / ${pages}`;$('#viewer-prev').disabled=viewerPage<=1;$('#viewer-next').disabled=viewerPage>=pages;$('#viewer-filter-summary').textContent=`${viewerFiltered.length.toLocaleString()} / ${viewerRows.length.toLocaleString()}行`}
 
 /* ---------- 3タブ切替 ---------- */
-function setViewerView(view){viewerView=view;['list','pivot','chart'].forEach(v=>$('#vtab-'+v)?.classList.toggle('on',v===view));let has=!!viewerData;$('#viewer-empty').hidden=has;$('#viewer-list').hidden=!has||view!=='list';$('#viewer-analysis').hidden=!has||view==='list';$('#chart-type-wrap').hidden=view!=='chart';if(!has)return;if(view==='list'){renderViewerList();return}$('#analysis-pivot-result').hidden=view!=='pivot';$('#analysis-chart-result').hidden=view!=='chart';buildPivotFields();renderAnalysis()}
+function setViewerView(view){viewerView=view;['list','pivot','chart'].forEach(v=>$('#vtab-'+v)?.classList.toggle('on',v===view));let has=!!viewerData;$('#viewer-empty').hidden=has;$('#viewer-list').hidden=!has||view!=='list';$('#viewer-analysis').hidden=!has||view==='list';$('#chart-type-wrap').hidden=view!=='chart';$('#viewer-analysis').classList.toggle('is-chart',view==='chart');if(!has)return;if(view==='list'){renderViewerList();return}buildPivotFields();renderAnalysis()}
 
-/* ---------- カラムリスト & ドロップゾーン ---------- */
+/* ---------- カラムの札と上の文 ---------- */
+const PIVOT_ROLE_NAME={rows:'行',columns:'列',values:'値'},KINDS_CAP=10000;
+/* カラムごとの「値の種類の数」と「数のカラムか」。行・列に向くか（種類が少ないか）、値にできるか（数か）を選ぶ手がかりにする */
+function viewerColumnInfo(rows,headers){return headers.map((_,i)=>{let seen=new Set(),sampled=0,nums=0;for(const r of rows){let v=r[i];if(seen.size<KINDS_CAP)seen.add(String(v??''));let t=String(v??'').trim();if(t!==''&&sampled<300){sampled++;if(numericVal(t)!==null)nums++}}return{kinds:seen.size,many:seen.size>=KINDS_CAP,numeric:sampled>0&&nums===sampled}})}
+const kindsText=c=>c?(c.many?`${(KINDS_CAP/10000).toLocaleString()}万種類以上`:`${c.kinds.toLocaleString()} 種類`):'';
 function usedRole(i){for(const r of['rows','columns','values'])if(pivotState[r].includes(i))return r;return null}
-function buildPivotFields(){if(!viewerData)return;let q=($('#pivot-field-search')?.value||'').toLowerCase();let b=$('#pivot-field-list');b.innerHTML=viewerData.headers.map((h,i)=>({h:h||'(空欄)',i})).filter(x=>!q||x.h.toLowerCase().includes(q)).map(x=>{let ur=usedRole(x.i),tag=ur?`<span class="fl-tag t-${ur}">${ur==='rows'?'行':ur==='columns'?'列':'値'}</span>`:'';return `<button type="button" draggable="true" data-col="${x.i}" class="${ur?'used':''}"><i>⋮⋮</i><span class="fl-name">${E(x.h)}</span>${tag}</button>`}).join('');bindDraggables(b)}
+function buildPivotFields(){if(!viewerData)return;let q=($('#pivot-field-search')?.value||'').toLowerCase(),b=$('#pivot-field-list');
+ b.innerHTML=viewerData.headers.map((h,i)=>({h:h||'(空欄)',i})).filter(x=>!q||x.h.toLowerCase().includes(q)).map(x=>{let ur=usedRole(x.i),c=viewerCols[x.i],roles=['rows','columns'].concat(c?.numeric?['values']:[]);
+  return `<div class="pv-f${ur?' is-used':''}" draggable="true" data-col="${x.i}"><span class="pv-fn" title="${E(x.h)}"><b>${E(x.h)}</b><small class="${c&&c.kinds>50?'is-many':''}">${E(kindsText(c))}</small></span>${roles.map(r=>`<button type="button" class="pv-r r-${r}${ur===r?' on':''}" data-role="${r}" data-col="${x.i}" aria-pressed="${ur===r}" title="${ur===r?PIVOT_ROLE_NAME[r]+'から外す':PIVOT_ROLE_NAME[r]+'に入れる'}">${PIVOT_ROLE_NAME[r]}</button>`).join('')}${c?.numeric?'':'<i></i>'}</div>`}).join('');
+ b.querySelectorAll('.pv-r').forEach(x=>x.onclick=()=>togglePivotField(x.dataset.role,x.dataset.col));bindDraggables(b)}
 function bindDraggables(root){root.querySelectorAll('[draggable][data-col]').forEach(x=>{x.ondragstart=e=>{e.dataTransfer.setData('text/plain',x.dataset.col);e.dataTransfer.setData('role',x.dataset.role||'');e.dataTransfer.effectAllowed='copyMove'}})}
-function renderAxis(role){let zone=$('#pivot-'+role),arr=pivotState[role];let ph={rows:'行に展開するカラムをドロップ',columns:'列に展開するカラムをドロップ（任意）',values:'件数以外はここへ'}[role];zone.innerHTML=arr.length?arr.map((i,n)=>`<div class="chip-field" draggable="true" data-col="${i}" data-role="${role}" data-pos="${n}"><em>${n+1}</em><span class="cf-name" title="${E(fieldName(i))}">${E(fieldName(i))}</span><b data-remove="1" title="外す">×</b></div>`).join(''):`<span class="axis-ph">${ph}</span>`;bindDraggables(zone);zone.querySelectorAll('[data-remove]').forEach(b=>b.onclick=e=>{e.stopPropagation();let p=Number(b.parentElement.dataset.pos);pivotState[role].splice(p,1);refreshDesigner()})}
-function refreshDesigner(){['rows','columns','values'].forEach(renderAxis);buildPivotFields();renderAnalysis()}
-function addPivotField(role,index){index=Number(index);if(Number.isNaN(index))return;['rows','columns','values'].forEach(r=>{let p=pivotState[r].indexOf(index);if(p>=0)pivotState[r].splice(p,1)});if(role==='values')pivotState.values=[index];else pivotState[role].push(index);refreshDesigner()}
+function renderSlot(role){let zone=$('#pivot-'+role),arr=pivotState[role];
+ zone.innerHTML=arr.length?arr.map((i,n)=>`<span class="pv-chip r-${role}" draggable="true" data-col="${i}" data-role="${role}" data-pos="${n}"><span title="${E(fieldName(i))}">${E(fieldName(i))}</span><b data-remove="1" title="外す">×</b></span>`).join(''):`<span class="pv-hole r-${role}">${role==='rows'?'行のカラム':'列のカラム（任意）'}</span>`;
+ bindDraggables(zone);zone.querySelectorAll('[data-remove]').forEach(b=>b.onclick=e=>{e.stopPropagation();pivotState[role].splice(Number(b.parentElement.dataset.pos),1);refreshDesigner()})}
+/* 値は1つの選択にまとめる（件数か、数のカラムの合計・平均・最小・最大）。集計方法と値の置き場を分けない */
+function measureKey(){return pivotState.aggregate==='count'||pivotState.values[0]==null?'count':`${pivotState.aggregate}:${pivotState.values[0]}`}
+function renderMeasure(){let sel=$('#pivot-measure');if(!sel||!viewerData)return;
+ sel.innerHTML='<option value="count">件数</option>'+viewerData.headers.map((h,i)=>viewerCols[i]?.numeric?`<optgroup label="${E(h||'(空欄)')}">${['sum','avg','min','max'].map(k=>`<option value="${k}:${i}">${E(h||'(空欄)')} の${AGG_LABEL[k]}</option>`).join('')}</optgroup>`:'').join('');
+ sel.value=measureKey();if(sel.value!==measureKey()){pivotState.aggregate='count';pivotState.values=[];sel.value='count'}}
+function setMeasure(key){let [k,i]=String(key||'count').split(':');if(k==='count'||i==null){pivotState.aggregate='count';pivotState.values=[]}else{pivotState.aggregate=k;pivotState.values=[Number(i)]}refreshDesigner()}
+function refreshDesigner(){['rows','columns'].forEach(renderSlot);renderMeasure();buildPivotFields();renderAnalysis()}
+/* 札を押す: 入っていなければ入れ（ほかの役からは外す）、入っていれば外す。値は数のカラムの合計にする */
+function togglePivotField(role,index){index=Number(index);if(Number.isNaN(index))return;
+ if(role==='values'){if(pivotState.values[0]===index&&pivotState.aggregate!=='count')return setMeasure('count');return addPivotField('values',index)}
+ if(pivotState[role].includes(index)){pivotState[role]=pivotState[role].filter(x=>x!==index);return refreshDesigner()}
+ addPivotField(role,index)}
+function addPivotField(role,index){index=Number(index);if(Number.isNaN(index))return;
+ if(role==='values'){if(!viewerCols[index]?.numeric)return toast('値にできるのは数のカラムだけです（件数は、上の文の［件数］のままで数えます）');['rows','columns'].forEach(r=>pivotState[r]=pivotState[r].filter(x=>x!==index));return setMeasure(`${pivotState.aggregate==='count'?'sum':pivotState.aggregate}:${index}`)}
+ ['rows','columns'].forEach(r=>pivotState[r]=pivotState[r].filter(x=>x!==index));if(pivotState.values[0]===index){pivotState.values=[];pivotState.aggregate='count'}
+ pivotState[role].push(index);refreshDesigner()}
+/* 何も置いていないとき、すぐ見られる組み方を出す（種類の少ないカラムどうし・数のカラムの合計） */
+function pivotQuickPicks(){let H=viewerData?.headers||[],few=H.map((_,i)=>i).filter(i=>{let c=viewerCols[i];return c&&!c.numeric&&c.kinds>=2&&c.kinds<=12}).sort((a,b)=>viewerCols[a].kinds-viewerCols[b].kinds||a-b),num=H.map((_,i)=>i).find(i=>viewerCols[i]?.numeric),out=[];
+ // 同じカラムばかりにならないよう、組み合わせを散らして選ぶ
+ [[0,1],[2,3],[1,2],[0,3],[0,2],[1,3]].filter(([a,b])=>few[a]!=null&&few[b]!=null).slice(0,3).forEach(([a,b])=>out.push({rows:[few[a]],columns:[few[b]],m:'count'}));
+ if(num!=null)few.slice(0,2).forEach(i=>out.push({rows:[i],columns:[],m:`sum:${num}`}));
+ if(!out.length&&few.length)out.push({rows:[few[0]],columns:[],m:'count'});
+ return out.slice(0,5)}
+function paintPivotEmpty(){let box=$('#pivot-empty'),onlyCols=!pivotState.rows.length&&pivotState.columns.length,picks=onlyCols?[]:pivotQuickPicks();
+ box.innerHTML=`<b>${onlyCols?'行のカラムを1つ以上選んでください':'カラムの［行］を押すと、値ごとの件数が出ます'}</b><span>${onlyCols?'列だけでは表になりません。いま列にあるカラムを行にするなら、そのカラムの［行］を押します。':'種類の少ないカラムが、行・列に向いています。'+(picks.length?'すぐに見るなら:':'')}</span>`+(picks.length?`<div class="pv-quick">${picks.map((q,n)=>{let [k,i]=q.m.split(':');return `<button type="button" data-n="${n}"><b>${E(fieldName(q.rows[0]))}${q.columns.length?' × '+E(fieldName(q.columns[0])):' ごと'}</b><small>${k==='count'?'件数':E(fieldName(i))+' の'+AGG_LABEL[k]}</small></button>`}).join('')}</div>`:'');
+ box.querySelectorAll('.pv-quick button').forEach(b=>b.onclick=()=>{let q=picks[Number(b.dataset.n)];pivotState.rows=q.rows.slice();pivotState.columns=q.columns.slice();setMeasure(q.m)})}
+function paintAnalysisPanes(empty){$('#pivot-empty').hidden=!empty;$('#analysis-pivot-result').hidden=empty||viewerView!=='pivot';$('#analysis-chart-result').hidden=empty||viewerView!=='chart';if(empty)paintPivotEmpty()}
 
 /* ---------- ピボット集計エンジン（階層・小計・総計） ---------- */
 function leafIdsForPath(fp,depth){if(depth===0)return['ALL:'];const ids=['D:'+fp.join(PSEP)];for(let p=1;p<depth;p++)ids.push('S:'+fp.slice(0,p).join(PSEP));ids.push('G:');return ids}
@@ -3587,15 +3801,14 @@ function pivotFormat(v){if(v===null||v===undefined||v==='')return '';if(typeof v
 function cellClass(rleaf,cleaf){let c=[];if(rleaf.type==='grand')c.push('col-x');if(cleaf.type==='grand')c.push('col-grand');if(cleaf.type==='subtotal')c.push('col-subtotal');return c.join(' ')}
 
 /* ---------- 集計表・グラフの描画 ---------- */
-function renderAnalysis(){if(!viewerData)return;pivotState.aggregate=$('#pivot-aggregate').value;pivotState.showSubtotals=$('#pivot-show-subtotal')?$('#pivot-show-subtotal').checked:(pivotState.showSubtotals!==false);pivotState.showGrandTotal=$('#pivot-show-grand')?$('#pivot-show-grand').checked:(pivotState.showGrandTotal!==false);let kind=pivotState.aggregate,value=pivotState.values[0]??null;let hint=$('#pivot-hint');if(!pivotState.rows.length&&!pivotState.columns.length){hint.textContent='「行」に1つ以上カラムを配置してください。1つでも配置すれば値ごとの件数（グルーピング集計）を表示します。';$('#pivot-head').innerHTML='';$('#pivot-body').innerHTML='';$('#pivot-chart').innerHTML='<div class="chart-empty">行にカラムを配置すると集計を表示します。</div>';return}
- if(!pivotState.rows.length){hint.textContent='「行」に少なくとも1つカラムを配置してください（列だけの集計は行へ移してください）。';$('#pivot-head').innerHTML='';$('#pivot-body').innerHTML='';$('#pivot-chart').innerHTML='<div class="chart-empty">行にカラムを配置してください。</div>';return}
- if(kind!=='count'&&value===null){hint.textContent='カウント以外の集計では「値」へ数値カラムを配置してください。';$('#pivot-head').innerHTML='';$('#pivot-body').innerHTML='';$('#pivot-chart').innerHTML='<div class="chart-empty">値へ数値カラムを配置してください。</div>';return}
+function renderAnalysis(){if(!viewerData)return;pivotState.showSubtotals=$('#pivot-show-subtotal')?$('#pivot-show-subtotal').checked:(pivotState.showSubtotals!==false);pivotState.showGrandTotal=$('#pivot-show-grand')?$('#pivot-show-grand').checked:(pivotState.showGrandTotal!==false);let kind=pivotState.aggregate,value=pivotState.values[0]??null;let hint=$('#pivot-hint');if(kind!=='count'&&value===null){kind='count';pivotState.aggregate='count'}
+ paintAnalysisPanes(!pivotState.rows.length);if(!pivotState.rows.length){$('#pivot-head').innerHTML='';$('#pivot-body').innerHTML='';$('#pivot-chart').innerHTML='';hint.textContent='';return}
  let measureLabel=kind==='count'?'件数':`${fieldName(value)} の${AGG_LABEL[kind]}`;
  let opts={subtotals:pivotState.showSubtotals!==false,grand:pivotState.showGrandTotal!==false};
  let model=buildPivot(viewerFiltered,pivotState.rows,pivotState.columns,value,kind,opts);
  let rowData=model.rowLeaves.filter(l=>l.type==='data').length,colData=model.colLeaves.filter(l=>l.type==='data'||l.type==='all').length;
  let totalsNote=[opts.subtotals?'小計':'',opts.grand?'総計':''].filter(Boolean).join('・')||'小計・総計なし';
- hint.textContent=`行グループ ${rowData} × 列グループ ${colData} / 集計: ${measureLabel}（${totalsNote}）`;
+ hint.textContent=`行 ${rowData.toLocaleString()} × 列 ${colData.toLocaleString()} ・ ${measureLabel}（${totalsNote}）・ ${viewerFiltered.length.toLocaleString()} 行から`;
  renderPivotTable(model,measureLabel);renderPivotChart(model,measureLabel)}
 function renderPivotTable(model,measureLabel){let R=pivotState.rows.length,C=pivotState.columns.length;let rowNames=pivotState.rows.map(fieldName);let headRows=buildColHeaderRows(model.colLeaves,C,rowNames,measureLabel);$('#pivot-head').innerHTML=headRows.map(cells=>'<tr>'+cells.map(c=>`<th class="${c.cls}" colspan="${c.colspan||1}" rowspan="${c.rowspan||1}">${E(c.label)}</th>`).join('')+'</tr>').join('');
  let rowHdr=computeRowHeaderCells(model.rowLeaves,R);
@@ -3618,7 +3831,7 @@ function renderPivotChart(model,measureLabel){let box=$('#pivot-chart');let cats
  box.innerHTML=`${legend}${note}<div class="chart-scroll"><svg viewBox="0 0 ${w} ${h}" role="img" aria-label="集計折れ線グラフ">${grid}<line class="chart-axis" x1="${padL}" y1="${h-padB}" x2="${w-padR}" y2="${h-padB}"/><line class="chart-axis" x1="${padL}" y1="${padT}" x2="${padL}" y2="${h-padB}"/>${lines}${xlabels}</svg></div>`}
 
 /* ---------- 読み込み ---------- */
-async function openViewer(){let {id,value}=viewerParse($('#viewer-job').value);if(!id)return;showWaiting('データを読み込み中','公開済みファイルを読み取り専用で確認しています...');try{let d=await fetch('/api/data-viewer/'+encodeURIComponent(id)+(value==null?'':'?value='+encodeURIComponent(value)),{cache:'no-store'}).then(r=>r.json());if(!d.ok)return showViewerError(d.error);if(d.value){$('#viewer-job').value=viewerKey(id,d.value)}paintViewerValues(id,d.value||null);viewerData=d;viewerRows=d.rows||[];viewerFiltered=viewerRows.slice();viewerSort={col:-1,dir:1};viewerPage=1;pivotState={rows:[],columns:[],values:[],aggregate:'count',showSubtotals:($('#pivot-show-subtotal')?$('#pivot-show-subtotal').checked:true),showGrandTotal:($('#pivot-show-grand')?$('#pivot-show-grand').checked:true)};$('#pivot-aggregate').value='count';$('#viewer-error').hidden=true;$('#viewer-meta').hidden=false;let vname=d.value?`${d.name} · ${d.value}`:d.name;$('#viewer-name').textContent=vname;$('#viewer-name').title=d.path||vname;$('#viewer-format').textContent=formatName(d.format);$('#viewer-count').textContent=`${Number(d.total_rows??viewerRows.length).toLocaleString()}行 × ${Number(d.total_columns??d.headers.length).toLocaleString()}列`;$('#viewer-modified').textContent=(d.modified||'').replace('T',' ');$('#viewer-search').value='';$('#viewer-note').textContent=d.truncated?`先頭${Number(d.preview_limit).toLocaleString()}行を表示（全${Number(d.total_rows).toLocaleString()}行）`+(d.row_budget_limited?`／${Number(d.total_columns).toLocaleString()}列と幅があるため行数を抑えています（列はすべて出しています）`:''):d.path;refreshDesigner();renderViewerList();setViewerView('list')}catch{showViewerError('データを読み込めませんでした')}finally{hideWaiting()}}
+async function openViewer(){let {id,value}=viewerParse($('#viewer-job').value);if(!id)return;showWaiting('データを読み込み中','公開済みファイルを読み取り専用で確認しています...');try{let d=await fetch('/api/data-viewer/'+encodeURIComponent(id)+(value==null?'':'?value='+encodeURIComponent(value)),{cache:'no-store'}).then(r=>r.json());if(!d.ok)return showViewerError(d.error);if(d.value){$('#viewer-job').value=viewerKey(id,d.value)}paintViewerValues(id,d.value||null);viewerData=d;viewerRows=d.rows||[];viewerFiltered=viewerRows.slice();viewerCols=viewerColumnInfo(viewerRows,d.headers||[]);viewerSort={col:-1,dir:1};viewerPage=1;pivotState={rows:[],columns:[],values:[],aggregate:'count',showSubtotals:($('#pivot-show-subtotal')?$('#pivot-show-subtotal').checked:true),showGrandTotal:($('#pivot-show-grand')?$('#pivot-show-grand').checked:true)};$('#viewer-error').hidden=true;$('#viewer-meta').hidden=false;let vname=d.value?`${d.name} · ${d.value}`:d.name;$('#viewer-name').textContent=vname;$('#viewer-name').title=d.path||vname;$('#viewer-format').textContent=formatName(d.format);$('#viewer-count').textContent=`${Number(d.total_rows??viewerRows.length).toLocaleString()}行 × ${Number(d.total_columns??d.headers.length).toLocaleString()}列`;$('#viewer-modified').textContent=(d.modified||'').replace('T',' ');$('#viewer-search').value='';$('#viewer-note').textContent=d.truncated?`先頭${Number(d.preview_limit).toLocaleString()}行を表示（全${Number(d.total_rows).toLocaleString()}行）`+(d.row_budget_limited?`／${Number(d.total_columns).toLocaleString()}列と幅があるため行数を抑えています（列はすべて出しています）`:''):d.path;refreshDesigner();renderViewerList();setViewerView('list')}catch{showViewerError('データを読み込めませんでした')}finally{hideWaiting()}}
 
 /* ---------- イベント結線 ---------- */
 if($('#viewer-load'))$('#viewer-load').onclick=openViewer;
@@ -3629,12 +3842,14 @@ if($('#viewer-next'))$('#viewer-next').onclick=()=>{viewerPage++;renderViewerLis
 ['list','pivot','chart'].forEach(v=>{let b=$('#vtab-'+v);if(b)b.onclick=()=>setViewerView(v)});
 if($('#pivot-field-search'))$('#pivot-field-search').oninput=buildPivotFields;
 $$('.viewer-v118 .axis-drop').forEach(z=>{z.ondragover=e=>{e.preventDefault();z.classList.add('over')};z.ondragleave=()=>z.classList.remove('over');z.ondrop=e=>{e.preventDefault();z.classList.remove('over');addPivotField(z.dataset.role,e.dataTransfer.getData('text/plain'))}});
-if($('#pivot-aggregate'))$('#pivot-aggregate').onchange=()=>{pivotState.aggregate=$('#pivot-aggregate').value;renderAnalysis()};
+if($('#pivot-measure'))$('#pivot-measure').onchange=()=>setMeasure($('#pivot-measure').value);
 if($('#chart-type'))$('#chart-type').onchange=renderAnalysis;
-if($('#pivot-clear'))$('#pivot-clear').onclick=()=>{pivotState={rows:[],columns:[],values:[],aggregate:$('#pivot-aggregate').value,showSubtotals:($('#pivot-show-subtotal')?$('#pivot-show-subtotal').checked:true),showGrandTotal:($('#pivot-show-grand')?$('#pivot-show-grand').checked:true)};refreshDesigner()};
+if($('#pivot-clear'))$('#pivot-clear').onclick=()=>{pivotState={rows:[],columns:[],values:[],aggregate:'count',showSubtotals:($('#pivot-show-subtotal')?$('#pivot-show-subtotal').checked:true),showGrandTotal:($('#pivot-show-grand')?$('#pivot-show-grand').checked:true)};refreshDesigner()};
 if($('#pivot-show-subtotal'))$('#pivot-show-subtotal').onchange=()=>{pivotState.showSubtotals=$('#pivot-show-subtotal').checked;renderAnalysis()};
 if($('#pivot-show-grand'))$('#pivot-show-grand').onchange=()=>{pivotState.showGrandTotal=$('#pivot-show-grand').checked;renderAnalysis()};
-if($('#pivot-export'))$('#pivot-export').onclick=exportPivot;
+/* 出力の形式は「出力…」の小窓で選ぶ（いつも使う設定ではないので、上の文の欄に並べない） */
+const pivotExportPop=bindPopover('#pivot-export-open','#pivot-export-pop');
+if($('#pivot-export'))$('#pivot-export').onclick=()=>{pivotExportPop?.(false);exportPivot()};
 /* ---------- 集計結果のファイル出力（CSV / TXT / EXCEL）。現在の小計・総計の表示設定を反映した集計結果を出力する。 ---------- */
 function buildFlatPivotMatrix(){
  if(!viewerData)return null;
@@ -3661,7 +3876,7 @@ function buildFlatPivotMatrix(){
 }
 async function exportPivot(){
  let built=buildFlatPivotMatrix();
- if(!built){toast('先に「行」（必要に応じて「値」）を配置してください');return}
+ if(!built){toast('先に、カラムの［行］を押して表を作ってください');return}
  let fmt=$('#pivot-export-format')?$('#pivot-export-format').value:'csv',base=(viewerData&&viewerData.name)||'集計結果';
  showWaiting('集計結果を出力中','ファイルを作成しています...');
  try{
@@ -4626,6 +4841,10 @@ window.addEventListener('drop',async e=>{
  e.preventDefault();
  await importMaster(k,f);
 });
+// 落とし先の無い所へファイルを落としたとき、WebView がそのファイルを開きに行かないようにする
+// （窓は D&D を画面へ渡しているので、何もしないと既定の動きでファイルへ移ろうとする）。
+window.addEventListener('dragover',e=>{if(!e.defaultPrevented&&[...(e.dataTransfer?.types||[])].includes('Files')){e.preventDefault();e.dataTransfer.dropEffect='none'}});
+window.addEventListener('drop',e=>{if(e.dataTransfer?.files?.length)e.preventDefault()});
 async function fillRecipePicker(selected){
  let sel=$('#m-recipe');if(!sel)return;
  let items=await loadJoins();

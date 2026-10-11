@@ -159,6 +159,26 @@
     const saved2 = decodeURIComponent(r.headers.get('X-DR-Saved') || '');
     ok('集計結果の EXCEL も窓が保存する', r.status === 204 && /\.xlsx$/.test(saved2), `${r.status} ${saved2}`);
 
+    // 集計表: D&D を使わず、カラムの札を押すだけで表ができる（2.1.3。Windows の窓では D&D が届かず組めなかった）
+    document.querySelector('nav button[data-p="viewer"]').click();
+    viewerData = { name: '自己診断', headers: ['工程', '作業者', '数量'], rows: [['研削', '佐藤', '3'], ['研削', '鈴木', '5'], ['検査', '佐藤', '2']] };
+    viewerRows = viewerData.rows; viewerFiltered = viewerRows.slice(); viewerCols = viewerColumnInfo(viewerRows, viewerData.headers);
+    pivotState = { rows: [], columns: [], values: [], aggregate: 'count', showSubtotals: true, showGrandTotal: true };
+    refreshDesigner(); setViewerView('pivot');
+    const quick = document.querySelectorAll('#pivot-empty:not([hidden]) .pv-quick button').length;
+    document.querySelector('#pivot-field-list .pv-f[data-col="0"] .pv-r[data-role="rows"]').click();
+    document.querySelector('#pivot-field-list .pv-f[data-col="1"] .pv-r[data-role="columns"]').click();
+    document.querySelector('#pivot-field-list .pv-f[data-col="2"] .pv-r[data-role="values"]').click();
+    const grand = [...document.querySelectorAll('#pivot-body tr.row-grand td')].map((td) => td.textContent).join(',');
+    ok('集計表は札を押すだけで組める（行=工程・列=作業者・数量の合計）', quick > 0 && $('#pivot-measure').value === 'sum:2' && grand === '5,5,10' && !$('#analysis-pivot-result').hidden, `おすすめ ${quick} / 値 ${$('#pivot-measure').value} / 総計 ${grand}`);
+    // ログ・診断（2.1.3）: 実行の記録と選んだ実行を描き、報告用の文を組める
+    document.querySelector('nav button[data-p="logs"]').click();
+    await loadLog();
+    const runsShown = document.querySelectorAll('#log-runs .lg-run').length, sel = logRunSel();
+    const report = sel ? logReportText(sel, { summary: true, env: true, issues: true }, logEnv()) : '';
+    ok('ログ・診断は実行の記録を並べ、選んだ実行の報告用の文を組める', runsShown > 0 && !!sel && report.includes('■ 環境') && $('#log-run-title').textContent !== 'ログを読んでいます', `${runsShown}件 / ${$('#log-run-title').textContent} / ${report.length}字`);
+    document.querySelector('nav button[data-p="jobs"]').click();
+
     // tkinter・os.startfile の置き換え（答えの形はいまと同じ {"path": ...}）
     // 設定のパスは相対（アプリフォルダー基準）・<PC>（この PC の作業場所）のことがある。窓は Python と同じ決まりで実際の場所へ直す
     const absolute = (p) => typeof p === 'string' && /^(?:\/|[A-Za-z]:[\\/]|\\\\)/.test(p);

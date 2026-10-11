@@ -490,6 +490,10 @@ fn window(app: &AppHandle, shell: Arc<Shell>) -> tauri::Result<WebviewWindow> {
         .min_inner_size(1100.0, 700.0)
         .maximized(true)
         .background_color(tauri::window::Color(0xf3, 0xf6, 0xf8, 0xff))
+        // Windows では Tauri が WebView2 のドラッグ＆ドロップを横取りし、画面の中の HTML5 の D&D
+        // （集計表のカラム置き・対象の並べ替え・マスタや ZIP のファイル落とし）が効かなくなる。
+        // 窓の側では D&D の知らせを使っていないので、横取りを外して画面へ渡す。
+        .disable_drag_drop_handler()
         .on_navigation(move |u| {
             let inside = is_app_url(u) || is_splash(u) || matches!(u.scheme(), "about" | "blob" | "data");
             if !inside && matches!(u.scheme(), "http" | "https" | "mailto" | "file") {
