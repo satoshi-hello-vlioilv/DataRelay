@@ -26,7 +26,6 @@ for _n in ('_viewer_output_path',
            'queue_snapshot',
            'resolve_join_path',
            'resolve_path',
-           'run_local_jobs',
            'set_status'):globals()[_n]=_borrow(_n)
 del _n
 
@@ -130,25 +129,6 @@ def wait_for_sources(job,cfg=None,deps=None,say=None):
   if cancel_requested.is_set():
    return {'waited':round(time.perf_counter()-started,1),'reasons':reasons,'timed_out':False}
 
-def run_deferred_local(after_api,cfg,trigger,progress,total_all,seed_results):
- """材料をNavigator側の対象が作る結合を、そのあとで走らせる。
-
- 先に走らせると、まだ作られていないファイルを繋ぐことになる。出来上がりは正しい形を
- しているので、中身が古いことに誰も気づかない ―― だから順番のほうを直す。
- """
- if not after_api:return [],[]
- log.info('LOCAL_AFTER_API_RUN jobs=%s',[j['name'] for j in after_api])
- _work=dde_staging_folder();_backup=resolve_path(cfg['backup_folder'])
- res,fails,job_res=run_local_jobs(after_api,cfg,_work,_backup,trigger,progress,
-                                  max(0,total_all-len(after_api)),total_all)
- if fails:
-  set_status(job_errors=[{'job':r.get('job'),'error':str(r.get('error') or '')} for r in fails],
-             failed_jobs=len(fails))
-  raise RuntimeError('材料の作成後の結合で%d件失敗しました\n'%len(fails)
-                     +'\n'.join('・%s: %s'%(r.get('job'),r.get('error')) for r in fails))
- return res,job_res
-
-
 def split_batch(jobs,cfg):
  """実行する対象を、流す順に振り分ける。(並べ替えた全体, 材料が要らない手元のもの, RNE, 材料がRNEのもの)
 
@@ -157,9 +137,8 @@ def split_batch(jobs,cfg):
  ―― 先に走らせると、まだ作られていないファイルを繋ぐことになる。出来上がりは正しい形を
  しているので、中身が古いことに誰も気づかない。
 
- どちらも「手元のもの」であることに変わりはないので、API方式では navi_lanerun が
- まとめて受け取り、材料がそろった順に流す。DDE方式（1つの画面を操作する方式）だけが
- 前半・後半の二段構えで走る。
+ どちらも「手元のもの」であることに変わりはないので、navi_lanerun がまとめて受け取り、
+ 材料がそろった順に流す。
  """
  ordered,deps=order_jobs_by_dependency(jobs,cfg)
  kind=lambda j:app.normalize_job_source(j.get('source'))

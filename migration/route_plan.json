@@ -498,8 +498,8 @@
   },
   "POST /api/settings/parallel-lines": {
    "area": "設定・対象の登録",
-   "to": "python",
-   "note": ""
+   "to": "remove",
+   "note": "2.1.2 で外した。同時実行ラインはほかの共通設定と同じ自動保存（PUT /api/config）で保存する（別の道で保存すると設定の版が進まず、次の自動保存が断られていた）"
   },
   "GET /api/shortcut": {
    "area": "配布と更新",

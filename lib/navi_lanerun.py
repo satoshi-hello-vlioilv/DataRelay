@@ -100,8 +100,7 @@ class LaneBoard:
    slot=self.api_lines+n
    lines.append({'line':f'ライン {slot}','job':'','state':'待機','percent':0,'elapsed':0,
                  'detail':'手元のファイルから作ります','slot':slot})
-  set_status(parallel_lines=lines,parallel_max_lines=len(lines),parallel_mode=True,
-             symnavi_window=f'独立プロセス {self.api_lines}ライン／手元 {self.local_lines}ライン'
+  set_status(parallel_lines=lines,parallel_max_lines=len(lines),parallel_mode=True
                             if self.api_lines else f'手元 {self.local_lines}ライン')
   self.publish()
 
@@ -262,7 +261,7 @@ def run_api_process_batch(jobs,cfg,user,pw,server,dde_work,backup,max_lines,trig
  log.info('SPLIT_BUDGET configured_lines=%s jobs=%s per_job=%s',configured_lines,total,split_budget)
  for _j in jobs:_j['_split_budget']=split_budget
  if board is None:
-  set_status(parallel_lines=[{'line':f'ライン {n}','job':'','state':'待機','percent':0,'elapsed':0,'detail':'開始待ち','slot':n} for n in range(1,max_lines+1)],queue_total=total,queue_waiting=total,queue_active=0,queue_completed=0,queue_completed_ids=[],queue_failed_ids=[],queue_running_ids=[],queue_waiting_ids=list(all_job_ids),parallel_max_lines=max_lines,parallel_mode=True,symnavi_window=f'独立プロセス {max_lines}ライン')
+  set_status(parallel_lines=[{'line':f'ライン {n}','job':'','state':'待機','percent':0,'elapsed':0,'detail':'開始待ち','slot':n} for n in range(1,max_lines+1)],queue_total=total,queue_waiting=total,queue_active=0,queue_completed=0,queue_completed_ids=[],queue_failed_ids=[],queue_running_ids=[],queue_waiting_ids=list(all_job_ids),parallel_max_lines=max_lines,parallel_mode=True)
  log.info('PARALLEL_BATCH_START model=process-isolated trigger=%s batch_id=%s runtime=%s jobs=%s max_lines=%s total_jobs=%s parent_pid=%s',trigger,batch_id,runtime,[j['rne'] for j in jobs],max_lines,total,os.getpid())
  def start_one(slot):
   index,job=queue.popleft();line=f'ライン {slot}'

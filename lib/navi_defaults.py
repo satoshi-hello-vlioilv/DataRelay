@@ -8,7 +8,7 @@
   defaults\\schedules.json     … 自動実行の予定 │ 形は「登録内容の持ち出し」（navi_bundle）と同じ。
   defaults\\text-layouts.json  … 読取マスタ   │ ZIP にせず並べて置くので、メモ帳でもそのまま読める
   defaults\\join-recipes.json  … 結合マスタ   ┘
-  defaults\\settings.json      … 共通設定（出力先・抽出方式・控え など。接続の認証情報は入れない）
+  defaults\\settings.json      … 共通設定（出力先・控え・同時実行ライン など。接続の認証情報は入れない）
   defaults\\rne\\              … 対象が使う RNE（対象の rne_path は .\\rne\\<名前> に直して入れる）
 
 各PCは手元の data\\data.json に「どの既定（id）まで見たか」を持ち、置き場の既定が新しくなれば画面が聞く:
@@ -41,9 +41,9 @@ SETTINGS_KIND = 'datarelay-settings'
 PARTS = navi_bundle.PARTS                  # jobs・schedules・layouts・recipes
 ALL_PARTS = PARTS + ('settings', 'rne')
 PART_LABEL = dict(navi_bundle.PART_LABEL, settings='共通設定', rne='RNE')
-# 共通設定として渡す項目（パス・抽出方式・控え・並列など）。渡さない物: 置き場（update_dir・各PCが入れた元から知る）、
+# 共通設定として渡す項目（パス・控え・並列など）。渡さない物: 置き場（update_dir・各PCが入れた元から知る）、
 # 接続の認証情報（各PCの資格情報マネージャー）、設定の版（settings_revision）。
-COMMON_KEYS = ('default_output_folder', 'text_folder', 'rne_folder', 'backup_folder', 'symnavi_exe', 'symnavim_def',
+COMMON_KEYS = ('default_output_folder', 'text_folder', 'rne_folder', 'backup_folder',
                'accdb_template', 'navigator_api_dll', 'navigator_api_search_roots')
 MODES = ('overwrite', 'add', 'keep')
 MODE_LABEL = {'overwrite': '上書き', 'add': '差分追加', 'keep': '今のまま'}
