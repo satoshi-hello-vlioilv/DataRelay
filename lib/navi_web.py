@@ -1345,6 +1345,7 @@ def release_dir():
   c['update_dir']=value
   rev=save(c,quiet=True)
  navi_release.remember(BASE,value)
+ navi_paths.set_place(navi_release.place_root(BASE,value))   # 相対パスの基準も新しい置き場へ
  log.info('RELEASE_DIR value=%s note=%s',value or '(既定)',note)
  return jsonify(ok=True,changed=True,settings_revision=rev,**view)
 

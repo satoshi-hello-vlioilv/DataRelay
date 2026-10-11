@@ -2307,6 +2307,7 @@ def update_parallel_line(line,**v):
 # PCごとに実体が変わる場所（<PC> の読み替え・他人のプロファイル検出）は navi_paths.py。
 import navi_paths
 navi_paths.setup(DATA_ROOT,LOCAL_ROOT,BASE,DATA_ROOT_SOURCE)
+import navi_release as _rel0; navi_paths.set_place(_rel0.place_root(BASE))   # 相対パスの基準＝配布の置き場（2.2.1）
 from navi_paths import PC_TOKEN,pc_path,is_pc_path,foreign_profile_path,resolve_path,clean_work_folder,_split_any,_profile_root,_looks_generated_backup
 
 
@@ -5394,7 +5395,8 @@ def boot_app(_spawn_at=0.0):
   faulthandler.enable(file=_crash_file,all_threads=True)
   log.info('APP_START_FAULTHANDLER path=%s',LOCAL_LOGS/'crash.log')
  except Exception:log.exception('FAULTHANDLER_UNAVAILABLE')
- log.info('APP_START_PLACE place=%s data_root=%s source=%s config=%s',release_place(),DATA_ROOT,DATA_ROOT_SOURCE,CONFIG_DIR)
+ navi_paths.set_place(navi_release.place_root(BASE,release_shared()))   # 設定を読めたら、共有の設定の置き場で決め直す
+ log.info('APP_START_PLACE place=%s data_root=%s source=%s config=%s rel_root=%s',release_place(),DATA_ROOT,DATA_ROOT_SOURCE,CONFIG_DIR,navi_paths.rel_root())
  threading.Thread(target=navi_web.defaults_tick,daemon=True,name='defaults-first').start()   # 新しく写したPCへ既定をすぐ入れる
  threading.Thread(target=release_watch_loop,daemon=True,name='release-watch').start()
  _t=time.perf_counter(); threading.Thread(target=scheduler,daemon=True,name='scheduler').start(); threading.Thread(target=command_dispatcher,daemon=True,name='command-dispatcher').start()
