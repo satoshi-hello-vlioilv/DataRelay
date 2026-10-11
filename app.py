@@ -2306,7 +2306,7 @@ def update_parallel_line(line,**v):
 
 # PCごとに実体が変わる場所（<PC> の読み替え・他人のプロファイル検出）は navi_paths.py。
 import navi_paths
-navi_paths.setup(DATA_ROOT,LOCAL_ROOT,BASE)
+navi_paths.setup(DATA_ROOT,LOCAL_ROOT,BASE,DATA_ROOT_SOURCE)
 from navi_paths import PC_TOKEN,pc_path,is_pc_path,foreign_profile_path,resolve_path,clean_work_folder,_split_any,_profile_root,_looks_generated_backup
 
 

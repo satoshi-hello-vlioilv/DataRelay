@@ -9,7 +9,7 @@ app.py から分けてある。パスの読み替えは全体から呼ばれる�
 一切見ない。基準となる2つの場所（アプリの場所・このPCのローカル領域）だけを
 setup で受け取る。外から見える名前は分ける前と同じ（app からも読める）。
 """
-import json,os,re,shutil,threading,time
+import json,logging,os,re,shutil,threading,time
 from datetime import datetime
 from pathlib import Path
 
@@ -52,11 +52,31 @@ def migrate_local_root(new_root,old_names,parent=None):
     except Exception:pass
  return moved
 
-DATA_ROOT=None;LOCAL_ROOT=None;PROGRAM_ROOT=None
-def setup(data_root,local_root,program_root=None):
- """基準になる場所（データの基準・このPCのローカル領域・プログラムの場所）を決める。app.py から一度だけ呼ぶ。"""
- global DATA_ROOT,LOCAL_ROOT,PROGRAM_ROOT
- DATA_ROOT=Path(data_root);LOCAL_ROOT=Path(local_root);PROGRAM_ROOT=Path(program_root) if program_root else None
+DATA_ROOT=None;LOCAL_ROOT=None;PROGRAM_ROOT=None;DATA_SOURCE=''
+def setup(data_root,local_root,program_root=None,source=''):
+ """基準になる場所（データの基準・このPCのローカル領域・プログラムの場所）と、データの基準の出どころ（data_root の答え）を決める。
+ app.py から一度だけ呼ぶ。"""
+ global DATA_ROOT,LOCAL_ROOT,PROGRAM_ROOT,DATA_SOURCE
+ DATA_ROOT=Path(data_root);LOCAL_ROOT=Path(local_root);PROGRAM_ROOT=Path(program_root) if program_root else None;DATA_SOURCE=str(source or '')
+
+# ==== 相対パスの基準（2.2.0） ============================================
+# 相対パス（.\rne\X.RNE など）は、いま動いている版のアプリのフォルダーを基準に読む。
+# 2.0.0 より前に写したPCは、データの基準が config\install.json の data_root（最初に入れたときの共有のフォルダー）のまま
+# 引き継がれ、新しい版を使っても相対パスが最初に起動した場所を指し続けていた（出どころ 'install'）。
+# そこで、データの基準がプログラムの外にあり、それを人が決めたのでもない（'install'）ときは、プログラムの場所を先に見る。
+# プログラムの場所に無い物（前の共有にだけある RNE など）は、データの基準にあればそちらを使う（実行を止めない・記録に残す）。
+# 人が決めた基準（'local' = config\local.json・'env' = NAVI_DATA_ROOT）と、プログラムの中の基準（'pc' = <写し>\data・'app'）は、
+# これまでどおりデータの基準が先（どちらも、決めた人の意図か、いまの版のフォルダーそのもの）。
+FOLLOW_PROGRAM=('install',)
+def rel_bases():
+ """相対パスを読む基準の順（先頭が主）。"""
+ if PROGRAM_ROOT is None or PROGRAM_ROOT==DATA_ROOT:return [DATA_ROOT]
+ if DATA_SOURCE in FOLLOW_PROGRAM:return [PROGRAM_ROOT,DATA_ROOT]
+ return [DATA_ROOT,PROGRAM_ROOT]
+def rel_root():
+ """相対パスの主な基準（相対へ直すとき・まだ無い物を作るときの場所）。"""
+ return rel_bases()[0]
+_FELL_BACK=set()
 
 # ==== データの基準（相対パスの基準・設定マスターの在りか） ==============
 # 設定に書いた相対パス（.\config\symnavim.conf・.\rne など）と設定のマスター（Config\app_settings.sqlite3）は、
@@ -180,9 +200,10 @@ def _looks_generated_backup(value):
 def resolve_path(value,base=None):
  """Resolve absolute, UNC, or app-relative paths without changing stored values.
 
- base の既定は setup で決めたデータの基準（共有のアプリのフォルダー）。定義時ではなく呼ばれた時点で解決する
- （既定引数に入れると、setup より前の値で固定されてしまう）。"""
- if base is None:base=DATA_ROOT
+ base の既定は相対パスの基準（rel_bases()。いま動いている版のアプリのフォルダー・データの基準）。定義時ではなく呼ばれた時点で
+ 解決する（既定引数に入れると、setup より前の値で固定されてしまう）。"""
+ default=base is None or base is DATA_ROOT
+ if base is None:base=rel_root()
  if value is None:return base
  raw=str(value).strip()
  # <PC> は、いま動いているPCのローカル領域へ直す。設定にはPC固有の値を残さない。
@@ -194,13 +215,19 @@ def resolve_path(value,base=None):
  if p.is_absolute() or raw.startswith('\\'):return p
  # 設定は Windows で書く（.\rne\X.RNE）。Windows 以外（手元の試験・自己診断）でも同じ場所を指すよう区切りを読み替える
  if os.sep=='/':p=Path(raw.replace('\\','/'))
- got=(Path(base)/p).resolve()
- # データの基準がプログラムの場所と別のとき（2.0.0 の写し: <写し>\data）、プログラムに付いてくる物
- # （.\assets\empty.accdb・.\Config\NAVIAP\… など）はデータの基準には無い。プログラムの場所にあればそちらを使う。
- # どちらにも無ければデータの基準の道を返す（作る物・まだ無い物は、これまでどおりデータの基準に作る）
- if base is DATA_ROOT and PROGRAM_ROOT is not None and PROGRAM_ROOT!=DATA_ROOT and not got.exists():
-  alt=(PROGRAM_ROOT/p).resolve()
-  if alt.exists():return alt
+ if not default:return (Path(base)/p).resolve()
+ # 基準が2つあるとき（データの基準がプログラムの場所と別）、主な基準に無い物は、もう片方にあればそちらを使う。
+ # 例: 写しの data にはプログラムに付いてくる物（.\assets\empty.accdb・.\Config\NAVIAP\…）が無い／前の共有にだけ RNE がある。
+ # どちらにも無ければ主な基準の道を返す（作る物・まだ無い物は主な基準に作る）
+ bases=rel_bases();got=(bases[0]/p).resolve()
+ if got.exists():return got
+ for other in bases[1:]:
+  alt=(other/p).resolve()
+  if alt.exists():
+   if other is DATA_ROOT and raw not in _FELL_BACK:
+    _FELL_BACK.add(raw)
+    logging.getLogger('navi').warning('RELATIVE_FALLBACK path=%s program=%s used=%s note=いまの版のフォルダーに無いので、前の場所の物を使いました',raw,bases[0],alt)
+   return alt
  return got
 
 # ==== このPCのローカル領域の後始末 =====================================
