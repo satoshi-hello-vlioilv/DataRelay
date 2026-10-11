@@ -99,7 +99,7 @@ def split_csv(path, item, values, out_dir, encodings=('cp932', 'utf-8-sig', 'utf
 
     値ごとのファイルは「その値の行だけ」を手元で振り分けて作るので、サーバー側の絞り込みが効いていなくても、
     ほかの値の行は混ざらない。空のマスは「上と同じ値を省いた」書き方（NAVI_NONREPEAT）の名残として、
-    上の行の値を引き継ぐ（受け取りは NAVI_REPEAT にしているので、ふつうは空にならない）。
+    上の行の値を引き継ぐ（受け取りは NAVI_REPEAT にしているので、ふつうは空にならない）。全部のマスが空の行は飛ばす。
     元と同じ文字コード・同じ見出しで書く（あとの変換は、ふだんの中間CSVと同じ道を通る）。"""
     p, out = Path(path), Path(out_dir)
     want = list(values)
@@ -124,6 +124,8 @@ def split_csv(path, item, values, out_dir, encodings=('cp932', 'utf-8-sig', 'utf
                         writers[v].writerow(head)
                         counts[v] = 0
                     for row in reader:
+                        if not any(str(c).strip() for c in row):
+                            continue   # 空の行は数えず、どの値にも入れない（上の値を引き継ぐと、空の行がその値のファイルに入る）
                         rows += 1
                         cell = str(row[i]).strip() if i < len(row) else ''
                         if not cell:

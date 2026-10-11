@@ -58,7 +58,8 @@ class RulesTest(unittest.TestCase):
  def test_split_csv(self):
   with tempfile.TemporaryDirectory() as d:
    p=Path(d)/'a.csv'
-   p.write_text('仕掛区分,BOX実績_設備名,ﾛｯﾄ番号\r\nA,LS4,1\r\nA,,2\r\nB,LS3,3\r\nB,PSW,4\r\nC,LS3,5\r\n',encoding='cp932')
+   # write_bytes で書く（write_text は Windows で \n を \r\n に変え、\r\r\n になって空の行が挟まる）
+   p.write_bytes('仕掛区分,BOX実績_設備名,ﾛｯﾄ番号\r\nA,LS4,1\r\nA,,2\r\nB,LS3,3\r\nB,PSW,4\r\nC,LS3,5\r\n'.encode('cp932'))
    sp=V.split_csv(p,'BOX実績_設備名',['LS3','LS4','KEN'],Path(d)/'parts')
    self.assertFalse(sp['missing_column']);self.assertEqual(sp['rows'],5)
    self.assertEqual(sp['found'],['LS4','LS3','PSW'],'出てきた値（頼んでいない PSW も数える）')
@@ -66,6 +67,10 @@ class RulesTest(unittest.TestCase):
    with open(sp['parts']['LS4']['path'],encoding='cp932',newline='') as f:rows=list(csv.reader(f))
    self.assertEqual(rows,[['仕掛区分','BOX実績_設備名','ﾛｯﾄ番号'],['A','LS4','1'],['A','LS4','2']],'同じ見出し・その値の行だけ・空のマスは値で埋める')
    self.assertTrue(V.split_csv(p,'無い列',['LS3'],Path(d)/'p2')['missing_column'])
+   # 空の行（\r\r\n や末尾の空行）は数えず、上の値のファイルにも入れない
+   q=Path(d)/'b.csv';q.write_bytes('仕掛区分,BOX実績_設備名,ﾛｯﾄ番号\r\r\nA,LS4,1\r\r\n\r\n,,\r\nB,LS3,3\r\n\r\n'.encode('cp932'))
+   sq=V.split_csv(q,'BOX実績_設備名',['LS3','LS4'],Path(d)/'p3')
+   self.assertEqual((sq['rows'],{k:v['rows'] for k,v in sq['parts'].items()}),(2,{'LS3':1,'LS4':1}))
 
  def test_relaxed(self):
   self.assertTrue(V.relaxed(['LS4','LS3'],['LS4'],['LS3','LS4']),'RNE のキー以外の値が返っていれば外せている')
