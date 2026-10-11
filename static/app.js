@@ -984,6 +984,8 @@ function mpWord(x){
    画面に2回出て、しかも役割の説明は片方にしか付いていない。1つの設定は1か所にまとめ、
    入力欄そのものに役割・実体・状態を添える。 */
 /* ==== 共通設定（2.1.2 で作り直し。案 H: tests/ui-proposals/2026-10-settings） ==============
+   2.1.3: 横幅の使い方を案 J に（tests/ui-proposals/2026-10-settings-width）。項目は表の行「項目｜設定｜説明と推奨」、
+   区分の見出しの下に帯（推奨と違う所・直すところ）。
    残す設定を1つの一覧（SETTING_FIELDS）にまとめ、欄の作成・値の反映・推奨と違うかの判定・まとめと左の欄の札を、
    すべてここから作る。推奨（既定値）の出どころはサーバーの SETTING_DEFAULTS（/api/config の setting_defaults）。
    設定を足すときは、サーバーの SETTING_DEFAULTS とこの一覧に1行ずつ足す。 */
@@ -1026,10 +1028,10 @@ function partHtml(p){
 }
 function fieldHtml(f,i){
  let first=f.parts[0],rest=f.parts.slice(1);
- return `<div class="sf" data-f="${i}"><div class="sf-l"><b>${E(f.label)}</b><i class="sf-rec"></i><small>${E(f.hint||'')}</small></div>`
+ return `<div class="sf" data-f="${i}"><div class="sf-l"><b>${E(f.label)}</b></div>`
   +`<div class="sf-c"><div class="sf-p" data-k="${first.key}">${partHtml(first)}</div>`
-  +(rest.length?`<div class="sf-row">${rest.map(p=>`<div class="sf-p" data-k="${p.key}">${partHtml(p)}</div>`).join('')}</div>`:'')
-  +`<button type="button" class="textbtn sf-reset" hidden></button></div></div>`;
+  +(rest.length?`<div class="sf-row">${rest.map(p=>`<div class="sf-p" data-k="${p.key}">${partHtml(p)}</div>`).join('')}</div>`:'')+`</div>`
+  +`<div class="sf-d"><i class="sf-rec"></i><small>${E(f.hint||'')}</small><button type="button" class="textbtn sf-reset" hidden></button></div></div>`;
 }
 function paintField(row){
  let f=SETTING_FIELDS[Number(row.dataset.f)],st=cfg.settings,dev=fieldDev(f);
@@ -1082,12 +1084,19 @@ function settingsStatus(){
  return st;
 }
 const SS_ORDER=[['conn','接続'],['place','場所'],['run','動かし方'],['safe','守り']];
+/* 区分の見出しの下の帯。直すところ・推奨と違う所があるかを、区分を開いた最初に言う */
+function settingsBanner(k,x){
+ if(x.tone==='n')return ['n','確認しています',''];
+ if(k==='run'||k==='safe')return (x.dev||[]).length?['warn',`推奨と違う所が ${x.dev.length} つあります`,`${x.dev.map(f=>f.label).join('・')}（行の右の「推奨に戻す」で戻せます）`]:['ok','推奨と違う所はありません','推奨と違う値にすると、その行に黄色の印と「推奨に戻す」が出ます'];
+ return x.tone==='ng'?['ng','直すところがあります',x.text]:['ok','直すところはありません',x.text];
+}
 function paintSettingsStatus(){
  if(!cfg?.settings||!$('#ss-cards'))return;
  let st=settingsStatus(),ng=SS_ORDER.filter(([k])=>st[k].tone==='ng'),dev=SS_ORDER.reduce((a,[k])=>a+(st[k].dev||[]).length,0);
  $$('[data-st]').forEach(el=>{let k=el.dataset.st,x=k==='summary'?(ng.length?{tone:'ng',chip:`要対応 ${ng.length}`}:dev?{tone:'warn',chip:`推奨と違う ${dev}`}:null):st[k];
   el.className='sn-st'+(x?' is-'+x.tone:'');el.textContent=x?x.chip:''});
  $$('[data-st-pill]').forEach(el=>{let x=st[el.dataset.stPill];if(!x)return;el.className='pill sn-pill is-'+x.tone;el.textContent=x.chip});
+ $$('[data-st-banner]').forEach(el=>{let x=st[el.dataset.stBanner];if(!x)return;let [tone,b,t]=settingsBanner(el.dataset.stBanner,x);el.className='sf-banner is-'+tone;el.innerHTML=`<b>${E(b)}</b>${t?`<span>${E(t)}</span>`:''}`});
  $('#ss-lead').textContent=ng.length?`直すところがあります: ${ng.map(x=>x[1]).join('・')}`:dev?`直すところはありません · 推奨と違う項目が ${dev} つあります`:'直すところはありません · すべて推奨どおりです';
  $('#ss-cards').innerHTML=SS_ORDER.map(([k,t])=>{let x=st[k];
   return `<button type="button" class="ss-card is-${x.tone}" data-go="${k}"><span class="sn-st is-${x.tone}">${E(x.chip)}</span><b>${t}</b><small>${E(x.text)}</small>`

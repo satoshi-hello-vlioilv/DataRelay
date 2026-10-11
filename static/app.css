@@ -2779,3 +2779,63 @@ body>main{width:var(--app-shell);max-width:var(--app-shell);
 .sf-adv>summary small{color:#647581;font-weight:400;font-size:11.5px}
 .pathgrid-one{grid-template-columns:minmax(0,1fr)!important;margin-top:12px}
 @media (prefers-reduced-motion:reduce){.sf-tog i,.sf-tog i::after{transition:none}}
+
+/* ==== 2.1.3 共通設定の横幅（案 J。tests/ui-proposals/2026-10-settings-width） ====
+   項目は表の行「項目｜設定｜説明と推奨」にし、枠で右端をそろえる。中身の幅の上限を外して区分の幅いっぱいを使う。
+   区分の見出しの札は区分名の隣、見出しの下に帯（推奨と違う所・直すところ）。 */
+.settings-pane .settings-block,.settings-pane .rel-block,.settings-pane .rel-block.rel-wide,.settings-pane .login-block,
+.settings-pane .dll-block,.settings-pane .api-dll-block,.settings-pane .backup-settings{max-width:none!important}
+.settings-pane>.panelhead h2{display:flex;align-items:center;gap:10px}
+.settings-pane>.panelhead h2 .sn-pill{font-size:11px}
+.sf-banner{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px;margin-top:12px;padding:9px 14px;border:1px solid;border-radius:9px;font-size:12.5px}
+.sf-banner:empty{display:none}
+.sf-banner b{font-weight:800}
+.sf-banner span{color:#4d6670;font-size:12px}
+.sf-banner.is-ok{background:#f1f9f5;border-color:#cfe8dc;color:#0a6a4a}
+.sf-banner.is-warn{background:#fffaf0;border-color:#efd9a8;color:#8a5a00}
+.sf-banner.is-ng{background:#fdf3f1;border-color:#efcdc7;color:#a5372c}
+.sf-banner.is-n{background:#f4f7f8;border-color:#e1e9ec;color:#647581}
+/* 表の行（動かし方・守り） */
+.sf-list{margin-top:12px;padding:0;overflow:hidden}
+.sf{grid-template-columns:minmax(190px,240px) minmax(300px,1fr) minmax(260px,1fr);gap:24px;align-items:start;padding:13px 18px}
+.sf:nth-child(even){background:#fafcfc}
+.sf.is-dev{margin:0;padding-left:18px;padding-right:18px;background:#fffaf0}
+.sf-l b{font-size:13.5px;line-height:1.45}
+.sf-d{display:grid;gap:5px;align-content:start;justify-items:start;padding-left:16px;border-left:2px solid #eef3f5}
+.sf-d small{font-size:12px;line-height:1.6;color:#4d6670}
+.sf.is-dev .sf-d{border-left-color:#efd9a8}
+.sf-adv{margin-top:10px}
+/* 表の行（場所の置き場・接続の symnavim.conf） */
+#pathform.pathgrid{flex-direction:column;flex-wrap:nowrap;gap:0!important;margin-top:12px;background:#fff;border:1px solid #d7e0e5;border-radius:12px;overflow:hidden}
+.pathgrid .pf-row{width:auto;display:grid;grid-template-columns:minmax(190px,240px) minmax(300px,1fr) minmax(260px,1fr);grid-template-areas:"top browse note" "top tools note";
+ gap:6px 24px;align-items:start;padding:12px 18px;border:0;border-bottom:1px solid #eef3f5;border-radius:0;background:#fff}
+.pathgrid .pf-row:last-child{border-bottom:0}
+.pathgrid .pf-row>.pf-top{grid-area:top;flex-direction:column;align-items:flex-start;gap:5px}
+.pathgrid .pf-row>.pf-top b{font-size:13.5px;white-space:normal}
+.pathgrid .pf-row .pf-badge{margin-left:0}
+.pathgrid .pf-row>.browse{grid-area:browse;min-width:0}
+.pathgrid .pf-row>.path-tools{grid-area:tools}
+.pathgrid .pf-row>.pf-note{grid-area:note;flex-direction:column;align-items:flex-start;gap:4px;padding-left:16px;border-left:2px solid #eef3f5}
+.pathgrid .pf-row>.pf-note code{white-space:normal;overflow-wrap:anywhere;font-size:11px}
+.pathgrid .pf-row>.pf-note small{font-size:12px;line-height:1.6;color:#4d6670}
+.pathgrid .pf-row.is-warn{background:#fdfaf3}.pathgrid .pf-row.is-ng{background:#fdf6f5}
+.pathgrid .pf-row.is-off{background:#fafcfc}
+#pathform .pf-divider{margin:0;padding:7px 18px;background:#f4f7f8;border-bottom:1px solid #eef3f5;border-top:0}
+/* 接続: 接続情報と symnavim.conf を1つの表に */
+.sf-table{margin-top:12px;background:#fff;border:1px solid #d7e0e5;border-radius:12px;overflow:hidden}
+.conn-table .login-block{display:grid;grid-template-columns:minmax(190px,240px) minmax(300px,1fr) minmax(260px,1fr);grid-template-areas:"head facts note" "head acts note";
+ gap:8px 24px;align-items:start;margin:0;padding:13px 18px;border:0;border-bottom:1px solid #eef3f5;border-radius:0}
+.conn-table .login-head{grid-area:head;flex-direction:column;align-items:flex-start;gap:5px}
+.conn-table .login-head b{font-size:13.5px}
+.conn-table #login-facts{grid-area:facts;margin:0}
+.conn-table #login-note{grid-area:note;margin:0;padding-left:16px;border-left:2px solid #eef3f5;font-size:12px;line-height:1.6;color:#4d6670}
+.conn-table .rel-actions{grid-area:acts;margin:0}
+.conn-table .login-delete{margin-left:0}
+.conn-table #pathform-conn{margin:0}
+.conn-table #pathform-conn .pf-row{border-bottom:0}
+/* 接続: API の確かめた項目は横に並べ、縦に長くしない */
+.settings-pane .dll-block{margin-top:12px;padding:13px 18px;background:#fff;border:1px solid #d7e0e5;border-radius:12px}
+.settings-pane .ar-items{grid-template-columns:repeat(auto-fill,minmax(340px,1fr))}
+.settings-pane .ar-fix{margin-top:12px}
+@media(max-width:1100px){.sf,.pathgrid .pf-row,.conn-table .login-block{grid-template-columns:minmax(160px,200px) minmax(0,1fr);grid-template-areas:"top browse" "top tools" "note note";gap:6px 18px}
+ .conn-table .login-block{grid-template-areas:"head facts" "head acts" "note note"}.sf-d,.pathgrid .pf-row>.pf-note,.conn-table #login-note{grid-column:1/-1;padding-left:0;border-left:0}}
