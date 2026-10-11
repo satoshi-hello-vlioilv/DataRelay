@@ -108,7 +108,7 @@ def _replace_once(src,dst):
 def _pending_pattern(dst):
  return f'{dst.stem}.pending_*{dst.suffix}'
 
-def apply_pending(dst,backup_root,generations,backup_enabled=True,retention_days=30,generation_limit_enabled=True,backup_mode='generations'):
+def apply_pending(dst,backup_root,generations,backup_enabled=True,retention_days=30,backup_mode='generations'):
  """Apply the newest deferred output before the next extraction, if the target is no longer locked."""
  # globは公開先フォルダー（多くはネットワーク共有）を丸ごと列挙する。並列ラインの数だけ
  # 同時に走るため、共有が重い環境では抽出開始前の待ち時間になり得る。実測を必ず残す。
@@ -119,7 +119,7 @@ def apply_pending(dst,backup_root,generations,backup_enabled=True,retention_days
  if not pending:return None
  newest=pending[0]
  try:
-  publish(newest,dst,backup_root,generations,from_pending=True,backup_enabled=backup_enabled,retention_days=retention_days,generation_limit_enabled=generation_limit_enabled,backup_mode=backup_mode)
+  publish(newest,dst,backup_root,generations,from_pending=True,backup_enabled=backup_enabled,retention_days=retention_days,backup_mode=backup_mode)
   for old in pending[1:]:
    try:old.unlink()
    except OSError:pass
@@ -137,7 +137,7 @@ def _wait(attempts,dst,err,started):
           dst,attempts,time.time()-started,busy_reason(err),gap)
  time.sleep(gap)
 
-def publish(src,dst,backup_root,generations,from_pending=False,backup_enabled=True,retention_days=30,generation_limit_enabled=True,backup_mode='generations'):
+def publish(src,dst,backup_root,generations,from_pending=False,backup_enabled=True,retention_days=30,backup_mode='generations'):
  """Copy locally-created output, then atomically replace the public file.
  If another PC has the target open, keep the new correct file as *.pending_* and return immediately.
  """

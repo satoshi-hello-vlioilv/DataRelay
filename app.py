@@ -58,8 +58,8 @@ def docs_dir():
 APP_ID=APP_NAME; INSTANCE_ID=str(uuid.uuid4()); app=_UnusedWebLayer() if WORKER_MODE else Flask(__name__)
 if not WORKER_MODE:app.config['SEND_FILE_MAX_AGE_DEFAULT']=0
 run_lock=threading.Lock(); stop_event=threading.Event(); status_lock=threading.Lock(); command_queue_lock=threading.RLock(); command_queue_event=threading.Event(); command_queue=[]; active_command=None
-# 実行中断（ユーザーによる明示キャンセル）。プロセス分離ワーカーはterminateで即時停止できるが、
-# 直列(DDE/API)実行中の1件はCOM/DDE操作の途中で安全に打ち切れないため、次のジョブ開始前でのみ打ち切る。
+# 実行中断（ユーザーによる明示キャンセル）。プロセス分離ワーカーはterminateで即時停止できる。
+# 手元の処理（固定長テキスト・結合）は1件の途中で打ち切らず、次の対象を始める前に打ち切る。
 cancel_requested=threading.Event(); active_workers_lock=threading.Lock(); active_workers={}
 # カレントディレクトリはプロセス全体で共有される。Flaskは threaded=True で動くため、
 # 直列実行と管理ポイント自動検出などが重なると復元順序が入れ違い、cwdが誤った場所に固定される
@@ -69,8 +69,14 @@ chdir_lock=threading.RLock()
 PARALLEL_LINES_SUPPORTED_MAX=24
 # SymNaviA.dllを探す既定の範囲。製品側の標準配置 → アプリ同梱 の順。設定画面から増減できる。
 DEFAULT_DLL_SEARCH_ROOTS=(r'C:\NAVIAP','.\\Config\\NAVIAP','.\\NAVIAP')
+# 2.1.2 で撤去した設定。読み込みで落とし、保存し直すと設定からも消える。
+# DDE 方式（SymfoNavi を画面操作する道）の設定と、どこからも読まれていなかった設定・効いていなかった設定
+REMOVED_SETTINGS=('extract_engine','dde_timeout_seconds','output_wait_seconds','symnavi_hide_profile','symnavi_hide_action_duration_seconds',
+                  'symnavi_hide_action_interval_seconds','symnavi_hide_interval_seconds','stability_profile','api_parallel_model','startup_run',
+                  'backup_generation_limit_enabled')
+REMOVED_TOP_KEYS=('symnavi_exe','symnavim_def','work_folder')
 class RunCancelled(Exception):pass
-status={'build_version':BUILD_VERSION,'running':False,'current':'','current_job_id':'','current_job_name':'','current_index':0,'total_jobs':0,'step':'idle','step_label':'待機中','step_percent':0,'completed_jobs':0,'failed_jobs':0,'started_at':'','elapsed_seconds':0,'symnavi_window':'未起動','last_result':'未実行','last_finished_at':'','error_detail':'','activity_detail':'','activity_value':'','heartbeat_at':'','parallel_lines':[],'batch_job_ids':[],'queue_completed_ids':[],'queue_failed_ids':[],'queue_running_ids':[],'queue_waiting_ids':[],'job_errors':[],'job_results':[]}
+status={'build_version':BUILD_VERSION,'running':False,'current':'','current_job_id':'','current_job_name':'','current_index':0,'total_jobs':0,'step':'idle','step_label':'待機中','step_percent':0,'completed_jobs':0,'failed_jobs':0,'started_at':'','elapsed_seconds':0,'last_result':'未実行','last_finished_at':'','error_detail':'','activity_detail':'','activity_value':'','heartbeat_at':'','parallel_lines':[],'batch_job_ids':[],'queue_completed_ids':[],'queue_failed_ids':[],'queue_running_ids':[],'queue_waiting_ids':[],'job_errors':[],'job_results':[]}
 # ログの機構（出す・省略する・末尾だけ読む・世代を押し出す）は navi_log.py にある。
 # ここに残すのは「いま付け替えてよいか」の判断だけ ―― それは本体の都合なので。
 import navi_log
@@ -2169,6 +2175,17 @@ def resolve_text_path(job,cfg):
  if raw.startswith(('.\\','..\\','./','../')):return resolve_path(raw,DATA_ROOT)
  return resolve_path(raw,root)
 
+# 共通設定の既定値。読み込みで足りないものを埋め、画面はこれを「推奨」として出す（2.1.2。出どころを1つにする）。
+# 結合の待ち合わせの既定値は navi_order が持つ（判断もあちら）。
+SETTING_DEFAULTS={'api_parallel_lines':6,'variant_method':navi_variants.DEFAULT_METHOD,
+                  'retry_enabled':True,'retry_delay_minutes':5,'retry_max':1,'schedule_catchup_minutes':30,
+                  'api_worker_stagger_ms':700,'local_parallel_lines':0,'api_worker_timeout_minutes':120,
+                  'log_max_mb':10,'log_keep':5,'reject_zero_rows':True,
+                  'backup_enabled':True,'backup_mode':'generations','backup_generations':3,'backup_retention_days':30,
+                  'split_trial_timeout_seconds':1800,'split_anchor_limit':3,'split_min_part_mb':2.0,'split_min_gain_seconds':5.0,
+                  'split_min_speedup':1.05,'split_fixed_seconds':SPLIT_FIXED_SECONDS,'split_run_enabled':True,
+                  **navi_order.WAIT_DEFAULTS}
+
 def load():
  init_settings_db()
  with settings_connection() as c:
@@ -2187,15 +2204,14 @@ def load():
   # 設定の版。画面はこれをそのまま送り返し、ほかで変わっていたら保存を断れるようにする
   # （画面を2つ開いていると、あとから保存したほうが相手の追加した対象を消していた）。
   _rev=c.execute("SELECT value FROM schema_info WHERE key='settings_revision'").fetchone()
-  cfg['settings_revision']=int(_rev[0]) if _rev and str(_rev[0]).strip().lstrip('-').isdigit() else 0; cfg['settings'].setdefault('extract_engine','api'); cfg['settings'].setdefault('api_parallel_max_lines',PARALLEL_LINES_SUPPORTED_MAX); cfg['settings'].setdefault('api_parallel_model','process')
-  # 既定の並列ラインは6。旧テスト実装では stability_profile='stable_api_serial' の環境で読込のたびに api_parallel_lines を1へ強制していた（毎回1ラインへ戻る不具合の原因）。
-  # その名残マーカーが残る環境（または初期状態）だけ一度2へ引き上げ、以降はユーザーが保存した値をそのまま尊重する。
-  _prev_profile=cfg['settings'].get('stability_profile')
-  if _prev_profile in (None,'stable_api_serial'):
-   cfg['settings']['api_parallel_lines']=6; cfg['settings']['stability_profile']='balanced_api_parallel'
-  cfg['settings'].setdefault('api_parallel_lines',6); cfg['settings'].setdefault('stability_profile','balanced_api_parallel'); cfg['settings'].setdefault('backup_enabled',True); _backup_mode_missing='backup_mode' not in cfg['settings']; cfg['settings'].setdefault('backup_mode','generations'); cfg['settings'].setdefault('backup_retention_days',30); cfg['settings'].setdefault('backup_generation_limit_enabled',True); cfg['settings'].setdefault('backup_generations',3); cfg['settings'].setdefault('schedule_catchup_minutes',30); cfg['settings'].setdefault('api_worker_stagger_ms',700); cfg['settings'].setdefault('api_worker_timeout_minutes',120); cfg['settings'].setdefault('local_parallel_lines',0); cfg['settings'].setdefault('split_trial_timeout_seconds',1800); cfg['settings'].setdefault('split_anchor_limit',3); cfg['settings'].setdefault('split_min_part_mb',2.0); cfg['settings'].setdefault('split_min_gain_seconds',5.0); cfg['settings'].setdefault('split_min_speedup',1.05); cfg['settings'].setdefault('split_fixed_seconds',SPLIT_FIXED_SECONDS); cfg['settings'].setdefault('split_run_enabled',True); cfg['settings'].setdefault('variant_method',navi_variants.DEFAULT_METHOD); cfg['settings'].setdefault('retry_enabled',True); cfg['settings'].setdefault('retry_max',1); cfg['settings'].setdefault('retry_delay_minutes',5); cfg['settings'].setdefault('log_max_mb',10); cfg['settings'].setdefault('log_keep',5)
-  # 結合の順番と待ち合わせ（判断は navi_order.py。既定値もあちらが持つ）。
-  for _k,_v in navi_order.WAIT_DEFAULTS.items():cfg['settings'].setdefault(_k,_v)
+  cfg['settings_revision']=int(_rev[0]) if _rev and str(_rev[0]).strip().lstrip('-').isdigit() else 0; cfg['settings'].setdefault('api_parallel_max_lines',PARALLEL_LINES_SUPPORTED_MAX)
+  # 旧テスト実装の名残（stability_profile='stable_api_serial' で毎回1ラインへ戻していた）が残る環境だけ、一度6へ戻す。
+  if cfg['settings'].get('stability_profile')=='stable_api_serial':cfg['settings']['api_parallel_lines']=6
+  # 使わなくなった設定は読み込みで落とす（次に保存したとき設定からも消える）。DDE 方式の設定（2.1.2 で撤去）と、どこからも読まれていない設定
+  for _k in REMOVED_SETTINGS:cfg['settings'].pop(_k,None)
+  for _k in REMOVED_TOP_KEYS:cfg.pop(_k,None)
+  _backup_mode_missing='backup_mode' not in cfg['settings']
+  for _k,_v in SETTING_DEFAULTS.items():cfg['settings'].setdefault(_k,_v)
   if _backup_mode_missing:cfg['settings']['backup_generations']=3
   cfg.setdefault('navigator_api_dll',r'.\Config\NAVIAP\debugdllVC14x64\SymNaviA.dll'); cfg.setdefault('accdb_template','.\\assets\\empty.accdb');
   # 固定長テキストと結合の基本フォルダー。ファイル名だけで登録したときの基準。
@@ -2225,7 +2241,7 @@ def normalize_interval_minutes(v):
  except (TypeError,ValueError):return 60
 
 def _save_local(v,quiet=False):
- init_settings_db(); now=datetime.now().isoformat(timespec='seconds'); jobs=v.get('jobs',[]); top={k:x for k,x in v.items() if k not in ('jobs','credential_status','text_layouts','join_recipes','settings_revision')}
+ init_settings_db(); now=datetime.now().isoformat(timespec='seconds'); jobs=v.get('jobs',[]); top={k:x for k,x in v.items() if k not in ('jobs','credential_status','text_layouts','join_recipes','settings_revision','setting_defaults')}
  with settings_connection() as c:
   c.execute('BEGIN IMMEDIATE'); c.execute('DELETE FROM app_settings')
   for key,value in top.items():
@@ -2351,7 +2367,7 @@ def dde_staging_folder():
 # 抽出・調査・影実行・ワーカーが別々に読むと、出どころの決め方がずれる。
 import navi_secret
 NAVI_VAULT=navi_secret.default_vault(LOCAL_ROOT)
-NO_LOGIN_MESSAGE='Navigator の接続情報が登録されていません。共通設定 →「接続とパス」の「Navigator の接続情報」で登録してください'
+NO_LOGIN_MESSAGE='Navigator の接続情報が登録されていません。共通設定 →「接続」の「Navigator の接続情報」で登録してください'
 def legacy_conf_path(cfg=None):
  """設定の symnavim.conf の実体（在れば）。無い・未設定なら None。"""
  try:raw=str((cfg if cfg is not None else load()).get('symnavim_conf') or '').strip()
@@ -2397,108 +2413,6 @@ def data_source_profiles(cfg,user,pw):
   profiles.insert(0,{'section':'NavigatorCredentialFallback','kind':'oracle','user':user,'password':pw,'server':'','option':'','resource':'','resource_kind':'0','credential_source':'navigator_session'})
  return profiles
 
-_wmi_warning_reported=False
-def symnavi_process_ids(root_pid):
- """Return the launched process and descendant process IDs using WMI."""
- global _wmi_warning_reported
- ids={root_pid}; pythoncom=None
- try:
-  import pythoncom, win32com.client
-  pythoncom.CoInitialize()
-  svc=win32com.client.GetObject(r'winmgmts:\\.\root\cimv2')
-  rows=list(svc.ExecQuery('SELECT ProcessId,ParentProcessId,Name FROM Win32_Process'))
-  changed=True
-  while changed:
-   changed=False
-   for item in rows:
-    pid=int(item.ProcessId); ppid=int(item.ParentProcessId); name=str(item.Name or '').lower()
-    if ppid in ids or name in ('symnavi.exe','symnavim.exe'):
-     if pid not in ids:ids.add(pid); changed=True
- except Exception as e:
-  if not _wmi_warning_reported:
-   log.warning('SymfoNavi子プロセス列挙を省略し、PID・タイトル検出を継続します: %s',e); _wmi_warning_reported=True
- finally:
-  if pythoncom:
-   try:pythoncom.CoUninitialize()
-   except:pass
- return ids
-
-def hide_symnavi_windows(proc,wait_seconds=0.8):
- """Hide currently visible SymfoNavi windows and confirm that they became hidden."""
- try:
-  import win32con, win32gui, win32process
-  deadline=time.time()+max(.1,wait_seconds); hidden=set(); remaining=[]
-  while time.time()<deadline:
-   pids=symnavi_process_ids(proc.pid); candidates=[]
-   def each(hwnd,_):
-    try:
-     _,pid=win32process.GetWindowThreadProcessId(hwnd)
-     title=win32gui.GetWindowText(hwnd).lower(); cls=win32gui.GetClassName(hwnd).lower()
-     if win32gui.IsWindowVisible(hwnd) and (pid in pids or 'symnavi' in title or 'navigator' in title or 'symnavi' in cls):candidates.append(hwnd)
-    except:pass
-   win32gui.EnumWindows(each,None)
-   if not candidates:return len(hidden),[]
-   for hwnd in candidates:
-    try:
-     win32gui.ShowWindow(hwnd,win32con.SW_HIDE)
-     if not win32gui.IsWindowVisible(hwnd):hidden.add(hwnd)
-    except:pass
-   time.sleep(.08)
-   remaining=[]
-   def confirm(hwnd,_):
-    try:
-     _,pid=win32process.GetWindowThreadProcessId(hwnd)
-     title=win32gui.GetWindowText(hwnd).lower(); cls=win32gui.GetClassName(hwnd).lower()
-     if win32gui.IsWindowVisible(hwnd) and (pid in pids or 'symnavi' in title or 'navigator' in title or 'symnavi' in cls):remaining.append(hwnd)
-    except:pass
-   win32gui.EnumWindows(confirm,None)
-   if not remaining:return len(hidden),[]
-  return len(hidden),remaining
- except Exception as e:
-  log.warning('SymfoNaviウィンドウ非表示失敗: %s',e); return 0,[]
-
-def symnavi_hide_options(settings):
- """DDE接続の直後に、SymfoNaviの画面をどれだけ念入りに隠すか。
-
- 以前は「定期監視」――抽出中も数秒おきに窓を探して隠す――も持っていたが、
- WMIと窓の列挙が並行して走るとDDEとExcel生成が目立って遅くなるため、
- 接続直後に隠しきる方式へ変えて定期監視は止めた。それにもかかわらず設定画面には
- 「軽量監視（3秒）」「バランス（2秒）」「標準監視（1秒）」と、動いていない監視の
- 間隔が並んだままだった。実際に効くのは下の2つだけなので、それだけを持つ。
-   action_duration … 接続直後、隠す試行を続ける時間
-   action_interval … その中で隠しなおす間隔
- """
- profile=str(settings.get('symnavi_hide_profile','balanced'))
- presets={
-  # light は action_only と同じ。古い設定がそのまま動くように残してある。
-  'action_only':{'action_duration':0.35,'action_interval':0.35},
-  'light':{'action_duration':0.35,'action_interval':0.35},
-  'balanced':{'action_duration':0.5,'action_interval':0.5},
-  'standard':{'action_duration':0.6,'action_interval':0.5},
-  'custom':{'action_duration':max(0.2,float(settings.get('symnavi_hide_action_duration_seconds',0.5))),'action_interval':max(0.2,float(settings.get('symnavi_hide_action_interval_seconds',0.5)))}
- }
- return profile,presets.get(profile,presets['balanced'])
-
-def hide_after_action(proc,action,settings,settle_seconds=None):
- profile,opt=symnavi_hide_options(settings)
- duration=opt['action_duration'] if settle_seconds is None else min(float(settle_seconds),opt['action_duration'])
- started=time.time(); total=0; visible=[]
- while True:
-  count,visible=hide_symnavi_windows(proc,min(.35,opt['action_interval'])); total+=count
-  if time.time()-started>=duration or (count==0 and not visible):break
-  time.sleep(opt['action_interval'])
- state='非表示確認済み' if not visible else f'次回監視待ち({len(visible)})'
- set_status(symnavi_window=state,activity_detail=f'{action}後の画面状態を確認',heartbeat_at=datetime.now().isoformat(timespec='seconds'))
- log.info('SymfoNavi非表示 action=%s profile=%s hidden=%s remaining=%s',action,profile,total,len(visible))
-
-def start_hidden_symnavi(proc,settings):
- hide_after_action(proc,'DDE接続',settings)
- return None
-
-# 定期監視（抽出中も数秒おきに窓を探して隠す）は持たない。WMIと窓の列挙が並行して
-# 走るとDDEとExcel生成が目立って遅くなるため、接続直後に隠しきる方式に一本化した。
-# 設定画面の選択肢からも、動いていない監視間隔の表記を外してある。
-
 # 1対象ぶんの工程内訳。STEP_START/ENDは並列実行だと他プロセスの行と混ざって追いにくいので、
 # 完了時に「どの工程が何秒・何%だったか」を1行へまとめ、対象ごとの傾向を後から比較できるようにする。
 _phase_profile={'started':0.0,'depth':0,'phases':{}}
@@ -2514,11 +2428,10 @@ def phase_profile_add(phase,elapsed):
  """
  _phase_profile['phases'][phase]=_phase_profile['phases'].get(phase,0.0)+float(elapsed)
 
-def serial_run_metrics(engine,fmt,total,rows,cols,intermediate=None,dde_save_seconds=None):
- """直列実行1件ぶんの実績。並列ワーカーが返すものと同じ形に揃える。
+def serial_run_metrics(engine,fmt,total,rows,cols,intermediate=None):
+ """1件ずつ流す処理（固定長テキスト・結合）1件ぶんの実績。並列ワーカーが返すものと同じ形に揃える。
 
  形が違うと一覧の実績欄・所要の比較・ログの読み方が方式ごとに分かれてしまう。
- DDEの[Save]は問い合わせと転送を一度に行うため、その1回を execute_seconds として扱う。
  """
  phases=phase_profile_seconds()
  def sec(*names):
@@ -2526,10 +2439,10 @@ def serial_run_metrics(engine,fmt,total,rows,cols,intermediate=None,dde_save_sec
    v=phases.get(n)
    if v:return round(float(v),2)
   return None
- execute=sec('xls_save','api_execute_catalog') if engine=='dde' else sec('api_execute_catalog')
- transfer_seconds=(float(dde_save_seconds) if engine=='dde' and dde_save_seconds else None) or sec('api_save_xlsx_direct','api_save_csv')
+ execute=sec('api_execute_catalog')
+ transfer_seconds=sec('api_save_xlsx_direct','api_save_csv')
  m={'elapsed':round(float(total),2),'rows':rows,'cols':cols,'format':fmt,'engine':engine,
-    'execute_seconds':execute,'save_seconds':sec('api_save_xlsx_direct','api_save_csv') if engine!='dde' else sec('xls_stability'),
+    'execute_seconds':execute,'save_seconds':transfer_seconds,
     'convert_seconds':sec('format_conversion'),'publish_seconds':sec('publish'),'lines':1}
  try:
   p=Path(intermediate) if intermediate else None
@@ -2649,73 +2562,6 @@ def apply_dynamic_period(api_client,handle,job,now=None,line=''):
  log.info('DYNAMIC_PERIOD job=%s line=%s enabled=1 unit=%s condition=%s from=%s to=%s target=%s summary=%s',job.get('name'),line or '-',spec['unit'],spec['condition'],spec['from_time'],spec['to_time'],info.get('label'),spec['summary'])
  return {**spec,'target':info.get('label')}
 
-def dde_connect(seconds):
- try: import win32ui, dde
- except Exception as e: raise RuntimeError('pywin32のDDE機能を読み込めません') from e
- srv=dde.CreateServer(); srv.Create('NaviToSQLiteClient'); conv=dde.CreateConversation(srv); end=time.time()+seconds; last=''
- while time.time()<end:
-  try: conv.ConnectTo('SymNavi','Macro'); time.sleep(5); log.info('DDE接続完了'); return srv,conv
-  except Exception as e: last=str(e); time.sleep(1)
- try:srv.Shutdown()
- except:pass
- raise TimeoutError('DDE接続タイムアウト: '+last)
-def dde_exec(conv,name,text,expected_output=None):
- last=None
- for attempt in range(1,4):
-  done=threading.Event(); started=time.time()
-  def heartbeat():
-   while not done.wait(5):
-    elapsed=int(time.time()-started)
-    set_status(activity_detail=f'DDE {name} 実行中',activity_value=f'{elapsed}秒経過。SymfoNaviの応答を待っています',heartbeat_at=datetime.now().isoformat(timespec='seconds'))
-    log.info('DDE待機中 command=%s attempt=%s elapsed=%ss',name,attempt,elapsed)
-  threading.Thread(target=heartbeat,daemon=True,name='dde-heartbeat-'+name).start()
-  try:
-   log.info('DDE実行開始 command=%s attempt=%s text=%s',name,attempt,text)
-   conv.Exec(text); done.set()
-   elapsed=time.time()-started; log.info('DDE実行完了 command=%s attempt=%s elapsed=%.2fs',name,attempt,elapsed)
-   time.sleep(.2); return
-  except Exception as e:
-   done.set(); last=e; elapsed=time.time()-started
-   # SymfoNavi can return Exec failed after completing the Save. Do not repeat the full extraction when output exists.
-   if expected_output:
-    candidate=Path(expected_output)
-    for _ in range(10):
-     if candidate.exists() and candidate.stat().st_size>0:
-      log.warning('DDE応答エラーだが出力ファイルを検出したため再実行を省略 command=%s attempt=%s elapsed=%.2fs file=%s size=%s error=%s',name,attempt,elapsed,candidate,candidate.stat().st_size,e); return
-     time.sleep(.5)
-   if name=='Open':
-    log.warning('DDE Open応答タイムアウト。重複Openによる確認ダイアログを防ぐため再実行せず次工程で検証します elapsed=%.2fs error=%s',elapsed,e)
-    set_status(activity_detail='RNE Open応答待ちを終了',activity_value='重複Openを防止し、XLS生成工程で実状態を検証します',heartbeat_at=datetime.now().isoformat(timespec='seconds'))
-    return
-   log.warning('DDE失敗 command=%s attempt=%s elapsed=%.2fs error=%s',name,attempt,elapsed,e); time.sleep(2)
- raise RuntimeError(f'DDE {name}失敗: {last}; command={text}')
-
-def validate_xls_complete(path,job):
- try:
-  import xlrd
-  book=xlrd.open_workbook(str(path),on_demand=True)
-  try:
-   sheet=book.sheet_by_name(job.get('sheet','Page1'))
-   return sheet.nrows>0 and sheet.ncols>0, f'{sheet.nrows:,} rows / {sheet.ncols:,} columns'
-  finally:book.release_resources()
- except Exception as e:return False,str(e)
-
-def wait_file(p,seconds,job):
- end=time.time()+seconds; old=-1; stable=0; started=time.time(); last_validation='未検証'
- while time.time()<end:
-  elapsed=int(time.time()-started)
-  if p.exists():
-   size=p.stat().st_size; stable=stable+1 if size>0 and size==old else 0; old=size
-   if stable>=5:
-    ok,last_validation=validate_xls_complete(p,job)
-    if ok:
-     set_status(activity_detail='中間XLSの完成を確認しました',activity_value=f'{size:,} bytes / {last_validation} / {elapsed}秒',heartbeat_at=datetime.now().isoformat(timespec='seconds')); return size
-    stable=0
-   set_status(activity_detail='中間XLSを書き込み中',activity_value=f'{size:,} bytes / 安定確認 {stable}/5 / {elapsed}秒 / {last_validation}',heartbeat_at=datetime.now().isoformat(timespec='seconds'))
-  else:set_status(activity_detail='SymfoNaviからの中間XLS生成を待機中',activity_value=f'未検出 / {elapsed}秒経過',heartbeat_at=datetime.now().isoformat(timespec='seconds'))
-  time.sleep(1)
- raise TimeoutError(f'一時XLSが完成しません: {p}; 最終サイズ={old:,} bytes; 検証={last_validation}')
-
 def unique_headers(values):
  out=[]; used={}
  for i,x in enumerate(values,1):
@@ -2772,17 +2618,8 @@ def read_extract(source,job,reject,expected_rows=None,expected_cols=None):
   if body is None:raise UnicodeError(f'API中間CSVの文字コードを判定できません: {source}: {last_error}')
   source_kind='api_csv'
  else:
-  import xlrd
-  b=xlrd.open_workbook(str(source),on_demand=True)
-  try: sh=b.sheet_by_name(job.get('sheet','Page1')); rows=[sh.row_values(i) for i in range(sh.nrows)]
-  finally:b.release_resources()
-  encoding_used='binary';source_kind='dde_xls'
-  names,used,shape_info=shape.resolve(rows[:shape.lookahead])
-  hs=unique_headers(names) if names is not None else None
-  body=[]
-  if hs is not None:
-   for row in rows[used:]:body.append([str(x) if x is not None else '' for x in list(row[:len(hs)])+['']*max(0,len(hs)-len(row))])
-  rows=None
+  # 中間ファイルはCSVだけ（2.1.2 で DDE の中間XLSを読む道を外した）
+  raise ValueError(f'中間ファイルの形式に対応していません（CSVだけ読みます）: {source.name}')
  if hs is None:raise ValueError(f'{source.suffix}にデータがありません')
  if reject and not body:raise ValueError('抽出0件のため出力を中止しました')
  row_match=expected_rows is None or len(body)==int(expected_rows)
@@ -3072,15 +2909,13 @@ def publish_extra_formats(j,cfg,intermediate,out_dir,work_dir,backup,stamp,line=
   try:
    sub=dict(j);sub['output_format']=fmt;sub['output_file']=name
    apply_pending(target,backup,int(s['backup_generations']),backup_enabled=bool(s.get('backup_enabled',True)),
-                 retention_days=int(s.get('backup_retention_days',30)),
-                 generation_limit_enabled=bool(s.get('backup_generation_limit_enabled',True)),
+                 retention_days=int(s.get('backup_retention_days',30)), 
                  backup_mode=str(s.get('backup_mode','generations')))
    t=phase_log('extra_format_conversion',job=j['name'],line=line,format=fmt)
    nr,nc=export_data(intermediate,work,sub,bool(s['reject_zero_rows']),data=data)
    phase_log('extra_format_conversion',t,job=j['name'],line=line,format=fmt,rows=nr,columns=nc)
    pub=publish(work,target,backup,int(s['backup_generations']),backup_enabled=bool(s.get('backup_enabled',True)),
-               retention_days=int(s.get('backup_retention_days',30)),
-               generation_limit_enabled=bool(s.get('backup_generation_limit_enabled',True)),
+               retention_days=int(s.get('backup_retention_days',30)), 
                backup_mode=str(s.get('backup_mode','generations')))
    row.update({'ok':True,'published':pub['published'],'pending':pub.get('pending',''),
                'rows':nr,'columns':nc,'elapsed':round(time.perf_counter()-started,2)})
@@ -3228,7 +3063,7 @@ def process_api_diag(cfg):
  from navigator_api import NavigatorApi
  started=time.perf_counter();api=None
  try:
-  api=NavigatorApi(resolve_path(cfg.get('symnavi_exe','')),log,
+  api=NavigatorApi(log,
                    resolve_path(cfg.get('navigator_api_dll')) if cfg.get('navigator_api_dll') else None,
                    base_dir=BASE,search_roots=dll_search_roots(cfg))
   info=api.info();info['ok']=True
@@ -3403,7 +3238,7 @@ def process_split_part(j,cfg,user,pw,server,out_csv,drop_columns,part_label='',r
   except Exception:pass
  try:
   step('接続')
-  api=NavigatorApi(resolve_path(cfg.get('symnavi_exe','')),log,resolve_path(cfg.get('navigator_api_dll')) if cfg.get('navigator_api_dll') else None,base_dir=BASE,search_roots=dll_search_roots(cfg))
+  api=NavigatorApi(log,resolve_path(cfg.get('navigator_api_dll')) if cfg.get('navigator_api_dll') else None,base_dir=BASE,search_roots=dll_search_roots(cfg))
   api.open_session(user,pw,server)
   for profile in data_source_profiles(cfg,user,pw):api.connect_data_source(profile)
   with chdir_lock:
@@ -3862,7 +3697,7 @@ def finish_one_job(j,cfg,*,intermediate,db,target,backup,out_dir,local_export,st
  else:
   t=plog('format_conversion',job=j['name'],format=fmt);nr,nc=export_data(intermediate,db,j,bool(cfg['settings']['reject_zero_rows']),expected_rows,expected_cols,data=shared);plog('format_conversion',t,job=j['name'],format=fmt,rows=nr,columns=nc)
  say('publish')
- t=plog('publish',job=j['name']);pub=publish(db,target,backup,int(cfg['settings']['backup_generations']),backup_enabled=bool(cfg['settings'].get('backup_enabled',True)),retention_days=int(cfg['settings'].get('backup_retention_days',30)),generation_limit_enabled=bool(cfg['settings'].get('backup_generation_limit_enabled',True)),backup_mode=str(cfg['settings'].get('backup_mode','generations')));plog('publish',t,job=j['name'],published=pub['published'])
+ t=plog('publish',job=j['name']);pub=publish(db,target,backup,int(cfg['settings']['backup_generations']),backup_enabled=bool(cfg['settings'].get('backup_enabled',True)),retention_days=int(cfg['settings'].get('backup_retention_days',30)),backup_mode=str(cfg['settings'].get('backup_mode','generations')));plog('publish',t,job=j['name'],published=pub['published'])
  # 差し替えられなかった回の指紋を覚えると、次の実行が「前回と同じ内容」と判断して
  # 変換も公開もせずに published=True で戻る ―― 共有先が古いままであることが、
  # 画面からもDBからも見えなくなる。公開できた回だけ覚える。
@@ -4048,8 +3883,7 @@ def _finish_variants(j,cfg,*,intermediate,backup,local_export,stamp,fmt,extras,e
     fmt1=validate_output_contract(one,'before-extraction')
     out_dir=resolve_path(one.get('output_folder') or cfg['default_output_folder']);target=out_dir/one['output_file']
     s=cfg['settings']
-    apply_pending(target,backup,int(s['backup_generations']),backup_enabled=bool(s.get('backup_enabled',True)),retention_days=int(s.get('backup_retention_days',30)),
-                  generation_limit_enabled=bool(s.get('backup_generation_limit_enabled',True)),backup_mode=str(s.get('backup_mode','generations')))
+    apply_pending(target,backup,int(s['backup_generations']),backup_enabled=bool(s.get('backup_enabled',True)),retention_days=int(s.get('backup_retention_days',30)), backup_mode=str(s.get('backup_mode','generations')))
     db=Path(local_export)/f'{Path(one["output_file"]).stem}_{stamp}{Path(one["output_file"]).suffix}'
     fin=finish_one_job(one,cfg,intermediate=Path(part['path']),db=db,target=target,backup=backup,out_dir=out_dir,
                        local_export=local_export,stamp=stamp,expected_rows=part['rows'],expected_cols=expected_cols,
@@ -4102,7 +3936,7 @@ def _process_api_job_once(j,job_index,total_jobs,cfg,user,pw,server,dde_work,bac
   rp=resolve_rne_path(j,cfg);out_dir=resolve_path(j.get('output_folder') or cfg['default_output_folder']);target=out_dir/j['output_file']
   # 保留ファイルの確認・適用は公開先(ネットワーク共有)への操作。抽出前の待ちとして別枠で計上する。
   _pending_started=time.perf_counter()
-  apply_pending(target,backup,int(cfg['settings']['backup_generations']),backup_enabled=bool(cfg['settings'].get('backup_enabled',True)),retention_days=int(cfg['settings'].get('backup_retention_days',30)),generation_limit_enabled=bool(cfg['settings'].get('backup_generation_limit_enabled',True)),backup_mode=str(cfg['settings'].get('backup_mode','generations')))
+  apply_pending(target,backup,int(cfg['settings']['backup_generations']),backup_enabled=bool(cfg['settings'].get('backup_enabled',True)),retention_days=int(cfg['settings'].get('backup_retention_days',30)),backup_mode=str(cfg['settings'].get('backup_mode','generations')))
   _pending_elapsed=time.perf_counter()-_pending_started;phase_profile_add('pending_apply',_pending_elapsed)
   if not rp.is_file():raise FileNotFoundError('RNEがありません: '+str(rp))
   attach_rne_layout(j,rp,line_name);crosstab=job_is_crosstab(j)
@@ -4157,7 +3991,7 @@ def _process_api_job_once(j,job_index,total_jobs,cfg,user,pw,server,dde_work,bac
    finally:
     shutil.rmtree(split_work,ignore_errors=True)
   if intermediate is None:
-   _dll_started=time.perf_counter();api_client=NavigatorApi(resolve_path(cfg['symnavi_exe']),log,resolve_path(cfg.get('navigator_api_dll')) if cfg.get('navigator_api_dll') else None,base_dir=BASE,search_roots=dll_search_roots(cfg));phase_profile_add('api_load_dll',time.perf_counter()-_dll_started)
+   _dll_started=time.perf_counter();api_client=NavigatorApi(log,resolve_path(cfg.get('navigator_api_dll')) if cfg.get('navigator_api_dll') else None,base_dir=BASE,search_roots=dll_search_roots(cfg));phase_profile_add('api_load_dll',time.perf_counter()-_dll_started)
    update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='API接続',percent=line_percent('session',0.4),detail='セッション接続',phase='session');session_started=time.perf_counter();session_elapsed=api_client.open_session(user,pw,server);phase_profile_add('api_open_session',session_elapsed);log.info('PARALLEL_API_SESSION line=%s job=%s dll=%s elapsed=%.2fs is_opened=1',line_name,j['name'],api_client.dll_path,session_elapsed)
    profiles=data_source_profiles(cfg,user,pw)
    if profiles[0].get('credential_source')=='navigator_session':
@@ -4310,15 +4144,14 @@ def _process_api_job_once(j,job_index,total_jobs,cfg,user,pw,server,dde_work,bac
 def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=None):
  if not run_lock.acquire(False):raise RuntimeError('別の処理が実行中です')
  cancel_requested.clear()
- proc=srv=api_client=None; access_prewarm_thread=None
- # ラインで流したかどうか。失敗の後始末（下の except）は直列実行のために書いてあり、
+ # ラインへ入ったかどうか。入る前の失敗（接続情報が無いなど）は、下の except が
  # 「いま走っていた1件」を status から拾って失敗として確定させる。ラインではその1件が
  # 最後に進捗を出した“成功済みの”対象なので、そのまま通すと実績を名前ごと潰す。
  lanes_used=False
  try:
   startup_started=time.perf_counter();cfg_started=time.perf_counter();cfg=load();log.info('STARTUP_PHASE phase=config_load elapsed=%.2fs',time.perf_counter()-cfg_started);jobs=[j for j in cfg['jobs'] if j.get('enabled') and (not job_ids or j['id'] in job_ids)]
   if not jobs:raise ValueError('実行対象がありません')
-  selection_elapsed=time.perf_counter()-cfg_started;first_job=jobs[0]; first_fmt=normalize_output_format(first_job.get('output_format'),first_job.get('output_file')); first_target=resolve_path(first_job.get('output_folder') or cfg['default_output_folder'])/canonical_output_file(first_job.get('output_file'),first_fmt); progress.started=time.time(); requested_lines=max(1,min(int(parallel_lines_override or 1),len(jobs))); execution_mode='parallel' if str(cfg['settings'].get('extract_engine') or 'api').lower()=='api' else 'serial'; set_status(run_id=run_id or uuid.uuid4().hex,execution_mode=execution_mode,requested_lines=requested_lines,parallel_mode=(execution_mode=='parallel'),parallel_lines=[],queue_total=0,queue_waiting=0,queue_active=0,queue_completed=0,queue_completed_ids=[],queue_failed_ids=[],queue_running_ids=[],queue_waiting_ids=[j['id'] for j in jobs],job_results=[],parallel_max_lines=(requested_lines if execution_mode=='parallel' else 0),parallel_speedup=0,batch_job_ids=[j['id'] for j in jobs]); set_status(running=True,current='準備中',current_job_id=first_job['id'],current_job_name=first_job['name'],current_index=1,total_jobs=len(jobs),completed_jobs=0,failed_jobs=0,output_format=first_fmt,output_file=canonical_output_file(first_job.get('output_file'),first_fmt),output_target=str(first_target),started_at=datetime.now().isoformat(timespec='seconds'),elapsed_seconds=0,symnavi_window='起動待ち',step='prepare',step_label='設定を確認しています',step_percent=3,last_result='実行中',error_detail='',job_errors=[]); log.info('BUILD_VERSION=%s',BUILD_VERSION); log.info('処理開始 trigger=%s jobs=%s',trigger,[j['rne'] for j in jobs]);log.info('STARTUP_PHASE phase=config_and_job_selection elapsed=%.2fs',selection_elapsed)
+  selection_elapsed=time.perf_counter()-cfg_started;first_job=jobs[0]; first_fmt=normalize_output_format(first_job.get('output_format'),first_job.get('output_file')); first_target=resolve_path(first_job.get('output_folder') or cfg['default_output_folder'])/canonical_output_file(first_job.get('output_file'),first_fmt); progress.started=time.time(); requested_lines=max(1,min(int(parallel_lines_override or 1),len(jobs))); execution_mode='parallel'; set_status(run_id=run_id or uuid.uuid4().hex,execution_mode=execution_mode,requested_lines=requested_lines,parallel_mode=(execution_mode=='parallel'),parallel_lines=[],queue_total=0,queue_waiting=0,queue_active=0,queue_completed=0,queue_completed_ids=[],queue_failed_ids=[],queue_running_ids=[],queue_waiting_ids=[j['id'] for j in jobs],job_results=[],parallel_max_lines=requested_lines,parallel_speedup=0,batch_job_ids=[j['id'] for j in jobs]); set_status(running=True,current='準備中',current_job_id=first_job['id'],current_job_name=first_job['name'],current_index=1,total_jobs=len(jobs),completed_jobs=0,failed_jobs=0,output_format=first_fmt,output_file=canonical_output_file(first_job.get('output_file'),first_fmt),output_target=str(first_target),started_at=datetime.now().isoformat(timespec='seconds'),elapsed_seconds=0,step='prepare',step_label='設定を確認しています',step_percent=3,last_result='実行中',error_detail='',job_errors=[]); log.info('BUILD_VERSION=%s',BUILD_VERSION); log.info('処理開始 trigger=%s jobs=%s',trigger,[j['rne'] for j in jobs]);log.info('STARTUP_PHASE phase=config_and_job_selection elapsed=%.2fs',selection_elapsed)
   # 手元のファイルから作る対象（固定長テキスト・複数ファイルの結合）は、Navigatorへ
   # 問い合わせない。接続も資格情報も要らないので、その2つだけを選んだ実行は
   # Navigatorの設定が1つも無くても走る。
@@ -4328,204 +4161,23 @@ def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=No
   # 順番の判断は navi_lane、流す係は navi_lanerun にある。
   jobs,text_jobs,api_jobs,after_api=split_batch(jobs,cfg)
   total_all_jobs=len(jobs); local_jobs=list(text_jobs)+list(after_api)
-  engine=str(cfg['settings'].get('extract_engine') or 'api').lower(); set_status(extract_engine=engine)
   user=pw=server=''; backup=resolve_path(cfg['backup_folder']); dde_work=dde_staging_folder()
   if api_jobs:
-   # 何が要るかの判断は path_setting_roles に1本化する。画面が「いまは不要」と出している
-   # ものを実行時にだけ必須にすると、直しようのない停止になる（v1.60.0〜v1.66.1は
-   # symnavim.def が無いだけでAPI方式でも止まっていた）。接続情報は navi_login が出どころを決め、
-   # 無ければ「どこで登録するか」を添えて止める（symnavim.conf はもう必須のファイルではない・1.99.0）。
-   _roles=path_setting_roles(cfg)
-   for k in ('symnavi_exe','symnavim_def'):
-    if _roles.get(k,('required',''))[0]!='required':continue
-    if not resolve_path(cfg[k]).is_file():raise FileNotFoundError(f'{PATH_SETTING_LABEL.get(k,k)}がありません: {cfg[k]}')
-   cred_started=time.perf_counter();user,pw,server,cred_source=navi_login(cfg);log.info('STARTUP_PHASE phase=credential_load elapsed=%.2fs source=%s',time.perf_counter()-cred_started,cred_source);path_started=time.perf_counter();rne_root=resolve_path(cfg['rne_folder']);log.info('STARTUP_PHASE phase=path_prepare elapsed=%.2fs total=%.2fs',time.perf_counter()-path_started,time.perf_counter()-startup_started);log.info('共通一時保存先: %s',dde_work)
+   # 接続情報は navi_login が出どころを決め、無ければ「どこで登録するか」を添えて止める（1.99.0）。
+   cred_started=time.perf_counter();user,pw,server,cred_source=navi_login(cfg);log.info('STARTUP_PHASE phase=credential_load elapsed=%.2fs source=%s',time.perf_counter()-cred_started,cred_source);path_started=time.perf_counter();rne_root=resolve_path(cfg.get('rne_folder') or '.\\rne');log.info('STARTUP_PHASE phase=path_prepare elapsed=%.2fs total=%.2fs',time.perf_counter()-path_started,time.perf_counter()-startup_started);log.info('共通一時保存先: %s',dde_work)
    # rne_folder設定は使われていない場合がある（対象ごとのrne_pathが優先）。実際にRNEがある場所を測る。
    try:probe_rne_dir=resolve_rne_path(api_jobs[0],cfg).parent
    except Exception:probe_rne_dir=rne_root
    log_run_environment(dde_work,probe_rne_dir)
-   log.info('抽出エンジン engine=%s stability_profile=%s',engine,cfg['settings'].get('stability_profile','stable_api_serial'))
-   if any(normalize_output_format(j.get('output_format'),j.get('output_file'))=='accdb' for j in api_jobs):
-    access_prewarm_thread=prewarm_access_async('process_contains_accdb')
   api_parallel_lines=max(1,min(int(cfg['settings'].get('api_parallel_max_lines',24) or 24),int(parallel_lines_override if parallel_lines_override is not None else cfg['settings'].get('api_parallel_lines',1) or 1)))
-  # API方式は対象が1件でも独立プロセスで実行する。アプリ内で直接DLLを呼ぶとNaviSaveDataが
+  # RNE は対象が1件でも独立プロセスで取る。アプリ内で直接DLLを呼ぶとNaviSaveDataが
   # 一桁遅くなる（実測 約45KB/s に対しワーカー経由は 0.5〜4MB/s）ため、重い抽出ほど差が開く。
-  # RNEが1件も無い実行は、方式によらずラインで流す（Navigatorには触らない）。
-  if engine!='dde' or not api_jobs:
-   log.info('PARALLEL_DECISION engine=%s selected_jobs=%s configured_lines=%s eligible=%s model=process-isolated',engine,len(api_jobs),api_parallel_lines,bool(api_jobs))
-   log.info('EXECUTION_MODE mode=lanes requested_lines=%s rne_jobs=%s local_jobs=%s',api_parallel_lines,len(api_jobs),len(local_jobs))
-   lanes_used=True
-   res=run_lanes(jobs,local_jobs,api_jobs,cfg,user,pw,server,dde_work,backup,api_parallel_lines,trigger,progress)
-   finish_batch(res,total_all_jobs,progress);return
-  jobs=api_jobs
-  text_results=[];text_job_results=[]
-  if text_jobs:
-   log.info('LOCAL_BATCH jobs=%s（手元のファイルから作ります。Navigatorへは接続しません）',
-            [(j['name'],normalize_job_source(j.get('source'))) for j in text_jobs])
-   text_results,text_failures,text_job_results=run_local_jobs(text_jobs,cfg,dde_work,backup,trigger,progress,0,total_all_jobs)
-   if text_failures:
-    set_status(job_errors=[{'job':r.get('job'),'error':str(r.get('error') or '')} for r in text_failures],failed_jobs=len(text_failures))
-    raise RuntimeError('手元のファイルからの作成で%d件失敗しました\n'%len(text_failures)+'\n'.join('・%s: %s'%(r.get('job'),r.get('error')) for r in text_failures))
-   if cancel_requested.is_set():raise RunCancelled(f'{len(text_results)}/{total_all_jobs}件完了後に中断されました')
-  # 値ごとに分けて出す（2.1.0）は API で条件を差し替えて取る。DDE方式では差し替えられないので、黙って1本で
-  # 取らずに止める（取ると、条件が RNE のまま＝最初の値だけのファイルが、値ごとの名前で出てしまう）。
-  bad=[j['name'] for j in jobs if navi_variants.active(j)]
-  if bad:raise RuntimeError('値ごとに分けて出す対象は API 方式でだけ動きます（DDE方式では条件を差し替えられません）: '+'・'.join(bad))
-  # ここから下はDDE方式（engine='dde'）専用の直列経路。API方式は上のラインで必ずreturnする。
-  # engine=='api'の分岐は、DLLを直接読み込む設定に戻せるよう残してあるが通常は通らない。
-  if engine=='api':
-   from navigator_api import NavigatorApi
-   progress('launch','Navigator APIを初期化しています',8); api_client=NavigatorApi(resolve_path(cfg['symnavi_exe']),log,resolve_path(cfg.get('navigator_api_dll')) if cfg.get('navigator_api_dll') else None,base_dir=BASE,search_roots=dll_search_roots(cfg)); set_status(symnavi_window='APIモード')
-   progress('dde','Navigator ServerへAPI接続しています',15); t=time.perf_counter(); elapsed=api_client.open_session(user,pw,server); log.info('APIセッション接続完了 dll=%s elapsed=%.2fs is_opened=1',api_client.dll_path,elapsed)
-   profiles=data_source_profiles(cfg,user,pw)
-   # ユーザー名・パスワードの実値はログへ出さない。
-   if profiles[0].get('credential_source')=='navigator_session':
-    log.info('API Oracle接続設定未指定。Navigator認証を1回だけ流用 credential_source=navigator_session user_configured=%s password_configured=%s',bool(user),bool(pw))
-   for profile in profiles:
-    source=profile.get('credential_source') or 'explicit_config'
-    progress('dde',f'APIデータソースへ接続しています: {profile["kind"]}',18,activity_detail='公式API接続工程',activity_value=f'{profile["section"]} / {source}')
-    try:
-     elapsed=api_client.connect_data_source(profile)
-     log.info('APIデータソース接続完了 section=%s kind=%s credential_source=%s elapsed=%.2fs',profile['section'],profile['kind'],source,elapsed)
-    except Exception:
-     log.error('APIデータソース接続失敗 section=%s kind=%s credential_source=%s retry=False',profile['section'],profile['kind'],source)
-     raise
-  elif engine=='dde':
-   # f-string内で同じ引用符をネストするとPython 3.12以降でしか解釈できず、3.11以下では
-   # app.py全体がコンパイル不能になる。文字列連結で組み立て、旧バージョンでも起動できるようにする。
-   progress('launch','SymfoNaviを起動しています',8); _symnavi_cmd='"'+str(resolve_path(cfg['symnavi_exe']))+'" -d -u"'+user+'","'+pw+'","'+server+'"'; proc=subprocess.Popen(_symnavi_cmd); set_status(symnavi_window='起動済み'); progress('dde','SymfoNaviへのDDE接続を待っています',15); srv,conv=dde_connect(int(cfg['settings']['dde_timeout_seconds'])); start_hidden_symnavi(proc,cfg['settings'])
-  else:raise ValueError('抽出エンジンが不正です: '+engine)
-  progress('ready','処理の準備が完了しました',20); results=[]; completed_ids=[]; job_results=[]
-  set_status(job_results=[])
-  for job_index,j in enumerate(jobs,1):
-   if cancel_requested.is_set():raise RunCancelled(f'{job_index-1}/{len(jobs)}件完了後に中断されました')
-   j['output_file']=resolve_output_filename(j,cfg); log.info('OUTPUT_NAME job=%s mode=%s pattern=%s resolved_file=%s',j['name'],j.get('naming_mode','fixed'),j.get('output_pattern',''),j['output_file'])
-   set_status(current_index=job_index,current_job_id=j['id'],current_job_name=j['name'],queue_running_ids=[j['id']],queue_waiting_ids=[x['id'] for x in jobs[job_index:]],output_format=normalize_output_format(j.get('output_format'),j.get('output_file')),output_file=canonical_output_file(j.get('output_file'),normalize_output_format(j.get('output_format'),j.get('output_file'))))
-   phase_profile_reset(); preflight_started=phase_log('job_preflight',job=j['name']); progress('open',f'{j["name"]}: 入出力先を確認しています',22,activity_detail='事前確認',activity_value='出力先・保留ファイル・RNEを確認'); rp=resolve_rne_path(j,cfg); out_dir=resolve_path(j.get('output_folder') or cfg['default_output_folder']); fmt=validate_output_contract(j,'before-extraction'); j['_accdb_template']=str(resolve_path(cfg.get('accdb_template','.\\assets\\empty.accdb'))); target=out_dir/j['output_file']; set_status(output_target=str(target)); log.info('実行設定 job=%s format=%s output_file=%s target=%s',j['name'],fmt,j['output_file'],target); apply_pending(target,backup,int(cfg['settings']['backup_generations']),backup_enabled=bool(cfg['settings'].get('backup_enabled',True)),retention_days=int(cfg['settings'].get('backup_retention_days',30)),generation_limit_enabled=bool(cfg['settings'].get('backup_generation_limit_enabled',True)),backup_mode=str(cfg['settings'].get('backup_mode','generations'))); phase_log('job_preflight',preflight_started,job=j['name'],rne=rp,target=target)
-   if not rp.is_file():raise FileNotFoundError('RNEがありません: '+str(rp))
-   attach_rne_layout(j,rp);crosstab=job_is_crosstab(j)
-   stamp=datetime.now().strftime('%Y%m%d_%H%M%S_%f'); xls=dde_work/f'navi_{job_index}_{stamp}.xls'; local_export=dde_work/'export'; local_export.mkdir(parents=True,exist_ok=True); db=local_export/f'{Path(j["output_file"]).stem}_{stamp}{Path(j["output_file"]).suffix}'; log.info('変換作業先 local=%s',db); esc=lambda x:str(x).replace('"','""')
-   # 同時に出す形式があるなら、共通の中間データを必ず通す（XLSXの直接受信からは他形式へ作り直せない）
-   extras=job_extra_formats(j)
-   allow_direct_xlsx=(engine=='api' and fmt=='xlsx' and not extras and not crosstab)
-   api_planned=(db if allow_direct_xlsx else (dde_work/f'navi_{job_index}_{stamp}.csv' if engine=='api' else xls));common_intermediate=('API_DIRECT_XLSX' if allow_direct_xlsx else ('CSV' if engine=='api' else 'XLS'))
-   if extras:log.info('MULTI_FORMAT job=%s primary=%s extras=%s note=抽出は1回のまま変換と公開だけを繰り返します',j['name'],fmt,','.join(extras))
-   job_started=time.perf_counter(); log.info('PIPELINE job=%s engine=%s common_intermediate=%s format=%s planned_intermediate=%s converted=%s target=%s',j['name'],engine,common_intermediate,fmt,api_planned,db,target)
-   if engine=='api':
-    progress('open',f'{j["name"]}: APIでRNEを読み込んでいます',28,current_job_id=j['id'],activity_detail='Navigator API 1/3',activity_value=str(rp))
-    # RNEを単体コピーすると、RNE内部の相対参照や同一フォルダー上の関連定義が切れる可能性がある。
-    # API方式では元の配置を維持し、正規化した絶対パスをNaviOpenCatalogへ渡す。
-    api_rne=rp.resolve()
-    if not api_rne.is_file():raise FileNotFoundError(f'API用RNEがありません: {api_rne}')
-    try:
-     with api_rne.open('rb') as f:f.read(1)
-    except OSError as e:raise PermissionError(f'API用RNEを読み取れません: {api_rne}: {e}') from e
-    rne_stat=api_rne.stat()
-    with chdir_lock:
-     previous_cwd=os.getcwd()
-     try:
-      # cwdも元RNEフォルダーへ合わせ、RNE内部の相対参照とAPI側の探索条件を両立する。
-      os.chdir(api_rne.parent)
-      log.info('APIカタログ読込条件 dll=%s cwd=%s catalog_full=%s catalog_name=%s extension=%s size=%s mtime_ns=%s strategy=original_fullpath',api_client.dll_path,os.getcwd(),api_rne,api_rne.name,api_rne.suffix,rne_stat.st_size,rne_stat.st_mtime_ns)
-      t=phase_log('api_open_catalog',job=j['name']); handle,api_elapsed=api_client.open_catalog(api_rne); phase_log('api_open_catalog',t,job=j['name'],handle=handle,api_elapsed=f'{api_elapsed:.2f}s',strategy='original_fullpath')
-     finally:os.chdir(previous_cwd)
-    if (j.get('period') or {}).get('enabled'):
-     progress('open',f'{j["name"]}: 相対期間を適用しています',34,activity_detail='Navigator API 期間指定',activity_value=(compute_period(j.get('period'),datetime.now()) or {}).get('summary',''));applied=apply_dynamic_period(api_client,handle,j,datetime.now())
-     if applied:log.info('実行設定 job=%s dynamic_period=%s',j['name'],applied.get('summary'))
-    progress('save',f'{j["name"]}: APIで問い合わせを実行しています',38,activity_detail='Navigator API 2/3',activity_value='問い合わせ実行・ダウンロード')
-    t=phase_log('api_execute_catalog',job=j['name']); api_number,api_elapsed=api_client.execute(handle); phase_log('api_execute_catalog',t,job=j['name'],number=api_number,api_elapsed=f'{api_elapsed:.2f}s',rows_per_sec=f'{api_number/api_elapsed:.0f}' if api_elapsed>0 else '0')
-    t=phase_log('api_get_dimensions',job=j['name']);expected_rows,expected_cols=api_client.dimensions(handle);phase_log('api_get_dimensions',t,job=j['name'],rows=expected_rows,columns=expected_cols)
-    api_direct_output=False;api_csv=None
-    if allow_direct_xlsx:
-     progress('wait',f'{j["name"]}: APIからXLSXへ直接保存しています',50,activity_detail='Navigator API 3/3',activity_value=str(db))
-     try:
-      if db.exists():
-       try:db.unlink()
-       except:pass
-      save_wall_started=time.perf_counter();t=phase_log('api_save_xlsx_direct',job=j['name'],target=db,repeat='NAVI_NONREPEAT',ftype='NAVI_XLSX');save_elapsed=api_client.save_xlsx(handle,db);save_wall_elapsed=time.perf_counter()-save_wall_started;phase_log('api_save_xlsx_direct',t,job=j['name'],api_elapsed=f'{save_elapsed:.2f}s',wall_elapsed=f'{save_wall_elapsed:.2f}s',size=db.stat().st_size if db.exists() else 0,throughput_kb_s=f'{(db.stat().st_size/1024/save_wall_elapsed):.1f}' if db.exists() and save_wall_elapsed>0 else '0')
-      if not db.is_file() or db.stat().st_size<=0:raise RuntimeError(f'API直接XLSXが作成されませんでした: {db}')
-      v=phase_log('api_direct_xlsx_validation',job=j['name'],file=db,mode='fast_header_only');verify_xlsx_fast(db,expected_cols);phase_log('api_direct_xlsx_validation',v,job=j['name'],mode='fast_header_only',rows=expected_rows,columns=expected_cols,size=db.stat().st_size)
-      api_direct_output=True;intermediate=db
-      log.info('API_DIRECT_OUTPUT job=%s format=xlsx method=NaviSaveData(NAVI_XLSX) rows=%s columns=%s file=%s bytes_per_cell=%.2f',j['name'],expected_rows,expected_cols,db,(db.stat().st_size/max(1,(int(expected_rows)+1)*int(expected_cols))))
-     except Exception as e:
-      log.warning('API直接XLSX保存に失敗したためCSV経由へフォールバック job=%s error=%s',j['name'],e)
-      try:
-       if db.exists():db.unlink()
-      except:pass
-    if not api_direct_output:
-     api_csv=dde_work/f'navi_{job_index}_{stamp}.csv'
-     progress('wait',f'{j["name"]}: API結果を高速CSVへ保存しています',50,activity_detail='Navigator API 3/3',activity_value=str(api_csv))
-     t=phase_log('api_save_csv',job=j['name'],repeat='NAVI_REPEAT' if crosstab else 'NAVI_NONREPEAT');save_elapsed=api_client.save_csv(handle,api_csv,repeat_labels=crosstab);phase_log('api_save_csv',t,job=j['name'],api_elapsed=f'{save_elapsed:.2f}s',**save_metrics(api_csv,save_elapsed,expected_rows))
-     if not api_csv.is_file() or api_csv.stat().st_size<=0:raise RuntimeError(f'API中間CSVが作成されませんでした: {api_csv}')
-     intermediate=api_csv
-    progress('close',f'{j["name"]}: APIカタログを解放しています',62,activity_detail='API抽出完了',activity_value=f'期待値 {expected_rows}行 x {expected_cols}列');t=phase_log('api_close_catalog',job=j['name']);api_client.close_catalog();phase_log('api_close_catalog',t,job=j['name'])
-   else:
-    # DDEも工程ごとに進捗を出す。APIと同じ順（開く→抽出→検証→閉じる）で percent も単調に増やす。
-    progress('open',f'{j["name"]}: RNEを開いています',28,current_job_id=j['id'],activity_detail='共通抽出工程 1/4',activity_value=str(rp))
-    t=phase_log('rne_open',job=j['name']); dde_exec(conv,'Open',f'[Open("{esc(rp)}")]'); phase_log('rne_open',t,job=j['name'])
-    progress('save',f'{j["name"]}: 共通XLSを生成しています',38,activity_detail='共通抽出工程 2/4',activity_value=str(xls))
-    t=phase_log('xls_save',job=j['name']); dde_exec(conv,'Save',f'[Save("{esc(xls)}", "EXCEL")]',expected_output=xls); dde_save_seconds=phase_log('xls_save',t,job=j['name'])
-    progress('wait',f'{j["name"]}: 共通XLSを検証しています',50,activity_detail='共通抽出工程 3/4',activity_value='ファイル安定・構造確認')
-    t=phase_log('xls_stability',job=j['name']); wait_file(xls,int(cfg['settings']['output_wait_seconds']),j); phase_log('xls_stability',t,job=j['name'],size=xls.stat().st_size)
-    intermediate=xls;expected_rows=None;expected_cols=None
-    xls_bytes=xls.stat().st_size
-    log.info('DDE_EXTRACT job=%s file=%s bytes=%s save_elapsed=%.2fs throughput_kb_s=%s',j['name'],xls,xls_bytes,dde_save_seconds or 0,f'{xls_bytes/1024/dde_save_seconds:.1f}' if dde_save_seconds else '0')
-    progress('close',f'{j["name"]}: 抽出画面を閉じています',62,activity_detail='共通抽出工程 4/4',activity_value=f'{xls_bytes:,} bytes')
-    t=phase_log('rne_close',job=j['name']); dde_exec(conv,'Close','[Close()]'); phase_log('rne_close',t,job=j['name'])
-   if fmt=='accdb' and access_prewarm_thread is not None:
-    join_started=time.perf_counter();alive_before=access_prewarm_thread.is_alive();access_prewarm_thread.join(timeout=2.0);log.info('ACCDB_PREWARM_JOIN alive_before=%s alive_after=%s elapsed=%.2fs',alive_before,access_prewarm_thread.is_alive(),time.perf_counter()-join_started)
-   # 仕上げ（変換 → 公開 → 同時出力）は並列と同じ関数で行う。見せ方だけをここで足す。
-   _direct=bool(allow_direct_xlsx and locals().get('api_direct_output'))
-   def _report(stage,**kw):
-    if stage=='unchanged':progress('publish',f'{j["name"]}: 前回と同じ内容のため更新しませんでした',95,activity_detail='変更なし',activity_value=str(target))
-    elif stage=='convert':
-     if kw.get('direct'):progress('export',f'{j["name"]}: API直接XLSXを検証しています',70,activity_detail='形式別変換工程',activity_value='CSV変換なし / API直接出力')
-     else:progress('export',f'{j["name"]}: {fmt.upper()}へ変換しています',70,activity_detail='形式別変換工程',activity_value=f'{intermediate.suffix.upper()} -> {fmt.upper()}')
-    elif stage=='publish':progress('publish',f'{j["name"]}: 検査済みファイルを公開しています',90,activity_detail='公開工程',activity_value=str(target))
-    elif stage=='extras':progress('publish',f'{j["name"]}: 同じデータからあと{len(extras)}形式を作成しています',95,activity_detail='同時出力',activity_value='・'.join(OUTPUT_FORMAT_LABEL.get(x,x) for x in extras))
-   fin=finish_one_job(j,cfg,intermediate=intermediate,db=db,target=target,backup=backup,out_dir=out_dir,
-                      local_export=local_export,stamp=stamp,expected_rows=expected_rows,expected_cols=expected_cols,
-                      fmt=fmt,extras=extras,api_direct_output=_direct,job_started=job_started,report=_report)
-   if fin['unchanged']:
-    total=fin['total']
-    detail=f'前回と同じ内容のため更新しませんでした / {total:.1f}秒'
-    results.append(f'{j["name"]}: '+detail); completed_ids.append(j['id'])
-    record_job_run(j['id'],j['name'],'ok',trigger,detail=detail,rows=fin['rows'],cols=fin['cols'],output_file=j['output_file'],metrics={})
-    job_results.append({'job':j['name'],'job_id':j['id'],'status':'ok','detail':detail,
-                        'rows':fin['rows'],'cols':fin['cols'],
-                        'elapsed':round(total,1),'target':str(target),'published':True,'unchanged':True})
-    set_status(completed_jobs=job_index,queue_completed_ids=list(completed_ids),queue_running_ids=[],job_results=list(job_results))
-    for p in (xls,locals().get('api_csv'),db):
-     try:
-      if p:p.unlink()
-     except:pass
-    continue
-   nr,nc=fin['rows'],fin['cols'];pub={'published':fin['published'],'pending':fin['pending'],'reason':fin.get('hold_reason') or '','waited':fin.get('hold_waited'),'attempts':fin.get('hold_attempts'),'advice':list(fin.get('hold_advice') or [])}
-   extra_results=fin['extra_results'];total=fin['total']
-   detail=f'{nr}件/{nc}列 / {total:.1f}秒'+('' if pub['published'] else f' / 更新保留: {pub["pending"]}')+extra_format_note(extra_results)
-   results.append(f'{j["name"]}: '+detail); completed_ids.append(j['id'])
-   # 直列（DDE / アプリ内API）でも並列と同じ実績を残す。ここを空にすると一覧の実績欄が
-   # 「件数だけ」になり、所要も転送量も後から追えなくなる。
-   metrics=serial_run_metrics(engine,fmt,total,nr,nc,locals().get('intermediate'),locals().get('dde_save_seconds'))
-   # 並列と同じ形で、公開できたかどうかも残す（鮮度の判定がこれを見る）
-   metrics.update(published=bool(pub['published']),pending=str(pub.get('pending') or ''),
-                  hold_reason=str(pub.get('reason') or ''),hold_waited=pub.get('waited'),
-                  hold_attempts=pub.get('attempts'),hold_advice=list(pub.get('advice') or []))
-   record_job_run(j['id'],j['name'],'ok',trigger,detail=detail,rows=nr,cols=nc,output_file=j['output_file'],metrics=metrics)
-   record_rne_run(rp,j,'ok',trigger,metrics,engine=engine,fmt=fmt)
-   job_results.append({'job':j['name'],'job_id':j['id'],'status':'ok','detail':detail,'rows':nr,'cols':nc,'elapsed':round(total,1),'target':str(target),'published':bool(pub['published']),'pending':str(pub.get('pending') or '')})
-   set_status(completed_jobs=job_index,queue_completed_ids=list(completed_ids),queue_running_ids=[],job_results=list(job_results))
-   log.info('JOB_RESULT job=%s format=%s rows=%s columns=%s elapsed=%.2fs target=%s',j['name'],fmt,nr,nc,total,target); log.info('JOB_PROFILE job=%s rows=%s columns=%s %s',j['name'],nr,nc,phase_profile_summary())
-   try:
-    if column_cache_state(rp)[0]!='hit':save_column_cache(rp,read_header_names(db,j),rows=nr,source='run',job=j)
-   except Exception as ce:log.warning('COLUMN_CACHE_READ_FAILED job=%s error=%s',j['name'],ce)
-   # 元RNEはAPIが直接参照するため削除対象に含めない。生成物だけを後片付けする。
-   for p in (xls,locals().get('api_csv'),db):
-    try:
-     if p:p.unlink()
-    except:pass
-  later,_later_results=run_deferred_local(after_api,cfg,trigger,progress,total_all_jobs,[])
-  msg='正常終了 | '+' | '.join(text_results+results+list(later)); progress('complete','すべての処理が完了しました',100); set_status(last_result=msg,last_finished_at=datetime.now().isoformat(timespec='seconds'),elapsed_seconds=int(time.time()-progress.started)); log.info(msg)
+  # 2.1.2 で DDE 方式（SymfoNavi を画面操作して1件ずつ取る直列の道）を外した。実行は常にラインで流す。
+  log.info('PARALLEL_DECISION selected_jobs=%s configured_lines=%s eligible=%s model=process-isolated',len(api_jobs),api_parallel_lines,bool(api_jobs))
+  log.info('EXECUTION_MODE mode=lanes requested_lines=%s rne_jobs=%s local_jobs=%s',api_parallel_lines,len(api_jobs),len(local_jobs))
+  lanes_used=True
+  res=run_lanes(jobs,local_jobs,api_jobs,cfg,user,pw,server,dde_work,backup,api_parallel_lines,trigger,progress)
+  finish_batch(res,total_all_jobs,progress)
  except RunCancelled as e:
   msg='中断されました: '+str(e); set_status(step='cancelled',step_label='ユーザーの操作により中断しました',step_percent=100,last_result=msg,error_detail='',last_finished_at=datetime.now().isoformat(timespec='seconds'),elapsed_seconds=int(time.time()-getattr(progress,'started',time.time()))); log.info('RUN_CANCELLED %s',msg)
   if status.get('running') and status.get('current_job_id') and not lanes_used:
@@ -4547,16 +4199,7 @@ def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=No
   raise
  finally:
   cancel_requested.clear()
-  set_status(running=False,current='',current_job_id='',symnavi_window='終了済み')
-  if api_client:
-   try:api_client.close()
-   except Exception as e:log.warning('Navigator API終了処理失敗: %s',e)
-  if srv:
-   try:srv.Shutdown()
-   except:pass
-  if proc and proc.poll() is None:
-   try:proc.terminate()
-   except:pass
+  set_status(running=False,current='',current_job_id='')
   run_lock.release()
 def bg(ids,trigger,parallel_lines_override=None,run_id=None):
  try:process(ids,trigger,parallel_lines_override,run_id)
@@ -4703,11 +4346,8 @@ def after_command(item,error='',cancelled=False):
 def enqueue_command(job_ids,trigger,parallel_lines,attempt=0):
  cfg=load(); selected=[j for j in cfg['jobs'] if j.get('enabled') and (not job_ids or j['id'] in job_ids)]
  if not selected:raise ValueError('実行対象がありません')
- # DDEはSymfoNavi画面を1つ操作する方式なので、並列ライン数の指定は効かない。
- # そのまま持たせると実行キューに「6ライン」と出て、実際の動き（1件ずつ）と食い違う。
- engine=str(cfg.get('settings',{}).get('extract_engine') or 'api').lower()
- lines=1 if engine=='dde' else clamp_parallel_lines(parallel_lines,cfg)
- item={'id':uuid.uuid4().hex,'job_ids':[j['id'] for j in selected],'job_names':[j['name'] for j in selected],'trigger':trigger,'parallel_lines':lines,'engine':engine,'attempt':int(attempt or 0),'enqueued_at':datetime.now().isoformat(timespec='seconds'),'count':len(selected)}
+ lines=clamp_parallel_lines(parallel_lines,cfg)
+ item={'id':uuid.uuid4().hex,'job_ids':[j['id'] for j in selected],'job_names':[j['name'] for j in selected],'trigger':trigger,'parallel_lines':lines,'attempt':int(attempt or 0),'enqueued_at':datetime.now().isoformat(timespec='seconds'),'count':len(selected)}
  with command_queue_lock:
   command_queue.append(item);position=len(command_queue)+(1 if active_command else 0)
  command_queue_event.set();log.info('COMMAND_QUEUE_ENQUEUE id=%s position=%s jobs=%s lines=%s trigger=%s',item['id'],position,item['job_names'],item['parallel_lines'],trigger)
@@ -4928,8 +4568,8 @@ def prepare_exit(source,wait_seconds=30):
  順番が肝。process() は終わりぎわに中断の札を下ろすので、キューを先に空にしておかないと
  中断した1本が終わった瞬間に次のバッチが始まり、そのワーカーは誰にも止められない
  （終了を押したのに新しい抽出が始まる）。予定の投入も止めてから中断する。
- os._exit は finally も atexit も走らせない。ここで止めておかないと、抽出のワーカーと
- （DDE方式なら）非表示のSymfoNaviが親を失って残り、次の起動でもう1本増える。
+ os._exit は finally も atexit も走らせない。ここで止めておかないと、抽出のワーカーが
+ 親を失って残り、次の起動でもう1本増える。
  プロセスを終わらせるのは窓（後始末を頼んだあと入力を閉じ、この中身は入力の終わりを見て自分で終わる）。
  戻り値は、待ち切っても実行中のままだったか。"""
  with command_queue_lock:command_queue.clear()
@@ -5045,7 +4685,7 @@ def open_api_catalog(c,rne_path):
  """セッションを開き、データソースへ接続し、RNEを読み込んで (api, handle) を返す。呼び出し側で api.close() すること。"""
  from navigator_api import NavigatorApi
  user,pw,server,_=navi_login(c)
- api=NavigatorApi(resolve_path(c.get('symnavi_exe','')),log,resolve_path(c.get('navigator_api_dll')) if c.get('navigator_api_dll') else None,base_dir=BASE,search_roots=dll_search_roots(c))
+ api=NavigatorApi(log,resolve_path(c.get('navigator_api_dll')) if c.get('navigator_api_dll') else None,base_dir=BASE,search_roots=dll_search_roots(c))
  api.open_session(user,pw,server)
  for profile in data_source_profiles(c,user,pw):api.connect_data_source(profile)
  with chdir_lock:
@@ -5512,6 +5152,23 @@ def read_log_lines(limit=1200,q='',preset=''):
 
 
 
+def viewer_files(job,cfg):
+ """データビュワーで開けるファイルの一覧。ふつうの対象は1つ、値ごとに分けて出す対象は値の数だけ（2.1.2）。
+ → [{'value'（ふつうは ''）, 'path', 'rows'（前回の件数。分からなければ None）}]。値ごとの道は、前回の実行で実際に作ったファイル（実行記録の variant_results）を先に見て、
+ 無ければ今の設定から決まる道（ファイル名に日付などの変数があれば、前回の名前とずれることがあるため）。"""
+ if not navi_variants.active(job):return [{'value':'','path':_viewer_output_path(job,cfg),'rows':None}]
+ made={};rows={}
+ for r in ((load_job_runs().get(job.get('id')) or {}).get('metrics') or {}).get('variant_results') or []:
+  if r.get('value') is not None and r.get('target'):made[str(r['value'])]=Path(str(r['target']))
+  if r.get('value') is not None and r.get('ok'):rows[str(r['value'])]=r.get('rows')
+ out=[]
+ try:planned={x['_variant_value']:resolve_path(x.get('output_folder') or cfg.get('default_output_folder'))/x['output_file'] for x in variant_jobs(job,cfg)}
+ except Exception:planned={}
+ for value in navi_variants.normalize(job.get('variants'))['values']:
+  got=made.get(value)
+  out.append({'value':value,'path':got if got and got.is_file() else planned.get(value) or got or Path(''),'rows':rows.get(value)})
+ return out
+
 def _viewer_output_path(job,cfg):
  run=(load_job_runs().get(job.get('id')) or {});filename=str(run.get('output_file') or job.get('output_file') or '')
  folder=resolve_path(job.get('output_folder') or cfg.get('default_output_folder'));candidate=folder/filename
@@ -5661,7 +5318,7 @@ sys.modules.setdefault('app',sys.modules[__name__])
 # 結合の順番と待ち合わせに、いまの様子を渡す係。判断は navi_order.py。
 import navi_orderrun
 from navi_orderrun import (job_output_paths,job_dependencies,order_jobs_by_dependency,
-                          job_wait_reasons,wait_for_sources,run_deferred_local,split_batch)
+                          job_wait_reasons,wait_for_sources,split_batch)
 
 # RNEと手元の処理を同時に流す係。どれを先に流すかの判断は navi_lane.py（机の上で確かめられる）。
 import navi_lane
@@ -5677,7 +5334,7 @@ from navi_joinrun import (_load_join_recipes,load_join_recipes,find_join_recipe,
 import navi_textrun
 from navi_textrun import (_json_rows,_layout_row,_load_text_layouts,load_text_layouts,
                           find_text_layout,save_text_layout,text_layout_usage,delete_text_layout,
-                          process_local_job,run_local_jobs,run_one_local,local_progress_say)
+                          process_local_job,run_one_local,local_progress_say)
 
 import navi_split
 from navi_split import (_split_trial_run, column_weights, compare_csv_content, split_trial_options,

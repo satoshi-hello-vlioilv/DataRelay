@@ -162,7 +162,7 @@ def process_local_job(j,cfg,work,backup,trigger,job_index,total_jobs,say=None):
   # 運べないので、名前で対応づけて対象に持たせて渡す（並び順で渡すと1本ずれる）。
   j['_column_types']=text_layout_column_types(layout)
  out_dir=resolve_path(j.get('output_folder') or cfg['default_output_folder']);target=out_dir/j['output_file']
- apply_pending(target,backup,int(cfg['settings']['backup_generations']),backup_enabled=bool(cfg['settings'].get('backup_enabled',True)),retention_days=int(cfg['settings'].get('backup_retention_days',30)),generation_limit_enabled=bool(cfg['settings'].get('backup_generation_limit_enabled',True)),backup_mode=str(cfg['settings'].get('backup_mode','generations')))
+ apply_pending(target,backup,int(cfg['settings']['backup_generations']),backup_enabled=bool(cfg['settings'].get('backup_enabled',True)),retention_days=int(cfg['settings'].get('backup_retention_days',30)),backup_mode=str(cfg['settings'].get('backup_mode','generations')))
  stamp=datetime.now().strftime('%Y%m%d_%H%M%S_%f')+f'_L{job_index}'
  local_export=work/'export';local_export.mkdir(parents=True,exist_ok=True)
  db=local_export/f'{Path(j["output_file"]).stem}_{stamp}{Path(j["output_file"]).suffix}'
@@ -255,28 +255,3 @@ def run_one_local(j,cfg,work,backup,trigger,index,total_all,say=None):
                        'cols':fin['cols'],'elapsed':round(total,1),'target':str(target),
                        'published':bool(fin['published']),'pending':str(fin.get('pending') or ''),
                        'unchanged':bool(fin['unchanged'])}}
-
-def run_local_jobs(jobs,cfg,work,backup,trigger,progress_fn=None,offset=0,total_all=0):
- """手元のファイルから作る対象を、1件ずつ順に片付ける。(結果の文, 失敗, 一覧用の結果)。
-
- DDE方式（1つの画面を操作する方式）だけが通る道。API方式は navi_lanerun が
- ラインに分けて同時に流す ―― 通す中身（run_one_local）はどちらも同じ。
- """
- results=[];failures=[];job_results=[];completed_ids=[]
- total_all=total_all or len(jobs)
- for n,j in enumerate(jobs,1):
-  index=offset+n
-  set_status(current=j['name'],current_job_id=j['id'],current_job_name=j['name'],current_index=index,
-             queue_running_ids=[j['id']])
-  out=run_one_local(j,cfg,work,backup,trigger,index,total_all,say=local_progress_say(progress_fn,j))
-  job_results.append(out['job_result'])
-  if not out['ok']:
-   failures.append({'job':out['job'],'error':out['error']})
-   set_status(queue_failed_ids=list(dict.fromkeys(list(app.status.get('queue_failed_ids') or [])+[j['id']])),
-              queue_running_ids=[],job_results=list((app.status.get('job_results') or [])+job_results[-1:]))
-   continue
-  results.append(out['result']);completed_ids.append(j['id'])
-  set_status(completed_jobs=index,queue_completed_ids=list(completed_ids),queue_running_ids=[],
-             job_results=list((app.status.get('job_results') or [])[:offset]+job_results))
-  if app.cancel_requested.is_set():break
- return results,failures,job_results

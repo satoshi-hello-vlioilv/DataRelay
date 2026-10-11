@@ -426,5 +426,52 @@ class RacersTest(unittest.TestCase):
   self.assertEqual(v['default_payload'],['cfg','job','server','split_part','user'],'payload_of を省けば、これまでどおり分割の1片（パスワードは書かない）')
   self.assertEqual(v['split_part'],'a.csv')
 
+
+# データビュワー（2.1.2）: 値ごとに分けて出す対象は、値ごとのファイルを選んで開ける
+VIEWER=r"""
+import json,sqlite3,sys
+from pathlib import Path
+sys.path[:0]=[sys.argv[1],sys.argv[1]+'/lib']
+import app
+work=Path(sys.argv[2]);out=work/'out';out.mkdir()
+def db(name,rows):
+ with sqlite3.connect(out/name) as c:
+  c.execute('CREATE TABLE t(設備 TEXT, n INTEGER)');c.executemany('INSERT INTO t VALUES(?,?)',rows)
+db('実績_LS4.sqlite3',[('LS4',1),('LS4',2)]);db('実績_LS3_前回.sqlite3',[('LS3',1)])
+cfg=app.load()
+job={'id':'v1','name':'設備単位実績','enabled':True,'source':'rne','rne':'LOTACH.RNE','rne_path':'x.RNE','output_folder':str(out),
+     'output_format':'sqlite3','output_file':'実績.sqlite3','naming_mode':'fixed','type':'詳細データ','sheet':'Page1','table':'t','schedules':[],
+     'variants':{'enabled':True,'item':'BOX実績_設備名','values':['LS4','LS3','DL2']}}
+cfg['jobs']=[job];app.save(cfg,quiet=True)
+# 前回の実行: LS3 は前回の名前（日付つきの型など）で作ってある。記録の道を先に見る
+app.record_job_run('v1','設備単位実績','success','manual',metrics={'variant_results':[{'value':'LS3','ok':True,'target':str(out/'実績_LS3_前回.sqlite3')}]})
+t=app.app.test_client()
+res={'jobs':t.get('/api/data-viewer/jobs').get_json()['items'],
+     'ls4':t.get('/api/data-viewer/v1?value=LS4').get_json(),'ls3':t.get('/api/data-viewer/v1?value=LS3').get_json(),
+     'dl2':t.get('/api/data-viewer/v1?value=DL2').get_json(),'first':t.get('/api/data-viewer/v1').get_json(),
+     'bad':t.get('/api/data-viewer/v1?value=XXX').status_code}
+print(json.dumps(res,ensure_ascii=False,default=str))
+"""
+
+
+class ViewerTest(unittest.TestCase):
+ def test_files_per_value(self):
+  with tempfile.TemporaryDirectory() as d:
+   env=dict(os.environ,NAVI_LOCAL_ROOT=str(Path(d)/'local'),NAVI_DATA_ROOT=str(Path(d)/'data'),NAVI_CONFIG_DIR=str(Path(d)/'data'/'Config'),
+            NAVI_SECRET_FILE=str(Path(d)/'local'/'s.json'),DATARELAY_NO_BOOT='1',PYTHONIOENCODING='utf-8')
+   r=subprocess.run([sys.executable,'-c',VIEWER,str(ROOT),d],env=env,capture_output=True,text=True,encoding='utf-8',timeout=120)
+   self.assertEqual(r.returncode,0,r.stderr[-3000:])
+   v=json.loads(r.stdout.strip().splitlines()[-1])
+  job=v['jobs'][0]
+  self.assertEqual([(x['value'],x['file'],x['exists']) for x in job['files']],
+                   [('LS4','実績_LS4.sqlite3',True),('LS3','実績_LS3_前回.sqlite3',True),('DL2','実績_DL2.sqlite3',False)],
+                   '値ごとに1つずつ。前回作ったファイルの道を先に見る。まだ無い値は exists=False')
+  self.assertTrue(job['exists'],'1つでもあれば選べる')
+  self.assertEqual((v['ls4']['value'],v['ls4']['total_rows'],v['ls4']['rows']),('LS4',2,[['LS4','1'],['LS4','2']]),'その値のファイルの中身（ビュワーは文字で渡す）')
+  self.assertEqual((v['ls3']['value'],v['ls3']['total_rows']),('LS3',1))
+  self.assertFalse(v['dl2']['ok']);self.assertIn('見つかりません',v['dl2']['error'])
+  self.assertEqual(v['first']['value'],'LS4','値を省けば、ある最初の値')
+  self.assertEqual(v['bad'],404,'対象に無い値は断る')
+
 if __name__=='__main__':
  unittest.main()

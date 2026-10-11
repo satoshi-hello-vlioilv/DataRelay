@@ -4,5 +4,5 @@
 navi_changelog.py にある ―― 800行の読みものなので、それを必要としない経路
 （抽出ワーカー）が読み込まずに済むように分けてある。
 """
-APP_VERSION='2.1.1'; APP_VERSION_TITLE='値ごとに分けて出すを作り直した ―― 指定した値だけを1回で問い合わせて手元で分ける（値ごとに並列も選べる）。実機で全部の設備を取って止まっていた'; APP_RELEASED_AT='2026-10-11'
+APP_VERSION='2.1.2'; APP_VERSION_TITLE='共通設定を作り直し、DDE 方式と使っていない設定を外した ―― データビュワーで値ごとのファイルも見られる'; APP_RELEASED_AT='2026-10-11'
 BUILD_VERSION=f'{APP_VERSION}-web'

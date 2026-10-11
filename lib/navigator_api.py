@@ -259,7 +259,7 @@ def _sibling_count(path):
     except OSError:return 0
 
 
-def candidate_dlls(symnavi_exe=None,configured_path=None,extra_roots=None,local_only=False,local_root=None,search_roots=None):
+def candidate_dlls(configured_path=None,extra_roots=None,local_only=False,local_root=None,search_roots=None):
     """C:\\NAVIAPを最優先し、利用可能なローカルDLLがなければ共有側を返す。
 
     local_rootは検証用の差し替え口。省略時は従来どおり C:\\NAVIAP を見る。
@@ -316,8 +316,6 @@ def candidate_dlls(symnavi_exe=None,configured_path=None,extra_roots=None,local_
         try:
             if root.is_dir():fallback.extend(x/'SymNaviA.dll' for x in root.iterdir() if x.is_dir() and rx.match(x.name))
         except OSError:pass
-    if symnavi_exe:
-        ep=Path(symnavi_exe);fallback += [ep.parent/'SymNaviA.dll',ep.parent.parent/'bin'/'SymNaviA.dll']
     fallback.append(Path('SymNaviA.dll'))
     return local+unique(fallback)
 
@@ -345,7 +343,7 @@ class NavigatorApiError(RuntimeError):
         super().__init__(f'{operation}失敗 rc=0x{int(rc):X} name={self.name} {detail}'.strip())
 
 class NavigatorApi:
-    def __init__(self,symnavi_exe=None,logger=None,dll_path=None,base_dir=None,search_roots=None):
+    def __init__(self,logger=None,dll_path=None,base_dir=None,search_roots=None):
         if os.name!='nt':raise RuntimeError('Navigator APIはWindowsでのみ利用できます')
         self.deploy_report=None
         extra_roots=[Path(base_dir)/'Config'/'NAVIAP',Path(base_dir)/'NAVIAP'] if base_dir else []
@@ -354,7 +352,7 @@ class NavigatorApi:
         self.log=logger;self.dll=None;self.dll_path='';self.dll_dirs=[];errors=[]
         self.attempts=[]
         pybits=struct.calcsize('P')*8
-        for candidate in candidate_dlls(symnavi_exe,dll_path,extra_roots,search_roots=self.search_roots):
+        for candidate in candidate_dlls(dll_path,extra_roots,search_roots=self.search_roots):
             bits=pe_bits(candidate) if Path(candidate).is_file() else None
             if bits and bits!=pybits:
                 msg=f'{candidate}: DLL={bits}bit / Python={pybits}bit のため対象外';errors.append(msg);self.attempts.append({'path':str(candidate),'exists':True,'dll_bits':bits,'python_bits':pybits,'result':'bit_mismatch'});continue

@@ -136,7 +136,7 @@ r=t.post('/api/login',json={'server':'SV3','user':'u2','password':''});out['keep
 out['get_vault']=t.get('/api/login').get_json()
 out['raw_get']=t.get('/api/login').get_data(as_text=True)
 out['validate']=[x for x in t.post('/api/validate',json={}).get_json()['checks'] if x.get('item')=='login']
-out['roles']={k:app.path_setting_roles(c)[k][0] for k in ('symnavim_conf','symnavim_def')}
+out['roles']={k:app.path_setting_roles(c)[k][0] for k in ('symnavim_conf',)}
 r=t.post('/api/login/import',json={});out['import']=r.status_code;out['after_import']=list(app.navi_login())
 out['import_missing']=t.post('/api/login/import',json={'path':conf+'.none'}).status_code
 import api_worker
@@ -158,7 +158,7 @@ class AppTest(unittest.TestCase):
    r=subprocess.run([sys.executable,'-c',APP,str(ROOT),str(conf)],env=env,capture_output=True,text=True,encoding='utf-8',timeout=180)
    self.assertEqual(r.returncode,0,r.stderr[-3000:])
    v=json.loads(r.stdout.strip().splitlines()[-1])
-  self.assertIn('接続とパス',v['none'],'どこにも無ければ、どこで登録するかを言って止める')
+  self.assertIn('共通設定 →「接続」',v['none'],'どこにも無ければ、どこで登録するかを言って止める')
   self.assertEqual(v['state_none'],{'saved':False,'source':'','needed':False,'declined':False},'雛形は空（2.0.0）なので、まだ要らない')
   self.assertEqual(v['conf'],['利用者01','p@ss;word','NAVISV01','conf'],'まだ取り込んでいないPCは symnavim.conf から読む')
   self.assertEqual(v['profiles_conf'],[['oracle','']],'明示した ApiOracle を使う（流用しない）')
@@ -171,7 +171,7 @@ class AppTest(unittest.TestCase):
   for secret in ('secret2','p@ss;word','orapw'):
    self.assertNotIn(secret,v['raw_get'],'画面へパスワードを返さない')
   self.assertEqual([x['ok'] for x in v['validate']],[True],'事前診断に接続情報の行がある')
-  self.assertEqual(v['roles'],{'symnavim_conf':'unused','symnavim_def':'unused'},'登録済みなら symnavim.conf は読まない／API方式では def は要らない')
+  self.assertEqual(v['roles'],{'symnavim_conf':'unused'},'登録済みなら symnavim.conf は読まない')
   self.assertEqual(v['import'],200)
   self.assertEqual(v['after_import'],['利用者01','p@ss;word','NAVISV01','vault'],'取り込んだ値はファイルと同じ')
   self.assertEqual(v['import_missing'],400)

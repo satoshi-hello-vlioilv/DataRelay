@@ -43,7 +43,7 @@ from app import (
     Path, ROW_AXIS_MODE_LABEL, SPLIT_BATCH_MAX, _api_diag_cache_path, _dll_requirement,
     _log_api_exports,
     _read_api_diag_cache, _run_inspect_endpoint, _split_stage_logged, _split_trial_run,
-    _viewer_output_path, _write_api_diag_cache, active_workers, active_workers_lock, alerts,
+    _viewer_output_path, viewer_files, SETTING_DEFAULTS, _write_api_diag_cache, active_workers, active_workers_lock, alerts,
     alerts_lock, api_readiness, axis_balance_scores, blocked_row_axes, calendar,
     settings_sync_lock, settings_revision, SETTINGS_DB, settings_flush_pending,
     run_api_diag_worker,
@@ -123,6 +123,8 @@ def get_config():
   # 1回の実行で実際に何ができるのか。名前まで組み立てて返す（画面で作り直さない）
   try:j['output_plan']=job_output_plan(j,c,now)
   except Exception:j['output_plan']=[]
+ # 共通設定の推奨（既定値）。画面が推奨の札と「推奨に戻す」に使う。保存では書かない（_save_local が除く）
+ c['setting_defaults']=dict(SETTING_DEFAULTS)
  return jsonify(c)
 
 @app.put('/api/config')
@@ -148,18 +150,6 @@ def put_config():
                   error='ほかの画面で設定が変わっています。最新の内容を読み直してから、もう一度保存してください'),409
   rev=save(data)
  return jsonify(ok=True,settings_revision=rev)
-
-@app.post('/api/settings/parallel-lines')
-def set_parallel_lines():
- # 並列ライン数だけを即時に保存する軽量エンドポイント。ユーザーが変更したら他の未保存編集に触れずその値を確定し、次回起動以降も保持する。
- data=request.get_json(silent=True) or {}
- # 読む→1つ変える→書く、のあいだに全量保存が割り込むと、その内容ごと読んだ時点へ戻る。
- # ひとつながりにして、割り込む余地をなくす。
- with settings_sync_lock:
-  c=load(); lines=clamp_parallel_lines(data.get('lines',2),c,default=2)
-  c['settings']['api_parallel_lines']=lines; c['settings']['stability_profile']='balanced_api_parallel'; save(c,quiet=True)
- log.info('設定保存 job=(共通) 並列ライン数を保存 api_parallel_lines=%s',lines)
- return jsonify(ok=True,api_parallel_lines=lines)
 
 def normalize_column_layout(v):
  """一覧の列の決め方を、そのまま置いても安全な形に整える。
@@ -404,8 +394,6 @@ def period_control_points():
  # 対象RNEを開いて時間型管理ポイントとデータ項目を読み取る。
  # 読み取りは独立プロセスで行う。DLL側で異常終了してもアプリ本体は落ちない。
  data=request.get_json(force=True) or {}; c=load()
- if str(c['settings'].get('extract_engine') or 'api').lower()!='api':
-  return jsonify(ok=False,error='この自動検出はNavigator API方式のときに使用できます。DDE方式では管理ポイント名を手入力してください'),200
  job=next((x for x in c['jobs'] if x['id']==data.get('job_id')),None) if data.get('job_id') else None
  rne_value=str(data.get('rne_path') or (job.get('rne_path') if job else '') or '').strip()
  if not rne_value:return jsonify(ok=False,error='RNEファイルを指定してください'),200
@@ -739,8 +727,6 @@ def split_trial_batch_start():
  data=request.get_json(force=True) or {};c=load()
  job=next((x for x in c['jobs'] if x['id']==data.get('job_id')),None) if data.get('job_id') else None
  if not job:return jsonify(ok=False,error='保存済みの対象を選んでください'),200
- if str(c['settings'].get('extract_engine') or 'api').lower()!='api':
-  return jsonify(ok=False,error='速さを測るのはNavigator API方式のときに使用できます'),200
  kind='axes' if str(data.get('kind') or 'methods')=='axes' else 'methods'
  try:items=split_batch_items(kind,data,job)
  except Exception as e:return jsonify(ok=False,error=str(e)),200
@@ -1058,7 +1044,7 @@ def navigator_api_status():
   try:
    from navigator_api import candidate_dlls,pe_bits,pe_exports
    pybits=struct.calcsize('P')*8;attempts=[]
-   for p in candidate_dlls(resolve_path(c.get('symnavi_exe','')),resolve_path(c.get('navigator_api_dll')) if c.get('navigator_api_dll') else None,[CONFIG_DIR/'NAVIAP',BASE/'config'/'NAVIAP',DATA_ROOT/'NAVIAP'],search_roots=dll_search_roots(c)):
+   for p in candidate_dlls(resolve_path(c.get('navigator_api_dll')) if c.get('navigator_api_dll') else None,[CONFIG_DIR/'NAVIAP',BASE/'config'/'NAVIAP',DATA_ROOT/'NAVIAP'],search_roots=dll_search_roots(c)):
     exists=p.is_file();bits=pe_bits(p) if exists else None;attempts.append({'path':str(p),'exists':exists,'dll_bits':bits,'python_bits':pybits,'result':'bit_mismatch' if exists and bits and bits!=pybits else 'not_found'})
     # DLLを読み込めなくても、エクスポート表はファイルを読むだけで分かる。
     # 読み込みに失敗する端末こそ、そのDLLに何ができるのかを知りたい。
@@ -1749,8 +1735,8 @@ def cancel_retries():
 @app.post('/api/path-check')
 def path_check():
  d=request.get_json(force=True); item=d.get('item'); job_id=d.get('job_id'); c=load()
- if item in ('symnavim_conf','symnavim_def','accdb_template'):
-  expected={'symnavim_conf':'symnavim.conf','symnavim_def':'symnavim.def','accdb_template':'empty.accdb'}[item]; result=check_path_item(c.get(item,''),'file',expected); result.update(item=item,label=expected)
+ if item in ('symnavim_conf','accdb_template'):
+  expected={'symnavim_conf':'symnavim.conf','accdb_template':'empty.accdb'}[item]; result=check_path_item(c.get(item,''),'file',expected); result.update(item=item,label=expected)
  elif item=='rne':
   j=next((x for x in c['jobs'] if x['id']==job_id),None)
   if not j:return jsonify(error='対象が見つかりません'),404
@@ -1768,7 +1754,7 @@ def apply_path_suggestion():
   try:stored=str(Path(candidate).resolve().relative_to(DATA_ROOT.resolve()))
   except ValueError:stored=str(Path(candidate).resolve())
   if not stored.startswith('.') and not Path(stored).is_absolute():stored='.\\'+stored.replace('/','\\')
-  if item in ('symnavim_conf','symnavim_def','accdb_template'):c[item]=stored
+  if item in ('symnavim_conf','accdb_template'):c[item]=stored
   elif item=='rne':
    j=next((x for x in c['jobs'] if x['id']==job_id),None)
    if not j:return jsonify(error='対象が見つかりません'),404
@@ -1777,11 +1763,20 @@ def apply_path_suggestion():
   save(c,quiet=True)
  return jsonify(ok=True,path=stored)
 
+def _mtime_text(p):
+ try:return datetime.fromtimestamp(p.stat().st_mtime).strftime('%m-%d %H:%M')
+ except OSError:return ''
+
 @app.get('/api/data-viewer/jobs')
 def data_viewer_jobs():
+ """ビュワーで選べる対象。値ごとに分けて出す対象は、値ごとのファイルを files に並べる（2.1.2）。"""
  c=load();items=[]
  for job in c['jobs']:
-  path=_viewer_output_path(job,c);items.append({'id':job['id'],'name':job['name'],'format':normalize_output_format(job.get('output_format'),path.name),'exists':path.is_file()})
+  files=viewer_files(job,c);path=files[0]['path'] if files else _viewer_output_path(job,c)
+  items.append({'id':job['id'],'name':job['name'],'format':normalize_output_format(job.get('output_format'),path.name),
+                'exists':any(Path(x['path']).is_file() for x in files),
+                'files':[{'value':x['value'],'file':Path(x['path']).name,'exists':Path(x['path']).is_file(),'rows':x.get('rows'),
+                          'modified':_mtime_text(Path(x['path']))} for x in files] if navi_variants.active(job) else []})
  return jsonify(items=items)
 
 @app.post('/api/data-viewer/export-pivot')
@@ -1825,9 +1820,14 @@ def data_viewer_export_pivot():
 
 @app.get('/api/data-viewer/<job_id>')
 def data_viewer(job_id):
+ """1つのファイルの中身。値ごとに分けて出す対象は ?value=LS4 のように値を選ぶ（省けば最初の値）。"""
  c=load();job=next((x for x in c['jobs'] if x['id']==job_id),None)
  if not job:return jsonify(ok=False,error='対象が見つかりません'),404
- path=_viewer_output_path(job,c)
+ files=viewer_files(job,c);want=request.args.get('value')
+ one=next((x for x in files if x['value']==want),None) if want is not None else None
+ if want is not None and one is None:return jsonify(ok=False,error=f'「{want}」は、この対象の値にありません'),404
+ one=one or next((x for x in files if Path(x['path']).is_file()),files[0])
+ path=Path(one['path'])
  if not path.is_file():return jsonify(ok=False,error=f'出力ファイルが見つかりません: {path}'),404
  try:
   # 公開先は直接開かない（開くと差し替えられなくなる）。写してから読む。
@@ -1835,7 +1835,7 @@ def data_viewer(job_id):
   # 列は何本あっても全部渡す。多いときに控えるのは行のほう（表の形は変えない）。
   keep=viewer_row_budget(len(headers));limited=len(rows)>keep
   if limited:rows=rows[:keep]
-  return jsonify(ok=True,name=job['name'],format=fmt,path=str(path),modified=datetime.fromtimestamp(path.stat().st_mtime).isoformat(timespec='seconds'),headers=headers,rows=rows,total_rows=total,preview_limit=len(rows),truncated=total is not None and total>len(rows),
+  return jsonify(ok=True,name=job['name'],value=one['value'],format=fmt,path=str(path),modified=datetime.fromtimestamp(path.stat().st_mtime).isoformat(timespec='seconds'),headers=headers,rows=rows,total_rows=total,preview_limit=len(rows),truncated=total is not None and total>len(rows),
                  total_columns=total_cols,row_budget=keep,row_budget_limited=limited)
  except Exception as e:log.exception('DATA_VIEWER_FAILED job=%s path=%s',job.get('name'),path);return jsonify(ok=False,error=str(e)),200
 
@@ -1844,48 +1844,30 @@ def validate():
  c=load();checks=[]
  def add(group,label,ok,detail,level=None,**extra):
   checks.append({'group':group,'label':label,'ok':bool(ok),'level':level or ('ok' if ok else 'error'),'detail':str(detail),**extra})
- engine=str(c.get('settings',{}).get('extract_engine') or 'api').lower()
- # 選択中の抽出方式に必要な構成だけを必須診断する。未使用方式の不足でNGにしない。
- if engine=='api':
-  try:
-   from navigator_api import candidate_dlls,pe_bits
-   import struct
-   pybits=struct.calcsize('P')*8
-   roots=dll_search_roots(c)
-   dll_candidates=candidate_dlls(resolve_path(c.get('symnavi_exe','')),resolve_path(c.get('navigator_api_dll')) if c.get('navigator_api_dll') else None,[CONFIG_DIR/'NAVIAP',BASE/'config'/'NAVIAP',DATA_ROOT/'NAVIAP'],search_roots=roots)
-   found=[x for x in dll_candidates if x.is_file()]
-   usable=[x for x in found if pe_bits(x)==pybits];selected=usable[0] if usable else None
-   # bit数の話は必ず添える。別のPCで詰まるのはたいていここ。
-   if selected:detail=f'利用候補: {selected} / このPCで必要なのは {pybits}bit版 / 一致'
-   elif found:detail='見つかったDLLは%s。必要なのは%dbit版です'%(', '.join(sorted({str(pe_bits(x) or "不明")+"bit" for x in found})),pybits)
-   else:detail='検索範囲にSymNaviA.dllがありません（範囲: %s）'%(' / '.join(str(x) for x in roots))
-   add('実行環境','Navigator API DLL',bool(selected),detail,configured=c.get('navigator_api_dll',''),item='navigator_api_dll',candidates=[str(x) for x in found],needs_reselect=not bool(selected))
-   req=_dll_requirement(c);missing=req.get('runtime_missing') or []
-   add('実行環境','Visual C++ ランタイム',not missing,('不足: '+', '.join(missing)+f'（{pybits}bit版の再頒布可能パッケージが必要です）') if missing else '必要な%dbit版ランタイムは揃っています: %s'%(pybits,', '.join(req.get('runtime') or [])),item='vc_runtime')
-  except Exception as e:add('実行環境','Navigator API DLL',False,e,item='navigator_api_dll',candidates=[],needs_reselect=True)
- else:
-  exe=resolve_path(c.get('symnavi_exe',''));add('実行環境','SymNavi.exe',exe.is_file(),exe,configured=c.get('symnavi_exe',''))
-  # DDEはpywin32のdde拡張が要る。無ければ実行開始直後に必ず失敗するので、事前に出す。
-  try:
-   import win32ui,dde  # noqa: F401
-   add('実行環境','pywin32のDDE機能',True,'win32ui / dde を読み込めます')
-  except Exception as e:
-   add('実行環境','pywin32のDDE機能',False,f'読み込めません: {e}（pip install pywin32 が必要です）',item='pywin32')
- # 共通接続ファイル。いま要るかどうかは path_setting_roles に合わせる（画面の役割表示と食い違わせない）。
- conn_roles=path_setting_roles(c)
+ # Navigator API の DLL とランタイム（2.1.2 で DDE 方式を外したので、方式で分けない）
+ try:
+  from navigator_api import candidate_dlls,pe_bits
+  import struct
+  pybits=struct.calcsize('P')*8
+  roots=dll_search_roots(c)
+  dll_candidates=candidate_dlls(resolve_path(c.get('navigator_api_dll')) if c.get('navigator_api_dll') else None,[CONFIG_DIR/'NAVIAP',BASE/'config'/'NAVIAP',DATA_ROOT/'NAVIAP'],search_roots=roots)
+  found=[x for x in dll_candidates if x.is_file()]
+  usable=[x for x in found if pe_bits(x)==pybits];selected=usable[0] if usable else None
+  # bit数の話は必ず添える。別のPCで詰まるのはたいていここ。
+  if selected:detail=f'利用候補: {selected} / このPCで必要なのは {pybits}bit版 / 一致'
+  elif found:detail='見つかったDLLは%s。必要なのは%dbit版です'%(', '.join(sorted({str(pe_bits(x) or "不明")+"bit" for x in found})),pybits)
+  else:detail='検索範囲にSymNaviA.dllがありません（範囲: %s）'%(' / '.join(str(x) for x in roots))
+  add('実行環境','Navigator API DLL',bool(selected),detail,configured=c.get('navigator_api_dll',''),item='navigator_api_dll',candidates=[str(x) for x in found],needs_reselect=not bool(selected))
+  req=_dll_requirement(c);missing=req.get('runtime_missing') or []
+  add('実行環境','Visual C++ ランタイム',not missing,('不足: '+', '.join(missing)+f'（{pybits}bit版の再頒布可能パッケージが必要です）') if missing else '必要な%dbit版ランタイムは揃っています: %s'%(pybits,', '.join(req.get('runtime') or [])),item='vc_runtime')
+ except Exception as e:add('実行環境','Navigator API DLL',False,e,item='navigator_api_dll',candidates=[],needs_reselect=True)
  # 接続情報（1.99.0）。赤くするのは「RNE の対象があるのに、どこにも無い」ときだけ（固定長・結合だけなら要らない）。
  ls=login_state(c)
  if ls.get('saved'):add('接続設定','Navigator の接続情報',True,f"このPCに登録済みです（{ls['where']}・サーバー {ls['server']}・利用者ID {ls['user']}）",item='login')
- elif ls['source']=='conf':add('接続設定','Navigator の接続情報',True,f"このPCには未登録で、{ls['conf']['path']} から読んでいます。「接続とパス」で取り込むと、このファイルは要らなくなります",level='warning',item='login')
+ elif ls['source']=='conf':add('接続設定','Navigator の接続情報',True,f"このPCには未登録で、{ls['conf']['path']} から読んでいます。「接続」で取り込むと、このファイルは要らなくなります",level='warning',item='login')
  elif ls.get('error'):add('接続設定','Navigator の接続情報',False,ls['error'],item='login')
  elif ls['needed']:add('接続設定','Navigator の接続情報',False,NO_LOGIN_MESSAGE,item='login')
  else:add('接続設定','Navigator の接続情報',True,'未登録です（RNE の対象が無いので、いまは要りません）',level='ok',item='login')
- for label,key in [('symnavim.def','symnavim_def')]:
-  role,why=conn_roles.get(key,('required',''))
-  raw=str(c.get(key) or '').strip();p=resolve_path(raw) if raw else None
-  if role=='unused':add('接続設定',label,True,why,level='ok',configured=raw,item=key)
-  elif raw:add('接続設定',label,bool(p and p.is_file()),p if (p and p.is_file()) else f'{p}（{why}）',configured=raw,item=key,candidates=find_nearby_file(label) if p and not p.is_file() else [],needs_reselect=bool(p and not p.is_file()))
-  else:add('接続設定',label,role!='required',f'未設定です。{why}',level='error' if role=='required' else 'warning',item=key,needs_reselect=role=='required')
  # RNE基本フォルダーは補助設定。各ジョブの実ファイルが解決できればフォルダー不足をNGにしない。
  configured_root=resolve_path(c.get('rne_folder','.\\rne'))
  standard_roots=[configured_root,CONFIG_DIR/'rne',DATA_ROOT/'config'/'rne',DATA_ROOT/'rne',BASE/'config'/'rne']
@@ -1970,7 +1952,7 @@ def validate():
  if accdb_jobs:
   ap=resolve_path(c.get('accdb_template','.\\assets\\empty.accdb'));add('変換環境','ACCDB空テンプレート',ap.is_file(),ap,configured=c.get('accdb_template',''),item='accdb_template',needs_reselect=not ap.is_file())
  counts={'ok':sum(1 for x in checks if x['level']=='ok'),'warning':sum(1 for x in checks if x['level']=='warning'),'error':sum(1 for x in checks if x['level']=='error')}
- return jsonify(ok=counts['error']==0,checks=checks,counts=counts,engine=engine,summary=('実行可能です' if counts['error']==0 else '修正が必要な項目があります'),search_scope='設定値、標準配置 Config\\rne、個別RNEパスを統合して判定')
+ return jsonify(ok=counts['error']==0,checks=checks,counts=counts,summary=('実行可能です' if counts['error']==0 else '修正が必要な項目があります'),search_scope='設定値、標準配置 Config\\rne、個別RNEパスを統合して判定')
 
 @app.get('/api/instance')
 def instance_info():

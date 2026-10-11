@@ -1,6 +1,6 @@
 """このPCで、いまの設定が本当に使えるのか。
 
-「設定した場所は在るか」「いまの抽出方式でそれは要るのか」「データは新しいか」
+「設定した場所は在るか」「いまの登録でそれは要るのか」「データは新しいか」
 「APIは使える状態か」――どれも読むだけで、実行中の状態を書き換えない。だから
 本体から切り離せる。逆に本体は、実行の前に path_setting_roles だけを使う。
 
@@ -196,8 +196,7 @@ def _api_diag_search_key(c):
  """「どう探すか」を1つの値にまとめたもの。探し方を変えたら前の結果は使わない。"""
  if c is None:return ''
  try:return json.dumps({'roots':[str(x) for x in dll_search_roots(c)],
-                        'manual':str(c.get('navigator_api_dll') or ''),
-                        'exe':str(c.get('symnavi_exe') or '')},ensure_ascii=False,sort_keys=True)
+                        'manual':str(c.get('navigator_api_dll') or '')},ensure_ascii=False,sort_keys=True)
  except Exception:return ''
 
 def _read_api_diag_cache(c=None):
@@ -334,11 +333,11 @@ def check_path_item(value,kind='file',expected_name=''):
 
 PATH_SETTING_LABEL={'rne_folder':'RNE基本フォルダー','text_folder':'固定長テキストの基本フォルダー',
  'default_output_folder':'既定の出力先',
- 'backup_folder':'バックアップ先','symnavi_exe':'SymNavi.exe','symnavim_conf':'symnavim.conf',
- 'symnavim_def':'symnavim.def','accdb_template':'ACCDB空テンプレート','navigator_api_dll':'Navigator API DLL'}
+ 'backup_folder':'バックアップ先','symnavim_conf':'symnavim.conf',
+ 'accdb_template':'ACCDB空テンプレート','navigator_api_dll':'Navigator API DLL'}
 
 PATH_SETTING_KIND={'rne_folder':'folder','text_folder':'folder','default_output_folder':'folder','backup_folder':'folder',
- 'symnavi_exe':'file','symnavim_conf':'file','symnavim_def':'file','accdb_template':'file',
+ 'symnavim_conf':'file','accdb_template':'file',
  'navigator_api_dll':'file'}
 
 def path_writable(p):
@@ -362,10 +361,9 @@ def path_setting_roles(c):
  返す役割は3つ。
    required … いまの構成で必ず要る。無ければ実行が止まる
    fallback … 何かが欠けたときにだけ使う。無くても実行できるなら赤くしない
-   unused   … いまの抽出方式・出力形式では使わない
+   unused   … いまの登録・出力形式では使わない
  """
  jobs=c.get('jobs') or []
- engine=str((c.get('settings') or {}).get('extract_engine') or 'api').lower()
  # RNE基本フォルダーを実際に使うのは、対象が「ファイル名だけ」を持っているとき。
  # 個別のパス（絶対・UNC・.\ 始まり）を持つ対象は、この設定を一切見ない。
  def leans_on_rne_root(j):
@@ -406,7 +404,6 @@ def path_setting_roles(c):
              +[f'結合マスタの{len(join_users)}ファイル' for _ in [1] if join_users])+'がこの場所を基準にします')
  else:
   roles['text_folder']=('fallback','ファイル名だけで登録したときの基準です。いまはすべて個別のパスで解決できています')
- # 接続に関わる3つは、まとめて「DDEのもの」にはできない。使われ方がそれぞれ違う。
  # symnavim.conf は 1.99.0 から認証情報の「取り込み元」になった。正本はこのPCの置き場（資格情報マネージャー）で、
  # 登録済みならこのファイルは読まない。未登録のあいだだけ読む（配った日に抽出を止めないため）。
  # 無いことは赤くしない ―― 足りないのは「接続情報」で、それは事前診断の「Navigator の接続情報」が言う。
@@ -414,20 +411,7 @@ def path_setting_roles(c):
  except Exception:saved=False
  roles['symnavim_conf']=(('unused','接続情報はこのPCに登録済みのため、このファイルは読みません。共有に置いたままなら消してかまいません')
    if saved else ('fallback','接続情報がこのPCに未登録のあいだだけ、ここから読みます。「Navigator の接続情報」で取り込めば要らなくなります'))
- # SymNavi.exe：DDEでは起動する本体そのもの。APIでは起動しないが、SymNaviA.dllが
- # 検索範囲で見つからなかったときに限り、この隣を最後に探す（candidate_dllsの終端）。
- roles['symnavi_exe']=('required','SymfoNaviを起動してDDEでつなぎます') if engine=='dde' else \
-   ('fallback','APIでは起動しません。SymNaviA.dllが見つからないときだけ、この隣を探す手がかりに使います')
- # symnavim.def：このアプリは中身を一度も読まず、SymfoNavi へ場所を渡してもいない（SymNavi.exe へは利用者ID・
- # パスワード・サーバーを引数で渡す）。DDEで指定してあれば「在ること」だけを実行前に確かめる。
- # 1.99.0 から空にできる ―― 空なら確かめない（アプリのフォルダーへ同梱しなくてよい）。
- if engine!='dde':roles['symnavim_def']=('unused','いまの抽出方式（Navigator API）では使いません')
- elif str(c.get('symnavim_def') or '').strip():
-  roles['symnavim_def']=('required','DDE互換方式で、ここに在ることを実行前に確かめます（中身はアプリは読まず、SymfoNavi 側が使います）')
- else:
-  roles['symnavim_def']=('fallback','未設定のため確かめません。アプリはこのファイルを読みません（SymfoNavi 側が自分の置き場で使います）')
- roles['navigator_api_dll']=(('fallback','手動で指定したときだけ使います。空なら探す範囲から自動で選びます')
-   if engine=='api' else ('unused','いまの抽出方式（DDE互換）では使いません'))
+ roles['navigator_api_dll']=('fallback','手動で指定したときだけ使います。空なら探す範囲から自動で選びます')
  roles['accdb_template']=(('required',f'{len(accdb)}件の対象がACCDBで出力します') if accdb
    else ('unused','ACCDBで出力する対象がないため使いません'))
  roles['backup_folder']=(('required','出力を差し替える前に、いまのファイルをここへ控えます')
