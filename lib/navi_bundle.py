@@ -74,6 +74,8 @@ def job_export_one(job,layout_name='',recipe_name=''):
  # （書くと、既定の設定と手元を比べたとき、使っていない全部の対象が「中身が違う」になる）
  v=out.get('variants')
  if not (isinstance(v,dict) and (v.get('enabled') or v.get('item') or v.get('values'))):out.pop('variants',None)
+ # データビュワーの表示の設定（2.2.0）も、使っていない対象は書かない（同じ理由）
+ if not out.get('viewer'):out.pop('viewer',None)
  if layout_name:out['layout_name']=_text(layout_name,120)
  if recipe_name:out['recipe_name']=_text(recipe_name,120)
  return out
