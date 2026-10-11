@@ -3893,40 +3893,116 @@ def variant_jobs(j,cfg,now=None):
  out=[]
  for x in navi_variants.plan(j,render,base,j.get('output_folder') or '',render_folder):
   one={**j,'naming_mode':'fixed','output_pattern':'','output_file':canonical_output_file(x['stem'],fmt),
-       'output_folder':x['folder'],'variants':{},'_variant_value':x['value'],
-       '_cond_override':{'item':v['item'],'value':x['value']}}
+       'output_folder':x['folder'],'variants':{},'_variant_value':x['value']}
   out.append(one)
  return out
 
 def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,backup):
- """1つの対象を API で取る。値ごとに分けて出す対象（2.1.0）は、値の数だけ1回ぶんの実行を順に行い、結果を1つにまとめる。
- 値ごとに控え・0件の確かめ・公開・同時に出す形式まで、ふだんの1回と同じ道を通る。1つの値が失敗しても残りの値は出す。"""
+ """1つの対象を API で取る。値ごとに分けて出す対象は、指定した値だけを入れて1回で問い合わせ、受け取ってから
+ 手元で値ごとのファイルに分ける（2.1.1。2.1.0 は値ごとに問い合わせ直していたが、キーの差し替えが効かず、
+ 毎回ほぼ全部の設備を取っていた: 2026-10-11 の実機ログ）。"""
  if not navi_variants.active(j):
   return _process_api_job_once(j,job_index,total_jobs,cfg,user,pw,server,dde_work,backup)
  started=time.perf_counter();line_name=os.environ.get('NAVI_WORKER_LINE') or threading.current_thread().name
- try:parts=variant_jobs(j,cfg)
+ v=navi_variants.normalize(j.get('variants'))
+ try:
+  parts=variant_jobs(j,cfg)
+  rp=resolve_rne_path(j,cfg)
+  conds=navi_crosstab.read_conditions(rp) or []
+  lay=navi_crosstab.read_rne_layout(rp) or {}
  except Exception as e:
   update_parallel_line(line_name,job=j.get('name',''),job_id=j.get('id',''),state='失敗',percent=100,detail=str(e))
   return {'ok':False,'job':j.get('name',''),'elapsed':time.perf_counter()-started,'error':f'値ごとの出し先を決められません: {e}'}
- v=navi_variants.normalize(j.get('variants'))
- log.info('VARIANTS_START line=%s job=%s item=%s values=%s',line_name,j.get('name'),v['item'],v['values'])
- results=[];rows=0
- for one in parts:
-  r=_process_api_job_once(one,job_index,total_jobs,cfg,user,pw,server,dde_work,backup)
-  value=one['_variant_value']
-  results.append({'value':value,'ok':bool(r.get('ok')),'rows':int(r.get('rows') or 0),'target':str(r.get('target') or ''),
-                  'published':bool(r.get('published',r.get('ok'))),'pending':str(r.get('pending') or ''),
-                  'unchanged':bool(r.get('unchanged')),'checked':r.get('variant_checked'),'error':str(r.get('error') or ''),
-                  'form':str(r.get('variant_form') or '')})
-  rows+=int(r.get('rows') or 0)
-  log.info('VARIANT_RESULT line=%s job=%s value=%s ok=%s rows=%s target=%s error=%s',line_name,j.get('name'),value,r.get('ok'),r.get('rows'),r.get('target'),r.get('error',''))
- total=time.perf_counter()-started;text=navi_variants.summary(results)
- ok=all(x['ok'] for x in results)
- update_parallel_line(line_name,job=j.get('name',''),job_id=j.get('id',''),state='完了' if ok else '一部失敗',percent=100,detail=text[:120],elapsed=round(total,1))
+ side=list(lay.get('side') or [])
+ ov={'item':v['item'],'values':[x['_variant_value'] for x in parts],
+     'rne_keys':next((c['keys'] for c in conds if c['name']==v['item']),[]),
+     # 表側に同じ名前の管理ポイントがあれば、そのカテゴリを指定の値だけにして、サーバー側で絞る
+     'side_index':side.index(v['item']) if v['item'] in side else None}
+ log.info('VARIANTS_START line=%s job=%s item=%s values=%s rne_keys=%s side_index=%s',line_name,j.get('name'),ov['item'],ov['values'],ov['rne_keys'],ov['side_index'])
+ return _process_api_job_once({**j,'_cond_override':ov,'_variant_parts':parts},job_index,total_jobs,cfg,user,pw,server,dde_work,backup)
+
+def _variant_conditions(api,handle,j,ov,line):
+ """値ごとに分けて出す回の問い合わせ条件。指定の値だけが返るようにする（実行前に呼ぶ）。
+ 1. RNE の条件欄のキー（例: LS4）に無い値を頼んでいれば、条件欄の絞り込みを外す（外さないと LS4 以外が0件になる）
+ 2. 表側の同じ名前の管理ポイントのカテゴリを、指定の値だけにする（行分割で実績のある NaviChangeCategory）
+ 2 が通らなければ、外したまま全部の値を取る（遅いが、手元で値ごとに振り分けるのでファイルは正しい）。→ 何をしたか。"""
+ from navigator_api import NAVI_SIDE
+ note={'relax':'','restrict':'','restrict_error':''}
+ if any(x not in set(ov['rne_keys']) for x in ov['values']):
+  got=api.relax_condition(handle,ov['item'],hint=ov['values'][0]);note['relax']=got['form']
+ if ov.get('side_index') is None:
+  note['restrict_error']=f'表側に「{ov["item"]}」の管理ポイントが無いため、サーバー側では絞れません'
+ else:
+  try:
+   got=api.apply_row_categories(handle,{'column':ov['item'],'locate':NAVI_SIDE,'index':int(ov['side_index']),'location':'表側',
+                                        'values':ov['values'],'others':[],'part':0,'parts':1})
+   note['restrict']=got['form'];note['restrict_count']=got.get('values');note['others_hidden']=got.get('others')
+  except Exception as e:
+   note['restrict_error']=str(e)
+ log.info('VARIANT_CONDITION line=%s job=%s item=%s values=%s relax=%s restrict=%s restrict_error=%s',line,j.get('name'),ov['item'],ov['values'],
+          note['relax'] or '-',note['restrict'] or '-',note['restrict_error'] or '-')
+ return note
+
+def _variant_percent(k,n,frac=0.0):
+ """値ごとのファイルを作る段の進み具合。変換と公開の帯（80〜100%）を値の数で等分する。"""
+ lo=LINE_PHASES['convert'][0];hi=LINE_PHASES['publish'][1]
+ return round(lo+(hi-lo)*((k+max(0.0,min(1.0,frac)))/max(1,n)),1)
+
+def _finish_variants(j,cfg,*,intermediate,backup,local_export,stamp,fmt,extras,expected_cols,job_started,line,note,rp,run_metrics):
+ """まとめて受け取った中間CSVを値ごとに分け、値ごとに 変換 → 公開 する。1つの値が失敗しても残りは出す。
+ 進み具合は「値ごとに作成 k/N」で出す（途中の値で「完了」「失敗」を出すと、一覧の行がそこで終わったことになる）。"""
+ ov=j['_cond_override'];parts=j['_variant_parts'];n=len(parts);name=j.get('name','');jid=j.get('id','')
+ update_parallel_line(line,job=name,job_id=jid,state='値ごとに分ける',percent=_variant_percent(0,n),detail=f'{ov["item"]} で {n}ファイルに分けています',phase='convert')
+ split_dir=Path(local_export)/f'split_{stamp}'
+ sp=navi_variants.split_csv(intermediate,ov['item'],ov['values'],split_dir)
+ try:
+  if sp['missing_column']:
+   raise ValueError(f'出力に「{ov["item"]}」の列が無いため、値ごとに分けられません。RNE の表側かデータに「{ov["item"]}」を置いてください')
+  if not navi_variants.relaxed(sp['found'],ov['rne_keys'],ov['values']):
+   raise ValueError(f'RNE の条件（{ov["item"]} = {"・".join(ov["rne_keys"])}）を外せず、ほかの値の行を受け取れませんでした（試した形: {note.get("relax") or "-"}）。0件のファイルは出していません')
+  extra=[x for x in sp['found'] if x not in set(ov['values'])]
+  log.info('VARIANT_SPLIT line=%s job=%s rows=%s found=%s per_value=%s outside=%s',line,name,sp['rows'],sp['found'][:20],
+           {k2:v2['rows'] for k2,v2 in sp['parts'].items()},extra[:10])
+  results=[]
+  for k,one in enumerate(parts):
+   value=one['_variant_value'];part=sp['parts'][value];t0=time.perf_counter();db=None
+   def rep(stage,k=k,value=value,**kw):
+    label={'convert_start':'変換・検証','unchanged':'前回と同じ','publish':'公開','extras':'同時出力'}.get(stage,stage)
+    frac={'convert_start':0.1,'unchanged':0.9,'publish':0.6,'extras':0.8}.get(stage,0.5)
+    update_parallel_line(line,job=name,job_id=jid,state=f'値ごとに作成 {k+1}/{n}',percent=_variant_percent(k,n,frac),
+                         detail=f'{value} · {label} · {int(part["rows"]):,}件',phase='publish' if stage in ('publish','extras') else 'convert')
+   try:
+    fmt1=validate_output_contract(one,'before-extraction')
+    out_dir=resolve_path(one.get('output_folder') or cfg['default_output_folder']);target=out_dir/one['output_file']
+    s=cfg['settings']
+    apply_pending(target,backup,int(s['backup_generations']),backup_enabled=bool(s.get('backup_enabled',True)),retention_days=int(s.get('backup_retention_days',30)),
+                  generation_limit_enabled=bool(s.get('backup_generation_limit_enabled',True)),backup_mode=str(s.get('backup_mode','generations')))
+    db=Path(local_export)/f'{Path(one["output_file"]).stem}_{stamp}{Path(one["output_file"]).suffix}'
+    fin=finish_one_job(one,cfg,intermediate=Path(part['path']),db=db,target=target,backup=backup,out_dir=out_dir,
+                       local_export=local_export,stamp=stamp,expected_rows=part['rows'],expected_cols=expected_cols,
+                       fmt=fmt1,extras=job_extra_formats(one),api_direct_output=False,job_started=t0,line=line,report=rep)
+    results.append({'value':value,'ok':True,'rows':int(fin['rows'] or 0),'target':str(target),'published':bool(fin.get('published',True)),
+                    'pending':str(fin.get('pending') or ''),'unchanged':bool(fin.get('unchanged')),'checked':True,'error':''})
+   except Exception as e:
+    log.warning('VARIANT_FILE_FAILED line=%s job=%s value=%s error=%s',line,name,value,e)
+    results.append({'value':value,'ok':False,'rows':int(part['rows']),'target':'','published':False,'pending':'','unchanged':False,'checked':True,'error':str(e)})
+   finally:
+    for x in (db,Path(part['path'])):
+     try:
+      if x and Path(x).exists():Path(x).unlink()
+     except Exception:pass
+   log.info('VARIANT_RESULT line=%s job=%s value=%s ok=%s rows=%s error=%s',line,name,value,results[-1]['ok'],results[-1]['rows'],results[-1]['error'])
+ finally:
+  shutil.rmtree(split_dir,ignore_errors=True)
+ total=time.perf_counter()-job_started;text=navi_variants.summary(results);ok=all(x['ok'] for x in results)
+ if note.get('restrict_error'):text+=f' / サーバー側では絞れず全部の値を取りました（{note["restrict_error"][:80]}）'
+ update_parallel_line(line,job=name,job_id=jid,state='完了' if ok else '一部失敗',percent=100,detail=text[:160],elapsed=round(total,1))
  first=next((x['target'] for x in results if x['ok']),'')
- base={'job':j.get('name',''),'elapsed':total,'rows':rows,'columns':0,'target':first,'variant_results':results,
-       'published':all(x['published'] for x in results if x['ok']),'pending':'・'.join(x['pending'] for x in results if x['pending'])}
- if ok:return {**base,'ok':True,'result':f'{j.get("name","")}: {text} / {total:.1f}秒'}
+ base={'job':name,'elapsed':total,'rows':sum(x['rows'] for x in results if x['ok']),'columns':int(expected_cols or 0),'target':first,
+       'variant_results':results,'variant_note':note,'rne_path':str(rp),'format':fmt,
+       'published':all(x['published'] for x in results if x['ok']),'pending':'・'.join(x['pending'] for x in results if x['pending']),
+       **run_metrics}
+ if ok:return {**base,'ok':True,'result':f'{name}: {text} / {total:.1f}秒'}
  return {**base,'ok':False,'error':text}
 
 def _process_api_job_once(j,job_index,total_jobs,cfg,user,pw,server,dde_work,backup):
@@ -3974,7 +4050,8 @@ def _process_api_job_once(j,job_index,total_jobs,cfg,user,pw,server,dde_work,bac
   update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='開始',percent=line_percent('session',0),detail=fmt,phase='session');log.info('PARALLEL_JOB_START line=%s job=%s index=%s/%s format=%s target=%s',line_name,j['name'],job_index,total_jobs,fmt,target)
   log.info('PIPELINE job=%s engine=api parallel_line=%s common_intermediate=%s format=%s planned_intermediate=%s converted=%s target=%s',j['name'],line_name,common_intermediate,fmt,planned,db,target)
   # 分割して取るか、そのまま取るか。判断は保存済みの裏付けだけで行い、ここでは測定しない。
-  split_used=None;split_reason='';intermediate=None;api_direct_output=False;race_winner='';run_stats={};variant_form=''
+  split_used=None;split_reason='';intermediate=None;api_direct_output=False;race_winner='';run_stats={};variant_note={}
+  if override and crosstab:raise ValueError('集計表（表頭のある RNE）は、値ごとに分けて出せません')
   try:
    # 値ごとの回は分けない（分割の各パートへ条件の差し替えを配るより、値ごとに1本で取るほうが確か）
    if override:split_used,split_reason=None,'値ごとに分けて出す回のため分割しません'
@@ -4021,14 +4098,13 @@ def _process_api_job_once(j,job_index,total_jobs,cfg,user,pw,server,dde_work,bac
     finally:os.chdir(previous_cwd)
    if (j.get('period') or {}).get('enabled'):update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='期間指定',percent=line_percent('session',0.9),detail='相対期間を適用',phase='session');apply_dynamic_period(api_client,handle,j,datetime.now(),line=line_name)
    if override:
-    update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='条件の差し替え',percent=line_percent('session',0.95),detail=f"{override['item']} = {override['value']}",phase='session')
-    got=api_client.apply_key_condition(handle,override['item'],override['value']);variant_form=got['form']
-    log.info('VARIANT_CONDITION line=%s job=%s item=%s value=%s form=%s tried=%s',line_name,j['name'],override['item'],override['value'],got['form'],got['tried'])
+    update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='値を絞る',percent=line_percent('session',0.95),detail=f"{override['item']} を {len(override['values'])}値（{'・'.join(override['values'])}）に絞ります",phase='session')
+    variant_note=_variant_conditions(api_client,handle,j,override,line_name)
    # 前回の実績。工程ごとの見込みに使う（無ければ見当なしで、秒だけを刻む）。
    _tm=load_rne_timing(rp) or {};_lastrun=(load_job_runs().get(j['id']) or {}).get('metrics') or {}
    _expect_bytes=int(_lastrun.get('transfer_bytes') or 0) or split_expected_bytes(rp,j,cfg)
    _expect_rows=_tm.get('rows') or 0
-   update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='問い合わせ実行',percent=line_percent('execute',0),detail='サーバー側で問い合わせを実行中',phase='execute')
+   update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='問い合わせ実行',percent=line_percent('execute',0),detail=(f"{len(override['values'])}値をまとめて問い合わせ中（1回）" if override else 'サーバー側で問い合わせを実行中'),phase='execute')
    t=phase_log('api_execute_catalog',job=j['name'],line=line_name)
    with line_ticker(line_name,j,'execute',elapsed_tick(_tm.get('execute'),'問い合わせ実行',f'前回 {int(_expect_rows):,}件' if _expect_rows else '')):
     api_number,api_elapsed=api_client.execute(handle)
@@ -4057,9 +4133,9 @@ def _process_api_job_once(j,job_index,total_jobs,cfg,user,pw,server,dde_work,bac
    if not api_direct_output:
     update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='受信・保存',percent=line_percent('transfer',0),detail='受信待ち',phase='transfer')
     api_csv=dde_work/f'navi_{job_index}_{stamp}.csv'
-    t=phase_log('api_save_csv',job=j['name'],line=line_name,repeat='NAVI_REPEAT' if crosstab else 'NAVI_NONREPEAT')
+    t=phase_log('api_save_csv',job=j['name'],line=line_name,repeat='NAVI_REPEAT' if (crosstab or override) else 'NAVI_NONREPEAT')
     with line_ticker(line_name,j,'transfer',growing_file_tick(api_csv,_expect_bytes)):
-     save_elapsed=api_client.save_csv(handle,api_csv,repeat_labels=crosstab)
+     save_elapsed=api_client.save_csv(handle,api_csv,repeat_labels=crosstab or bool(override))
     phase_log('api_save_csv',t,job=j['name'],line=line_name,api_elapsed=f'{save_elapsed:.2f}s',**save_metrics(api_csv,save_elapsed,expected_rows))
     if not api_csv.is_file() or api_csv.stat().st_size<=0:raise RuntimeError(f'API中間CSVが作成されませんでした: {api_csv}')
     intermediate=api_csv
@@ -4074,15 +4150,14 @@ def _process_api_job_once(j,job_index,total_jobs,cfg,user,pw,server,dde_work,bac
    if accdb_prewarm is not None:
     join_started=time.perf_counter();alive=accdb_prewarm.is_alive();accdb_prewarm.join(timeout=2.0)
     log.info('ACCDB_PREWARM_JOIN line=%s alive_before=%s alive_after=%s elapsed=%.2fs',line_name,alive,accdb_prewarm.is_alive(),time.perf_counter()-join_started)
-  variant_checked=None
   if override:
-   # 本当にその値だけに絞れたか。出力に同じ名前の列があれば中身で確かめ、ほかの値が混じっていれば公開しない
-   chk=navi_variants.check_rows(intermediate,override['item'],override['value']) if not crosstab else {'checked':False,'rows':0,'other':[]}
-   variant_checked=bool(chk['checked'])
-   log.info('VARIANT_CHECK line=%s job=%s item=%s value=%s checked=%s rows=%s other=%s',line_name,j['name'],override['item'],override['value'],chk['checked'],chk['rows'],chk['other'])
-   if chk['other']:
-    raise ValueError(f"条件が効いていません: 「{override['item']}」を「{override['value']}」に絞ったのに、"
-                     f"{'・'.join(chk['other'])} の行が入っていました（公開していません）")
+   # 値ごとに分けて出す: まとめて受け取った中間CSVを値ごとに分け、値ごとに 変換 → 公開 する
+   ph=_phase_profile.get('phases') or {}
+   return _finish_variants(j,cfg,intermediate=intermediate,backup=backup,local_export=local_export,stamp=stamp,fmt=fmt,extras=extras,
+                           expected_cols=expected_cols,job_started=job_started,line=line_name,note=variant_note,rp=rp,
+                           run_metrics={'execute_seconds':round(float(ph.get('api_execute_catalog') or 0),2),
+                                        'save_seconds':round(float(ph.get('api_save_csv') or 0),2),
+                                        'query_rows':int(expected_rows or 0)})
   fin=finish_one_job(j,cfg,intermediate=intermediate,db=db,target=target,backup=backup,out_dir=out_dir,
                      local_export=local_export,stamp=stamp,expected_rows=expected_rows,expected_cols=expected_cols,
                      fmt=fmt,extras=extras,api_direct_output=api_direct_output,job_started=job_started,
@@ -4096,7 +4171,7 @@ def _process_api_job_once(j,job_index,total_jobs,cfg,user,pw,server,dde_work,bac
            'column_names':[],'rne_path':str(rp),'extra_formats':[],
            'split_parts':0,'split_shape':'','split_how':'','row_axis':'','axis_seconds':None,
            'split_reason':'','race_winner':'','execute_seconds':0,'save_seconds':0,
-           'total_seconds':round(total,2),'transfer_bytes':0,'merge_seconds':0,'transfer_kbs':None,'variant_checked':variant_checked}
+           'total_seconds':round(total,2),'transfer_bytes':0,'merge_seconds':0,'transfer_kbs':None}
   nr,nc=fin['rows'],fin['cols'];pub={'published':fin['published'],'pending':fin['pending'],'reason':fin.get('hold_reason') or '','waited':fin.get('hold_waited'),'attempts':fin.get('hold_attempts'),'advice':list(fin.get('hold_advice') or [])}
   extra_results=fin['extra_results'];total=fin['total']
   update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='完了',percent=100,detail=f'{nr}件/{nc}列',elapsed=round(total,1));log.info('PARALLEL_JOB_RESULT line=%s job=%s format=%s rows=%s columns=%s elapsed=%.2fs target=%s published=%s',line_name,j['name'],fmt,nr,nc,total,target,pub['published'])
@@ -4139,8 +4214,7 @@ def _process_api_job_once(j,job_index,total_jobs,cfg,user,pw,server,dde_work,bac
           'split_reason':split_reason,'race_winner':race_winner,
           'execute_seconds':execute_s,'save_seconds':save_s,'total_seconds':round(total,2),
           'transfer_bytes':int(tbytes or 0),'merge_seconds':run_stats.get('merge_seconds',0),
-          'transfer_kbs':round((tbytes or 0)/1024/save_s,1) if save_s else None,
-          'variant_checked':variant_checked,'variant_form':variant_form}
+          'transfer_kbs':round((tbytes or 0)/1024/save_s,1) if save_s else None}
  except Exception as e:
   total=time.perf_counter()-job_started
   update_parallel_line(line_name,job=j.get('name',''),job_id=j.get('id',''),state='失敗',percent=100,detail=str(e),elapsed=round(total,1));log.error('PARALLEL_JOB_ERROR line=%s job=%s elapsed=%.2fs error=%s\n%s',line_name,j.get('name'),total,e,traceback.format_exc())

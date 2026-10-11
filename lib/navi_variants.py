@@ -72,35 +72,68 @@ def plan(job, render, base_name, base_folder, render_folder=None):
     return out
 
 
-def check_rows(path, item, value, encodings=('cp932', 'utf-8-sig', 'utf-8')):
-    """問い合わせた結果（中間CSV）が、本当にその値だけに絞れているか。
-    → {'checked'（列があって確かめられたか）, 'rows', 'other'（その値以外に入っていた値。最大 SAMPLE_OTHERS 個）}。
+def split_csv(path, item, values, out_dir, encodings=('cp932', 'utf-8-sig', 'utf-8')):
+    """まとめて1回で受け取った中間CSVを、item 列の値ごとのCSVに分ける（2.1.1）。
+    → {'missing_column', 'header', 'found'（item 列に出てきた値。出てきた順）, 'rows'（全行数）,
+       'parts': {値: {'path', 'rows'}}, 'encoding'}。
 
-    条件を差し替えても、渡し方によっては rc=OK のまま1行も絞られないことがある（行分割で実測済み）。黙って全件を
-    値ごとのファイルにしないよう、出力に同じ名前の列があれば中身で確かめる。空のマスは「上と同じ値を省いた」書き方
-    （NAVI_NONREPEAT）なので数えない。列が無ければ確かめられないので checked=False で返す（止めはしない）。"""
-    p = Path(path)
+    値ごとのファイルは「その値の行だけ」を手元で振り分けて作るので、サーバー側の絞り込みが効いていなくても、
+    ほかの値の行は混ざらない。空のマスは「上と同じ値を省いた」書き方（NAVI_NONREPEAT）の名残として、
+    上の行の値を引き継ぐ（受け取りは NAVI_REPEAT にしているので、ふつうは空にならない）。
+    元と同じ文字コード・同じ見出しで書く（あとの変換は、ふだんの中間CSVと同じ道を通る）。"""
+    p, out = Path(path), Path(out_dir)
+    want = list(values)
     for enc in encodings:
         try:
             with p.open('r', encoding=enc, newline='') as f:
                 reader = csv.reader(f)
                 head = next(reader, None)
                 if head is None:
-                    return {'checked': False, 'rows': 0, 'other': []}
+                    return {'missing_column': True, 'header': [], 'found': [], 'rows': 0, 'parts': {}, 'encoding': enc}
                 names = [str(x).strip() for x in head]
                 if item not in names:
-                    return {'checked': False, 'rows': sum(1 for _ in reader), 'other': []}
+                    return {'missing_column': True, 'header': names, 'found': [], 'rows': 0, 'parts': {}, 'encoding': enc}
                 i = names.index(item)
-                rows, other = 0, []
-                for row in reader:
-                    rows += 1
-                    cell = str(row[i]).strip() if i < len(row) else ''
-                    if cell and cell != value and cell not in other and len(other) < SAMPLE_OTHERS:
-                        other.append(cell)
-                return {'checked': True, 'rows': rows, 'other': other}
+                out.mkdir(parents=True, exist_ok=True)
+                files, writers, counts, found, last, rows = {}, {}, {}, [], '', 0
+                try:
+                    for n, v in enumerate(want):
+                        fp = out / ('part_%02d.csv' % n)
+                        files[v] = fp.open('w', encoding=enc, newline='')
+                        writers[v] = csv.writer(files[v], lineterminator='\r\n')
+                        writers[v].writerow(head)
+                        counts[v] = 0
+                    for row in reader:
+                        rows += 1
+                        cell = str(row[i]).strip() if i < len(row) else ''
+                        if not cell:
+                            cell = last
+                        last = cell
+                        if cell and cell not in found:
+                            found.append(cell)
+                        if cell in writers:
+                            if i < len(row) and not str(row[i]).strip():
+                                row = list(row)
+                                row[i] = cell
+                            writers[cell].writerow(row)
+                            counts[cell] += 1
+                finally:
+                    for f2 in files.values():
+                        f2.close()
+                return {'missing_column': False, 'header': names, 'found': found, 'rows': rows, 'encoding': enc,
+                        'parts': {v: {'path': str(out / ('part_%02d.csv' % n)), 'rows': counts[v]} for n, v in enumerate(want)}}
         except UnicodeDecodeError:
             continue
-    return {'checked': False, 'rows': 0, 'other': []}
+    raise ValueError('中間CSVの文字コードを読めません: %s' % p)
+
+
+def relaxed(found, rne_keys, values):
+    """RNE の条件を外せたか。外す必要があった（RNE のキーに無い値を頼んだ）のに、返った行の値が RNE のキーの中だけなら、
+    外せていない（ほかの値の行が0件なのが「無い」のか「取れていない」のか区別できないので、0件のファイルを出さず止める）。"""
+    need = [v for v in values if v not in set(rne_keys or [])]
+    if not need or not rne_keys:
+        return True
+    return any(v not in set(rne_keys) for v in found)
 
 
 def summary(results):

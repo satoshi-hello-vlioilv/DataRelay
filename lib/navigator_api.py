@@ -1233,25 +1233,24 @@ class NavigatorApi:
         raise NavigatorApiError('行分割:条件の設定',NAVI_ERROR,
                                 f'列「{name}」に条件を設定できませんでした。試した形: '+' / '.join(tried))
 
-    def key_condition_forms(self,value):
-        """条件のキーを1つの値にする渡し方の候補（確からしい順）。
+    def relax_condition_forms(self,hint=''):
+        """条件欄の項目のキーの絞り込みを外す渡し方の候補（確からしい順）。
 
-        RNEでは「キーで絞る」条件（例: BOX実績_設備名 に LS4）は、値の並びを持つ一致の条件として書かれている。
-        APIでこれに当たるのは NAVI_MATCH（一致）＋ key。絞り込み方は完全一致（NAVI_COMPLETE）。
-        引数の細部は原本の宣言から読み切れないので、通る形を実測で見つける（行分割の row_condition_forms と同じ考え方）。
+        値ごとに分けて出すときは、指定した値をまとめて1回で取り、手元で値ごとに分ける（2.1.1）。
+        そのために RNE の条件（例: BOX実績_設備名 = LS4）が他の値を落とさないよう、絞り込みを外す。
+        1. NULL以外（NAVI_EXCEPTNULL）: キーで絞らず、空でない行を全部
+        2. 一致＋キー1つ（NAVI_MATCH）: 実機（2026-10-11）で rc=OK のまま、ほぼ全部の設備の行が返った形
+        どちらも「外れたか」は、返った行に RNE のキー以外の値があるかで呼ぶ側が確かめる。
         """
-        v=str(value)
         return [
-            ('一致・完全一致',dict(condition=NAVI_MATCH,key=v,search=NAVI_COMPLETE,nonmatch=0)),
-            ('一致・完全一致(該当なしのカテゴリも読む)',dict(condition=NAVI_MATCH,key=v,search=NAVI_COMPLETE,nonmatch=NAVI_NONMATCH)),
+            ('NULL以外（キーの絞り込みを外す）',dict(condition=NAVI_EXCEPTNULL,key='',search=NAVI_COMPLETE,nonmatch=0)),
+            ('一致＋キー1つ（実機でほぼ全件が返った形）',dict(condition=NAVI_MATCH,key=str(hint),search=NAVI_COMPLETE,nonmatch=0)),
         ]
 
-    def apply_key_condition(self,h_catalog,item,value):
-        """条件欄のデータ項目 item のキーを value だけにする（値ごとに分けて出すとき。実行前に呼ぶ）。RNEファイルは変えない。
+    def relax_condition(self,h_catalog,item,hint=''):
+        """条件欄のデータ項目 item のキーの絞り込みを外す（実行前に呼ぶ）。RNEファイルは変えない。
 
-        項目は条件欄（NAVI_COND）からだけ引く。データ欄の項目に条件を付けても rc=OK のまま絞られない
-        （行分割で実測 2026-08-10）ので、条件欄に無ければ止める。どの形でも通らなければ例外。
-        通った形は戻り値の form に入れて持ち帰る（ログに残し、どの渡し方が正解だったかを後から確かめる）。
+        項目は条件欄（NAVI_COND）からだけ引く。どの形でも通らなければ例外。通った形は form に入れて持ち帰る。
         """
         if not self.supports_row_split():
             raise RuntimeError('このDLLは NaviChangeConditionDI を公開していません')
@@ -1264,14 +1263,14 @@ class NavigatorApi:
             raise NavigatorApiError('値ごとの出力:条件の項目',NAVI_ERROR,
                                     f'条件欄に「{item}」がありません（ハンドルが0）。RNEの条件に置いた項目名を指定してください')
         tried=[]
-        for label,kw in self.key_condition_forms(value):
+        for label,kw in self.relax_condition_forms(hint):
             try:
                 self.change_condition_di(h,**kw)
-                return {'item':str(item),'value':str(value),'handle':h,'form':label,'tried':tried}
+                return {'item':str(item),'handle':h,'form':label,'tried':tried}
             except Exception as e:
                 tried.append(f'{label}: {e}')
-        raise NavigatorApiError('値ごとの出力:条件の設定',NAVI_ERROR,
-                                f'「{item}」を「{value}」に絞れませんでした。試した形: '+' / '.join(tried))
+        raise NavigatorApiError('値ごとの出力:条件を外す',NAVI_ERROR,
+                                f'「{item}」の絞り込みを外せませんでした。試した形: '+' / '.join(tried))
 
     def apply_column_split(self,h_catalog,drop_names):
         """担当外の列をカタログから外す。実行前に呼ぶこと。
