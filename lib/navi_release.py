@@ -123,6 +123,14 @@ def dir_choice(app_root, shared=''):
     return release_root(raw)[0], source
 
 
+def place_root(app_root, shared=None):
+    """相対パスの基準にする置き場の根（2.2.1）。shared を渡さなければ、共有の設定の控え（config\\update.json）を読む
+    （起動の早い時点では設定の DB をまだ読まないので）。"""
+    if shared is None:
+        shared = str(navi_paths.read_json(Path(app_root) / 'config' / MIRROR).get(CONFIG_KEY) or '').strip()
+    return dir_choice(app_root, shared)[0]
+
+
 def dir_note(app_root, shared=''):
     """置き場を直したときの理由（画面に出す）。直していなければ空。"""
     return release_root(_raw_dir_choice(app_root, shared)[0])[1]

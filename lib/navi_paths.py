@@ -59,20 +59,30 @@ def setup(data_root,local_root,program_root=None,source=''):
  global DATA_ROOT,LOCAL_ROOT,PROGRAM_ROOT,DATA_SOURCE
  DATA_ROOT=Path(data_root);LOCAL_ROOT=Path(local_root);PROGRAM_ROOT=Path(program_root) if program_root else None;DATA_SOURCE=str(source or '')
 
-# ==== 相対パスの基準（2.2.0） ============================================
-# 相対パス（.\rne\X.RNE など）は、いま動いている版のアプリのフォルダーを基準に読む。
-# 2.0.0 より前に写したPCは、データの基準が config\install.json の data_root（最初に入れたときの共有のフォルダー）のまま
-# 引き継がれ、新しい版を使っても相対パスが最初に起動した場所を指し続けていた（出どころ 'install'）。
-# そこで、データの基準がプログラムの外にあり、それを人が決めたのでもない（'install'）ときは、プログラムの場所を先に見る。
-# プログラムの場所に無い物（前の共有にだけある RNE など）は、データの基準にあればそちらを使う（実行を止めない・記録に残す）。
-# 人が決めた基準（'local' = config\local.json・'env' = NAVI_DATA_ROOT）と、プログラムの中の基準（'pc' = <写し>\data・'app'）は、
-# これまでどおりデータの基準が先（どちらも、決めた人の意図か、いまの版のフォルダーそのもの）。
-FOLLOW_PROGRAM=('install',)
+# ==== 相対パスの基準（2.2.1） ============================================
+# 相対パス（.\rne\X.RNE など）は、配布の置き場（共有の上の、配る入口の DataRelay.exe を置くフォルダー）を基準に読む。
+# 置き場は版が変わっても動かないので、基準が毎回変わらない（2.2.0 は「いま動いている版のアプリのフォルダー」だったが、
+# 版のフォルダー versions\<版> から動かすと版ごとに基準が変わる）。置き場は navi_release.place_root が決め、app.py が渡す
+# （config\local.json の update_dir → 共有の設定の控え → 入れた元 → アプリのフォルダー。版のフォルダーは置き場の根へ直す）。
+# 置き場に無い物（写しの data にだけある RNE・プログラムに付いてくる .\assets\empty.accdb など）は、データの基準・
+# プログラムの場所にあればそちらを使う（実行を止めない・記録に残す）。まだ無い物は置き場に作る。
+# 人が決めた基準（'local' = config\local.json の data_root・'env' = NAVI_DATA_ROOT）は、これまでどおりデータの基準が先。
+EXPLICIT_DATA=('local','env')
+PLACE_ROOT=None
+def set_place(place):
+ """相対パスの基準にする置き場を決める（app.py が起動時と、置き場を変えたときに呼ぶ）。None なら置き場を使わない。"""
+ global PLACE_ROOT
+ PLACE_ROOT=Path(place) if place else None
 def rel_bases():
- """相対パスを読む基準の順（先頭が主）。"""
- if PROGRAM_ROOT is None or PROGRAM_ROOT==DATA_ROOT:return [DATA_ROOT]
- if DATA_SOURCE in FOLLOW_PROGRAM:return [PROGRAM_ROOT,DATA_ROOT]
- return [DATA_ROOT,PROGRAM_ROOT]
+ """相対パスを読む基準の順（先頭が主）。同じ場所は1度だけ。"""
+ if DATA_SOURCE in EXPLICIT_DATA:order=[DATA_ROOT,PROGRAM_ROOT]
+ elif PLACE_ROOT is not None:order=[PLACE_ROOT,DATA_ROOT,PROGRAM_ROOT]
+ elif DATA_SOURCE=='install':order=[PROGRAM_ROOT,DATA_ROOT]      # 置き場が分からないとき（2.2.0 と同じ）
+ else:order=[DATA_ROOT,PROGRAM_ROOT]
+ out=[]
+ for x in order:
+  if x is not None and x not in out:out.append(x)
+ return out or [DATA_ROOT]
 def rel_root():
  """相対パスの主な基準（相対へ直すとき・まだ無い物を作るときの場所）。"""
  return rel_bases()[0]
@@ -200,7 +210,7 @@ def _looks_generated_backup(value):
 def resolve_path(value,base=None):
  """Resolve absolute, UNC, or app-relative paths without changing stored values.
 
- base の既定は相対パスの基準（rel_bases()。いま動いている版のアプリのフォルダー・データの基準）。定義時ではなく呼ばれた時点で
+ base の既定は相対パスの基準（rel_bases()。配布の置き場・データの基準・プログラムの場所）。定義時ではなく呼ばれた時点で
  解決する（既定引数に入れると、setup より前の値で固定されてしまう）。"""
  default=base is None or base is DATA_ROOT
  if base is None:base=rel_root()
@@ -224,9 +234,9 @@ def resolve_path(value,base=None):
  for other in bases[1:]:
   alt=(other/p).resolve()
   if alt.exists():
-   if other is DATA_ROOT and raw not in _FELL_BACK:
+   if raw not in _FELL_BACK:
     _FELL_BACK.add(raw)
-    logging.getLogger('navi').warning('RELATIVE_FALLBACK path=%s program=%s used=%s note=いまの版のフォルダーに無いので、前の場所の物を使いました',raw,bases[0],alt)
+    logging.getLogger('navi').info('RELATIVE_FALLBACK path=%s base=%s used=%s note=相対パスの基準に無いので、ほかの場所の物を使いました',raw,bases[0],alt)
    return alt
  return got
 

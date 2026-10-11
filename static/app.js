@@ -5181,7 +5181,7 @@ function renderRelease(){
   ['置き方',REL_PLACE[st.place]||st.place,''],
   ['置き場',st.dir,'',`${REL_SOURCE[st.dirSource]||st.dirSource}で決まりました\n${st.dir}`],
   ['データの基準',st.dataRoot,'',`設定のマスターの基準\n${st.dataRoot}`],
-  ['相対パスの基準',st.relRoot||st.dataRoot,'',`相対パス（.\\…）はここを先に見ます（いま動いている版のアプリのフォルダー・データの基準）\n${st.relRoot||st.dataRoot}`]];
+  ['相対パスの基準',st.relRoot||st.dataRoot,'',`相対パス（.\\…）はここを先に見ます（配布の置き場＝入口の DataRelay.exe があるフォルダー。版が変わっても動きません）\n${st.relRoot||st.dataRoot}`]];
  $('#rel-here').innerHTML=facts.map(([k,v,c,t])=>`<div class="${c}"><small>${E(k)}</small><b title="${E(t||v)}">${E(v)}</b></div>`).join('');
  let note=!st.reachable?`置き場に届きません: ${st.why}。BOX Drive・ネットワークを確かめてください。届かない日も、いまの版のまま使えます。`
   :st.place==='dev'?'作る途中の木（.git がある）では、配る版へそろえません。'
