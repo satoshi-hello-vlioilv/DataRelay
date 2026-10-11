@@ -22,6 +22,13 @@ from navi_log import log
 # 保留も注意の帯も出ない。間隔は詰めすぎない（共有へ何十回も叩きに行かないため）。
 REPLACE_DEADLINE_SECONDS=20.0
 REPLACE_BACKOFF=(0.25,0.5,1.0,1.5,2.0,3.0)
+# 目印（.<名前>.<番号>.incoming）を出してから置き換えるまで、少なくともこれだけ空ける（共有の写し方の約束 W2・
+# docs/SHARED_READ.md）。読み手（WaveLog・Quality-Analysis・このアプリのビュワー）は目印を見たら写し始めないので、
+# 目印を見る前に写し始めた読み手が写し終える間を取れば、置き換えとぶつからない。新しい版を目印へ写すのに
+# それ以上かかっていれば待ち足さない（ふだんはこちら）。保留の版を入れるときは写さないので、ここで待つ。
+MARK_GRACE_SECONDS=3.0
+# 従っている「共有の写し方の約束」の版（docs/SHARED_READ.md の題。WaveLog・Quality-Analysis と同じ文）。
+CONTRACT_VERSION=1
 
 # 使用中を表すWindowsのエラー番号。5=アクセス拒否 32=別のプロセスが使用中 33=ロック中
 BUSY_WINERRORS=(5,32,33)
@@ -165,14 +172,20 @@ def publish(src,dst,backup_root,generations,from_pending=False,backup_enabled=Tr
  stamp=datetime.now().strftime('%Y%m%d_%H%M%S')
  incoming=dst.parent/f'.{dst.name}.{os.getpid()}.incoming'
  try:
+  marked_at=time.time()
   if from_pending:
-   incoming=src
+   # 保留の版も**目印の名前へ移してから**置き換える（約束の W1）。以前は保留のファイルから直接置き換えており、
+   # この1回だけ読み手が「公開の途中」に気づけなかった。同じフォルダーの中の名前替えなので一瞬で済む。
+   os.replace(src,incoming)
   else:
    copy_started=time.perf_counter();shutil.copy2(src,incoming);log.info('PUBLISH_INCOMING_COPY src=%s incoming=%s size=%s elapsed=%.2fs',src,incoming,incoming.stat().st_size,time.perf_counter()-copy_started)
    if incoming.stat().st_size!=src.stat().st_size:raise IOError('公開先へのコピーサイズが一致しません')
-  # 照合用サイズはincomingを動かす前に確定させる。
-  # from_pending時のincomingはsrcそのもののため、os.replace後にsrc.stat()はできない。
+  # 照合用サイズはincomingを動かす前に確定させる（os.replace のあとは incoming が無い）。
   expected_size=incoming.stat().st_size
+  # 目印を出してから MARK_GRACE_SECONDS は置き換えない（約束の W2）。
+  grace=MARK_GRACE_SECONDS-(time.time()-marked_at)
+  if grace>0:
+   log.info('PUBLISH_MARK_GRACE target=%s wait=%.2fs（目印を見る前に写し始めた読み手が写し終える間）',dst,grace);time.sleep(grace)
   started_wait=time.time();deadline=started_wait+REPLACE_DEADLINE_SECONDS
   last=None; backed_up=False; attempts=0
   while time.time()<deadline:
@@ -209,6 +222,7 @@ def publish(src,dst,backup_root,generations,from_pending=False,backup_enabled=Tr
               dst,waited,attempts,busy_reason(last))
   for tip in busy_advice(dst,last):log.warning('PUBLISH_BUSY_ADVICE %s',tip)
   if from_pending:
+   os.replace(incoming,src)   # 保留の名前へ戻す（次の実行でまた入れる）
    raise PermissionError(f'公開先が使用中のため差し替えられませんでした（{busy_reason(last)}／'
                          f'{waited:.0f}秒 {attempts}回 試しました）: {dst}') from last
   # 保留ファイルは「次に公開できるようになるまでの1枚」であればよい。公開先が
@@ -228,6 +242,9 @@ def publish(src,dst,backup_root,generations,from_pending=False,backup_enabled=Tr
           'reason':busy_reason(last),'winerror':getattr(last,'winerror',None),
           'waited':round(waited,1),'attempts':attempts,'advice':busy_advice(dst,last)}
  finally:
-  if incoming.exists() and incoming!=src:
-   try:incoming.unlink()
+  if incoming.exists():
+   try:
+    # 保留の版は捨てない（途中で失敗しても、保留の名前へ戻して次の実行に回す）。新しく写した目印は消す。
+    if from_pending and not src.exists():os.replace(incoming,src)
+    else:incoming.unlink()
    except OSError:pass
