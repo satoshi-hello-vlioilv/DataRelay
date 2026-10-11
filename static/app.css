@@ -2737,7 +2737,7 @@ body>main{width:var(--app-shell);max-width:var(--app-shell);
 .def-pick-sum{margin-right:auto;font-size:12px;color:#425661;align-self:center}
 .rel-table td.rel-act .rel-del{margin-left:6px}
 
-/* 条件の値ごとに分けて出す（2.1.0。案 K）: タブ「5 値ごとに分ける」・1ページ目の札・一覧の印・実行結果の値ごとの行 */
+/* 条件の値ごとに分けて出す（2.1.0。案 K）: タブ「値ごとに分ける」・1ページ目の札・一覧の印・実行結果の値ごとの行 */
 .eb-variant{background:#e7f1f9;color:#1d5f8a}
 .etab-count-variant{background:#1d6f8f}
 .var-box{display:grid;gap:12px;border:1px solid #cfe0e6;border-radius:10px;background:#f7fbfc;padding:14px 16px}
@@ -2782,3 +2782,34 @@ body>main{width:var(--app-shell);max-width:var(--app-shell);
 .pres-vars li{display:grid;grid-template-columns:16px 52px 1fr;gap:6px;font-size:11.5px;color:#425661;align-items:baseline}
 .pres-vars li i{font-style:normal;font-weight:800}.pres-vars li.is-ok i{color:var(--ok)}.pres-vars li.is-error i,.pres-vars li.is-error span{color:var(--bad)}
 .pres-vars li b{color:#14576a}.pres-vars li span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* 値ごとに分けて出す回の進み具合（2.1.1 K 案）。色は行の状態の色とそろえる: 済=緑・作成中=青緑・待ち=灰・失敗=赤 */
+.var-seg{display:grid;grid-template-columns:repeat(var(--n),minmax(0,1fr));gap:3px;height:8px;margin:2px 0 1px;overflow:visible!important}
+.var-seg.is-named{height:16px}
+.var-seg i{position:relative;display:block;min-width:0;border-radius:3px;background:#dce5e8;overflow:hidden;font-style:normal}
+.var-seg .vs-ok{background:#1f936b}
+.var-seg .vs-ng{background:#c4473d}
+.var-seg .vs-run{background:linear-gradient(90deg,#149aa5 var(--p),#cdeaee var(--p))}
+.var-seg b{position:absolute;inset:0;display:block;padding:0 2px;font:800 9.5px/16px "Yu Gothic UI","Meiryo",sans-serif;text-align:center;color:#5a6c74;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.var-seg .vs-ok b,.var-seg .vs-ng b{color:#fff}
+.var-seg .vs-run b{color:#0b3f4c;text-shadow:0 0 2px #fff,0 0 2px #fff,0 0 1px #fff}
+.rp-vseg[hidden],.rp-track[hidden]{display:none}
+.fixed-lanes .pline .var-seg{margin:0}
+/* ラインの列は枠の幅に固定する（長い「詳しく」や区切りバーの最小幅で列が広がり、枠からはみ出して状態の札を押し出していた） */
+.fixed-lanes .pline{grid-template-columns:minmax(0,1fr)}
+/* 編集画面のタブの区切り（2.1.1 I 案: 取り出す条件｜出す形｜動かす）。道具の前の区切りより少し濃く、短く */
+.editor-tabsep.is-group{background:#b3c5cc;margin:9px 0}
+/* 値ごとに分けて出す取り方（入切のすぐ下・共通設定）。選んでいるものは下線と淡い青緑 */
+.var-method{display:flex;align-items:center;gap:10px;margin:2px 0 8px}
+.var-method-l{flex:none;font-size:11.5px;font-weight:800;color:#3e5964}
+.var-method-seg{flex:1;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));border:1px solid #c9d8de;border-radius:9px;overflow:hidden;background:#fff}
+.var-method-seg.is-two{grid-template-columns:repeat(2,minmax(0,1fr))}
+.var-method-seg label{display:grid;gap:1px;padding:6px 11px;border-left:1px solid #dbe5e9;cursor:pointer;min-width:0}
+.var-method-seg label:first-child{border-left:0}
+.var-method-seg label:hover{background:#f4f9fa}
+.var-method-seg label.on{background:#e3f3f5;box-shadow:inset 0 -2px 0 #149aa5}
+.var-method-seg label:focus-within{outline:2px solid #66bcc7;outline-offset:-2px}
+.var-method-seg input{position:absolute;opacity:0;pointer-events:none}
+.var-method-seg b{font-size:12px;color:#1d3440}
+.var-method-seg small{font-size:10.5px;color:#60757c;line-height:1.45}
+.var-method-wide{margin:6px 0 4px}
+
