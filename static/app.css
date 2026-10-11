@@ -2698,6 +2698,110 @@ body>main{width:var(--app-shell);max-width:var(--app-shell);
 .vv-chip.on{background:#149aa5;border-color:#149aa5}.vv-chip.on b,.vv-chip.on small{color:#fff}
 .vv-chip.off{background:#f1f4f5;border-style:dashed;cursor:not-allowed}.vv-chip.off b,.vv-chip.off small{color:#9aabb2}
 
+/* ==== データビュワーの帯・条件・表示列・日付のまとめ（2.2.0 案 K。tests/ui-proposals/2026-10-viewer-columns）====
+   帯は一覧・集計表・グラフで共通の1段: 検索｜条件の札｜件数｜表示列（一覧だけ）｜前へ・次へ（一覧だけ）。
+   色: 条件=青緑（行の札と同じ系統）・計算列=薄紫・日付=藍・効いていない条件=赤・値の空いた条件=灰の点線 */
+.viewer-v118{display:flex;flex-direction:column}
+.viewer-v118>.viewer-empty,.viewer-v118>.viewer-list-view,.viewer-v118>.viewer-analysis{flex:1 1 0;height:auto;min-height:0}
+.viewer-v118 .viewer-list-view{grid-template-rows:minmax(0,1fr) auto}
+.viewer-bar{position:relative;z-index:30;flex:none;display:flex;align-items:center;flex-wrap:wrap;gap:6px 8px;padding:6px 10px;background:#fff;border:1px solid #d8e3e7;border-radius:10px}
+.viewer-bar .vb-search{width:260px;height:32px;flex:none}
+.vb-sep{width:1px;align-self:stretch;margin:2px 2px;background:#dce6ea}
+.vb-label{font-size:12.5px;font-weight:800;color:#3e5964;white-space:nowrap}.vb-label b{color:#0b6d86}
+.vb-conds{display:contents}
+.vb-cond{display:inline-flex;align-items:center;height:30px;border:1px solid #a8d2dc;border-radius:16px;background:#e2f1f4;color:#0b5a6e;overflow:hidden}
+.vb-ct{height:100%;max-width:340px;padding:0 4px 0 12px;background:none;color:inherit;font-size:12.5px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border-radius:0}
+.vb-ct:hover{background:#d3eaef;filter:none}
+.vb-x{display:grid;place-items:center;width:26px;height:100%;color:#7a9aa3;font-size:14px;cursor:pointer}
+.vb-x:hover{color:#b93b32;background:#f6e3e1}
+.vb-cond.is-bad{background:#fbeceb;border-color:#e3b1ac;color:#a5372c}
+.vb-cond.is-bad i{font-style:normal;display:inline-grid;place-items:center;width:15px;height:15px;margin-right:5px;border-radius:50%;background:#b93b32;color:#fff;font-size:10px}
+.vb-cond.is-idle{background:#f5f8f9;border-style:dashed;border-color:#b9c9cf;color:#647581}
+.vb-join{height:22px;padding:0 8px;border:1px solid #c8d6db;border-radius:11px;background:#f6f9fa;color:#3e5964;font-size:11px;font-weight:800}
+.vb-join:hover{background:#e8f1f3;filter:none}
+.vb-add{height:30px;padding:0 12px;border:1px dashed #8cc0cc;border-radius:16px;background:#fff;color:#0b6d86;font-size:12.5px;font-weight:800}
+.vb-add:hover,.vb-add[aria-expanded="true"]{background:#eef8fa;filter:none}
+.viewer-v118 #viewer-filter-summary{font-size:12px;color:#5e747e;white-space:nowrap;font-variant-numeric:tabular-nums}
+.viewer-v118 #viewer-filter-summary b{font-size:13px;color:#0b6d86}
+.vb-cols{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 12px;font-size:12.5px}
+.vb-cols i{font-style:normal;color:#5c7884}
+.vb-cols b{padding:1px 7px;border-radius:9px;background:#e6eef1;color:#3e5964;font-size:11px}
+.vb-cols.is-trim b{background:#fff1d6;color:#8a5f18}
+.vb-cols[aria-expanded="true"]{background:#dfeef2;border-color:#9fc9d4}
+.viewer-bar .viewer-pager{margin-left:0}
+.viewer-bar .viewer-pager button{height:32px;padding:0 12px}
+/* 条件の小窓 */
+.vb-pop{position:absolute;top:calc(100% + 6px);z-index:40;display:grid;gap:9px;width:560px;padding:12px 14px;background:#fff;border:1px solid #bcd6de;border-radius:10px;box-shadow:0 16px 34px #17384e30}
+.vb-pop>b{font-size:13.5px;color:#17384e}
+.vcp-row{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr) minmax(0,1.3fr);gap:6px}
+.vcp-row select,.vcp-row input{height:32px;min-width:0}
+.vcp-sugg{display:flex;flex-wrap:wrap;align-items:center;gap:5px}
+.vcp-sugg:empty{display:none}
+.vcp-sugg>small{font-size:11px;color:#647581}
+.vcp-sugg button{display:inline-flex;align-items:baseline;gap:5px;height:28px;padding:0 10px;border:1px solid #cfdde2;border-radius:14px;background:#fff;color:#1d3440;font-size:12px;font-weight:700}
+.vcp-sugg button small{font-size:10.5px;color:#7a8e96;font-weight:600}
+.vcp-sugg button:hover{background:#f0f9fa;border-color:#8cc8d3;filter:none}
+.vcp-sugg button.on{background:#149aa5;border-color:#149aa5;color:#fff}.vcp-sugg button.on small{color:#e3f5f6}
+.vcp-foot{display:flex;align-items:center;gap:8px}
+.vcp-foot small{font-size:11px;color:#647581;line-height:1.5}
+.vcp-foot button{height:32px;padding:0 16px;white-space:nowrap}
+/* 表示列のパネル（WaveLog の2面） */
+.vc-panel{position:absolute;top:calc(100% + 6px);right:0;z-index:35;display:grid;grid-template-rows:auto minmax(0,1fr);width:min(1000px,100%);height:480px;background:#fff;border:1px solid #bcd6de;border-radius:12px;box-shadow:0 18px 40px #17384e33;overflow:hidden}
+.vc-ph{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid #e1eaee;background:#f8fbfc}
+.vc-ph>b{font-size:14px;color:#17384e}.vc-ph>small{font-size:11px;color:#647581;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vc-ph button{height:30px;padding:0 12px;font-size:12px;white-space:nowrap}
+.vc-pb{min-height:0;display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr)}
+.vc-list{min-height:0;overflow:auto;padding:8px;display:flex;flex-direction:column;gap:3px;border-right:1px solid #e1eaee}
+.vc-ci{flex:none;display:grid;grid-template-columns:16px 18px minmax(0,1fr) minmax(0,38%);align-items:center;gap:8px;min-height:36px;padding:0 10px 0 6px;border:1px solid transparent;border-radius:8px;cursor:pointer}
+.vc-ci:hover{background:#f3f8f9}
+.vc-ci.sel{background:#e6f3f6;border-color:#a8d2dc}
+.vc-ci.off .vc-cn b{color:#8a9ca3;font-weight:600}
+.vc-ci.dragging{opacity:.45}
+.vc-ci.drop-before{box-shadow:inset 0 2px 0 #0d8191}.vc-ci.drop-after{box-shadow:inset 0 -2px 0 #0d8191}
+.vc-grip{font-style:normal;color:#a6b6bc;letter-spacing:-2px;cursor:grab}
+.vc-ci input{width:16px;height:16px;margin:0}
+.vc-cn{min-width:0;display:flex;align-items:center;gap:6px}
+.vc-cn b{font-size:12.5px;color:#1f3d48;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vc-ci>small{font:11px Consolas,"Yu Gothic UI";color:#7a8e96;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:right}
+.vc-tag{flex:none;padding:1px 6px;border-radius:5px;font-style:normal;font-size:10px;font-weight:800}
+.vc-tag.calc{background:#f1ebfa;color:#5b3f99}.vc-tag.date{background:#e6ecfa;color:#3a4d9c}.vc-tag.bad{background:#fbeceb;color:#a5372c}
+.vc-detail{min-height:0;overflow:auto;display:flex;flex-direction:column;gap:10px;padding:14px 16px}
+.vc-cdh{display:flex;align-items:center;gap:8px}.vc-cdh b{font-size:15px;color:#17384e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.vc-fl{display:grid;gap:4px;font-size:11.5px;font-weight:800;color:#4d6670}
+.vc-fl input{height:34px;font-size:13px}
+.vc-fl input.mono{font-family:Consolas,"Yu Gothic UI",monospace}
+.vc-check{font-size:11.5px;font-weight:700;margin-top:-4px}.vc-check.is-ok{color:#0b6b4c}.vc-check.is-bad{color:#b93b32}
+.vc-muted{font-size:11px;color:#7a8e96;font-weight:600}
+.vc-ins{display:flex;flex-wrap:wrap;align-items:flex-start;gap:8px}
+.vc-ins select{width:auto;height:30px;font-size:12px}
+.vc-fx{flex:1;min-width:200px;font-size:12px}
+.vc-fx summary{cursor:pointer;color:#087c98;font-weight:700;line-height:30px}
+.vc-fx div{display:flex;flex-wrap:wrap;gap:4px;max-height:140px;overflow:auto;padding:4px 0}
+.vc-fx button{height:24px;padding:0 7px;border:1px solid #d3e0e6;border-radius:5px;background:#f6f9fa;color:#294f63;font:11px Consolas,"Yu Gothic UI"}
+.vc-parts{display:flex;flex-wrap:wrap;gap:5px}
+.vc-parts button{height:30px;padding:0 12px;border:1px solid #bccaee;border-radius:7px;background:#fff;color:#3a4d9c;font-size:12.5px;font-weight:800}
+.vc-parts button:hover{background:#eef2fc;filter:none}
+.vc-parts button.on{background:#e6ecfa}
+.vc-parts button.on::after{content:" ✓";font-size:11px}
+.vc-parts button.cur{box-shadow:inset 0 0 0 2px #3a4d9c}
+.vc-row{display:flex;align-items:center;gap:6px;margin-top:auto;padding-top:4px}
+.vc-row button{height:32px;padding:0 14px;white-space:nowrap}
+.vc-danger{color:#a5372c!important;border-color:#e3c1bd!important}
+/* 一覧の計算列は、見出しと値を薄紫にする（元の列と見分ける） */
+.viewer-v118 .viewer-table th.is-calc{background:#f1ebfa;color:#4b3285}
+.viewer-v118 .viewer-table td.is-calc{background:#fbf9fe;color:#3d2a6e}
+.vh-bad{font-style:normal;display:inline-grid;place-items:center;width:15px;height:15px;margin-right:5px;border-radius:50%;background:#b93b32;color:#fff;font-size:10px}
+/* 集計表: 日付の列の［年・月・日 ▾］と、札の中のまとめ方 */
+.viewer-v118 .pv-fields{position:relative}
+.viewer-v118 .pv-f.is-date{grid-template-columns:minmax(0,1fr) auto repeat(3,36px)}
+.viewer-v118 .pv-f.is-calc{background:#fbf9fe;border-color:#e2d8f3}
+.viewer-v118 .pv-d{height:28px;padding:0 8px;border:1px solid #bccaee;border-radius:6px;background:#eef2fc;color:#3a4d9c;font-size:11.5px;font-weight:800;white-space:nowrap;filter:none}
+.viewer-v118 .pv-d:hover,.viewer-v118 .pv-d[aria-expanded="true"]{background:#dfe6f9}
+.viewer-v118 .pv-datepop{left:10px;right:10px;top:0;min-width:0}
+.viewer-v118 .pv-datepop>b{font-size:12.5px;color:#17384e}
+.viewer-v118 .pv-datepop>small{font-size:10.5px;color:#647581;line-height:1.5}
+.viewer-v118 .pv-part{width:auto;max-width:96px;height:24px;padding:0 4px;margin-left:-2px;border:1px solid currentColor;border-radius:5px;background:#fff;color:inherit;font-size:12px;font-weight:800;cursor:pointer}
+
 /* ==== 共通設定（2.1.2 で作り直し。案 H）==== 状態の色は全体とそろえる: OK=緑・要対応=赤・推奨と違う=黄・確認中=灰 */
 .cat-summary{background:#e8f1f3;color:#1f5e6e}
 .cat-place{background:#e6f3f6;color:#0b6d86}

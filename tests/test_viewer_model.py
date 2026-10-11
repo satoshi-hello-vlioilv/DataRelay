@@ -84,6 +84,8 @@ class ViewerModelTest(unittest.TestCase):
   self.assertEqual(got,[{'date':True,'hasTime':True},{'date':True,'hasTime':False},{'date':False,'hasTime':False},{'date':False,'hasTime':False}])
   self.assertEqual(self.js("[M.datePartName('着手日時','ym'),M.datePartFormula('着手日時','ym'),M.datePartName('着手日時','fy')]"),
                    ['着手日時（年月）','ym([着手日時])','着手日時（年度）'])
+  self.assertEqual(self.js("['ym([着手日時])',' date( [完了 日時] ) ','upper([品名])','ym([a])+1','fy([x], 1)'].map(M.datePartOf)"),
+                   [['着手日時','ym'],['完了 日時','date'],None,None,None],'日付のまとめの式だけを見分ける（集計の札でまとめ方を切り替える）')
 
  def test_conditions(self):
   cases=[('contains','LS4-東','ls4',True),('contains','ＬＳ４','LS4',True),('not_contains','LS4','LS3',True),('eq','010','10',True),('eq','A','a',True),('neq','A','B',True),

@@ -161,16 +161,30 @@
 
     // 集計表: D&D を使わず、カラムの札を押すだけで表ができる（2.1.3。Windows の窓では D&D が届かず組めなかった）
     document.querySelector('nav button[data-p="viewer"]').click();
-    viewerData = { name: '自己診断', headers: ['工程', '作業者', '数量'], rows: [['研削', '佐藤', '3'], ['研削', '鈴木', '5'], ['検査', '佐藤', '2']] };
-    viewerRows = viewerData.rows; viewerFiltered = viewerRows.slice(); viewerCols = viewerColumnInfo(viewerRows, viewerData.headers);
-    pivotState = { rows: [], columns: [], values: [], aggregate: 'count', showSubtotals: true, showGrandTotal: true };
-    refreshDesigner(); setViewerView('pivot');
+    setViewerTable({ name: '自己診断', headers: ['工程', '作業者', '数量'], rows: [['研削', '佐藤', '3'], ['研削', '鈴木', '5'], ['検査', '佐藤', '2']] }, '');
+    applyViewerSearch(); refreshDesigner(); setViewerView('pivot');
     const quick = document.querySelectorAll('#pivot-empty:not([hidden]) .pv-quick button').length;
     document.querySelector('#pivot-field-list .pv-f[data-col="0"] .pv-r[data-role="rows"]').click();
     document.querySelector('#pivot-field-list .pv-f[data-col="1"] .pv-r[data-role="columns"]').click();
     document.querySelector('#pivot-field-list .pv-f[data-col="2"] .pv-r[data-role="values"]').click();
     const grand = [...document.querySelectorAll('#pivot-body tr.row-grand td')].map((td) => td.textContent).join(',');
     ok('集計表は札を押すだけで組める（行=工程・列=作業者・数量の合計）', quick > 0 && $('#pivot-measure').value === 'sum:2' && grand === '5,5,10' && !$('#analysis-pivot-result').hidden, `おすすめ ${quick} / 値 ${$('#pivot-measure').value} / 総計 ${grand}`);
+    // 表示列・条件・日付のまとめ（2.2.0）: 帯の条件で絞った行から数え、日付の列を［年・月・日］で年月にまとめ、札の中で年へ切り替える
+    setViewerTable({ name: '自己診断', headers: ['工程', '着手日時', '数量'], rows: [['研削', '2026-09-30 08:00', '3'], ['研削', '2026-10-01 09:00', '5'], ['検査', '2026-10-02 10:00', '2'], ['研削', '2027-01-05 07:00', '1']] }, '');
+    applyViewerSearch(); refreshDesigner(); setViewerView('pivot');
+    viewerSpec = { filters: [{ column: '工程', op: 'eq', value: '研削' }] }; viewerChanged('filters');
+    const chips = document.querySelectorAll('#viewer-conds .vb-cond').length, hit = $('#viewer-filter-summary').textContent;
+    document.querySelector('#pivot-field-list .pv-f[data-col="1"] .pv-d').click();
+    document.querySelector('#pivot-date-pop [data-part="ym"]').click();
+    const ymRows = [...document.querySelectorAll('#pivot-body tr th')].map((th) => th.textContent).join(',');
+    const part = $('#pivot-rows .pv-part'); part.value = 'year'; part.dispatchEvent(new Event('change'));
+    const yRows = [...document.querySelectorAll('#pivot-body tr th')].map((th) => th.textContent).join(',');
+    setViewerView('list');
+    const listHeads = [...document.querySelectorAll('#viewer-head th')].map((th) => th.textContent).join(',');
+    ok('条件で絞った行から、日付の列を年月・年にまとめて数えられる（一覧にもまとめた列が出る）',
+      chips === 1 && hit.startsWith('3') && ymRows === '2026-09,2026-10,2027-01,総計' && yRows === '2026,2027,総計' && listHeads.includes('着手日時（年月）') && listHeads.includes('着手日時（年）'),
+      `条件 ${chips} / ${hit} / 年月 ${ymRows} / 年 ${yRows} / 一覧 ${listHeads}`);
+    setViewerView('pivot');
     // ログ・診断（2.1.3）: 実行の記録と選んだ実行を描き、報告用の文を組める
     document.querySelector('nav button[data-p="logs"]').click();
     await loadLog();

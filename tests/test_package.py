@@ -11,7 +11,7 @@ sys.path.insert(0,str(ROOT/'lib'))
 import navi_version
 
 # 窓（desktop/src/locate.rs の is_program）がアプリのフォルダーと認める印と、起動に要るもの
-NEEDED=['DataRelay.exe','install_local.cmd','app.py','sidecar.py','lib/navi_web.py','lib/navi_instance.py','static/app.js','templates/index.html',
+NEEDED=['DataRelay.exe','install_local.cmd','app.py','sidecar.py','lib/navi_web.py','lib/navi_instance.py','static/app.js','static/viewer-model.js','templates/index.html',
         'config/requirements.txt','config/app_settings.template.sqlite3','assets/empty.accdb','README.md']
 # 作る側・確かめる側だけが使うもの（.gitattributes の export-ignore）と、1.96.0 で外したブラウザ版の入口
 NOT_SHIPPED=['tests/','desktop/','migration/','samples/','.github/','.gitattributes','.gitignore','CLAUDE.md',

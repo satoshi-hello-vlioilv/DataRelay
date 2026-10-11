@@ -231,6 +231,9 @@
  const datePart=k=>DATE_PARTS.find(x=>x[0]===k)||null;
  const datePartName=(col,k)=>{const p=datePart(k);return p?`${col}（${p[1].replace(/（.*）/,'')}）`:col};
  const datePartFormula=(col,k)=>{const p=datePart(k);return p?`${p[2]}([${col}])`:''};
+ /* 計算列の式が「日付のまとめ」（ym([着手日時]) のような形）なら [元の列, まとめ方] を返す。集計の札でまとめ方を切り替えるのに使う */
+ function datePartOf(formula){const m=/^\s*([a-z]+)\(\s*\[([^\]]+)\]\s*\)\s*$/.exec(textOf(formula));if(!m)return null;
+  const p=DATE_PARTS.find(x=>x[2]===m[1]);return p?[m[2],p[0]]:null}
 
  /* ---------- 条件（WaveLog filters.js の12の比べ方） ---------- */
  const OPS=[['contains','含む'],['not_contains','含まない'],['eq','＝ 一致'],['neq','≠ 不一致'],['starts','前方一致'],['ends','後方一致'],
@@ -320,7 +323,7 @@
   ['quarter','x','四半期（2026-Q4）'],['week','x','週（2026-W40・月曜始まり）'],['weekday','x','曜日（月〜日）'],['hour','x','時（0〜23）'],
   ['fy','x, 開始月','年度（既定は4月始まり）'],['days','a, b','a から b までの日数'],
  ];
- const API={parse,compile,check,cmp,truthy,parseDate,dateInfo,DATE_PARTS,datePart,datePartName,datePartFormula,
+ const API={parse,compile,check,cmp,truthy,parseDate,dateInfo,DATE_PARTS,datePart,datePartName,datePartFormula,datePartOf,
   OPS,noValueOp,condMatch,condLabel,applyView,applyFilters,sigs:SIGS,funcNames:Object.keys(FUNCS),MAX_LEN};
  if(typeof module==='object'&&module.exports)module.exports=API;
  else root.DRV=API;

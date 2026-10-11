@@ -3702,6 +3702,8 @@ tmApplyOptions();
    ============================================================ */
 let viewerData=null,viewerRows=[],viewerFiltered=[],viewerPage=1,viewerSort={col:-1,dir:1},viewerCols=[];
 let viewerView='list',pivotState={rows:[],columns:[],values:[],aggregate:'count',showSubtotals:true,showGrandTotal:true};
+let viewerBase=null,viewerBaseCols=[],viewerSpec={},viewerApplied=null,viewerLayout=null,viewerCondRows=null,viewerJobId='',viewerColSel='',viewerColsPop=null,condPop=null;
+const viewerBaseWidth=()=>viewerBase?.headers?.length??(viewerData?.headers?.length||0);
 const VIEWER_PAGE_SIZE=100,PSEP='\u001f',CSEP='\u001e';
 const CHART_COLORS=['#0d8191','#3a4d9c','#0b6b4c','#b5822a','#7658ae','#c9564a','#1f6aa8','#8a5f18','#5c8a2a','#a5372c','#5a6f77','#2c9c9c'];
 const AGG_LABEL={count:'件数',sum:'合計',avg:'平均',min:'最小',max:'最大'};
@@ -3730,32 +3732,41 @@ function paintViewerValues(id,value){
  box.querySelectorAll('.vv-chip:not(.off)').forEach(b=>b.onclick=()=>{$('#viewer-job').value=viewerKey(id,b.dataset.value);openViewer()});
 }
 function showViewerError(t){$('#viewer-error').hidden=false;$('#viewer-error').textContent=t;$('#viewer-empty').hidden=true;$('#viewer-list').hidden=true;$('#viewer-analysis').hidden=true}
-function fieldName(i){return viewerData?.headers?.[Number(i)]||'(空欄)'}
+function fieldName(i){i=Number(i);return viewerLayout?.labels?.[i]||viewerData?.headers?.[i]||'(空欄)'}
 function numericVal(v){let t=String(v??'').replace(/,/g,'').trim();return t!==''&&!isNaN(t)?Number(t):null}
 
 /* ---------- データ一覧（検索・並べ替え・ページング） ---------- */
 function compareViewer(a,b,c,d){let x=a[c]??'',y=b[c]??'',nx=String(x).replace(/,/g,'').trim(),ny=String(y).replace(/,/g,'').trim(),xn=nx!==''&&!isNaN(nx),yn=ny!==''&&!isNaN(ny);return (xn&&yn?(+nx-+ny):String(x).localeCompare(String(y),'ja',{numeric:true}))*d}
-function applyViewerSearch(){if(!viewerData)return;let q=($('#viewer-search').value||'').trim().toLowerCase();viewerFiltered=q?viewerRows.filter(r=>r.some(v=>String(v).toLowerCase().includes(q))):viewerRows.slice();if(viewerSort.col>=0)viewerFiltered.sort((a,b)=>compareViewer(a,b,viewerSort.col,viewerSort.dir));viewerPage=1;renderViewerList();if(viewerView!=='list')renderAnalysis()}
+function applyViewerSearch(){if(!viewerData)return;let q=($('#viewer-search').value||'').trim().toLowerCase(),base=viewerCondRows||viewerRows;viewerFiltered=q?base.filter(r=>r.some(v=>String(v??'').toLowerCase().includes(q))):base.slice();if(viewerSort.col>=0)viewerFiltered.sort((a,b)=>compareViewer(a,b,viewerSort.col,viewerSort.dir));viewerPage=1;renderViewerList();paintViewerBar();if(viewerView!=='list')renderAnalysis()}
 function sortViewer(c){viewerSort=viewerSort.col===c?{col:c,dir:-viewerSort.dir}:{col:c,dir:1};applyViewerSearch()}
-function renderViewerList(){if(!viewerData)return;let pages=Math.max(1,Math.ceil(viewerFiltered.length/VIEWER_PAGE_SIZE));viewerPage=Math.max(1,Math.min(pages,viewerPage));let start=(viewerPage-1)*VIEWER_PAGE_SIZE,rows=viewerFiltered.slice(start,start+VIEWER_PAGE_SIZE);$('#viewer-head').innerHTML='<tr><th class="viewer-rownum">No.</th>'+viewerData.headers.map((h,i)=>`<th class="viewer-sortable ${viewerSort.col===i?'sorted':''}" data-col="${i}">${E(h||'(空欄)')}<span>${viewerSort.col===i?(viewerSort.dir>0?'▲':'▼'):''}</span></th>`).join('')+'</tr>';$('#viewer-body').innerHTML=rows.length?rows.map((r,n)=>`<tr><td class="viewer-rownum">${start+n+1}</td>`+viewerData.headers.map((_,i)=>`<td title="${E(r[i]??'')}">${E(r[i]??'')}</td>`).join('')+'</tr>').join(''):`<tr><td class="viewer-nohit" colspan="${viewerData.headers.length+1}">一致するデータはありません</td></tr>`;$$('#viewer-head .viewer-sortable').forEach(x=>x.onclick=()=>sortViewer(+x.dataset.col));$('#viewer-page').textContent=`${viewerPage} / ${pages}`;$('#viewer-prev').disabled=viewerPage<=1;$('#viewer-next').disabled=viewerPage>=pages;$('#viewer-filter-summary').textContent=`${viewerFiltered.length.toLocaleString()} / ${viewerRows.length.toLocaleString()}行`}
+/* 見せる列は、表示の設定の並び・表示・表示名で（隠した列は出さない。計算列は薄い紫の見出し） */
+function renderViewerList(){if(!viewerData)return;let pages=Math.max(1,Math.ceil(viewerFiltered.length/VIEWER_PAGE_SIZE));viewerPage=Math.max(1,Math.min(pages,viewerPage));let start=(viewerPage-1)*VIEWER_PAGE_SIZE,rows=viewerFiltered.slice(start,start+VIEWER_PAGE_SIZE),H=viewerData.headers,cols=viewerLayout?.shown||H.map((_,i)=>i),calc=i=>i>=viewerBaseWidth()?' is-calc':'',err=viewerApplied?.calcErrors||{};
+ $('#viewer-head').innerHTML='<tr><th class="viewer-rownum">No.</th>'+cols.map(i=>`<th class="viewer-sortable${calc(i)}${viewerSort.col===i?' sorted':''}" data-col="${i}" title="${E(err[H[i]]?'式の誤り: '+err[H[i]]:H[i])}">${err[H[i]]?'<i class="vh-bad">!</i>':''}${E(fieldName(i))}<span>${viewerSort.col===i?(viewerSort.dir>0?'▲':'▼'):''}</span></th>`).join('')+'</tr>';
+ let none=viewerCondRows&&!viewerCondRows.length?'条件に合う行はありません（帯の条件を見直してください）':'一致するデータはありません';
+ $('#viewer-body').innerHTML=rows.length?rows.map((r,n)=>`<tr><td class="viewer-rownum">${start+n+1}</td>`+cols.map(i=>`<td class="${calc(i)}" title="${E(r[i]??'')}">${E(r[i]??'')}</td>`).join('')+'</tr>').join(''):`<tr><td class="viewer-nohit" colspan="${cols.length+1}">${none}</td></tr>`;
+ $$('#viewer-head .viewer-sortable').forEach(x=>x.onclick=()=>sortViewer(+x.dataset.col));$('#viewer-page').textContent=`${viewerPage} / ${pages}`;$('#viewer-prev').disabled=viewerPage<=1;$('#viewer-next').disabled=viewerPage>=pages}
 
 /* ---------- 3タブ切替 ---------- */
-function setViewerView(view){viewerView=view;['list','pivot','chart'].forEach(v=>$('#vtab-'+v)?.classList.toggle('on',v===view));let has=!!viewerData;$('#viewer-empty').hidden=has;$('#viewer-list').hidden=!has||view!=='list';$('#viewer-analysis').hidden=!has||view==='list';$('#chart-type-wrap').hidden=view!=='chart';$('#viewer-analysis').classList.toggle('is-chart',view==='chart');if(!has)return;if(view==='list'){renderViewerList();return}buildPivotFields();renderAnalysis()}
+function setViewerView(view){viewerView=view;['list','pivot','chart'].forEach(v=>$('#vtab-'+v)?.classList.toggle('on',v===view));let has=!!viewerData;$('#viewer-empty').hidden=has;$('#viewer-bar').hidden=!has;$('#viewer-list').hidden=!has||view!=='list';$('#viewer-analysis').hidden=!has||view==='list';$('#chart-type-wrap').hidden=view!=='chart';$('#viewer-analysis').classList.toggle('is-chart',view==='chart');$('#viewer-pager').hidden=view!=='list';$('#viewer-cols-open').hidden=view!=='list';if(view!=='list')viewerColsPop?.(false);if(!has)return;paintViewerBar();if(view==='list'){renderViewerList();return}buildPivotFields();renderAnalysis()}
 
 /* ---------- カラムの札と上の文 ---------- */
 const PIVOT_ROLE_NAME={rows:'行',columns:'列',values:'値'},KINDS_CAP=10000;
 /* カラムごとの「値の種類の数」と「数のカラムか」。行・列に向くか（種類が少ないか）、値にできるか（数か）を選ぶ手がかりにする */
-function viewerColumnInfo(rows,headers){return headers.map((_,i)=>{let seen=new Set(),sampled=0,nums=0;for(const r of rows){let v=r[i];if(seen.size<KINDS_CAP)seen.add(String(v??''));let t=String(v??'').trim();if(t!==''&&sampled<300){sampled++;if(numericVal(t)!==null)nums++}}return{kinds:seen.size,many:seen.size>=KINDS_CAP,numeric:sampled>0&&nums===sampled}})}
+function viewerColumnInfo(rows,headers,from=0){return headers.slice(from).map((_,k)=>columnInfo(rows,from+k))}
+/* 日付とみなす列（2.2.0）: 空でない値の 9 割以上が日付に読めれば（DRV.dateInfo）。集計の［年・月・日］と条件の案内に使う */
+function columnInfo(rows,i){let seen=new Set(),sampled=0,nums=0,samples=[];for(const r of rows){let v=r[i];if(seen.size<KINDS_CAP)seen.add(String(v??''));let t=String(v??'').trim();if(t!==''&&sampled<300){sampled++;samples.push(t);if(numericVal(t)!==null)nums++}}let d=window.DRV?DRV.dateInfo(samples):{date:false,hasTime:false};return{kinds:seen.size,many:seen.size>=KINDS_CAP,numeric:sampled>0&&nums===sampled,date:d.date,hasTime:d.hasTime}}
 const kindsText=c=>c?(c.many?`${(KINDS_CAP/10000).toLocaleString()}万種類以上`:`${c.kinds.toLocaleString()} 種類`):'';
 function usedRole(i){for(const r of['rows','columns','values'])if(pivotState[r].includes(i))return r;return null}
 function buildPivotFields(){if(!viewerData)return;let q=($('#pivot-field-search')?.value||'').toLowerCase(),b=$('#pivot-field-list');
- b.innerHTML=viewerData.headers.map((h,i)=>({h:h||'(空欄)',i})).filter(x=>!q||x.h.toLowerCase().includes(q)).map(x=>{let ur=usedRole(x.i),c=viewerCols[x.i],roles=['rows','columns'].concat(c?.numeric?['values']:[]);
-  return `<div class="pv-f${ur?' is-used':''}" draggable="true" data-col="${x.i}"><span class="pv-fn" title="${E(x.h)}"><b>${E(x.h)}</b><small class="${c&&c.kinds>50?'is-many':''}">${E(kindsText(c))}</small></span>${roles.map(r=>`<button type="button" class="pv-r r-${r}${ur===r?' on':''}" data-role="${r}" data-col="${x.i}" aria-pressed="${ur===r}" title="${ur===r?PIVOT_ROLE_NAME[r]+'から外す':PIVOT_ROLE_NAME[r]+'に入れる'}">${PIVOT_ROLE_NAME[r]}</button>`).join('')}${c?.numeric?'':'<i></i>'}</div>`}).join('');
- b.querySelectorAll('.pv-r').forEach(x=>x.onclick=()=>togglePivotField(x.dataset.role,x.dataset.col));bindDraggables(b)}
+ b.innerHTML=viewerData.headers.map((h,i)=>({h:fieldName(i),i})).filter(x=>!q||x.h.toLowerCase().includes(q)).map(x=>{let ur=usedRole(x.i),c=viewerCols[x.i],roles=['rows','columns'].concat(c?.numeric?['values']:[]),calc=x.i>=viewerBaseWidth(),dated=c?.date&&!datePartAt(x.i);
+  return `<div class="pv-f${ur?' is-used':''}${calc?' is-calc':''}${dated?' is-date':''}" draggable="true" data-col="${x.i}"><span class="pv-fn" title="${E(x.h)}"><b>${E(x.h)}</b><small class="${c&&c.kinds>50?'is-many':''}">${calc?'計算列 · ':''}${E(kindsText(c))}</small></span>${dated?`<button type="button" class="pv-d" data-col="${x.i}" aria-haspopup="dialog" title="年・年月・年月日などでまとめた列を作って行に置きます">年・月・日 ▾</button>`:''}${roles.map(r=>`<button type="button" class="pv-r r-${r}${ur===r?' on':''}" data-role="${r}" data-col="${x.i}" aria-pressed="${ur===r}" title="${ur===r?PIVOT_ROLE_NAME[r]+'から外す':PIVOT_ROLE_NAME[r]+'に入れる'}">${PIVOT_ROLE_NAME[r]}</button>`).join('')}${c?.numeric?'':'<i></i>'}</div>`}).join('');
+ b.querySelectorAll('.pv-r').forEach(x=>x.onclick=()=>togglePivotField(x.dataset.role,x.dataset.col));b.querySelectorAll('.pv-d').forEach(x=>x.onclick=e=>{e.stopPropagation();openPivotDatePop(x)});bindDraggables(b)}
 function bindDraggables(root){root.querySelectorAll('[draggable][data-col]').forEach(x=>{x.ondragstart=e=>{e.dataTransfer.setData('text/plain',x.dataset.col);e.dataTransfer.setData('role',x.dataset.role||'');e.dataTransfer.effectAllowed='copyMove'}})}
+/* 日付からまとめた列（計算列 ym([着手日時]) など）の札は、札の中の選択でまとめ方をその場で切り替える */
 function renderSlot(role){let zone=$('#pivot-'+role),arr=pivotState[role];
- zone.innerHTML=arr.length?arr.map((i,n)=>`<span class="pv-chip r-${role}" draggable="true" data-col="${i}" data-role="${role}" data-pos="${n}"><span title="${E(fieldName(i))}">${E(fieldName(i))}</span><b data-remove="1" title="外す">×</b></span>`).join(''):`<span class="pv-hole r-${role}">${role==='rows'?'行のカラム':'列のカラム（任意）'}</span>`;
- bindDraggables(zone);zone.querySelectorAll('[data-remove]').forEach(b=>b.onclick=e=>{e.stopPropagation();pivotState[role].splice(Number(b.parentElement.dataset.pos),1);refreshDesigner()})}
+ zone.innerHTML=arr.length?arr.map((i,n)=>{let dp=datePartAt(i);return `<span class="pv-chip r-${role}" draggable="true" data-col="${i}" data-role="${role}" data-pos="${n}"><span title="${E(fieldName(i))}">${E(dp?dp[0]:fieldName(i))}</span>${dp?`<select class="pv-part" aria-label="まとめ方">${datePartOptions(dp[0],dp[1])}</select>`:''}<b data-remove="1" title="外す">×</b></span>`}).join(''):`<span class="pv-hole r-${role}">${role==='rows'?'行のカラム':'列のカラム（任意）'}</span>`;
+ bindDraggables(zone);zone.querySelectorAll('[data-remove]').forEach(b=>b.onclick=e=>{e.stopPropagation();pivotState[role].splice(Number(b.parentElement.dataset.pos),1);refreshDesigner()});
+ zone.querySelectorAll('.pv-part').forEach(sel=>{sel.onmousedown=e=>e.stopPropagation();sel.onchange=()=>{let chip=sel.closest('.pv-chip'),dp=datePartAt(Number(chip.dataset.col)),at=ensureDatePart(dp[0],sel.value);if(at<0)return;pivotState[role][Number(chip.dataset.pos)]=at;refreshDesigner()}})}
 /* 値は1つの選択にまとめる（件数か、数のカラムの合計・平均・最小・最大）。集計方法と値の置き場を分けない */
 function measureKey(){return pivotState.aggregate==='count'||pivotState.values[0]==null?'count':`${pivotState.aggregate}:${pivotState.values[0]}`}
 function renderMeasure(){let sel=$('#pivot-measure');if(!sel||!viewerData)return;
@@ -3774,14 +3785,18 @@ function addPivotField(role,index){index=Number(index);if(Number.isNaN(index))re
  pivotState[role].push(index);refreshDesigner()}
 /* 何も置いていないとき、すぐ見られる組み方を出す（種類の少ないカラムどうし・数のカラムの合計） */
 function pivotQuickPicks(){let H=viewerData?.headers||[],few=H.map((_,i)=>i).filter(i=>{let c=viewerCols[i];return c&&!c.numeric&&c.kinds>=2&&c.kinds<=12}).sort((a,b)=>viewerCols[a].kinds-viewerCols[b].kinds||a-b),num=H.map((_,i)=>i).find(i=>viewerCols[i]?.numeric),out=[];
+ // 日付の列があれば、日ごとにまとめた組み方を先頭に（押すと「着手日時（年月日）」の計算列を作って置く）
+ let d=H.findIndex((_,i)=>i<viewerBaseWidth()&&viewerCols[i]?.date);
+ if(d>=0)out.push({make:[H[d],'date'],rows:[],columns:few.length?[few[0]]:[],m:'count'});
  // 同じカラムばかりにならないよう、組み合わせを散らして選ぶ
  [[0,1],[2,3],[1,2],[0,3],[0,2],[1,3]].filter(([a,b])=>few[a]!=null&&few[b]!=null).slice(0,3).forEach(([a,b])=>out.push({rows:[few[a]],columns:[few[b]],m:'count'}));
  if(num!=null)few.slice(0,2).forEach(i=>out.push({rows:[i],columns:[],m:`sum:${num}`}));
  if(!out.length&&few.length)out.push({rows:[few[0]],columns:[],m:'count'});
  return out.slice(0,5)}
 function paintPivotEmpty(){let box=$('#pivot-empty'),onlyCols=!pivotState.rows.length&&pivotState.columns.length,picks=onlyCols?[]:pivotQuickPicks();
- box.innerHTML=`<b>${onlyCols?'行のカラムを1つ以上選んでください':'カラムの［行］を押すと、値ごとの件数が出ます'}</b><span>${onlyCols?'列だけでは表になりません。いま列にあるカラムを行にするなら、そのカラムの［行］を押します。':'種類の少ないカラムが、行・列に向いています。'+(picks.length?'すぐに見るなら:':'')}</span>`+(picks.length?`<div class="pv-quick">${picks.map((q,n)=>{let [k,i]=q.m.split(':');return `<button type="button" data-n="${n}"><b>${E(fieldName(q.rows[0]))}${q.columns.length?' × '+E(fieldName(q.columns[0])):' ごと'}</b><small>${k==='count'?'件数':E(fieldName(i))+' の'+AGG_LABEL[k]}</small></button>`}).join('')}</div>`:'');
- box.querySelectorAll('.pv-quick button').forEach(b=>b.onclick=()=>{let q=picks[Number(b.dataset.n)];pivotState.rows=q.rows.slice();pivotState.columns=q.columns.slice();setMeasure(q.m)})}
+ const rowName=q=>q.make?DRV.datePartName(q.make[0],q.make[1]):fieldName(q.rows[0]);
+ box.innerHTML=`<b>${onlyCols?'行のカラムを1つ以上選んでください':'カラムの［行］を押すと、値ごとの件数が出ます'}</b><span>${onlyCols?'列だけでは表になりません。いま列にあるカラムを行にするなら、そのカラムの［行］を押します。':'種類の少ないカラムが、行・列に向いています。日付の列は［年・月・日］で、年・月・日ごとにまとめられます。'+(picks.length?'すぐに見るなら:':'')}</span>`+(picks.length?`<div class="pv-quick">${picks.map((q,n)=>{let [k,i]=q.m.split(':');return `<button type="button" data-n="${n}"><b>${E(rowName(q))}${q.columns.length?' × '+E(fieldName(q.columns[0])):' ごと'}</b><small>${k==='count'?'件数':E(fieldName(i))+' の'+AGG_LABEL[k]}</small></button>`}).join('')}</div>`:'');
+ box.querySelectorAll('.pv-quick button').forEach(b=>b.onclick=()=>{let q=picks[Number(b.dataset.n)],rows=q.rows.slice();if(q.make){let at=ensureDatePart(q.make[0],q.make[1]);if(at<0)return;rows=[at]}pivotState.rows=rows;pivotState.columns=q.columns.slice();setMeasure(q.m)})} // 計算列は後ろへ足すので、ほかの列の番号は変わらない
 function paintAnalysisPanes(empty){$('#pivot-empty').hidden=!empty;$('#analysis-pivot-result').hidden=empty||viewerView!=='pivot';$('#analysis-chart-result').hidden=empty||viewerView!=='chart';if(empty)paintPivotEmpty()}
 
 /* ---------- ピボット集計エンジン（階層・小計・総計） ---------- */
@@ -3831,12 +3846,181 @@ function renderPivotChart(model,measureLabel){let box=$('#pivot-chart');let cats
  box.innerHTML=`${legend}${note}<div class="chart-scroll"><svg viewBox="0 0 ${w} ${h}" role="img" aria-label="集計折れ線グラフ">${grid}<line class="chart-axis" x1="${padL}" y1="${h-padB}" x2="${w-padR}" y2="${h-padB}"/><line class="chart-axis" x1="${padL}" y1="${padT}" x2="${padL}" y2="${h-padB}"/>${lines}${xlabels}</svg></div>`}
 
 /* ---------- 読み込み ---------- */
-async function openViewer(){let {id,value}=viewerParse($('#viewer-job').value);if(!id)return;showWaiting('データを読み込み中','公開済みファイルを読み取り専用で確認しています...');try{let d=await fetch('/api/data-viewer/'+encodeURIComponent(id)+(value==null?'':'?value='+encodeURIComponent(value)),{cache:'no-store'}).then(r=>r.json());if(!d.ok)return showViewerError(d.error);if(d.value){$('#viewer-job').value=viewerKey(id,d.value)}paintViewerValues(id,d.value||null);viewerData=d;viewerRows=d.rows||[];viewerFiltered=viewerRows.slice();viewerCols=viewerColumnInfo(viewerRows,d.headers||[]);viewerSort={col:-1,dir:1};viewerPage=1;pivotState={rows:[],columns:[],values:[],aggregate:'count',showSubtotals:($('#pivot-show-subtotal')?$('#pivot-show-subtotal').checked:true),showGrandTotal:($('#pivot-show-grand')?$('#pivot-show-grand').checked:true)};$('#viewer-error').hidden=true;$('#viewer-meta').hidden=false;let vname=d.value?`${d.name} · ${d.value}`:d.name;$('#viewer-name').textContent=vname;$('#viewer-name').title=d.path||vname;$('#viewer-format').textContent=formatName(d.format);$('#viewer-count').textContent=`${Number(d.total_rows??viewerRows.length).toLocaleString()}行 × ${Number(d.total_columns??d.headers.length).toLocaleString()}列`;$('#viewer-modified').textContent=(d.modified||'').replace('T',' ');$('#viewer-search').value='';$('#viewer-note').textContent=d.truncated?`先頭${Number(d.preview_limit).toLocaleString()}行を表示（全${Number(d.total_rows).toLocaleString()}行）`+(d.row_budget_limited?`／${Number(d.total_columns).toLocaleString()}列と幅があるため行数を抑えています（列はすべて出しています）`:''):d.path;refreshDesigner();renderViewerList();setViewerView('list')}catch{showViewerError('データを読み込めませんでした')}finally{hideWaiting()}}
+async function openViewer(){let {id,value}=viewerParse($('#viewer-job').value);if(!id)return;showWaiting('データを読み込み中','公開済みファイルを読み取り専用で確認しています...');try{let d=await fetch('/api/data-viewer/'+encodeURIComponent(id)+(value==null?'':'?value='+encodeURIComponent(value)),{cache:'no-store'}).then(r=>r.json());if(!d.ok)return showViewerError(d.error);if(d.value){$('#viewer-job').value=viewerKey(id,d.value)}paintViewerValues(id,d.value||null);condPop?.(false);viewerColsPop?.(false);setViewerTable(d,id);$('#viewer-error').hidden=true;$('#viewer-meta').hidden=false;let vname=d.value?`${d.name} · ${d.value}`:d.name;$('#viewer-name').textContent=vname;$('#viewer-name').title=d.path||vname;$('#viewer-format').textContent=formatName(d.format);$('#viewer-count').textContent=`${Number(d.total_rows??viewerRows.length).toLocaleString()}行 × ${Number(d.total_columns??d.headers.length).toLocaleString()}列`;$('#viewer-modified').textContent=(d.modified||'').replace('T',' ');$('#viewer-note').textContent=d.truncated?`先頭${Number(d.preview_limit).toLocaleString()}行を表示（全${Number(d.total_rows).toLocaleString()}行）`+(d.row_budget_limited?`／${Number(d.total_columns).toLocaleString()}列と幅があるため行数を抑えています（列はすべて出しています）`:''):d.path;applyViewerSearch();refreshDesigner();setViewerView('list')}catch(e){console.error(e);showViewerError('データを読み込めませんでした')}finally{hideWaiting()}}
+
+/* ---------- 表示列・計算列・条件（2.2.0。WaveLog の表示列の編集とフィルタを移した作り。中身は static/viewer-model.js の DRV） ----------
+   読み込んだ表（viewerBase）に、対象ごとの表示の設定（viewerSpec = cfg.jobs[i].viewer）を当てる:
+   計算列を足す（viewerData.headers・viewerRows）→ 並び・表示・表示名（viewerLayout）→ 帯の条件で絞る（viewerCondRows）→ 検索。
+   条件と計算列はデータ一覧・集計表・グラフのどれにも効く。日付のまとめ（年・年月・年月日…）も計算列の1つ
+   （案 K。tests/ui-proposals/2026-10-viewer-columns）。集計の組み方と並べ替えは、列の名前で引き継ぐ */
+const specClone=v=>JSON.parse(JSON.stringify(v&&typeof v==='object'?v:{}));
+function viewerJob(){return cfg?.jobs?.find(j=>j.id===viewerJobId)||null}
+function saveViewerSpec(){let j=viewerJob();if(!j)return;let v=specClone(viewerSpec);['cols','calc','filters'].forEach(k=>{if(!v[k]?.length)delete v[k]});if(!v.filters||v.join!=='or')delete v.join;j.viewer=v;dirty()}
+/* 読み込んだ表を画面へ（openViewer と自己診断が使う） */
+function setViewerTable(d,jobId){viewerData=d;viewerJobId=jobId||'';viewerBase={headers:d.headers||[],rows:d.rows||[]};viewerBaseCols=viewerColumnInfo(viewerBase.rows,viewerBase.headers);viewerSpec=specClone(viewerJob()?.viewer);viewerSort={col:-1,dir:1};viewerPage=1;viewerColSel='';
+ pivotState={rows:[],columns:[],values:[],aggregate:'count',showSubtotals:($('#pivot-show-subtotal')?$('#pivot-show-subtotal').checked:true),showGrandTotal:($('#pivot-show-grand')?$('#pivot-show-grand').checked:true)};
+ $('#viewer-search').value='';rebuildViewer();viewerFiltered=viewerCondRows.slice()}
+function rebuildViewer(rename){if(!viewerBase)return;rename=rename||{};
+ let oldH=viewerData?.headers||[],nameOf=i=>{let n=oldH[i];return rename[n]??n},keep={rows:pivotState.rows.map(nameOf),columns:pivotState.columns.map(nameOf),values:pivotState.values.map(nameOf)},sortName=viewerSort.col>=0?nameOf(viewerSort.col):null;
+ viewerApplied=DRV.applyView(viewerBase,{calc:viewerSpec.calc});
+ let H=viewerApplied.headers,at=n=>H.indexOf(n);
+ viewerData={...viewerData,headers:H};viewerRows=viewerApplied.rows;viewerCols=viewerBaseCols.concat(viewerColumnInfo(viewerRows,H,viewerBase.headers.length));
+ ['rows','columns','values'].forEach(r=>pivotState[r]=keep[r].map(at).filter(i=>i>=0));if(!pivotState.values.length)pivotState.aggregate='count';
+ viewerSort.col=sortName==null?-1:at(sortName);
+ layoutViewer();filterViewer()}
+function layoutViewer(){viewerLayout=DRV.applyView({headers:viewerData.headers,rows:[]},{cols:viewerSpec.cols})}
+function filterViewer(){viewerCondRows=DRV.applyFilters(viewerData.headers,viewerRows,viewerSpec.filters,viewerSpec.join).rows}
+/* 表示の設定を変えたあと: calc=計算列（列が増減する）/ cols=並び・表示・表示名 / filters=条件 */
+function viewerChanged(kind,opt={}){if(!viewerBase)return;
+ if(kind==='calc')rebuildViewer(opt.rename);else if(kind==='cols')layoutViewer();else filterViewer();
+ saveViewerSpec();
+ if(kind==='cols'){renderViewerList();paintViewerBar()}else applyViewerSearch();
+ if(viewerView!=='list'){['rows','columns'].forEach(renderSlot);renderMeasure();buildPivotFields();if(kind==='cols')renderAnalysis()}
+ if(!$('#viewer-cols-pop').hidden){paintColsList();if(opt.detail!==false)paintColDetail()}}
+/* 今の並びを、全部の列を載せた cols にする（並べ替え・表示の切り替えの土台） */
+function fullCols(){let H=viewerData.headers,L=viewerLayout,shown=new Set(L.shown);return L.order.map(i=>{let c={key:H[i],show:shown.has(i)};if(L.labels[i]!==H[i])c.label=L.labels[i];return c})}
+function datePartAt(i){i=Number(i);if(!(i>=viewerBaseWidth()))return null;let n=viewerData?.headers?.[i],c=(viewerSpec.calc||[]).find(x=>x.name===n);return c?DRV.datePartOf(c.formula):null}
+function dateParts(col){let c=viewerCols[viewerData.headers.indexOf(col)];return DRV.DATE_PARTS.filter(p=>p[0]!=='hour'||!c||c.hasTime)}
+function datePartOptions(col,cur){return dateParts(col).map(p=>`<option value="${p[0]}"${p[0]===cur?' selected':''}>${E(p[1])}</option>`).join('')}
+/* 日付の列 col を k（year・ym・date…）でまとめた計算列を作る（あればそれを使う）。返すのは列の番号 */
+function ensureDatePart(col,k){let name=DRV.datePartName(col,k),at=viewerData.headers.indexOf(name);if(at>=0)return at;
+ let cols=fullCols(),pos=cols.findIndex(c=>c.key===col);cols.splice(pos<0?cols.length:pos+1,0,{key:name,show:true});
+ viewerSpec={...viewerSpec,calc:[...(viewerSpec.calc||[]),{name,formula:DRV.datePartFormula(col,k)}],cols};
+ viewerChanged('calc');return viewerData.headers.indexOf(name)}
+
+/* ---- 帯（データ一覧・集計表・グラフで共通）: 検索｜条件の札｜件数｜表示列 ---- */
+const COND_TEXT={contains:(c,v)=>`${c} に「${v}」を含む`,not_contains:(c,v)=>`${c} に「${v}」を含まない`,eq:(c,v)=>`${c} ＝ ${v}`,neq:(c,v)=>`${c} ≠ ${v}`,
+ starts:(c,v)=>`${c} が「${v}」で始まる`,ends:(c,v)=>`${c} が「${v}」で終わる`,gt:(c,v)=>`${c} ＞ ${v}`,gte:(c,v)=>`${c} ≧ ${v}`,lt:(c,v)=>`${c} ＜ ${v}`,lte:(c,v)=>`${c} ≦ ${v}`,
+ empty:c=>`${c} が空欄`,not_empty:c=>`${c} が空欄以外`};
+function labelOf(name){let i=viewerData?.headers?.indexOf(name);return i>=0?fieldName(i):name}
+const condText=f=>(COND_TEXT[f.op]||((c,v)=>`${c} ${f.op} ${v}`))(labelOf(f.column),String(f.value??''));
+function paintViewerBar(){if(!viewerData)return;let F=viewerSpec.filters||[],H=viewerData.headers,or=viewerSpec.join==='or';
+ $('#viewer-cond-label').innerHTML=F.length?`条件 <b>${F.length}</b>`:'条件';
+ $('#viewer-conds').innerHTML=F.map((f,n)=>{let bad=!H.includes(f.column),idle=!bad&&!DRV.noValueOp(f.op)&&!String(f.value??'').trim();
+  return `${n?`<button type="button" class="vb-join" title="押すと「${or?'すべて満たす（かつ）':'どれかを満たす（または）'}」に切り替えます">${or?'または':'かつ'}</button>`:''}<span class="vb-cond${bad?' is-bad':''}${idle?' is-idle':''}" data-n="${n}"><button type="button" class="vb-ct" title="${E(bad?`列「${f.column}」がありません（この条件は効いていません）`:'押すと直せます')}">${bad?'<i>!</i>':''}${E(condText(f))}</button><b class="vb-x" role="button" title="この条件を外す">×</b></span>`}).join('');
+ $('#viewer-cond-clear').hidden=!F.length;
+ let total=viewerRows.length,hit=viewerFiltered.length;
+ $('#viewer-filter-summary').innerHTML=hit===total?`${total.toLocaleString()}行`:`<b>${hit.toLocaleString()}</b> / ${total.toLocaleString()}行`;
+ let all=H.length,shown=viewerLayout?.shown?.length??all;$('#viewer-cols-count').textContent=shown===all?`${all}列`:`${all}列中${shown}`;$('#viewer-cols-open').classList.toggle('is-trim',shown<all);
+ $$('#viewer-conds .vb-ct').forEach(b=>b.onclick=e=>{e.stopPropagation();openCondPop(Number(b.parentElement.dataset.n),b.parentElement)});
+ $$('#viewer-conds .vb-x').forEach(b=>b.onclick=e=>{e.stopPropagation();let F2=(viewerSpec.filters||[]).slice();F2.splice(Number(b.parentElement.dataset.n),1);viewerSpec={...viewerSpec,filters:F2};condPop?.(false);viewerChanged('filters')});
+ $$('#viewer-conds .vb-join').forEach(b=>b.onclick=e=>{e.stopPropagation();viewerSpec={...viewerSpec,join:viewerSpec.join==='or'?'and':'or'};viewerChanged('filters')})}
+
+/* ---- 条件の小窓: 列・比べ方・値。値の下に、その列の値の候補（多い順・件数つき）を出す ---- */
+let condEdit=-1;
+function condDefaultOp(col){let c=viewerCols[viewerData.headers.indexOf(col)];return c?.date||c?.numeric?'gte':c&&c.kinds<=50?'eq':'contains'}
+function openCondPop(n,anchor){if(!viewerData)return;condEdit=n;let f=n>=0?viewerSpec.filters[n]:null,H=viewerData.headers,order=viewerLayout?.order||H.map((_,i)=>i);
+ $('#vcp-title').textContent=n>=0?'条件を直す':'条件を足す';$('#vcp-ok').textContent=n>=0?'直す':'足す';$('#vcp-del').hidden=n<0;
+ $('#vcp-col').innerHTML=order.map(i=>`<option value="${E(H[i])}">${E(fieldName(i))}${i>=viewerBaseWidth()?'（計算列）':''}</option>`).join('')+(f&&!H.includes(f.column)?`<option value="${E(f.column)}">${E(f.column)}（ありません）</option>`:'');
+ $('#vcp-op').innerHTML=DRV.OPS.map(o=>`<option value="${o[0]}">${E(o[1])}</option>`).join('');
+ let guess=order.find(i=>{let c=viewerCols[i];return c&&!c.numeric&&!c.date&&c.kinds>=2&&c.kinds<=50}),col=f?f.column:H[guess??order[0]];
+ $('#vcp-col').value=col;$('#vcp-op').value=f?f.op:condDefaultOp(col);$('#vcp-value').value=f?String(f.value??''):'';
+ paintCondSugg();
+ let bar=$('#viewer-bar'),br=bar.getBoundingClientRect(),ar=anchor.getBoundingClientRect(),pop=$('#viewer-cond-pop');
+ pop.style.left=Math.max(8,Math.min(ar.left-br.left,br.width-560))+'px';condPop(true);
+ (DRV.noValueOp($('#vcp-op').value)?$('#vcp-op'):$('#vcp-value')).focus()}
+function paintCondSugg(){let col=$('#vcp-col').value,i=viewerData.headers.indexOf(col),c=viewerCols[i],op=$('#vcp-op').value,box=$('#vcp-sugg'),note=$('#vcp-note'),cur=$('#vcp-value').value.trim();
+ let none=DRV.noValueOp(op);$('#vcp-value').hidden=none;box.innerHTML='';note.textContent='';
+ if(none||i<0){note.textContent=i<0?'この列は今のファイルにありません':'値は要りません';return}
+ const btn=(v,t,cnt)=>`<button type="button" data-v="${E(v)}" class="${String(v)===cur?'on':''}">${E(t)}${cnt!=null?`<small>${cnt.toLocaleString()}</small>`:''}</button>`;
+ if(c?.date){let ds=viewerRows.map(r=>DRV.parseDate(r[i])).filter(Boolean).map(t=>`${t.y}-${String(t.m).padStart(2,'0')}-${String(t.d).padStart(2,'0')}`).sort();
+  box.innerHTML=ds.length?`<small>この列の日付:</small>${btn(ds[0],'最初 '+ds[0])}${btn(ds[ds.length-1],'最後 '+ds[ds.length-1])}`:'';
+  note.textContent='日付は「>= 以上」「<= 以下」で範囲にできます。日付だけ書くと、時刻つきの値も同じ日として一致します';return}
+ if(c&&c.kinds<=200){let m=new Map();for(const r of viewerRows){let v=String(r[i]??'').trim();if(v)m.set(v,(m.get(v)||0)+1)}
+  let top=[...m].sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0],'ja',{numeric:true})).slice(0,12);
+  box.innerHTML=top.length?`<small>この列の値:</small>${top.map(([v,n])=>btn(v,v,n)).join('')}${m.size>12?`<small>ほか ${(m.size-12).toLocaleString()} 種類</small>`:''}`:'';return}
+ note.textContent='種類の多い列です。値を入れてください（「含む」なら一部だけでも合います）'}
+function commitCond(){let f={column:$('#vcp-col').value,op:$('#vcp-op').value,value:$('#vcp-value').value.trim()};
+ if(!DRV.noValueOp(f.op)&&!f.value){$('#vcp-note').textContent='値を入れるか、上の候補を押してください';$('#vcp-value').focus();return}
+ if(DRV.noValueOp(f.op))f.value='';
+ let F=(viewerSpec.filters||[]).slice();if(condEdit>=0)F[condEdit]=f;else F.push(f);viewerSpec={...viewerSpec,filters:F};condPop(false);viewerChanged('filters')}
+
+/* ---- 表示列のパネル（WaveLog の2面）: 左＝列のリスト（チェックで表示・つまみで並べ替え・見本の値）、右＝選んだ列の設定 ---- */
+function colSample(i){for(let n=0;n<viewerRows.length&&n<500;n++){let v=viewerRows[n][i];if(v!=null&&String(v).trim()!=='')return String(v)}return ''}
+function paintColsPanel(){if(!viewerData||!viewerLayout)return;
+ // 帯の下から画面の下（足元の保存の帯の上）までに収める
+ let pop=$('#viewer-cols-pop'),top=$('#viewer-bar').getBoundingClientRect().bottom+6,foot=document.querySelector('footer')?.getBoundingClientRect().height||56;
+ pop.style.height=Math.max(300,Math.min(600,innerHeight-top-foot-12))+'px';paintColsList();paintColDetail()}
+function paintColsList(){let H=viewerData.headers,L=viewerLayout,shown=new Set(L.shown),err=viewerApplied?.calcErrors||{},w=viewerBaseWidth();
+ if(!H.includes(viewerColSel))viewerColSel=H[L.order[0]]||'';
+ $('#vc-sub').textContent=`${viewerJob()?.name||viewerData.name||''} · 対象ごとに保存（値ごとのファイルも同じ設定）`;
+ $('#vc-list').innerHTML=L.order.map(i=>`<div class="vc-ci${H[i]===viewerColSel?' sel':''}${shown.has(i)?'':' off'}" draggable="true" data-key="${E(H[i])}" role="option" aria-selected="${H[i]===viewerColSel}"><i class="vc-grip" title="ドラッグで並べ替え">⋮⋮</i><input type="checkbox" ${shown.has(i)?'checked':''} aria-label="${E(fieldName(i))} を表示"><span class="vc-cn"><b>${E(fieldName(i))}</b>${i>=w?'<i class="vc-tag calc">計算列</i>':''}${viewerCols[i]?.date?'<i class="vc-tag date">日付</i>':''}${err[H[i]]?'<i class="vc-tag bad">式の誤り</i>':''}</span><small>${E(colSample(i))}</small></div>`).join('');
+ $$('#vc-list .vc-ci').forEach(row=>{let key=row.dataset.key;
+  row.onclick=e=>{if(e.target.matches('input'))return;viewerColSel=key;paintColsList();paintColDetail()};
+  row.querySelector('input').onchange=e=>{let cols=fullCols(),c=cols.find(x=>x.key===key);if(!e.target.checked&&cols.filter(x=>x.show).length<=1){e.target.checked=true;return toast('少なくとも1列は表示します')}c.show=e.target.checked;viewerSpec={...viewerSpec,cols};viewerChanged('cols',{detail:false})};
+  row.ondragstart=e=>{e.dataTransfer.setData('text/plain',key);e.dataTransfer.effectAllowed='move';row.classList.add('dragging')};
+  row.ondragend=()=>row.classList.remove('dragging');
+  row.ondragover=e=>{e.preventDefault();let r=row.getBoundingClientRect();row.classList.toggle('drop-before',e.clientY<r.top+r.height/2);row.classList.toggle('drop-after',e.clientY>=r.top+r.height/2)};
+  row.ondragleave=()=>row.classList.remove('drop-before','drop-after');
+  row.ondrop=e=>{e.preventDefault();let after=row.classList.contains('drop-after');row.classList.remove('drop-before','drop-after');moveCol(e.dataTransfer.getData('text/plain'),key,after)}})}
+function moveCol(key,target,after){if(!key||key===target)return;let cols=fullCols(),from=cols.findIndex(c=>c.key===key);if(from<0)return;let [c]=cols.splice(from,1),to=cols.findIndex(x=>x.key===target);if(to<0)return;cols.splice(after?to+1:to,0,c);viewerSpec={...viewerSpec,cols};viewerChanged('cols',{detail:false})}
+function stepCol(dir){let cols=fullCols(),i=cols.findIndex(c=>c.key===viewerColSel),j=i+dir;if(i<0||j<0||j>=cols.length)return;[cols[i],cols[j]]=[cols[j],cols[i]];viewerSpec={...viewerSpec,cols};viewerChanged('cols',{detail:false})}
+function calcKnownBefore(name){let calc=viewerSpec.calc||[],k=calc.findIndex(c=>c.name===name);return viewerBase.headers.concat(calc.slice(0,k<0?calc.length:k).map(c=>c.name))}
+function paintColCheck(i){let el=$('#vc-check');if(!el)return;let H=viewerData.headers,err=viewerApplied?.calcErrors?.[H[i]];
+ el.className='vc-check '+(err?'is-bad':'is-ok');el.textContent=err?`✕ ${err}`:`✓ 式は正しく読めます · 見本: ${colSample(i)||'（空）'}`}
+function paintColDetail(){let box=$('#vc-detail'),H=viewerData.headers,i=H.indexOf(viewerColSel);if(i<0){box.innerHTML='';return}
+ let w=viewerBaseWidth(),calc=i>=w,spec=calc?(viewerSpec.calc||[]).find(c=>c.name===H[i]):null,dp=spec?DRV.datePartOf(spec.formula):null,src=dp?dp[0]:(!calc&&viewerCols[i]?.date?H[i]:null),L=viewerLayout;
+ let made=src?new Set(dateParts(src).filter(p=>H.includes(DRV.datePartName(src,p[0]))).map(p=>p[0])):null;
+ box.innerHTML=`<div class="vc-cdh"><b>${E(fieldName(i))}</b>${calc?'<i class="vc-tag calc">計算列</i>':''}${viewerCols[i]?.date?'<i class="vc-tag date">日付</i>':''}</div>`
+  +(calc?`<label class="vc-fl">列の名前<input id="vc-name" value="${E(H[i])}" maxlength="100"></label><label class="vc-fl">作り方の式<input id="vc-formula" class="mono" value="${E(spec?.formula||'')}" spellcheck="false" maxlength="${DRV.MAX_LEN}"></label><small id="vc-check" class="vc-check"></small>
+   <div class="vc-ins"><select id="vc-insert" aria-label="式に列を入れる"><option value="">式に列を入れる…</option>${calcKnownBefore(H[i]).map(n=>`<option value="${E(n)}">${E(n)}</option>`).join('')}</select><details class="vc-fx"><summary>使える関数</summary><div>${DRV.sigs.map(s=>`<button type="button" data-fn="${s[0]}" title="${E(s[2])}">${s[0]}(${E(s[1])})</button>`).join('')}</div></details></div>`
+   :`<label class="vc-fl">表示名<input id="vc-label" value="${E(L.labels[i]!==H[i]?L.labels[i]:'')}" placeholder="${E(H[i])}" maxlength="100"></label><small class="vc-muted">元の名前: ${E(H[i])}（空にすると元の名前）</small>`)
+  +(src?`<div class="vc-fl"><span>日付から作る（${E(src)}）</span><div class="vc-parts">${dateParts(src).map(p=>`<button type="button" data-part="${p[0]}" class="${made.has(p[0])?'on':''}${dp&&dp[1]===p[0]?' cur':''}" title="${E(made.has(p[0])?'作ってあります（押すとその列へ）':`「${DRV.datePartName(src,p[0])}」の列を作ります`)}">${E(p[1])}</button>`).join('')}</div><small class="vc-muted">作った列は、一覧・条件・集計表・グラフで使えます</small></div>`:'')
+  +`<div class="vc-row"><button id="vc-up" type="button" class="secondary" ${L.order[0]===i?'disabled':''}>↑ 上へ</button><button id="vc-down" type="button" class="secondary" ${L.order[L.order.length-1]===i?'disabled':''}>↓ 下へ</button>${calc?'<button id="vc-del" type="button" class="secondary vc-danger">この列を消す</button>':''}<span class="pv-sp"></span><button id="vc-close" type="button">閉じる</button></div>`;
+ if(calc)paintColCheck(i);
+ $('#vc-up').onclick=()=>stepCol(-1);$('#vc-down').onclick=()=>stepCol(1);$('#vc-close').onclick=()=>viewerColsPop(false);
+ box.querySelectorAll('[data-part]').forEach(b=>b.onclick=()=>{let name=DRV.datePartName(src,b.dataset.part);ensureDatePart(src,b.dataset.part);viewerColSel=name;paintColsList();paintColDetail()});
+ if(!calc){$('#vc-label').oninput=e=>{let cols=fullCols(),c=cols.find(x=>x.key===H[i]),v=e.target.value.trim();if(v&&v!==H[i])c.label=v;else delete c.label;viewerSpec={...viewerSpec,cols};viewerChanged('cols',{detail:false})};return}
+ let name=H[i],timer=0,inp=$('#vc-formula');
+ inp.oninput=()=>{clearTimeout(timer);timer=setTimeout(()=>{let r=DRV.check(inp.value,calcKnownBefore(name)),el=$('#vc-check');if(!r.ok){el.className='vc-check is-bad';el.textContent=`✕ ${r.error}`;return}
+  viewerSpec={...viewerSpec,calc:viewerSpec.calc.map(c=>c.name===name?{...c,formula:inp.value.trim()}:c)};viewerChanged('calc',{detail:false});paintColCheck(viewerData.headers.indexOf(name))},250)};
+ const put=t=>{let a=inp.selectionStart??inp.value.length,b=inp.selectionEnd??a;inp.value=inp.value.slice(0,a)+t+inp.value.slice(b);inp.focus();inp.selectionStart=inp.selectionEnd=a+t.length;inp.dispatchEvent(new Event('input'))};
+ $('#vc-insert').onchange=e=>{if(e.target.value)put(`[${e.target.value}]`);e.target.value=''};
+ box.querySelectorAll('[data-fn]').forEach(b=>b.onclick=()=>put(b.dataset.fn+'('));
+ $('#vc-name').onchange=e=>{let v=e.target.value.trim();if(v===name)return;if(!v||viewerData.headers.includes(v)){e.target.value=name;return toast(v?`「${v}」は、ほかの列と同じ名前です`:'列の名前を入れてください')}
+  const swap=t=>String(t).split(`[${name}]`).join(`[${v}]`);
+  viewerSpec={...viewerSpec,calc:viewerSpec.calc.map(c=>c.name===name?{...c,name:v}:{...c,formula:swap(c.formula)}),cols:viewerSpec.cols?.map(c=>c.key===name?{...c,key:v}:c),filters:viewerSpec.filters?.map(f=>f.column===name?{...f,column:v}:f)};
+  viewerColSel=v;viewerChanged('calc',{rename:{[name]:v}})};
+ $('#vc-del').onclick=()=>{let cols=fullCols(),k=cols.findIndex(c=>c.key===name);viewerSpec={...viewerSpec,calc:viewerSpec.calc.filter(c=>c.name!==name),cols:cols.filter(c=>c.key!==name)};viewerColSel=(cols[k+1]||cols[k-1]||{}).key||'';viewerChanged('calc');toast(`「${name}」を消しました`)}}
+function addCalcColumn(){if(!viewerData)return;let H=viewerData.headers,n=1;while(H.includes(`計算列${n}`))n++;let name=`計算列${n}`,base=H.includes(viewerColSel)?viewerColSel:H[0];
+ let cols=fullCols(),pos=cols.findIndex(c=>c.key===base);cols.splice(pos<0?cols.length:pos+1,0,{key:name,show:true});
+ viewerSpec={...viewerSpec,calc:[...(viewerSpec.calc||[]),{name,formula:`[${base}]`}],cols};viewerColSel=name;viewerChanged('calc');
+ let inp=$('#vc-formula');if(inp){inp.focus();inp.select()}}
+
+/* ---- 集計表のカラムの［年・月・日 ▾］: まとめ方を選ぶと計算列を作り（あれば使い）、行に置く ---- */
+function openPivotDatePop(btn){let pop=$('#pivot-date-pop'),i=Number(btn.dataset.col),col=viewerData.headers[i],placed=new Set(pivotState.rows.concat(pivotState.columns).map(datePartAt).filter(d=>d&&d[0]===col).map(d=>d[1]));
+ pop.innerHTML=`<b>「${E(fieldName(i))}」をまとめる</b><small>選ぶと「${E(DRV.datePartName(col,'ym'))}」のような列を作って行に置きます（一覧・条件でも使えます）</small><div class="vc-parts">${dateParts(col).map(p=>`<button type="button" data-part="${p[0]}" class="${placed.has(p[0])?'on':''}">${E(p[1])}</button>`).join('')}</div>`;
+ // 下に入りきらなければ、ボタンの上に出す（カラムの一覧の下の方でも切れない）
+ pop.hidden=false;let box=(pop.offsetParent||pop.parentElement).getBoundingClientRect(),r=btn.getBoundingClientRect(),h=pop.offsetHeight,below=r.bottom-box.top+4;
+ pop.style.top=(below+h>box.height-6?Math.max(6,r.top-box.top-h-4):below)+'px';btn.setAttribute('aria-expanded','true');
+ pop.querySelectorAll('[data-part]').forEach(b=>b.onclick=e=>{e.stopPropagation();pop.hidden=true;placeDatePart(col,b.dataset.part,i)})}
+function placeDatePart(col,k,src){let at=ensureDatePart(col,k);if(at<0)return;if(pivotState.rows.includes(at)||pivotState.columns.includes(at))return refreshDesigner();
+ // 元の列か、同じ列の別のまとめ方が行・列にあれば、そこを置き換える。無ければ行の最後へ
+ for(const r of['rows','columns']){let p=pivotState[r].findIndex(x=>{let d=datePartAt(x);return x===src||(d&&d[0]===col)});if(p>=0){pivotState[r][p]=at;return refreshDesigner()}}
+ addPivotField('rows',at)}
 
 /* ---------- イベント結線 ---------- */
 if($('#viewer-load'))$('#viewer-load').onclick=openViewer;
 if($('#viewer-job'))$('#viewer-job').onchange=()=>{$('#viewer-job').value&&openViewer()};
 if($('#viewer-search'))$('#viewer-search').oninput=applyViewerSearch;
+/* 帯の条件と表示列の小窓（2.2.0） */
+condPop=bindPopover('#viewer-cond-add','#viewer-cond-pop');
+if($('#viewer-cond-add'))$('#viewer-cond-add').onclick=e=>{e.stopPropagation();if(!$('#viewer-cond-pop').hidden&&condEdit<0)return condPop(false);openCondPop(-1,e.currentTarget)};
+if($('#viewer-cond-clear'))$('#viewer-cond-clear').onclick=()=>{viewerSpec={...viewerSpec,filters:[]};delete viewerSpec.join;condPop?.(false);viewerChanged('filters')};
+if($('#vcp-col'))$('#vcp-col').onchange=()=>{$('#vcp-op').value=condDefaultOp($('#vcp-col').value);$('#vcp-value').value='';paintCondSugg()};
+if($('#vcp-op'))$('#vcp-op').onchange=paintCondSugg;
+if($('#vcp-value'))$('#vcp-value').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.isComposing){e.preventDefault();commitCond()}});
+if($('#vcp-sugg'))$('#vcp-sugg').addEventListener('click',e=>{let b=e.target.closest('[data-v]');if(!b)return;$('#vcp-value').value=b.dataset.v;if(['contains','not_contains','starts','ends'].includes($('#vcp-op').value)&&viewerCols[viewerData.headers.indexOf($('#vcp-col').value)]?.kinds<=50)$('#vcp-op').value='eq';paintCondSugg()});
+if($('#vcp-sugg'))$('#vcp-sugg').addEventListener('dblclick',e=>{if(e.target.closest('[data-v]'))commitCond()});
+if($('#vcp-ok'))$('#vcp-ok').onclick=commitCond;
+if($('#vcp-del'))$('#vcp-del').onclick=()=>{let F=(viewerSpec.filters||[]).slice();if(condEdit>=0)F.splice(condEdit,1);viewerSpec={...viewerSpec,filters:F};condPop(false);viewerChanged('filters')};
+viewerColsPop=bindPopover('#viewer-cols-open','#viewer-cols-pop',paintColsPanel);
+if($('#vc-add'))$('#vc-add').onclick=addCalcColumn;
+if($('#vc-all'))$('#vc-all').onclick=()=>{viewerSpec={...viewerSpec,cols:fullCols().map(c=>({...c,show:true}))};viewerChanged('cols')};
+if($('#vc-reset'))$('#vc-reset').onclick=()=>{let v={...viewerSpec};delete v.cols;viewerSpec=v;viewerChanged('cols')};
+/* 集計表の［年・月・日 ▾］の小窓は、外を押すか Esc で閉じる */
+document.addEventListener('click',e=>{let p=$('#pivot-date-pop');if(p&&!p.hidden&&!p.contains(e.target)){p.hidden=true;$$('#pivot-field-list .pv-d').forEach(b=>b.setAttribute('aria-expanded','false'))}});
+document.addEventListener('keydown',e=>{let p=$('#pivot-date-pop');if(e.key==='Escape'&&p&&!p.hidden)p.hidden=true});
 if($('#viewer-prev'))$('#viewer-prev').onclick=()=>{viewerPage--;renderViewerList()};
 if($('#viewer-next'))$('#viewer-next').onclick=()=>{viewerPage++;renderViewerList()};
 ['list','pivot','chart'].forEach(v=>{let b=$('#vtab-'+v);if(b)b.onclick=()=>setViewerView(v)});
@@ -4996,7 +5180,8 @@ function renderRelease(){
   ['配る版',want||'（未決定）',want?'':'is-idle'],
   ['置き方',REL_PLACE[st.place]||st.place,''],
   ['置き場',st.dir,'',`${REL_SOURCE[st.dirSource]||st.dirSource}で決まりました\n${st.dir}`],
-  ['データの基準',st.dataRoot,'',`相対パス（.\\…）と設定のマスターの基準\n${st.dataRoot}`]];
+  ['データの基準',st.dataRoot,'',`設定のマスターの基準\n${st.dataRoot}`],
+  ['相対パスの基準',st.relRoot||st.dataRoot,'',`相対パス（.\\…）はここを先に見ます（いま動いている版のアプリのフォルダー・データの基準）\n${st.relRoot||st.dataRoot}`]];
  $('#rel-here').innerHTML=facts.map(([k,v,c,t])=>`<div class="${c}"><small>${E(k)}</small><b title="${E(t||v)}">${E(v)}</b></div>`).join('');
  let note=!st.reachable?`置き場に届きません: ${st.why}。BOX Drive・ネットワークを確かめてください。届かない日も、いまの版のまま使えます。`
   :st.place==='dev'?'作る途中の木（.git がある）では、配る版へそろえません。'
