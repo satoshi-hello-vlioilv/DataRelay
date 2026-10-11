@@ -11,32 +11,8 @@ let joinCache=[],joinMeta={types:[],formats:[],layouts:[],max_sources:8},jnEditi
    実際に使われる設定が食い違うことがあったため、押す操作そのものを無くした。 */
 let saveTimer=null,saveSeq=0,saveRetry=0;
 function saveState(text,kind){let e=$('#dirty');if(e){e.textContent=text;e.className='autosave-state '+(kind||'')}}
-function collectSettings(){if(!cfg||!cfg.settings)return;let s=cfg.settings,v=id=>$(id);
- if(v('#extract-engine'))s.extract_engine=v('#extract-engine').value;
- if(v('#dde'))s.dde_timeout_seconds=Math.max(1,Number(v('#dde').value)||1);
- if(v('#wait'))s.output_wait_seconds=Math.max(0,Number(v('#wait').value)||0);
- if(v('#gens'))s.backup_generations=Math.max(1,Math.min(9999,Number(v('#gens').value)||3));
- if(v('#backup-enabled'))s.backup_enabled=v('#backup-enabled').checked;
- if(v('#backup-mode'))s.backup_mode=v('#backup-mode').value||'generations';
- if(v('#backup-retention-days'))s.backup_retention_days=Math.max(1,Math.min(3650,Number(v('#backup-retention-days').value)||30));
- if(v('#schedule-catchup'))s.schedule_catchup_minutes=Math.max(0,Math.min(720,Number(v('#schedule-catchup').value)||0));
- if(v('#join-wait-enabled'))s.join_wait_enabled=v('#join-wait-enabled').checked;
- if(v('#join-wait-lookahead'))s.join_wait_lookahead_seconds=Math.max(0,Math.min(3600,Number(v('#join-wait-lookahead').value)||0));
- if(v('#join-wait-max'))s.join_wait_max_seconds=Math.max(0,Math.min(86400,Number(v('#join-wait-max').value)||0));
- if(v('#worker-stagger'))s.api_worker_stagger_ms=Math.max(0,Math.min(5000,Number(v('#worker-stagger').value)||0));
- if(v('#api-lines'))s.api_parallel_lines=Math.max(1,Math.min(24,Number(v('#api-lines').value)||6));
- if(v('#local-lines'))s.local_parallel_lines=Math.max(0,Math.min(12,Number(v('#local-lines').value)||0));
- if(v('#zero'))s.reject_zero_rows=v('#zero').checked;
- let vm=document.querySelector('input[name="variant-method"]:checked');if(vm)s.variant_method=vm.value;
- if(v('#retry-enabled'))s.retry_enabled=v('#retry-enabled').checked;
- if(v('#retry-delay'))s.retry_delay_minutes=Math.max(1,Math.min(180,Number(v('#retry-delay').value)||5));
- if(v('#retry-max'))s.retry_max=Math.max(0,Math.min(5,Number(v('#retry-max').value)||0));
- if(v('#log-max-mb'))s.log_max_mb=Math.max(1,Math.min(500,Number(v('#log-max-mb').value)||10));
- if(v('#log-keep'))s.log_keep=Math.max(0,Math.min(20,Number(v('#log-keep').value)||0));
- if(v('#hide-profile'))s.symnavi_hide_profile=v('#hide-profile').value;
- if(v('#hide-action-duration'))s.symnavi_hide_action_duration_seconds=Math.max(.2,Number(v('#hide-action-duration').value)||.5);
- s.backup_generation_limit_enabled=s.backup_mode!=='days';s.stability_profile='balanced_api_parallel'}
-function settingsPayload(){collectSettings();return structuredClone(cfg||{})}
+/* 共通設定の値は、欄を触った時点で cfg.settings へ入る（renderSettingFields）。送るのは cfg の写し */
+function settingsPayload(){return structuredClone(cfg||{})}
 function scheduleSave(delay=450){clearTimeout(saveTimer);saveTimer=setTimeout(()=>saveSettingsNow(),delay)}
 function saveFailed(why){if(saveRetry<3){saveRetry++;saveState(`保存できません（${why}）／${saveRetry}回目の再試行をします`,'is-ng');scheduleSave(3000)}else saveState(`保存できません（${why}）／画面を再読込してやり直してください`,'is-ng');return false}
 async function saveSettingsNow(){clearTimeout(saveTimer);saveTimer=null;if(!cfg)return false;let payload=settingsPayload(),seq=++saveSeq;saveState('保存しています','is-saving');try{let r=await putConfig(payload);if(seq!==saveSeq)return true;if(!r.ok){let d=await r.json().catch(()=>({}));return saveFailed(d.error||('HTTP '+r.status))}saveRetry=0;saveState('自動保存しました '+new Date().toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit',second:'2-digit'}),'is-ok');return true}catch(e){if(seq!==saveSeq)return true;return saveFailed('サーバーへ届きませんでした')}}
@@ -88,8 +64,9 @@ function showPane(p){
 $$('nav button,#subnav button').forEach(b=>b.onclick=()=>showPane(b.dataset.p));
 // 一覧の「入力」欄が読取マスタの名前を出すので、最初に一度だけ読んでおく。
 Promise.all([loadLayouts(),loadJoins()]).then(()=>{if(typeof cfg!=='undefined'&&cfg)render()});
-const paths={navigator_api_dll:['Navigator API DLL','file',[['DLLファイル','*.dll'],['すべて','*.*']]],symnavi_exe:['SymNavi.exe','file',[['実行ファイル','*.exe'],['すべて','*.*']]],symnavim_conf:['symnavim.conf（取り込み元）','file',[['CONFファイル','*.conf'],['すべて','*.*']]],symnavim_def:['symnavim.def','file',[['DEFファイル','*.def'],['すべて','*.*']]],accdb_template:['ACCDB空テンプレート','file',[['Access Database','*.accdb'],['すべて','*.*']]],rne_folder:['RNE基本フォルダー','folder'],text_folder:['固定長テキストの基本フォルダー','folder'],default_output_folder:['既定の出力先','folder'],backup_folder:['バックアップ先','folder']};
-let waitingTimer=null,waitingStarted=0;function currentEngine(){return $('#extract-engine')?.value||cfg?.settings?.extract_engine||'api'}function waitingEngineLabel(context='common'){if(context==='api'||(context==='engine'&&currentEngine()==='api'))return 'NAVIGATOR API';if(context==='dde'||(context==='engine'&&currentEngine()==='dde'))return 'DDE COMPATIBILITY';return 'COMMON OPERATION'}function showWaiting(title='確認中',detail='処理を続行しています...',context='common'){let d=$('#waiting-dialog');$('#waiting-engine').textContent=waitingEngineLabel(context);$('#waiting-title').textContent=title;$('#waiting-detail').textContent=detail;waitingStarted=Date.now();clearInterval(waitingTimer);let tick=()=>{let sec=Math.floor((Date.now()-waitingStarted)/1000);$('#waiting-elapsed').textContent=`経過 ${String(Math.floor(sec/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`};tick();waitingTimer=setInterval(tick,1000);if(!d.open)d.showModal()}function updateWaiting(title,detail,context){if(title)$('#waiting-title').textContent=title;if(detail)$('#waiting-detail').textContent=detail;if(context)$('#waiting-engine').textContent=waitingEngineLabel(context)}function hideWaiting(){clearInterval(waitingTimer);waitingTimer=null;let d=$('#waiting-dialog');if(d?.open)d.close()}async function convertPath(input,mode){showWaiting('パス変換中',mode==='relative'?'アプリフォルダー基準へ変換しています...':'実際の絶対パスを解決しています...');try{let r=await fetch('/api/path-convert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({value:input.value,mode})}),d=await r.json();if(!r.ok)return toast(d.error);input.value=d.value;updatePathBadge(input);dirty()}finally{hideWaiting()}}function updatePathBadge(input){let badge=input.closest('label')?.querySelector('.path-badge');if(!badge)return;let relative=input.value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(input.value);badge.textContent=relative?'相対パス / 基準: アプリフォルダー':'絶対パス';badge.className='path-badge '+(relative?'path-kind-relative':'path-kind-absolute')}function isRelativePath(value){return !!value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(value)}function enhancePathInput(input,kind='folder'){if(!input||input.dataset.pathEnhanced)return;input.dataset.pathEnhanced='1';let tools=document.createElement('div');tools.className='path-tools compact-path-tools';tools.innerHTML='<button type="button" class="pathmode path-toggle" title="絶対パスと相対パスを切り替えます"></button><small class="path-badge"></small>';input.closest('label')?.appendChild(tools);let toggle=tools.querySelector('.path-toggle');function refresh(){let relative=isRelativePath(input.value);toggle.textContent=relative?'相対 → 絶対':'絶対 → 相対';toggle.dataset.mode=relative?'absolute':'relative';updatePathBadge(input)}toggle.onclick=async()=>{await convertPath(input,toggle.dataset.mode);refresh()};input.addEventListener('input',refresh);input._refreshPathControl=refresh;refresh()}async function browse(kind,initial,types){showWaiting('参照画面を準備中','設定中のパスを解決して、その場所から開きます...');try{let url=kind==='folder'?'/api/pick-folder':'/api/pick-file',r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({initial,types})}),d=await r.json();if(!r.ok)toast(d.error);return d.path||''}finally{hideWaiting()}}
+const paths={default_output_folder:['既定の出力先','folder'],rne_folder:['RNE の置き場','folder'],backup_folder:['控えの置き場','folder'],text_folder:['固定長テキストの置き場','folder'],accdb_template:['ACCDB の雛形','file',[['Access Database','*.accdb'],['すべて','*.*']]],symnavim_conf:['symnavim.conf（接続情報の取り込み元）','file',[['CONFファイル','*.conf'],['すべて','*.*']]]};
+const PATH_HOME={symnavim_conf:'#pathform-conn'};   // ほかは「場所」の #pathform
+let waitingTimer=null,waitingStarted=0;function waitingEngineLabel(context='common'){return context==='api'||context==='engine'?'NAVIGATOR API':'COMMON OPERATION'}function showWaiting(title='確認中',detail='処理を続行しています...',context='common'){let d=$('#waiting-dialog');$('#waiting-engine').textContent=waitingEngineLabel(context);$('#waiting-title').textContent=title;$('#waiting-detail').textContent=detail;waitingStarted=Date.now();clearInterval(waitingTimer);let tick=()=>{let sec=Math.floor((Date.now()-waitingStarted)/1000);$('#waiting-elapsed').textContent=`経過 ${String(Math.floor(sec/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`};tick();waitingTimer=setInterval(tick,1000);if(!d.open)d.showModal()}function updateWaiting(title,detail,context){if(title)$('#waiting-title').textContent=title;if(detail)$('#waiting-detail').textContent=detail;if(context)$('#waiting-engine').textContent=waitingEngineLabel(context)}function hideWaiting(){clearInterval(waitingTimer);waitingTimer=null;let d=$('#waiting-dialog');if(d?.open)d.close()}async function convertPath(input,mode){showWaiting('パス変換中',mode==='relative'?'アプリフォルダー基準へ変換しています...':'実際の絶対パスを解決しています...');try{let r=await fetch('/api/path-convert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({value:input.value,mode})}),d=await r.json();if(!r.ok)return toast(d.error);input.value=d.value;updatePathBadge(input);dirty()}finally{hideWaiting()}}function updatePathBadge(input){let badge=input.closest('label')?.querySelector('.path-badge');if(!badge)return;let relative=input.value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(input.value);badge.textContent=relative?'相対パス / 基準: アプリフォルダー':'絶対パス';badge.className='path-badge '+(relative?'path-kind-relative':'path-kind-absolute')}function isRelativePath(value){return !!value&&!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(value)}function enhancePathInput(input,kind='folder'){if(!input||input.dataset.pathEnhanced)return;input.dataset.pathEnhanced='1';let tools=document.createElement('div');tools.className='path-tools compact-path-tools';tools.innerHTML='<button type="button" class="pathmode path-toggle" title="絶対パスと相対パスを切り替えます"></button><small class="path-badge"></small>';input.closest('label')?.appendChild(tools);let toggle=tools.querySelector('.path-toggle');function refresh(){let relative=isRelativePath(input.value);toggle.textContent=relative?'相対 → 絶対':'絶対 → 相対';toggle.dataset.mode=relative?'absolute':'relative';updatePathBadge(input)}toggle.onclick=async()=>{await convertPath(input,toggle.dataset.mode);refresh()};input.addEventListener('input',refresh);input._refreshPathControl=refresh;refresh()}async function browse(kind,initial,types){showWaiting('参照画面を準備中','設定中のパスを解決して、その場所から開きます...');try{let url=kind==='folder'?'/api/pick-folder':'/api/pick-file',r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({initial,types})}),d=await r.json();if(!r.ok)toast(d.error);return d.path||''}finally{hideWaiting()}}
 async function checkConfiguredPath(item,jobId){showWaiting('ファイル存在確認中','設定場所と周辺フォルダーを検索しています...');try{let r=await fetch('/api/path-check',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({item,job_id:jobId})}),d=await r.json();if(!r.ok)return toast(d.error);showPathResult(d)}finally{hideWaiting()}}function showPathResult(d){let box=$('#suggest-content');if(d.ok){box.innerHTML=`<p class="path-ok">存在を確認しました。</p><code>${E(d.resolved)}</code>`}else if(d.candidates?.length){box.innerHTML=`<p class="path-ng">設定先には存在しません。</p><p>設定値: <code>${E(d.configured)}</code></p><p>実在する修正候補:</p><div class="candidate-list">${d.candidates.map(x=>`<div class="candidate"><code>${E(x)}</code><button class="apply-suggestion" data-path="${E(x)}">このパスへ修正</button></div>`).join('')}</div>`;box.querySelectorAll('.apply-suggestion').forEach(b=>b.onclick=async()=>{let r=await fetch('/api/apply-path-suggestion',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({item:d.item,job_id:d.job_id,candidate:b.dataset.path})}),x=await r.json();if(r.ok){$('#path-suggestion').close();toast('設定を修正しました');await init()}else toast(x.error)})}else{box.innerHTML=`<p class="path-ng">ファイルが見つかりません。</p><p>確認先: <code>${E(d.resolved)}</code></p><p class="reselect">上2階層・下1階層の検索範囲にも候補がありません。参照ボタンから再指定してください。</p>`}if(!$('#path-suggestion').open)$('#path-suggestion').showModal()}
 
 function expectedExt(f){return {sqlite3:'.sqlite3',txt:'.txt',csv:'.csv',xlsx:'.xlsx',accdb:'.accdb'}[normalizeFormat(f)]||'.sqlite3'}
@@ -678,7 +655,7 @@ if($('#job-context-menu')){$('#job-context-menu').onclick=e=>{
   else openFolderPath(jobFolder(j.rne_path||j.rne)||cfg.rne_folder,'RNEのフォルダー');
  }
  else if(act==='log')showJobLog(j);
- else if(act==='viewer'){document.querySelector('[data-p="viewer"]')?.click();setTimeout(()=>{let sel=$('#viewer-job');if(sel){sel.value=j.id;sel.dispatchEvent(new Event('change'))}},100)}
+ else if(act==='viewer'){document.querySelector('[data-p="viewer"]')?.click();setTimeout(()=>{let sel=$('#viewer-job');if(sel){selectViewerJob(j.id);sel.dispatchEvent(new Event('change'))}},100)}
  else if(act==='copy-rne'){
   let src=j.source||'rne';
   copyTextValue(src==='text'?(j.text_path||''):src==='join'?jobSourceName(j):(j.rne_path||j.rne),
@@ -847,8 +824,7 @@ function paintVariants(){
   :v.enabled?'項目と値を決めると、値ごとのファイルができます。':`切っています。入れると、${E(v.item||'条件の項目')}の値ごとに別のファイルを作ります（いまは1ファイル）。`;
  $('#m-var-say').classList.toggle('is-off',!on);
  let warn=src!=='rne'?'値ごとに分けて出せるのは RNE の対象だけです。'
-  :(cfg.settings?.extract_engine==='dde'?'いまの抽出方式は DDE です。値ごとに分けて出すのは API 方式でだけ動きます（DDE では実行時に止めます）。'
-  :(on&&d.conditions&&d.side_has_item===false?`RNE の表側に「${v.item}」が無いため、サーバー側では指定の値に絞れません。全部の値を受け取ってから分けるので、ファイルは正しくできますが遅くなります（表側に「${v.item}」を置くと速くなります）。`:''));
+  :(on&&d.conditions&&d.side_has_item===false?`RNE の表側に「${v.item}」が無いため、サーバー側では指定の値に絞れません。全部の値を受け取ってから分けるので、ファイルは正しくできますが遅くなります（表側に「${v.item}」を置くと速くなります）。`:'');
  $('#m-var-warn').hidden=!warn;$('#m-var-warn').textContent=warn;
  let cnt=$('#etab-variant-count');cnt.hidden=!on;cnt.textContent=v.values.length;
  // 1ページ目の札: 入なら何ファイルできるか、切ってあっても RNE が条件で絞っていれば先回りして知らせる
@@ -860,8 +836,7 @@ function paintVariants(){
  card.querySelector('.var-open')?.addEventListener('click',()=>setEditorTab('variant'));
 }
 $$('input[name="m-var-method"]').forEach(r=>r.addEventListener('change',()=>varPreview(true)));
-function paintVarMethodCards(){$$('#variant-method-block .var-method-seg label').forEach(l=>l.classList.toggle('on',!!l.querySelector('input')?.checked))}
-$$('input[name="variant-method"]').forEach(r=>r.addEventListener('change',()=>{paintVarMethodCards();dirty()}));
+
 if($('#m-var-add')){
  let add=$('#m-var-add');
  add.addEventListener('keydown',e=>{
@@ -992,8 +967,7 @@ if($('#rule-editor')){$('#rule-editor').addEventListener('input',onRuleFormChang
 $('#rule-apply').onclick=e=>{e.preventDefault();editingRule.name=$('#r-name').value.trim();editingRule.enabled=$('#r-enabled').checked;editingRule.type=$('#r-type').value;editingRule.time=$('#r-time').value;if(editingRule.type==='weekdays')editingRule.weekdays=$$('#r-detail input:checked').map(x=>Number(x.value));if(editingRule.type==='monthly')editingRule.month_days=$('#r-monthdays').value.split(',').map(Number).filter(Number.isFinite);/* 空欄は Number('')===0 になり、0分は「毎分（＝終わるたび）」として走り続ける。
    画面の表示は interval_minutes||60 なので「60分ごと」と出たまま食い違っていた。 */
 if(editingRule.type==='interval')editingRule.interval_minutes=Math.max(1,Number($('#r-interval').value)||60);if(editingRule.type==='specific_dates')editingRule.dates=$('#r-dates').value.split(',').map(x=>x.trim()).filter(Boolean);delete editingRule._new;let i=editing.schedules.findIndex(r=>r.id===editingRule.id);if(i<0)editing.schedules.push(editingRule);else editing.schedules[i]=editingRule;$('#rule-editor').close();rulesRender()};
-function updateEngineUI(){let engine=$('#extract-engine')?.value||'api',api=engine==='api',badge=$('#engine-scope-badge');$$('.engine-card').forEach(c=>{let on=c.dataset.engine===engine;c.classList.toggle('on',on);c.setAttribute('aria-selected',on?'true':'false')});$$('.engine-api-only').forEach(el=>el.style.display=api?'':'none');$$('.engine-dde-only').forEach(el=>el.style.display=api?'none':'');if(badge){badge.textContent=api?'選択中: Navigator API（並列処理を使用）':'選択中: DDE互換（画面制御を使用）';badge.classList.remove('pill-muted');badge.classList.add('pill-active')}}
-function setExtractEngine(v){let s=$('#extract-engine');if(s)s.value=v;updateEngineUI();dirty();refreshMachinePaths()}/* ==== このPCでの実際の場所 ==================================================
+/* ==== このPCでの実際の場所 ==================================================
    設定はBOXのマスターを通じて全PCへ配られる。絶対パスで特定の利用者の
    フォルダーを書くと、別のPCでは他人のフォルダーを指して実行できない。
    実際に走らせるまで気づけなかったので、設定の画面でそのまま見せる。 */
@@ -1009,6 +983,124 @@ function mpWord(x){
 /* 設定の入力欄と「このPCでの状態」は、以前は別々の一覧だった。同じ symnavim.conf が
    画面に2回出て、しかも役割の説明は片方にしか付いていない。1つの設定は1か所にまとめ、
    入力欄そのものに役割・実体・状態を添える。 */
+/* ==== 共通設定（2.1.2 で作り直し。案 H: tests/ui-proposals/2026-10-settings） ==============
+   残す設定を1つの一覧（SETTING_FIELDS）にまとめ、欄の作成・値の反映・推奨と違うかの判定・まとめと左の欄の札を、
+   すべてここから作る。推奨（既定値）の出どころはサーバーの SETTING_DEFAULTS（/api/config の setting_defaults）。
+   設定を足すときは、サーバーの SETTING_DEFAULTS とこの一覧に1行ずつ足す。 */
+const SF=(key,type,o={})=>({key,type,...o});
+const SETTING_FIELDS=[
+ {cat:'run',label:'同時実行ライン',hint:'いくつの対象を同時に取るか（1 直列 · 2〜5 軽め · 6 推奨 · 7〜24 環境しだい）',parts:[SF('api_parallel_lines','int',{min:1,max:24,unit:'ライン'})]},
+ {cat:'run',label:'値ごとに分けて出すときの既定の取り方',hint:'対象の設定で「既定に従う」を選んだ対象が、この取り方で動きます。どちらでも出るファイルは同じです',
+  parts:[SF('variant_method','choice',{options:[['combined','まとめて1回','問い合わせ1回 · 受け取ってから分ける'],['parallel','値ごとに並列','値ごとに同時に問い合わせ · 大きいと速いことがある']]})]},
+ {cat:'run',label:'失敗したときの取り直し',hint:'自動実行が失敗したとき、失敗した対象だけを待ってから取り直します（手動の実行は取り直しません）',
+  parts:[SF('retry_enabled','bool',{text:'自動実行が失敗したら取り直す'}),SF('retry_delay_minutes','int',{min:1,max:180,unit:'分後',when:s=>s.retry_enabled!==false}),SF('retry_max','int',{min:0,max:5,unit:'回まで',when:s=>s.retry_enabled!==false})]},
+ {cat:'run',label:'自動実行の取りこぼし',hint:'予定の時刻にほかの処理が動いていたとき、この時間内なら手が空いてから実行します（0 なら実行しない）',parts:[SF('schedule_catchup_minutes','int',{min:0,max:720,step:5,unit:'分以内なら遅れて実行'})]},
+ {cat:'run',adv:true,label:'ライン起動の間隔',hint:'一斉に起動すると接続が混み合うので、少しずつずらします（0 なら一斉）',parts:[SF('api_worker_stagger_ms','int',{min:0,max:5000,step:100,unit:'ミリ秒'})]},
+ {cat:'run',adv:true,label:'手元の処理のライン',hint:'固定長テキストと結合を同時に流す数。0 なら自動（同時実行ラインに合わせて最大4）',parts:[SF('local_parallel_lines','int',{min:0,max:12,unit:'ライン'})]},
+ {cat:'run',adv:true,label:'結合の待ち合わせ',hint:'材料を作る対象が作成中・まもなく作成なら、それが済んでから結合します',
+  parts:[SF('join_wait_enabled','bool',{text:'材料がそろうのを待ってから結合する'}),SF('join_wait_lookahead_seconds','int',{min:0,max:3600,unit:'秒先の予定まで見る',when:s=>s.join_wait_enabled!==false}),SF('join_wait_max_seconds','int',{min:0,max:86400,unit:'秒まで待つ',when:s=>s.join_wait_enabled!==false})]},
+ {cat:'run',adv:true,label:'ログの大きさ',hint:'app.log がこの大きさを超えたら次のファイルへ送り、古いものは世代数を超えたぶんから消します',parts:[SF('log_max_mb','int',{min:1,max:500,unit:'MB で次へ'}),SF('log_keep','int',{min:0,max:20,unit:'世代残す'})]},
+ {cat:'safe',label:'0件なら公開しない',hint:'取れた行が0件のとき、いまのファイルを差し替えずに残します',parts:[SF('reject_zero_rows','bool',{text:'0件なら、いまのファイルを残す'})]},
+ {cat:'safe',label:'差し替える前の控え',hint:'控えは「場所」の控えの置き場へ取ります',after:()=>refreshMachinePaths(),
+  parts:[SF('backup_enabled','bool',{text:'差し替える前に控えを取る'}),SF('backup_mode','choice',{options:[['generations','世代で残す'],['days','日数で残す'],['both','両方で残す']],when:s=>s.backup_enabled!==false}),
+         SF('backup_generations','int',{min:1,max:9999,unit:'世代',when:s=>s.backup_enabled!==false&&s.backup_mode!=='days'}),
+         SF('backup_retention_days','int',{min:1,max:3650,unit:'日',when:s=>s.backup_enabled!==false&&(s.backup_mode==='days'||s.backup_mode==='both')})]},
+];
+const settingDefaults=()=>cfg?.setting_defaults||{};
+const partShown=(p,st)=>!p.when||p.when(st);
+function partText(p,v){
+ if(p.type==='bool')return v===false?'切':'入';
+ if(p.type==='choice')return (p.options.find(o=>o[0]===v)||[,String(v??'')])[1];
+ return `${Number(v)}${p.unit||''}`;
+}
+const partSame=(p,a,b)=>p.type==='int'?Number(a)===Number(b):p.type==='bool'?(a!==false)===(b!==false):String(a)===String(b);
+/* 推奨と違うか。見えている部品だけで比べる（切ってある取り直しの「分後」は比べない） */
+function fieldDev(f){let st=cfg.settings,d=settingDefaults();return f.parts.some(p=>partShown(p,st)&&p.key in d&&!partSame(p,st[p.key],d[p.key]))}
+const fieldRec=f=>{let d=settingDefaults();return f.parts.filter(p=>partShown(p,d)&&p.key in d).map(p=>partText(p,d[p.key])).join(' · ')};
+const fieldNow=f=>f.parts.filter(p=>partShown(p,cfg.settings)).map(p=>partText(p,cfg.settings[p.key])).join(' · ');
+function partHtml(p){
+ let v=cfg.settings[p.key],id='sf-'+p.key;
+ if(p.type==='bool')return `<label class="sf-tog"><input id="${id}" type="checkbox" ${v===false?'':'checked'}><i aria-hidden="true"></i><span>${E(p.text)}</span></label>`;
+ if(p.type==='choice')return `<div class="var-method-seg sf-seg${p.options.length===2?' is-two':''}" role="radiogroup">${p.options.map(([k,b,sm])=>`<label class="${k===v?'on':''}"><input type="radio" name="${id}" value="${E(k)}" ${k===v?'checked':''}><b>${E(b)}</b>${sm?`<small>${E(sm)}</small>`:''}</label>`).join('')}</div>`;
+ return `<label class="sf-num"><input id="${id}" type="number" min="${p.min}" max="${p.max}" step="${p.step||1}" value="${E(v)}"><em>${E(p.unit||'')}</em></label>`;
+}
+function fieldHtml(f,i){
+ let first=f.parts[0],rest=f.parts.slice(1);
+ return `<div class="sf" data-f="${i}"><div class="sf-l"><b>${E(f.label)}</b><i class="sf-rec"></i><small>${E(f.hint||'')}</small></div>`
+  +`<div class="sf-c"><div class="sf-p" data-k="${first.key}">${partHtml(first)}</div>`
+  +(rest.length?`<div class="sf-row">${rest.map(p=>`<div class="sf-p" data-k="${p.key}">${partHtml(p)}</div>`).join('')}</div>`:'')
+  +`<button type="button" class="textbtn sf-reset" hidden></button></div></div>`;
+}
+function paintField(row){
+ let f=SETTING_FIELDS[Number(row.dataset.f)],st=cfg.settings,dev=fieldDev(f);
+ f.parts.forEach(p=>{let w=row.querySelector(`.sf-p[data-k="${p.key}"]`);if(w)w.hidden=!partShown(p,st)});
+ row.classList.toggle('is-dev',dev);
+ let rec=row.querySelector('.sf-rec');rec.textContent=dev?'推奨と違う':'推奨 '+fieldRec(f);
+ let rs=row.querySelector('.sf-reset');rs.hidden=!dev;rs.textContent=`推奨（${fieldRec(f)}）に戻す`;
+ row.querySelectorAll('.sf-seg label').forEach(l=>l.classList.toggle('on',!!l.querySelector('input')?.checked));
+}
+function setSetting(f,p,value){
+ if(p.type==='int'){let n=Math.round(Number(value));if(!Number.isFinite(n))n=Number(settingDefaults()[p.key]??p.min);value=Math.max(p.min,Math.min(p.max,n))}
+ cfg.settings[p.key]=value;
+}
+function renderSettingFields(){
+ [['#sf-run',x=>x.cat==='run'&&!x.adv],['#sf-run-adv',x=>x.cat==='run'&&x.adv],['#sf-safe',x=>x.cat==='safe']].forEach(([sel,want])=>{
+  let box=$(sel);if(!box)return;
+  box.innerHTML=SETTING_FIELDS.map((f,i)=>want(f)?fieldHtml(f,i):'').join('');
+ });
+ $$('.sf[data-f]').forEach(row=>{
+  let f=SETTING_FIELDS[Number(row.dataset.f)];
+  f.parts.forEach(p=>{
+   let apply=v=>{setSetting(f,p,v);paintAfterSettingChange(f)};
+   if(p.type==='choice')row.querySelectorAll(`input[name="sf-${p.key}"]`).forEach(r=>r.onchange=()=>apply(r.value));
+   else{let inp=row.querySelector('#sf-'+p.key);if(!inp)return;
+    inp.onchange=()=>{apply(p.type==='bool'?inp.checked:inp.value);if(p.type==='int')inp.value=cfg.settings[p.key]}}
+  });
+  row.querySelector('.sf-reset').onclick=()=>{let d=settingDefaults();f.parts.forEach(p=>{if(p.key in d)cfg.settings[p.key]=d[p.key]});
+   renderSettingFields();paintAfterSettingChange(f);toast(`「${f.label}」を推奨に戻しました`)};
+ });
+ let adv=$('#sf-adv');if(adv&&!adv.dataset.bound){adv.dataset.bound='1';adv.addEventListener('toggle',()=>{adv.dataset.touched='1'})}
+ paintSettings();
+}
+function paintAfterSettingChange(f){dirty();paintSettings();f.after?.()}
+function paintSettings(){if(!cfg?.settings)return;$$('.sf[data-f]').forEach(paintField);paintSettingsStatus()}
+/* 区分ごとの状態（まとめ・左の欄の札・区分の見出し）。接続と場所はサーバーの判定（接続情報・API・置き場）をそのまま使う */
+let apiReadinessLast=null,machinePathsLast=null;
+function settingsStatus(){
+ let st={},devOf=cat=>SETTING_FIELDS.filter(f=>f.cat===cat&&fieldDev(f));
+ let lx=loginState,ar=apiReadinessLast;
+ let loginOk=!!(lx&&lx.ok&&(lx.saved||lx.source==='conf'||!lx.needed));
+ st.conn={tone:!lx||!ar?'n':loginOk&&ar.ok?'ok':'ng',chip:!lx||!ar?'確認中':loginOk&&ar.ok?'使えます':'要対応',
+  text:`接続情報 ${lx?(lx.saved?'登録済み':lx.source==='conf'?'共有のファイルから読んでいます':lx.needed?'未登録':'未登録（いまは不要）'):'確認中'} · API ${ar?(ar.ok?'使えます':'使えません'):'確認中'}`};
+ let rows=(machinePathsLast?.rows||[]).filter(x=>x.key in paths&&!PATH_HOME[x.key]);
+ let ng=rows.filter(x=>x.state==='ng'),off=rows.filter(x=>x.role==='unused'||(x.role==='fallback'&&x.state!=='ok')),used=rows.filter(x=>!off.includes(x)&&x.state!=='ng');
+ st.place={tone:!machinePathsLast?'n':ng.length?'ng':'ok',chip:!machinePathsLast?'確認中':ng.length?`要対応 ${ng.length}`:`${used.length}か所OK`,
+  text:!machinePathsLast?'確認中':[ng.length?`要対応: ${ng.map(x=>paths[x.key][0]).join('・')}`:'',used.length?`${used.map(x=>paths[x.key][0]).join('・')} OK`:'',off.length?`${off.length}か所は使っていません`:''].filter(Boolean).join(' · ')};
+ ['run','safe'].forEach(cat=>{let dev=devOf(cat),main=SETTING_FIELDS.filter(f=>f.cat===cat&&!f.adv);
+  st[cat]={tone:dev.length?'warn':'ok',chip:dev.length?`推奨と違う ${dev.length}`:'推奨どおり',dev,
+   text:main.map(f=>`${f.label.replace(/^値ごとに分けて出すときの既定の/,'値ごとの')} ${fieldNow(f)}`).join(' · ')}});
+ return st;
+}
+const SS_ORDER=[['conn','接続'],['place','場所'],['run','動かし方'],['safe','守り']];
+function paintSettingsStatus(){
+ if(!cfg?.settings||!$('#ss-cards'))return;
+ let st=settingsStatus(),ng=SS_ORDER.filter(([k])=>st[k].tone==='ng'),dev=SS_ORDER.reduce((a,[k])=>a+(st[k].dev||[]).length,0);
+ $$('[data-st]').forEach(el=>{let k=el.dataset.st,x=k==='summary'?(ng.length?{tone:'ng',chip:`要対応 ${ng.length}`}:dev?{tone:'warn',chip:`推奨と違う ${dev}`}:null):st[k];
+  el.className='sn-st'+(x?' is-'+x.tone:'');el.textContent=x?x.chip:''});
+ $$('[data-st-pill]').forEach(el=>{let x=st[el.dataset.stPill];if(!x)return;el.className='pill sn-pill is-'+x.tone;el.textContent=x.chip});
+ $('#ss-lead').textContent=ng.length?`直すところがあります: ${ng.map(x=>x[1]).join('・')}`:dev?`直すところはありません · 推奨と違う項目が ${dev} つあります`:'直すところはありません · すべて推奨どおりです';
+ $('#ss-cards').innerHTML=SS_ORDER.map(([k,t])=>{let x=st[k];
+  return `<button type="button" class="ss-card is-${x.tone}" data-go="${k}"><span class="sn-st is-${x.tone}">${E(x.chip)}</span><b>${t}</b><small>${E(x.text)}</small>`
+   +((x.dev||[]).length?`<em>推奨と違う: ${x.dev.map(f=>E(f.label)).join('・')}</em>`:'')+`<i class="ss-go">開く ›</i></button>`}).join('');
+ $$('#ss-cards .ss-card').forEach(b=>b.onclick=()=>document.querySelector(`#settings-nav .settings-navbtn[data-cat="${b.dataset.go}"]`)?.click());
+ let adv=SETTING_FIELDS.filter(f=>f.adv),advDev=adv.filter(fieldDev);
+ let as=$('#sf-adv-sum');if(as)as.textContent=advDev.length?`推奨と違う: ${advDev.map(f=>f.label).join('・')}`:'すべて推奨どおり';
+ let ad=$('#sf-adv');if(ad&&advDev.length&&!ad.dataset.touched)ad.open=true;
+}
+/* 置き場の欄（接続情報の取り込み元は「接続」へ、ほかは「場所」へ） */
+function pathRowsHtml(want){
+ return Object.entries(paths).filter(([k])=>want(k)).map(([k,a])=>`<label class="pf-row" id="pf-${k}"><div class="pf-top"><b>${a[0]}</b><i class="pf-badge">確認中</i></div><div class="browse"><input id="${k}" value="${E(cfg[k]||'')}"><div class="path-actions">${['symnavim_conf','accdb_template'].includes(k)?`<button class="pathcheck verify-btn" data-k="${k}" type="button">確認</button>`:''}<button class="pathpick browse-btn" data-k="${k}" type="button">参照</button></div></div><div class="pf-note"></div></label>`).join('');
+}
 let mpTimer=null;
 async function loadMachinePaths(){
  let box=$('#pathform');if(!box)return;
@@ -1034,12 +1126,13 @@ async function loadMachinePaths(){
     +(x.note?`<small>${E(x.note)}</small>`:(x.why?`<small>${E(x.why)}</small>`:''))
     +(x.foreign?`<button type="button" class="secondary mp-fix" data-k="${E(x.key)}">このPCの場所へ直す</button>`:'');
   });
-  // 区切りは1本だけ。ここから下は、いまの抽出方式では読まれない。
+  // 区切りは1本だけ。ここから下は、いまの登録では読まれない。
   let div=$('#pf-divider');
   if(div){
    if(firstUnused===null)div.hidden=true;
    else{div.hidden=false;div.style.order=firstUnused*2-1}
   }
+  machinePathsLast=d;paintSettingsStatus();
   let fb=$('#mp-fixed');
   if(fb)fb.innerHTML=(d.fixed||[]).map(x=>`<div class="mp-row is-fix"><i>固定</i><div class="mp-main">`
     +`<b>${E(x.label)}</b><code class="mp-real" title="${E(x.path)}">${E(x.path)}</code>`
@@ -1053,12 +1146,10 @@ async function loadMachinePaths(){
  }catch{let st=$('#mp-state');if(st){st.textContent='確認できませんでした';st.className='pill pill-ng'}}
 }
 /* 「もう一度調べる」を押さないと現状が分からない、という状態を無くす。設定を触った直後・
-   抽出方式を変えた直後・保存した直後に、まとめて1回だけ調べ直す。 */
+   保存した直後に、まとめて1回だけ調べ直す。 */
 function refreshMachinePaths(delay){clearTimeout(mpTimer);mpTimer=setTimeout(loadMachinePaths,delay||400)}
 if($('#mp-reload'))$('#mp-reload').onclick=()=>{clearTimeout(mpTimer);loadMachinePaths()};
-/* 「定期監視（3秒/2秒/1秒）」はもう動いていない。動かない設定を並べ続けると、
-   触っても何も変わらない設定を探し続けることになる。実際に効く1つだけを出す。 */
-function updateHideProfileUI(){let p=$('#hide-profile').value,custom=p==='custom';$('#hide-action-duration-wrap').style.display=custom?'grid':'none';let descriptions={action_only:'0.35秒だけ試す。いちばん軽い',balanced:'0.5秒。ふつうはこれで隠しきれる',standard:'0.6秒。隠れ残るときに',custom:'0.2〜3秒で指定する'};$('#hide-profile').title=descriptions[p]||''}/* 設定の全量保存は、送った内容で対象も実績も置き換える。画面を2つ開いていると、
+/* 設定の全量保存は、送った内容で対象も実績も置き換える。画面を2つ開いていると、
    古い写しを持ったタブが相手の追加した対象を消していた。版を持ち回り、サーバーに
    食い違いを断ってもらう（409）。断られたら黙って読み直す。 */
 async function putConfig(body){
@@ -1070,30 +1161,15 @@ async function putConfig(body){
  }catch{}
  return r;
 }
-async function init(){cfg=await fetch('/api/config').then(r=>r.json());cfg.jobs.forEach(j=>{j.id=j.id||uid();j.name=j.name||j.rne.replace(/\.RNE$/i,'');j.schedules=j.schedules||[]});$('#pathform').innerHTML=Object.entries(paths).map(([k,a])=>k==='navigator_api_dll'
-  ?`<div class="pf-row pf-ro" id="pf-${k}"><div class="pf-top"><b>${a[0]}</b><i class="pf-badge">確認中</i></div><p class="pf-ro-note">この設定は「抽出方式」の中で指定します<button type="button" class="ghost pf-goto" data-cat="engine">抽出方式を開く</button></p><div class="pf-note"></div></div>`
-  :`<label class="pf-row" id="pf-${k}"><div class="pf-top"><b>${a[0]}</b><i class="pf-badge">確認中</i></div><div class="browse"><input id="${k}" value="${E(cfg[k]||'')}"><div class="path-actions">${['symnavim_conf','symnavim_def','accdb_template'].includes(k)?`<button class="pathcheck verify-btn" data-k="${k}" type="button">確認</button>`:''}<button class="pathpick browse-btn" data-k="${k}" type="button">参照</button></div></div><div class="pf-note"></div></label>`).join('')
- +'<p class="pf-divider" id="pf-divider" hidden>いまの抽出方式では使わない設定</p>';
+async function init(){cfg=await fetch('/api/config').then(r=>r.json());cfg.jobs.forEach(j=>{j.id=j.id||uid();j.name=j.name||j.rne.replace(/\.RNE$/i,'');j.schedules=j.schedules||[]});$('#pathform').innerHTML=pathRowsHtml(k=>!PATH_HOME[k])+'<p class="pf-divider" id="pf-divider" hidden>いまは使っていない場所</p>';if($('#pathform-conn'))$('#pathform-conn').innerHTML=pathRowsHtml(k=>PATH_HOME[k]==='#pathform-conn');
 // 参照ボタンは .pathpick で名指しする。data-k だけで拾うと、確認ボタンが先に居る4件で
 // 参照の代わりに確認へ結びついてしまい、参照が何も起きなくなる。
-Object.entries(paths).filter(([k])=>k!=='navigator_api_dll').forEach(([k,a])=>{$('#'+k).onchange=e=>{cfg[k]=e.target.value;dirty();refreshMachinePaths()};document.querySelector(`.pathpick[data-k="${k}"]`).onclick=async()=>{let p=await browse(a[1],cfg[k],a[2]);if(p){cfg[k]=p;$('#'+k).value=p;$('#'+k)._refreshPathControl?.();dirty();refreshMachinePaths()}}});
-$$('.pf-goto').forEach(b=>b.onclick=()=>document.querySelector(`#settings-nav .settings-navbtn[data-cat="${b.dataset.cat}"]`)?.click());$('#extract-engine').value=cfg.settings.extract_engine||'api';updateEngineUI();$('#dde').value=cfg.settings.dde_timeout_seconds;$('#wait').value=cfg.settings.output_wait_seconds;$('#gens').value=cfg.settings.backup_generations||3;if($('#backup-enabled'))$('#backup-enabled').checked=cfg.settings.backup_enabled!==false;if($('#backup-mode'))$('#backup-mode').value=cfg.settings.backup_mode||'generations';if($('#backup-retention-days'))$('#backup-retention-days').value=Number(cfg.settings.backup_retention_days||30);if($('#schedule-catchup'))$('#schedule-catchup').value=Number(cfg.settings.schedule_catchup_minutes??30);if($('#join-wait-enabled')){$('#join-wait-enabled').checked=cfg.settings.join_wait_enabled!==false;$('#join-wait-lookahead').value=Number(cfg.settings.join_wait_lookahead_seconds??60);$('#join-wait-max').value=Number(cfg.settings.join_wait_max_seconds??600);updateJoinWaitOptions()}if($('#worker-stagger'))$('#worker-stagger').value=Number(cfg.settings.api_worker_stagger_ms??700);if($('#local-lines')){$('#local-lines').value=Number(cfg.settings.local_parallel_lines??0);$('#local-lines').title='0なら自動（同時実行ラインに合わせて最大4ライン）。RNEとは別枠で、同時に流れます。'}updateBackupOptions();if($('#api-lines')){$('#api-lines').value=Math.max(1,Math.min(24,Number(cfg.settings.api_parallel_lines||6)));$('#api-lines').title='既定は6ライン、設定可能範囲は1～24ラインです。変更した時点で保存されます。'}$('#zero').checked=cfg.settings.reject_zero_rows;$$('input[name="variant-method"]').forEach(r=>r.checked=r.value===varDefaultMethod());paintVarMethodCards();if($('#retry-enabled')){$('#retry-enabled').checked=cfg.settings.retry_enabled!==false;$('#retry-delay').value=Number(cfg.settings.retry_delay_minutes??5);$('#retry-max').value=Number(cfg.settings.retry_max??1);updateRetryOptions()}if($('#log-max-mb')){$('#log-max-mb').value=Number(cfg.settings.log_max_mb??10);$('#log-keep').value=Number(cfg.settings.log_keep??5)}let hp=cfg.settings.symnavi_hide_profile||'balanced';if(hp==='light')hp='action_only';$('#hide-profile').value=hp;$('#hide-action-duration').value=Number(cfg.settings.symnavi_hide_action_duration_seconds||0.5);updateHideProfileUI();Object.keys(paths).filter(k=>k!=='navigator_api_dll').forEach(k=>enhancePathInput($('#'+k),paths[k][1]));let dllInput=$('#navigator-api-dll');if(dllInput){dllInput.value=cfg.navigator_api_dll||'';dllInput.oninput=()=>{cfg.navigator_api_dll=dllInput.value;dirty();
+Object.entries(paths).forEach(([k,a])=>{$('#'+k).onchange=e=>{cfg[k]=e.target.value;dirty();refreshMachinePaths()};document.querySelector(`.pathpick[data-k="${k}"]`).onclick=async()=>{let p=await browse(a[1],cfg[k],a[2]);if(p){cfg[k]=p;$('#'+k).value=p;$('#'+k)._refreshPathControl?.();dirty();refreshMachinePaths()}}});
+renderSettingFields();Object.keys(paths).forEach(k=>enhancePathInput($('#'+k),paths[k][1]));let dllInput=$('#navigator-api-dll');if(dllInput){dllInput.value=cfg.navigator_api_dll||'';dllInput.oninput=()=>{cfg.navigator_api_dll=dllInput.value;dirty();
    let v=$('#api-readiness');if(v)v.className='api-readiness is-stale';};}let dllPick=$('#api-dll-pick');if(dllPick)dllPick.onclick=async()=>{let q=await browse('file',dllInput.value,paths.navigator_api_dll[2]);if(q){dllInput.value=q;cfg.navigator_api_dll=q;dirty();await testNavigatorApi()}};let dllCheck=$('#api-dll-check');if(dllCheck)dllCheck.onclick=()=>testNavigatorApi();if(!Array.isArray(cfg.navigator_api_search_roots))cfg.navigator_api_search_roots=DLL_DEFAULT_ROOTS.slice();renderDllRoots();loadDllRequirement();fillSuggestions();loadColumns();render();loadMachinePaths();loadFreshness();saveState('設定を読み込みました／変更はすべて自動で保存されます','');$$('.pathcheck').forEach(b=>b.onclick=()=>checkConfiguredPath(b.dataset.k))}
-['search','filter-enabled','filter-schedule','sort'].forEach(k=>$('#'+k).addEventListener(k==='search'?'input':'change',render));$$('.sortable').forEach(h=>h.onclick=()=>{$('#sort').value=h.dataset.sort;sortDir*=-1;render()});$('#add').onclick=()=>openEditor(null);$('#select-visible').onclick=()=>{setAllSelected(true)};$('#clear-selection').onclick=()=>{setAllSelected(false)};if($('#export-selected'))$('#export-selected').onclick=()=>exportJobs($$('#jobs-body tr.selected').map(tr=>tr.dataset.id));function resetProgressView(){let q=$('#queue-summary');if(q){q.hidden=true;q.innerHTML=''}let pr=$('#p-results');if(pr){pr.hidden=true;pr.innerHTML=''}let b=$('#p-parallel-lines');if(b){b.hidden=true;b.innerHTML=''}document.querySelector('.current-box')?.classList.remove('parallel-hidden');$('#p-steps')?.classList.remove('parallel-hidden');$('#p-count').textContent='全体 0 / 0';$('#p-percent').textContent='0%';$('#p-bar').style.width='0%';$('#p-job').textContent='準備中';$('#p-output').textContent='';}async function runJobs(ids){resetProgressView();showWaiting(currentEngine()==='api'?'API処理を開始しています':'DDE処理を開始しています',currentEngine()==='api'?'APIセッションと実行対象を準備しています...':'SymfoNavi起動とDDE接続を準備しています...','engine');let r=await fetch('/api/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_ids:ids,parallel_lines:Math.max(1,Math.min(24,Number($('#api-lines')?.value||6)||6))})}),d=await r.json();hideWaiting();if(r.ok){toast(`実行キュー ${d.position}番へ追加しました`);await loadCommandQueue()}else toast(d.error)}$('#run-all').onclick=()=>runJobs(null);$('#run-selected').onclick=()=>{let ids=$$('#jobs-body tr.selected').map(tr=>tr.dataset.id);if(ids.length)runJobs(ids)};/* 保存ボタンの代わりに、値が変わったところで保存する。数値欄は打っている途中に
+['search','filter-enabled','filter-schedule','sort'].forEach(k=>$('#'+k).addEventListener(k==='search'?'input':'change',render));$$('.sortable').forEach(h=>h.onclick=()=>{$('#sort').value=h.dataset.sort;sortDir*=-1;render()});$('#add').onclick=()=>openEditor(null);$('#select-visible').onclick=()=>{setAllSelected(true)};$('#clear-selection').onclick=()=>{setAllSelected(false)};if($('#export-selected'))$('#export-selected').onclick=()=>exportJobs($$('#jobs-body tr.selected').map(tr=>tr.dataset.id));function resetProgressView(){let q=$('#queue-summary');if(q){q.hidden=true;q.innerHTML=''}let pr=$('#p-results');if(pr){pr.hidden=true;pr.innerHTML=''}let b=$('#p-parallel-lines');if(b){b.hidden=true;b.innerHTML=''}document.querySelector('.current-box')?.classList.remove('parallel-hidden');$('#p-steps')?.classList.remove('parallel-hidden');$('#p-count').textContent='全体 0 / 0';$('#p-percent').textContent='0%';$('#p-bar').style.width='0%';$('#p-job').textContent='準備中';$('#p-output').textContent='';}async function runJobs(ids){resetProgressView();showWaiting('処理を開始しています','APIセッションと実行対象を準備しています...','engine');let r=await fetch('/api/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_ids:ids,parallel_lines:Math.max(1,Math.min(24,Number(cfg?.settings?.api_parallel_lines)||6))})}),d=await r.json();hideWaiting();if(r.ok){toast(`実行キュー ${d.position}番へ追加しました`);await loadCommandQueue()}else toast(d.error)}$('#run-all').onclick=()=>runJobs(null);$('#run-selected').onclick=()=>{let ids=$$('#jobs-body tr.selected').map(tr=>tr.dataset.id);if(ids.length)runJobs(ids)};/* 保存ボタンの代わりに、値が変わったところで保存する。数値欄は打っている途中に
    何度も飛ばさないよう、まとめて少し待ってから送る（scheduleSave）。 */
-['dde','wait','schedule-catchup','worker-stagger','hide-action-duration','join-wait-lookahead','join-wait-max','local-lines'].forEach(id=>{let e=$('#'+id);if(e){e.addEventListener('input',dirty);e.addEventListener('change',dirty)}});
-/* 待たない設定にしたときは、待ち方の欄も伏せる。効かない欄を出したままにすると、
-   入れた値が効いていると思わせてしまう。 */
-function updateJoinWaitOptions(){
- let on=$('#join-wait-enabled')?.checked!==false,box=$('#join-wait-options');
- if(box){box.style.display=on?'':'none'}
-}
-if($('#join-wait-enabled'))$('#join-wait-enabled').onchange=()=>{updateJoinWaitOptions();dirty()};
-['zero','extract-engine','hide-profile','backup-mode','backup-enabled'].forEach(id=>{let e=$('#'+id);if(e)e.addEventListener('change',dirty)});
-if($('#backup-enabled'))$('#backup-enabled').addEventListener('change',()=>refreshMachinePaths());
-['retry-delay','retry-max','log-max-mb','log-keep'].forEach(id=>{let e=$('#'+id);if(e){e.addEventListener('input',dirty);e.addEventListener('change',dirty)}});
-if($('#retry-enabled'))$('#retry-enabled').addEventListener('change',()=>{updateRetryOptions();dirty()});
-function updateRetryOptions(){let on=$('#retry-enabled')?.checked;let box=$('#retry-options');if(box)box.style.display=on?'':'none'}$('#validate').onclick=async()=>{showWaiting(currentEngine()==='api'?'API実行前診断中':'DDE実行前診断中','実際の設定値と配置を統合して確認しています...','engine');try{let r=await fetch('/api/validate',{method:'POST'}),d=await r.json();if(!r.ok)throw Error(d.error||'診断に失敗しました');renderDiagnostics(d);let dlg=$('#diagnostic-dialog');if(dlg&&!dlg.open)dlg.showModal()}catch(e){toast(e.message)}finally{hideWaiting()}};function renderDiagnostics(d){$('#check-scope').textContent=d.search_scope||'';let state=$('#diagnostic-state');state.textContent=d.summary||'';state.className='diag-state '+(d.ok?'is-ok':'is-ng');let c=d.counts||{};$('#diagnostic-counts').innerHTML=`<span class="dc-ok">正常 ${c.ok||0}</span><span class="dc-warn">注意 ${c.warning||0}</span><span class="dc-ng">要修正 ${c.error||0}</span>`;let groups={};(d.checks||[]).forEach((x,i)=>(groups[x.group]||(groups[x.group]=[])).push({...x,_i:i}));$('#checks').innerHTML=Object.entries(groups).map(([g,items])=>`<section class="diag-group"><h3>${E(g)}<small>${items.length}項目</small></h3>${items.map(x=>`<div class="diag-row ${E(x.level)}"><i>${x.level==='ok'?'OK':x.level==='warning'?'注意':'要修正'}</i><div><b>${E(x.label)}</b><span>${E(x.detail)}</span></div>${x.candidates?.length?`<button class="fix secondary" data-i="${x._i}">候補 ${x.candidates.length}件</button>`:''}${x.item==='login'&&x.level!=='ok'?'<button class="login-go secondary" type="button">接続情報を開く</button>':''}</div>`).join('')}</section>`).join('');$$('#checks .fix').forEach(b=>b.onclick=()=>showPathResult(d.checks[Number(b.dataset.i)]));$$('#checks .login-go').forEach(b=>b.onclick=()=>{$('#diagnostic-dialog')?.close();openLoginDialog(false)})}if($('#diagnostic-close'))$('#diagnostic-close').onclick=()=>$('#diagnostic-dialog').close();if($('#diagnostic-close-foot'))$('#diagnostic-close-foot').onclick=()=>$('#diagnostic-dialog').close();let commandQueueOpen=false;async function loadCommandQueue(){try{let d=await fetch('/api/execution-queue',{cache:'no-store'}).then(r=>r.json()),list=$('#cq-list'),summary=$('#cq-summary');applyRowQueueProgress(d);if(!list||!summary)return;
+$('#validate').onclick=async()=>{showWaiting('実行前診断中','実際の設定値と配置を統合して確認しています...','engine');try{let r=await fetch('/api/validate',{method:'POST'}),d=await r.json();if(!r.ok)throw Error(d.error||'診断に失敗しました');renderDiagnostics(d);let dlg=$('#diagnostic-dialog');if(dlg&&!dlg.open)dlg.showModal()}catch(e){toast(e.message)}finally{hideWaiting()}};function renderDiagnostics(d){$('#check-scope').textContent=d.search_scope||'';let state=$('#diagnostic-state');state.textContent=d.summary||'';state.className='diag-state '+(d.ok?'is-ok':'is-ng');let c=d.counts||{};$('#diagnostic-counts').innerHTML=`<span class="dc-ok">正常 ${c.ok||0}</span><span class="dc-warn">注意 ${c.warning||0}</span><span class="dc-ng">要修正 ${c.error||0}</span>`;let groups={};(d.checks||[]).forEach((x,i)=>(groups[x.group]||(groups[x.group]=[])).push({...x,_i:i}));$('#checks').innerHTML=Object.entries(groups).map(([g,items])=>`<section class="diag-group"><h3>${E(g)}<small>${items.length}項目</small></h3>${items.map(x=>`<div class="diag-row ${E(x.level)}"><i>${x.level==='ok'?'OK':x.level==='warning'?'注意':'要修正'}</i><div><b>${E(x.label)}</b><span>${E(x.detail)}</span></div>${x.candidates?.length?`<button class="fix secondary" data-i="${x._i}">候補 ${x.candidates.length}件</button>`:''}${x.item==='login'&&x.level!=='ok'?'<button class="login-go secondary" type="button">接続情報を開く</button>':''}</div>`).join('')}</section>`).join('');$$('#checks .fix').forEach(b=>b.onclick=()=>showPathResult(d.checks[Number(b.dataset.i)]));$$('#checks .login-go').forEach(b=>b.onclick=()=>{$('#diagnostic-dialog')?.close();openLoginDialog(false)})}if($('#diagnostic-close'))$('#diagnostic-close').onclick=()=>$('#diagnostic-dialog').close();if($('#diagnostic-close-foot'))$('#diagnostic-close-foot').onclick=()=>$('#diagnostic-dialog').close();let commandQueueOpen=false;async function loadCommandQueue(){try{let d=await fetch('/api/execution-queue',{cache:'no-store'}).then(r=>r.json()),list=$('#cq-list'),summary=$('#cq-summary');applyRowQueueProgress(d);if(!list||!summary)return;
  let st=latestStatus||{},running=!!st.running;
  // 実行中バッチの対象(job)単位の実状態。バッジ件数を実進捗に連動させる。
  let jobDone=running?(st.queue_completed_ids||[]).length:0,jobFail=running?(st.queue_failed_ids||[]).length:0;
@@ -1126,7 +1202,7 @@ function updateRetryOptions(){let on=$('#retry-enabled')?.checked;let box=$('#re
   `<span class="cq-badge cq-manual">即実行 ${manualJobs}件</span>`;}
  list.innerHTML=d.items.length?d.items.map(x=>{
   let stateInfo=x.state==='running'?(running?`処理中 ${jobRun} / 完了 ${jobDone}${jobFail?' / 失敗 '+jobFail:''} / 待機 ${batchWait}`:'処理中'):`${x.position}番目に実行予定`;
-  return `<div class="cq-row ${x.state}"><span class="cq-pos">${x.state==='running'?'実行中':x.position+'番'}</span><div class="cq-main"><b>${E((x.job_names||[]).join(' / '))}</b><small>${x.state==='running'?E(stateInfo):('登録 '+E(x.enqueued_at||'')+' / '+(x.count||0)+'対象')}</small></div><span class="cq-mode">${x.engine==='dde'?'DDE 1件ずつ':x.parallel_lines>1?x.parallel_lines+'ライン':'API 1ライン'}</span><div class="cq-actions">${x.state==='waiting'?`<button class="secondary cq-up" data-id="${x.id}">上へ</button><button class="secondary cq-down" data-id="${x.id}">下へ</button><button class="danger cq-delete" data-id="${x.id}">解除</button>`:'<span>処理中は変更不可</span>'}</div></div>`}).join(''):'<div class="cq-empty">実行待ちのキューはありません</div>';list.hidden=!commandQueueOpen;$$('.cq-up,.cq-down').forEach(b=>b.onclick=async()=>{await fetch(`/api/execution-queue/${b.dataset.id}/move`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({direction:b.classList.contains('cq-up')?'up':'down'})});loadCommandQueue()});$$('.cq-delete').forEach(b=>b.onclick=async()=>{let r=await fetch(`/api/execution-queue/${b.dataset.id}`,{method:'DELETE'});if(r.ok)toast('実行キューから解除しました');loadCommandQueue()})}catch{}}{const cqToggle=$('#cq-toggle');if(cqToggle)cqToggle.onclick=()=>{commandQueueOpen=!commandQueueOpen;cqToggle.textContent=commandQueueOpen?'閉じる':'一覧';loadCommandQueue()};}function logLevel(line){return line.includes('[ERROR]')?'error':line.includes('[WARNING]')?'warning':'info'}function buildLogTree(text){let lines=(text||'').split(/\r?\n/).filter(Boolean),groups=[],current=null,job=null;for(let line of lines){if(line.includes('処理開始 trigger=')){current={title:line.slice(0,19)+'  実行指令',lines:[],jobs:[]};groups.push(current);job=null}else if(line.includes('設定保存 job=')){current={title:line.slice(0,19)+'  設定保存',lines:[line],jobs:[]};groups.push(current);job=null;continue}if(!current){current={title:'その他のログ',lines:[],jobs:[]};groups.push(current)}let m=line.match(/(?:PIPELINE|JOB_RESULT) job=([^ ]+)/);if(m){job=current.jobs.find(x=>x.name===m[1])||{name:m[1],lines:[]};if(!current.jobs.includes(job))current.jobs.push(job)}if(job)job.lines.push(line);else current.lines.push(line);if(line.includes('正常終了')||line.includes('異常終了'))job=null}return groups}function logLines(lines){return `<div class="log-lines">${lines.map(x=>`<div class="log-line ${logLevel(x)}">${E(x)}</div>`).join('')}</div>`}function renderLogTree(text){let groups=buildLogTree(text);renderedLogGroups=groups.slice().reverse();$('#log').innerHTML=renderedLogGroups.length?renderedLogGroups.map((g,gi)=>`<details class="log-action" ${gi===0?'open':''} data-gi="${gi}"><summary><span><b>実行指令 ${renderedLogGroups.length-gi}</b> ${E(g.title)}</span><small>${g.jobs.length}ファイル</small><span class="log-summary-actions"><button class="secondary log-copy-full" data-gi="${gi}">全文コピー</button><button class="secondary log-copy-summary" data-gi="${gi}">要約コピー</button><button class="secondary danger-lite log-delete-group" data-gi="${gi}">削除</button></span></summary>${g.lines.length?logLines(g.lines):''}${g.jobs.map(j=>`<details class="log-job"><summary>${E(j.name)} <small>${j.lines.length}行</small></summary>${logLines(j.lines)}</details>`).join('')}</details>`).join(''):'<div class="empty">ログなし</div>';$$('.log-copy-full').forEach(b=>b.onclick=e=>{e.preventDefault();e.stopPropagation();let g=renderedLogGroups[Number(b.dataset.gi)];textToClipboard(groupText(g,'full'),'選択した実行指令ログをコピーしました')});$$('.log-copy-summary').forEach(b=>b.onclick=e=>{e.preventDefault();e.stopPropagation();let g=renderedLogGroups[Number(b.dataset.gi)];textToClipboard(groupText(g,'summary'),'選択した実行指令の要約ログをコピーしました')});$$('.log-delete-group').forEach(b=>b.onclick=async e=>{e.preventDefault();e.stopPropagation();let g=renderedLogGroups[Number(b.dataset.gi)],txt=groupText(g,'full');if(!confirm('この実行指令ログを削除しますか？'))return;let r=await fetch('/api/log/delete-lines',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({lines:txt.split(/\n/)})});if(r.ok){toast('選択した実行指令ログを削除しました');await loadLog()}})}let latestLogText='',renderedLogGroups=[];async function loadLog(){let d=await fetch('/api/log').then(r=>r.json());latestLogText=d.text||'';renderLogTree(latestLogText);renderLogSize(d)}
+  return `<div class="cq-row ${x.state}"><span class="cq-pos">${x.state==='running'?'実行中':x.position+'番'}</span><div class="cq-main"><b>${E((x.job_names||[]).join(' / '))}</b><small>${x.state==='running'?E(stateInfo):('登録 '+E(x.enqueued_at||'')+' / '+(x.count||0)+'対象')}</small></div><span class="cq-mode">${x.parallel_lines>1?x.parallel_lines+'ライン':'1ライン'}</span><div class="cq-actions">${x.state==='waiting'?`<button class="secondary cq-up" data-id="${x.id}">上へ</button><button class="secondary cq-down" data-id="${x.id}">下へ</button><button class="danger cq-delete" data-id="${x.id}">解除</button>`:'<span>処理中は変更不可</span>'}</div></div>`}).join(''):'<div class="cq-empty">実行待ちのキューはありません</div>';list.hidden=!commandQueueOpen;$$('.cq-up,.cq-down').forEach(b=>b.onclick=async()=>{await fetch(`/api/execution-queue/${b.dataset.id}/move`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({direction:b.classList.contains('cq-up')?'up':'down'})});loadCommandQueue()});$$('.cq-delete').forEach(b=>b.onclick=async()=>{let r=await fetch(`/api/execution-queue/${b.dataset.id}`,{method:'DELETE'});if(r.ok)toast('実行キューから解除しました');loadCommandQueue()})}catch{}}{const cqToggle=$('#cq-toggle');if(cqToggle)cqToggle.onclick=()=>{commandQueueOpen=!commandQueueOpen;cqToggle.textContent=commandQueueOpen?'閉じる':'一覧';loadCommandQueue()};}function logLevel(line){return line.includes('[ERROR]')?'error':line.includes('[WARNING]')?'warning':'info'}function buildLogTree(text){let lines=(text||'').split(/\r?\n/).filter(Boolean),groups=[],current=null,job=null;for(let line of lines){if(line.includes('処理開始 trigger=')){current={title:line.slice(0,19)+'  実行指令',lines:[],jobs:[]};groups.push(current);job=null}else if(line.includes('設定保存 job=')){current={title:line.slice(0,19)+'  設定保存',lines:[line],jobs:[]};groups.push(current);job=null;continue}if(!current){current={title:'その他のログ',lines:[],jobs:[]};groups.push(current)}let m=line.match(/(?:PIPELINE|JOB_RESULT) job=([^ ]+)/);if(m){job=current.jobs.find(x=>x.name===m[1])||{name:m[1],lines:[]};if(!current.jobs.includes(job))current.jobs.push(job)}if(job)job.lines.push(line);else current.lines.push(line);if(line.includes('正常終了')||line.includes('異常終了'))job=null}return groups}function logLines(lines){return `<div class="log-lines">${lines.map(x=>`<div class="log-line ${logLevel(x)}">${E(x)}</div>`).join('')}</div>`}function renderLogTree(text){let groups=buildLogTree(text);renderedLogGroups=groups.slice().reverse();$('#log').innerHTML=renderedLogGroups.length?renderedLogGroups.map((g,gi)=>`<details class="log-action" ${gi===0?'open':''} data-gi="${gi}"><summary><span><b>実行指令 ${renderedLogGroups.length-gi}</b> ${E(g.title)}</span><small>${g.jobs.length}ファイル</small><span class="log-summary-actions"><button class="secondary log-copy-full" data-gi="${gi}">全文コピー</button><button class="secondary log-copy-summary" data-gi="${gi}">要約コピー</button><button class="secondary danger-lite log-delete-group" data-gi="${gi}">削除</button></span></summary>${g.lines.length?logLines(g.lines):''}${g.jobs.map(j=>`<details class="log-job"><summary>${E(j.name)} <small>${j.lines.length}行</small></summary>${logLines(j.lines)}</details>`).join('')}</details>`).join(''):'<div class="empty">ログなし</div>';$$('.log-copy-full').forEach(b=>b.onclick=e=>{e.preventDefault();e.stopPropagation();let g=renderedLogGroups[Number(b.dataset.gi)];textToClipboard(groupText(g,'full'),'選択した実行指令ログをコピーしました')});$$('.log-copy-summary').forEach(b=>b.onclick=e=>{e.preventDefault();e.stopPropagation();let g=renderedLogGroups[Number(b.dataset.gi)];textToClipboard(groupText(g,'summary'),'選択した実行指令の要約ログをコピーしました')});$$('.log-delete-group').forEach(b=>b.onclick=async e=>{e.preventDefault();e.stopPropagation();let g=renderedLogGroups[Number(b.dataset.gi)],txt=groupText(g,'full');if(!confirm('この実行指令ログを削除しますか？'))return;let r=await fetch('/api/log/delete-lines',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({lines:txt.split(/\n/)})});if(r.ok){toast('選択した実行指令ログを削除しました');await loadLog()}})}let latestLogText='',renderedLogGroups=[];async function loadLog(){let d=await fetch('/api/log').then(r=>r.json());latestLogText=d.text||'';renderLogTree(latestLogText);renderLogSize(d)}
 /* ログの大きさと、いま読んでいる範囲を出す。全文を読まなくなったので、
    「これで全部なのか」が分からないままにしない。 */
 function renderLogSize(d){
@@ -1159,9 +1235,9 @@ function textToClipboard(text,msg){text=stripLogNoise(text);if(!text?.trim())ret
    状態から始める（自分で押した実行まで畳むと、終わったときの結果が出てこない）。 */
 /* 実際に流れる順番と同じ並びにする。ここが実行順とずれていると、進捗が
    「ファイル生成・安定確認」から「抽出画面を閉じる」へ戻ったように見える。 */
-const stepOrder=['prepare','launch','dde','ready','open','save','wait','close','export','publish','complete'];function showProgress(){let d=$('#progress-dialog');if(!d.open)d.showModal()}function hhmmss(v){v=Math.floor(Math.max(0,Number(v)||0));return [Math.floor(v/3600),Math.floor((v%3600)/60),v%60].map(x=>String(x).padStart(2,'0')).join(':')}
+const stepOrder=['prepare','launch','connect','ready','open','save','wait','close','export','publish','complete'];function showProgress(){let d=$('#progress-dialog');if(!d.open)d.showModal()}function hhmmss(v){v=Math.floor(Math.max(0,Number(v)||0));return [Math.floor(v/3600),Math.floor((v%3600)/60),v%60].map(x=>String(x).padStart(2,'0')).join(':')}
 /* 終わった対象の結果をその場で出す。ログを開かないと件数も所要も分からない、という状態にしない。
-   直列（DDE / API 1ライン）はライン表示が無いぶん、ここが唯一の途中経過になる。 */
+   ライン表示が無いとき（ラインへ入る前）は、ここが唯一の途中経過になる。 */
 function renderRunResults(list){
  let box=$('#p-results');if(!box)return;
  if(!list.length){box.hidden=true;box.innerHTML='';return}
@@ -1172,7 +1248,7 @@ function renderRunResults(list){
    // 値ごとに分けて出した対象は、値ごとのファイルと成否を下に並べる（どの値が失敗したかを探させない）
    +(x.variants?`<ul class="pres-vars">${x.variants.map(v=>`<li class="${v.ok?'is-ok':'is-error'}"><i>${v.ok?'✓':'×'}</i><b>${E(v.value)}</b><span title="${E(v.target||v.error||'')}">${E(v.ok?String(v.target).split(/[\\/]/).pop()+` · ${Number(v.rows||0).toLocaleString()}件`+(v.checked===false?'（絞れたかは確かめられません）':''):v.error)}</span></li>`).join('')}</ul>`:'')).join('');
 }
-function laneColumns(n){return n<=4?n:n<=12?4:6}function applyProgressEngine(engine){let api=engine==='api';$$('#p-steps li[data-api]').forEach(li=>li.textContent=api?li.dataset.api:li.dataset.dde)}function updateProgress(s){if(activeRunId&&s.run_id!==activeRunId)return;let engine=s.extract_engine||cfg?.settings?.extract_engine||'api';applyProgressEngine(engine);let isParallel=(s.execution_mode==='parallel');$('#progress-dialog .progress-modal').classList.toggle('serial-mode',!isParallel);$('#progress-dialog .progress-modal').classList.toggle('parallel-mode',isParallel);let overall=s.total_jobs?Math.round(((Math.max(0,s.current_index-1)+(s.step_percent||0)/100)/s.total_jobs)*100):(s.step_percent||0);if(s.step==='complete'||s.step==='error')overall=100;$('#p-title').textContent=s.step_label||'処理中';$('#p-count').textContent=`全体 ${s.completed_jobs||0} / ${s.total_jobs||0}`;$('#p-percent').textContent=overall+'%';$('#p-bar').style.width=overall+'%';$('#p-job').textContent=s.current_job_name||'準備中';let j=cfg?.jobs?.find(x=>x.id===s.current_job_id),fmt=s.output_format||j?.output_format,file=s.output_file||j?.output_file,target=s.output_target||(j?`${j.output_folder||cfg.default_output_folder}\\${file}`:'');$('#p-output').textContent=fmt?`${formatName(fmt)} → ${target}`:'';let liveElapsed=s.started_at?Math.max(Number(s.elapsed_seconds)||0,Math.floor((Date.now()-new Date(s.started_at).getTime())/1000)):(s.elapsed_seconds||0);$('#p-elapsed').textContent='経過時間 '+hhmmss(liveElapsed);$('#p-activity span').textContent=[s.activity_detail,s.activity_value].filter(Boolean).join(' / ')||'処理を継続しています';$('#p-engine').textContent=(engine==='dde'?'DDE互換 / 1件ずつ直列':(s.execution_mode==='parallel'?`Navigator API 並列 ${s.requested_lines||1}ライン`:'Navigator API / 1件ずつ直列'))+' / '+(s.running?'処理中':'終了');let box=document.querySelector('#p-parallel-lines');if(!box){box=document.createElement('div');box.id='p-parallel-lines';box.className='parallel-lines fixed-lanes';document.querySelector('.current-box')?.after(box)}let pls=(s.parallel_lines||[]).slice().sort((a,b)=>Number(String(a.line).match(/\d+/)?.[0]||0)-Number(String(b.line).match(/\d+/)?.[0]||0));let total=Number(s.queue_total||0),waiting=Number(s.queue_waiting||0),active=Number(s.queue_active||0),completed=Number(s.queue_completed||0),lineCount=Number(s.parallel_max_lines||pls.length||0),parallel=(s.execution_mode==='parallel'&&s.run_id===activeRunId);if(lineCount)box.style.setProperty('--lane-cols',laneColumns(lineCount));let queue=$('#queue-summary');if(queue){queue.hidden=!parallel;
+function laneColumns(n){return n<=4?n:n<=12?4:6}function updateProgress(s){if(activeRunId&&s.run_id!==activeRunId)return;let isParallel=(s.execution_mode==='parallel');$('#progress-dialog .progress-modal').classList.toggle('serial-mode',!isParallel);$('#progress-dialog .progress-modal').classList.toggle('parallel-mode',isParallel);let overall=s.total_jobs?Math.round(((Math.max(0,s.current_index-1)+(s.step_percent||0)/100)/s.total_jobs)*100):(s.step_percent||0);if(s.step==='complete'||s.step==='error')overall=100;$('#p-title').textContent=s.step_label||'処理中';$('#p-count').textContent=`全体 ${s.completed_jobs||0} / ${s.total_jobs||0}`;$('#p-percent').textContent=overall+'%';$('#p-bar').style.width=overall+'%';$('#p-job').textContent=s.current_job_name||'準備中';let j=cfg?.jobs?.find(x=>x.id===s.current_job_id),fmt=s.output_format||j?.output_format,file=s.output_file||j?.output_file,target=s.output_target||(j?`${j.output_folder||cfg.default_output_folder}\\${file}`:'');$('#p-output').textContent=fmt?`${formatName(fmt)} → ${target}`:'';let liveElapsed=s.started_at?Math.max(Number(s.elapsed_seconds)||0,Math.floor((Date.now()-new Date(s.started_at).getTime())/1000)):(s.elapsed_seconds||0);$('#p-elapsed').textContent='経過時間 '+hhmmss(liveElapsed);$('#p-activity span').textContent=[s.activity_detail,s.activity_value].filter(Boolean).join(' / ')||'処理を継続しています';$('#p-engine').textContent=`Navigator API 並列 ${s.requested_lines||1}ライン`+' / '+(s.running?'処理中':'終了');let box=document.querySelector('#p-parallel-lines');if(!box){box=document.createElement('div');box.id='p-parallel-lines';box.className='parallel-lines fixed-lanes';document.querySelector('.current-box')?.after(box)}let pls=(s.parallel_lines||[]).slice().sort((a,b)=>Number(String(a.line).match(/\d+/)?.[0]||0)-Number(String(b.line).match(/\d+/)?.[0]||0));let total=Number(s.queue_total||0),waiting=Number(s.queue_waiting||0),active=Number(s.queue_active||0),completed=Number(s.queue_completed||0),lineCount=Number(s.parallel_max_lines||pls.length||0),parallel=(s.execution_mode==='parallel'&&s.run_id===activeRunId);if(lineCount)box.style.setProperty('--lane-cols',laneColumns(lineCount));let queue=$('#queue-summary');if(queue){queue.hidden=!parallel;
  /* 数値だけでは全体のどこまで進んだか掴みにくいため、実行キュー一覧の帯へデータバーを併記する。 */
  let qPct=total?Math.round(completed/total*100):0;
  queue.innerHTML=parallel?`<div><small>予約総数</small><strong>${total}</strong></div><div class="queue-arrow">→</div><div class="q-active"><small>実行中</small><strong>${active}</strong><span>${lineCount}ライン</span></div><div class="q-wait"><small>待機</small><strong>${waiting}</strong></div><div class="q-done"><small>完了</small><strong>${completed}</strong></div><div class="q-overall" title="完了 ${completed} / 実行中 ${active} / 待機 ${waiting} / 全体 ${total}"><small>実行キュー全体 ${completed} / ${total} 完了${active?`（実行中 ${active}）`:''}</small><b>${qPct}%</b><div class="q-overall-track"><i style="width:${qPct}%"></i></div></div>`:'';}document.querySelector('.current-box')?.classList.toggle('parallel-hidden',parallel);$('#p-steps')?.classList.toggle('parallel-hidden',parallel);box.hidden=!parallel;if(parallel){let byLine=new Map(pls.map(x=>[x.line,x]));let stable=[];for(let n=1;n<=lineCount;n++)stable.push(byLine.get(`ライン ${n}`)||{line:`ライン ${n}`,job:'',state:'待機',percent:0,detail:'次の予約を待機',elapsed:0});box.innerHTML=stable.map(x=>{let state=String(x.state||'待機'),cls=state.includes('完了')?'is-done':state.includes('失敗')?'is-error':state.includes('中断')?'is-error':state.includes('待機')||state.includes('終了')?'is-wait':'is-running';return `<article class="pline ${cls}"><header><b>${E(x.line)}</b><span>${E(state)}</span></header><strong title="${E(x.job||'')}">${E(x.job||'予約待ち')}</strong>${x.variants&&x.variants.length?variantSegHtml(x.variants):`<div class="lane-progress"><i style="width:${Math.max(0,Math.min(100,Number(x.percent||0)))}%"></i></div>`}<footer><small>${E(x.detail||'')}</small><time>${hhmmss(x.elapsed||0)}</time></footer></article>`}).join('')}else box.innerHTML='';let current=stepOrder.indexOf(s.step);$$('#p-steps li').forEach(li=>{let i=stepOrder.indexOf(li.dataset.step);li.className=s.step==='error'&&i===Math.max(0,current)?'error':i<current?'done':i===current?'active':''});let failed=s.step==='error',cancelled=s.step==='cancelled',done=s.step==='complete'||cancelled;$('#p-state').textContent=failed?'失敗':cancelled?'中断済み':done?'完了':'実行中';$('#p-state').classList.toggle('running',!failed&&!done);$('#p-activity i').style.display=(failed||done)?'none':'block';$('#p-state').style.background=failed?'#fff0ee':cancelled?'#f3eee0':done?'#e5f5ef':'#e6f4f6';renderRunResults(s.job_results||[]);$('#p-error').hidden=!failed;if(failed){let errs=s.job_errors||[];$('#p-error').innerHTML=errs.length?`<div class="perr-head">失敗した対象 ${errs.length}件</div>`+errs.map(x=>`<div class="perr-item"><b>${E(x.job||'対象')}</b><span>${E(x.error||'')}</span></div>`).join('')+`<div class="perr-foot">詳しい経過は「ログ・診断」で確認できます。</div>`:E(s.error_detail||s.last_result||'処理を完了できませんでした')}else $('#p-error').textContent='';$('#p-background').hidden=failed||done;$('#p-close').hidden=!(failed||done);/* 終わっても進捗の窓は開かない（1.99.0）。成否は一覧の各行と上の状態に出ているので、毎回窓で遮らない。見たいときは上の状態を押す */}$('#p-background').onclick=()=>{$('#progress-dialog').close();toast('上部の処理インジケータから進捗を再表示できます')};$('#p-close').onclick=()=>{$('#progress-dialog').close();resetProgressView()};/* 実行中でなくても開けるようにする。終わった実行の結果を見る手段がこれしかない。 */
@@ -1210,6 +1286,7 @@ function renderApiReadiness(r,note){
  // 足りないときだけ、直し方を開いておく。そろっているのに開くと、何が問題なのか紛れる。
  let fix=$('#api-fix');if(fix)fix.open=!r.ok;
  let det=$('#api-detail');if(det&&r.ok)det.open=false;
+ apiReadinessLast=r;paintSettingsStatus();
 }
 function renderDllRequirement(req,extra){
  let box=$('#dll-requirement');if(!box)return;
@@ -1307,7 +1384,7 @@ async function testNavigatorApi(){
   }
  }finally{hideWaiting();if(b)b.disabled=false}
 }
-$('#api-test').onclick=testNavigatorApi;$('#extract-engine').onchange=()=>{updateEngineUI();dirty();refreshMachinePaths()};$$('.engine-card').forEach(c=>c.onclick=()=>setExtractEngine(c.dataset.engine));setInterval(poll,1000);init().then(async()=>{poll();loadCommandQueue();loadLogin(true).then(()=>setTimeout(checkDefaultsOffer,400));try{
+$('#api-test').onclick=testNavigatorApi;setInterval(poll,1000);init().then(async()=>{poll();loadCommandQueue();loadLogin(true).then(()=>setTimeout(checkDefaultsOffer,400));try{
  let d=await fetch('/api/navigator-api-status',{cache:'no-store'}).then(r=>r.json());
  renderDllRequirement(d.requirement);
  renderApiReadiness(d.readiness,d.cached?'前回の確認結果です。「いま確認する」で取り直せます。':'');
@@ -1377,7 +1454,6 @@ paintExitMode();
 
 function resetEditorState(){editing=null;editingRule=null;$('#editor form')?.reset();$('#rule-editor form')?.reset();if($('#m-rules'))$('#m-rules').innerHTML='';if($('#r-detail'))$('#r-detail').innerHTML=''}$('#editor').addEventListener('close',resetEditorState);$('#rule-editor').addEventListener('close',()=>{editingRule=null;$('#rule-editor form')?.reset();if($('#r-detail'))$('#r-detail').innerHTML=''});$('#path-suggestion').addEventListener('close',()=>{$('#suggest-content').innerHTML=''});window.addEventListener('pageshow',()=>{$$('dialog').forEach(d=>{if(d.open)d.close()});resetEditorState()});
 
-if($('#api-lines'))$('#api-lines').addEventListener('change',async e=>{let v=Math.max(1,Math.min(24,Number(e.target.value)||6));e.target.value=v;cfg.settings.api_parallel_lines=v;cfg.settings.stability_profile='balanced_api_parallel';try{let r=await fetch('/api/settings/parallel-lines',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({lines:v})});if(r.ok)toast(`並列ライン数を${v}ラインで保存しました（次回以降も保持）`);else{dirty();toast(`次回実行は${v}ラインです（保存に失敗したため自動で再試行します）`)}}catch{dirty();toast(`次回実行は${v}ラインです（保存に失敗したため自動で再試行します）`)}});function updateBackupOptions(){let on=$('#backup-enabled')?.checked!==false,mode=$('#backup-mode')?.value||'generations',gens=Math.max(1,Number($('#gens')?.value)||3),days=Math.max(1,Number($('#backup-retention-days')?.value)||30);$('#backup-options')?.classList.toggle('is-disabled',!on);let useG=mode==='generations'||mode==='both',useD=mode==='days'||mode==='both';$('#backup-generation-field')?.classList.toggle('is-disabled',!useG);$('#backup-days-field')?.classList.toggle('is-disabled',!useD);let labels={generations:`世代方式 / ${gens}世代`,days:`日数方式 / ${days}日`,both:`複合方式 / ${gens}世代・${days}日`};let b=$('#backup-policy-badge');if(b)b.textContent=on?labels[mode]:'バックアップ無効'}if($('#backup-enabled'))$('#backup-enabled').addEventListener('change',()=>{updateBackupOptions();dirty()});if($('#backup-mode'))$('#backup-mode').addEventListener('change',()=>{updateBackupOptions();dirty()});if($('#backup-retention-days'))$('#backup-retention-days').addEventListener('input',e=>{e.target.value=Math.max(1,Math.min(3650,Number(e.target.value)||1));updateBackupOptions();dirty()});if($('#gens'))$('#gens').addEventListener('input',e=>{e.target.value=Math.max(1,Math.min(9999,Number(e.target.value)||1));updateBackupOptions();dirty()});if($('#backup-reset-default'))$('#backup-reset-default').onclick=()=>{$('#backup-enabled').checked=true;$('#backup-mode').value='generations';$('#gens').value=3;$('#backup-retention-days').value=30;updateBackupOptions();dirty()};$('#hide-profile').addEventListener('change',()=>{updateHideProfileUI();dirty()});$('#hide-action-duration').addEventListener('change',e=>{e.target.value=Math.min(3,Math.max(.2,Number(e.target.value)||.5));dirty()});
 
 
 /* V29: vertical progress and structured log workspace */
@@ -1635,8 +1711,7 @@ function lastMetricsRow(info,jobId,job){
  let m=showMetrics?((info&&info.last_metrics)||{}):{};
  // 「通常」は既定なので何も足さない。9pxの札を全行に置くと、目は毎行それを読み飛ばす
  // 仕事をさせられるだけになる（1.88.0で撤去）。分割・競争のときだけ札を出す。
- let mode=m.engine==='dde'?['dde','DDE']
-  :m.race_winner?['race',`競争→${m.race_winner==='split'?(m.split_how||(m.split_parts||2)+'分割'):'分割なし'}`]
+ let mode=m.race_winner?['race',`競争→${m.race_winner==='split'?(m.split_how||(m.split_parts||2)+'分割'):'分割なし'}`]
   :m.split_parts>1?[m.split_shape==='row'?'rowsplit':'split',m.split_how||`${m.split_parts}分割`]:null;
  let bits=[];
  if(m.elapsed)bits.push(fmtSeconds(m.elapsed));
@@ -1760,7 +1835,7 @@ function applyRowQueueProgress(d){
 // 工程を小さな点で並べ、いまどこかを示す。文字を読まなくても位置が分かる。
 const LINE_STEPS=[['session','接続'],['execute','問い合わせ'],['transfer','受信'],['convert','変換'],['publish','公開']];
 /* 直列実行の工程名を、並列ラインと同じ5つの点へ寄せる。方式が違っても行の見え方は同じにする。 */
-const SERIAL_PHASE={prepare:'session',launch:'session',dde:'session',ready:'session',open:'execute',save:'execute',wait:'transfer',close:'transfer',export:'convert',publish:'publish',complete:'publish'};
+const SERIAL_PHASE={prepare:'session',launch:'session',connect:'session',ready:'session',open:'execute',save:'execute',wait:'transfer',close:'transfer',export:'convert',publish:'publish',complete:'publish'};
 function serialPhase(step){return SERIAL_PHASE[String(step||'')]||''}
 function stepDotsHtml(phase){
  let at=LINE_STEPS.findIndex(x=>x[0]===phase);
@@ -3451,7 +3526,29 @@ const VIEWER_PAGE_SIZE=100,PSEP='\u001f',CSEP='\u001e';
 const CHART_COLORS=['#0d8191','#3a4d9c','#0b6b4c','#b5822a','#7658ae','#c9564a','#1f6aa8','#8a5f18','#5c8a2a','#a5372c','#5a6f77','#2c9c9c'];
 const AGG_LABEL={count:'件数',sum:'合計',avg:'平均',min:'最小',max:'最大'};
 
-async function loadViewerJobs(){let sel=$('#viewer-job');if(!sel)return;try{let d=await fetch('/api/data-viewer/jobs',{cache:'no-store'}).then(r=>r.json()),cur=sel.value;sel.innerHTML='<option value="">対象を選択</option>'+(d.items||[]).map(x=>`<option value="${E(x.id)}" ${x.exists?'':'disabled'}>${E(x.name)} / ${E(formatName(x.format))}${x.exists?'':'（未出力）'}</option>`).join('');sel.value=cur}catch{showViewerError('対象一覧を取得できませんでした')}}
+/* 値ごとに分けて出した対象（2.1.2）: 値ごとのファイルを「データ」の選択肢にまとまりで並べ、開いたら上の帯の下に値の札を出す
+   （案 H。tests/ui-proposals/2026-10-viewer-files）。選択肢の値は「対象ID」か「対象ID＋タブ＋値」。 */
+let viewerJobs=[];
+const VIEWER_SEP='\t';
+const viewerKey=(id,value)=>value==null||value===''?String(id):String(id)+VIEWER_SEP+value;
+function viewerParse(v){v=String(v||'');let i=v.indexOf(VIEWER_SEP);return i<0?{id:v,value:null}:{id:v.slice(0,i),value:v.slice(i+1)}}
+const viewerRowsText=n=>n==null?'':`${Number(n).toLocaleString()}件`;
+async function loadViewerJobs(){let sel=$('#viewer-job');if(!sel)return;try{let d=await fetch('/api/data-viewer/jobs',{cache:'no-store'}).then(r=>r.json()),cur=sel.value;viewerJobs=d.items||[];
+ sel.innerHTML='<option value="">対象を選択</option>'+viewerJobs.map(x=>{
+  if(!(x.files||[]).length)return `<option value="${E(x.id)}" ${x.exists?'':'disabled'}>${E(x.name)} / ${E(formatName(x.format))}${x.exists?'':'（未出力）'}</option>`;
+  let made=x.files.filter(f=>f.exists).length;
+  return `<optgroup label="${E(x.name)}（値ごと ${made}/${x.files.length}）">${x.files.map(f=>`<option value="${E(viewerKey(x.id,f.value))}" ${f.exists?'':'disabled'}>${E(x.name)} · ${E(f.value)}（${f.exists?E(viewerRowsText(f.rows)||formatName(x.format)):'未出力'}）</option>`).join('')}</optgroup>`;
+ }).join('');sel.value=cur;if(sel.value!==cur)sel.value=''}catch{showViewerError('対象一覧を取得できませんでした')}}
+/* 対象を選ぶ（値ごとの対象なら、ファイルのある最初の値）。右クリックの「データビュワーで表示」から使う */
+function selectViewerJob(id){let sel=$('#viewer-job');if(!sel)return;let opt=[...sel.options].find(o=>!o.disabled&&viewerParse(o.value).id===String(id));sel.value=opt?opt.value:''}
+function paintViewerValues(id,value){
+ let box=$('#viewer-values'),job=viewerJobs.find(x=>x.id===id),files=job?.files||[];
+ box.hidden=!files.length;document.querySelector('.viewer-shell')?.classList.toggle('has-values',!!files.length);
+ if(!files.length){box.innerHTML='';return}
+ let made=files.filter(f=>f.exists).length;
+ box.innerHTML=`<span class="vv-label">値ごとのファイル <b>${made}/${files.length}</b></span>`+files.map(f=>`<button type="button" role="tab" class="vv-chip${f.value===value?' on':''}${f.exists?'':' off'}" data-value="${E(f.value)}" aria-selected="${f.value===value}" ${f.exists?'':'disabled'} title="${E(f.exists?`${f.file}${f.modified?' · '+f.modified:''}`:'前回の実行で作られていません')}"><b>${E(f.value)}</b><small>${f.exists?E(viewerRowsText(f.rows)):'未出力'}</small></button>`).join('');
+ box.querySelectorAll('.vv-chip:not(.off)').forEach(b=>b.onclick=()=>{$('#viewer-job').value=viewerKey(id,b.dataset.value);openViewer()});
+}
 function showViewerError(t){$('#viewer-error').hidden=false;$('#viewer-error').textContent=t;$('#viewer-empty').hidden=true;$('#viewer-list').hidden=true;$('#viewer-analysis').hidden=true}
 function fieldName(i){return viewerData?.headers?.[Number(i)]||'(空欄)'}
 function numericVal(v){let t=String(v??'').replace(/,/g,'').trim();return t!==''&&!isNaN(t)?Number(t):null}
@@ -3521,7 +3618,7 @@ function renderPivotChart(model,measureLabel){let box=$('#pivot-chart');let cats
  box.innerHTML=`${legend}${note}<div class="chart-scroll"><svg viewBox="0 0 ${w} ${h}" role="img" aria-label="集計折れ線グラフ">${grid}<line class="chart-axis" x1="${padL}" y1="${h-padB}" x2="${w-padR}" y2="${h-padB}"/><line class="chart-axis" x1="${padL}" y1="${padT}" x2="${padL}" y2="${h-padB}"/>${lines}${xlabels}</svg></div>`}
 
 /* ---------- 読み込み ---------- */
-async function openViewer(){let id=$('#viewer-job').value;if(!id)return;showWaiting('データを読み込み中','公開済みファイルを読み取り専用で確認しています...');try{let d=await fetch('/api/data-viewer/'+encodeURIComponent(id),{cache:'no-store'}).then(r=>r.json());if(!d.ok)return showViewerError(d.error);viewerData=d;viewerRows=d.rows||[];viewerFiltered=viewerRows.slice();viewerSort={col:-1,dir:1};viewerPage=1;pivotState={rows:[],columns:[],values:[],aggregate:'count',showSubtotals:($('#pivot-show-subtotal')?$('#pivot-show-subtotal').checked:true),showGrandTotal:($('#pivot-show-grand')?$('#pivot-show-grand').checked:true)};$('#pivot-aggregate').value='count';$('#viewer-error').hidden=true;$('#viewer-meta').hidden=false;$('#viewer-name').textContent=d.name;$('#viewer-name').title=d.name;$('#viewer-format').textContent=formatName(d.format);$('#viewer-count').textContent=`${Number(d.total_rows??viewerRows.length).toLocaleString()}行 × ${Number(d.total_columns??d.headers.length).toLocaleString()}列`;$('#viewer-modified').textContent=(d.modified||'').replace('T',' ');$('#viewer-search').value='';$('#viewer-note').textContent=d.truncated?`先頭${Number(d.preview_limit).toLocaleString()}行を表示（全${Number(d.total_rows).toLocaleString()}行）`+(d.row_budget_limited?`／${Number(d.total_columns).toLocaleString()}列と幅があるため行数を抑えています（列はすべて出しています）`:''):d.path;refreshDesigner();renderViewerList();setViewerView('list')}catch{showViewerError('データを読み込めませんでした')}finally{hideWaiting()}}
+async function openViewer(){let {id,value}=viewerParse($('#viewer-job').value);if(!id)return;showWaiting('データを読み込み中','公開済みファイルを読み取り専用で確認しています...');try{let d=await fetch('/api/data-viewer/'+encodeURIComponent(id)+(value==null?'':'?value='+encodeURIComponent(value)),{cache:'no-store'}).then(r=>r.json());if(!d.ok)return showViewerError(d.error);if(d.value){$('#viewer-job').value=viewerKey(id,d.value)}paintViewerValues(id,d.value||null);viewerData=d;viewerRows=d.rows||[];viewerFiltered=viewerRows.slice();viewerSort={col:-1,dir:1};viewerPage=1;pivotState={rows:[],columns:[],values:[],aggregate:'count',showSubtotals:($('#pivot-show-subtotal')?$('#pivot-show-subtotal').checked:true),showGrandTotal:($('#pivot-show-grand')?$('#pivot-show-grand').checked:true)};$('#pivot-aggregate').value='count';$('#viewer-error').hidden=true;$('#viewer-meta').hidden=false;let vname=d.value?`${d.name} · ${d.value}`:d.name;$('#viewer-name').textContent=vname;$('#viewer-name').title=d.path||vname;$('#viewer-format').textContent=formatName(d.format);$('#viewer-count').textContent=`${Number(d.total_rows??viewerRows.length).toLocaleString()}行 × ${Number(d.total_columns??d.headers.length).toLocaleString()}列`;$('#viewer-modified').textContent=(d.modified||'').replace('T',' ');$('#viewer-search').value='';$('#viewer-note').textContent=d.truncated?`先頭${Number(d.preview_limit).toLocaleString()}行を表示（全${Number(d.total_rows).toLocaleString()}行）`+(d.row_budget_limited?`／${Number(d.total_columns).toLocaleString()}列と幅があるため行数を抑えています（列はすべて出しています）`:''):d.path;refreshDesigner();renderViewerList();setViewerView('list')}catch{showViewerError('データを読み込めませんでした')}finally{hideWaiting()}}
 
 /* ---------- イベント結線 ---------- */
 if($('#viewer-load'))$('#viewer-load').onclick=openViewer;
@@ -4588,6 +4685,7 @@ function renderLogin(){
  $('#login-edit').textContent=x&&x.saved?'変更する':'登録する';
  $('#login-import').hidden=!(c&&c.ok&&!(x&&x.saved));
  $('#login-delete').hidden=!(x&&x.saved);
+ paintSettingsStatus();
 }
 function openLoginDialog(first){
  let d=$('#login-dialog'),x=loginState||{},c=x.conf;if(!d)return;
@@ -4629,7 +4727,7 @@ if($('#login-x'))$('#login-x').onclick=()=>$('#login-dialog').close();
 if($('#login-decline'))$('#login-decline').onclick=async()=>{
  let d=await postJson('/api/login/decline',{yes:true}).then(r=>r.json()).catch(()=>null);
  if(d){loginState=d;renderLogin()}
- $('#login-dialog').close();toast('このPCでは聞かないようにしました。使うときは 共通設定 →「接続とパス」から登録できます');
+ $('#login-dialog').close();toast('このPCでは聞かないようにしました。使うときは 共通設定 →「接続」から登録できます');
 };
 if($('#login-edit'))$('#login-edit').onclick=()=>openLoginDialog(false);
 if($('#login-import'))$('#login-import').onclick=()=>loginImport('');
@@ -4903,7 +5001,7 @@ function renderDefaults(){
   let chip=(p,n)=>`<em>${E(n)}<button type="button" class="def-out" data-part="${p}" data-name="${E(n)}"${lock} title="${E(block||'既定から外す')}" aria-label="${E(n)} を既定から外す">外す</button></em>`;
   let rows=DEF_ORDER.filter(p=>(d.parts[p]||[]).length).map(p=>`<div class="def-row"><b>${DEF_PART[p]} <span class="n">${d.parts[p].length}</span></b><span>${d.parts[p].map(n=>chip(p,n)).join('')}</span></div>`).join('');
   let none=DEF_ORDER.filter(p=>!(d.parts[p]||[]).length).map(p=>DEF_PART[p]);
-  let st=d.settings?`<span class="z">入っています（${(d.settingsKeys||[]).length}項目: 出力先・RNE のフォルダー・抽出方式 など）</span><button type="button" class="def-out def-out-set" data-part="settings" data-name="共通設定"${lock}${lockTitle}>外す</button>`
+  let st=d.settings?`<span class="z">入っています（${(d.settingsKeys||[]).length}項目: 出力先・RNE のフォルダー・控え など）</span><button type="button" class="def-out def-out-set" data-part="settings" data-name="共通設定"${lock}${lockTitle}>外す</button>`
    :'<span class="z">入っていない（各PCの共通設定はアプリの標準のまま始まります）</span>';
   box.innerHTML=how+warn+`<div class="rel-facts def-facts">${facts.map(([k,v])=>`<div><small>${E(k)}</small><b title="${E(v)}">${E(v)}</b></div>`).join('')}</div>`
    +(d.note?`<p class="def-memo">メモ: ${E(d.note)}</p>`:'')
