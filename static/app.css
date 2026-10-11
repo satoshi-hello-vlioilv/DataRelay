@@ -146,7 +146,6 @@ main>nav,main>section.on{align-self:stretch}
 .command-queue{background:#fff;border:1px solid #d5e1e6;border-radius:9px;margin:0 0 7px;overflow:hidden;box-shadow:0 2px 10px #16384d0a}.queue-head{height:40px;display:flex;align-items:center;justify-content:space-between;padding:5px 9px;background:#f4f8fa}.queue-head>div{display:flex;align-items:center;gap:10px}.queue-head b{font-size:12px;color:#244d5e}.queue-head span{font-size:11px;color:#62757e}.queue-head button{padding:5px 10px;font-size:11px}.cq-list{max-height:190px;overflow:auto;border-top:1px solid #dce6ea;padding:5px;background:#fbfcfd}.cq-row{display:grid;grid-template-columns:46px minmax(180px,1fr) 80px 142px;align-items:center;gap:7px;padding:6px 8px;border-bottom:1px solid #e6edef;font-size:11px}.cq-row:last-child{border-bottom:0}.cq-pos{font-weight:900;color:#187e91}.cq-row.running{background:#eaf7f8;border-left:4px solid #1399a4}.cq-row.waiting{background:#fff}.cq-main{min-width:0}.cq-main b,.cq-main small{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.cq-main small{color:#6b7d85}.cq-mode{color:#526a74}.cq-actions{display:flex;justify-content:flex-end;gap:4px}.cq-actions button{padding:4px 7px;font-size:10px}.cq-empty{padding:12px;text-align:center;color:#71828a;font-size:11px}
 @media(max-height:720px){.cq-list{max-height:125px}.queue-head{height:34px}.cq-row{padding:4px 7px}}
 
-
 /* V29: structured log workspace (parallel lane grid superseded by V31 below) */
 .parallel-mode .queue-summary{grid-template-columns:repeat(4,minmax(0,1fr))!important}.parallel-mode .queue-arrow{display:none!important}
 .log-workspace{margin:10px 0 8px;border:1px solid #d8e3e8;border-radius:10px;background:#f7fafb;overflow:hidden}.log-filterbar{display:grid;grid-template-columns:minmax(270px,1fr) 145px 125px 115px;gap:8px;padding:10px;border-bottom:1px solid #dce6ea}.log-filterbar label{display:grid;gap:4px;color:#415b66;font-size:11px;font-weight:800}.log-filterbar input,.log-filterbar select{height:32px;font-size:12px}.log-commandbar{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 10px;background:#fff}.log-selection-actions,.log-bulk-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.log-commandbar button{padding:6px 9px;font-size:11px}.log-filter-summary,#log-filter-summary{font-size:11px;color:#5e747e;margin-left:4px}.selectable-log .log-line{display:grid;grid-template-columns:22px 68px minmax(0,1fr);gap:7px;align-items:start;padding:4px 6px;border-left-width:4px}.selectable-log .log-line input{width:14px;height:14px;margin-top:2px}.log-kind{font-family:"Yu Gothic UI",sans-serif;font-size:10px;font-weight:900;border-radius:999px;text-align:center;padding:2px 5px;white-space:nowrap}.log-line.kind-execution{border-left-color:#1597a2}.log-line.kind-execution .log-kind{background:#dff3f5;color:#08727f}.log-line.kind-setting{border-left-color:#6e9d48;background:#142126}.log-line.kind-setting .log-kind{background:#e5f1dd;color:#3f6b20}.log-line.kind-queue{border-left-color:#718aa5}.log-line.kind-queue .log-kind{background:#e3eaf1;color:#3e566d}.log-line.kind-performance{border-left-color:#b17d2d}.log-line.kind-performance .log-kind{background:#f4ead5;color:#79531b}.log-line.kind-publish{border-left-color:#7658ae}.log-line.kind-publish .log-kind{background:#e8e0f5;color:#53398b}.log-line.kind-error{border-left-color:#d04f46;background:#291719}.log-line.kind-error .log-kind{background:#f5d9d6;color:#962f28}.log-line.hidden-by-filter{display:none!important}
@@ -196,7 +195,6 @@ main>nav,main>section.on{align-self:stretch}
 .version-modal{width:min(560px,92vw);max-height:86vh;display:flex;flex-direction:column;background:#fff}
 .version-modal .modalbody{overflow:auto}
 @media(max-width:900px){.settings-shell{grid-template-columns:1fr;grid-template-rows:auto minmax(0,1fr)}.settings-nav{flex-direction:row;overflow-x:auto;overflow-y:hidden;align-content:normal}.settings-navbtn{flex:none}.settings-navtext small{display:none}}
-
 
 /* V36: ヘッダー右側の操作系を1つの体系にそろえる。
    これまでは状態表示が枠付きの箱、実行が2種類のボタン、終了がまた別色と、
@@ -987,8 +985,8 @@ body > main{max-width:1620px;padding-left:12px;padding-right:12px}
 @media(max-width:900px){.monitor-panel .hb-grid{grid-template-columns:repeat(3,1fr)}.backup-options{grid-template-columns:1fr 1fr!important}}@media(max-width:560px){.monitor-panel .hb-grid,.backup-options{grid-template-columns:1fr!important}.diagnostic-summary{grid-template-columns:1fr}.diag-counts{justify-content:flex-start}.diag-row{grid-template-columns:50px minmax(0,1fr)}}
 /* v1.17.0 queue progress and hierarchical pivot/chart designer */
 .queue-head{height:auto;min-height:44px;gap:12px}.cq-overall{display:grid;grid-template-columns:170px;gap:3px;margin-left:auto}.cq-overall>div:first-child{display:flex;justify-content:space-between;align-items:center}.cq-overall span,.cq-overall b{font-size:10px;color:#47616b}.cq-progress-track{height:7px;background:#dce7ea;border-radius:999px;overflow:hidden}.cq-progress-track i{display:block;height:100%;width:0;background:linear-gradient(90deg,#14a39f,#237fbc);border-radius:inherit;transition:width .35s ease}
-.viewer-v117{height:100%;display:grid;grid-template-rows:auto minmax(0,1fr);gap:5px}.viewer-analysis{min-height:0;height:100%;display:grid;grid-template-columns:220px minmax(0,1fr);gap:7px}.analysis-fields{min-height:0;display:grid;grid-template-rows:auto minmax(0,1fr);padding:9px;background:#f5f8f9;border:1px solid #d5e2e6;border-radius:9px}.analysis-caption{display:grid;gap:6px;padding-bottom:7px;border-bottom:1px solid #dce6e9}.analysis-caption>div{display:flex;justify-content:space-between;align-items:center}.analysis-caption b{font-size:12px;color:#2c505d}.analysis-caption small{font-size:9px;color:#718891}.analysis-caption input{height:29px}.pivot-field-list{display:grid;align-content:start;gap:4px;padding-top:7px;overflow:auto}.pivot-field-list button,.axis-drop button{display:flex;align-items:center;gap:6px;min-width:0;padding:6px 8px;background:#fff;color:#31515d;border:1px solid #ccdce1;border-radius:7px;font-size:10.5px;text-align:left;cursor:grab}.pivot-field-list button:hover{border-color:#58aeb5;background:#f0fafa}.pivot-field-list button.used{opacity:.55;background:#edf3f4}.pivot-field-list button i,.axis-drop button i{font-style:normal;color:#91a6ad}.analysis-work{min-width:0;min-height:0;display:grid;grid-template-rows:auto auto auto minmax(0,1fr);gap:5px}.analysis-tabs{display:flex;width:max-content;border:1px solid #bfd0d5;border-radius:7px;overflow:hidden}.analysis-tabs button{border:0;border-radius:0;background:#fff;color:#536c75;padding:5px 16px}.analysis-tabs button.on{background:#0c8191;color:#fff}.axis-designer{display:grid;grid-template-columns:1fr 1fr 1fr 180px;gap:6px}.axis-designer>section,.analysis-options{padding:6px;background:#fff;border:1px solid #d7e3e7;border-radius:8px}.axis-designer header{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px}.axis-designer header b{font-size:10.5px;color:#31515d}.axis-designer header small{font-size:8.5px;color:#7a8e95}.axis-drop{display:flex;align-items:center;gap:4px;min-height:46px;padding:4px;background:#f6f9fa;border:1px dashed #aac2ca;border-radius:6px;overflow:auto}.axis-drop>span{font-size:9.5px;color:#81939a;margin:auto}.axis-drop.over{background:#e4f5f5;border-color:#168b98}.axis-drop button{flex:0 0 auto;padding:5px 6px;background:#eaf5f6}.axis-drop button span{max-width:120px;overflow:hidden;text-overflow:ellipsis}.axis-drop button em{display:grid;place-items:center;width:17px;height:17px;border-radius:50%;background:#fff;color:#0d8191;font-size:8px;font-style:normal}.axis-drop button b{font-size:12px;color:#8c5550;cursor:pointer}.analysis-options{display:grid;grid-template-columns:1fr 1fr;gap:5px}.analysis-options label{display:grid;gap:2px;font-size:9px;font-weight:900;color:#6d8189}.analysis-options select{height:29px}.analysis-options button{grid-column:1/-1;height:29px}.analysis-result{min-height:0;overflow:auto}.pivot-resultbox{height:100%}.pivot-level{background:#edf5f5!important;text-align:left!important;white-space:nowrap}.pivot-level.repeat{border-top-color:transparent;color:transparent}.pivot-table thead tr:nth-child(2) th{top:23px}.pivot-chart{min-height:100%;padding:12px;background:#fff;border:1px solid #d7e3e7;border-radius:8px;overflow:auto}.chart-empty{display:grid;place-items:center;height:100%;color:#71858d}.bar-chart{display:grid;gap:6px}.bar-row{display:grid;grid-template-columns:180px minmax(120px,1fr) 90px;align-items:center;gap:8px}.bar-row>span{font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.bar-row>div{height:17px;background:#edf3f4;border-radius:4px;overflow:hidden}.bar-row i{display:block;height:100%;background:linear-gradient(90deg,#17a19b,#367fc1);border-radius:inherit}.bar-row b{font-size:10px;text-align:right;color:#34515c}.column-chart{height:330px;display:flex;align-items:end;gap:5px;padding:20px 8px 0;border-bottom:1px solid #b9cbd1}.column-chart>div{height:100%;min-width:34px;flex:1;display:flex;flex-direction:column;justify-content:end;align-items:center}.column-chart i{display:block;width:75%;max-width:48px;background:linear-gradient(#1aa59f,#377fc0);border-radius:4px 4px 0 0}.column-chart b{font-size:8px;color:#48616b}.column-chart span{width:100%;padding-top:4px;font-size:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:center}.pivot-chart svg{width:100%;height:340px}.chart-axis{stroke:#9eb2ba;stroke-width:1}.chart-line{fill:none;stroke:#168c98;stroke-width:3}.pivot-chart circle{fill:#fff;stroke:#168c98;stroke-width:3}
-@media(max-width:1000px){.viewer-analysis{grid-template-columns:180px minmax(0,1fr)}.axis-designer{grid-template-columns:1fr 1fr}.analysis-options{grid-column:1/-1}.cq-overall{grid-template-columns:140px}}@media(max-width:680px){.viewer-analysis{grid-template-columns:1fr;grid-template-rows:150px minmax(0,1fr)}.axis-designer{grid-template-columns:1fr}.bar-row{grid-template-columns:100px minmax(80px,1fr) 65px}.cq-overall{display:none!important}}
+.analysis-result{min-height:0;overflow:auto}.pivot-resultbox{height:100%}.pivot-level{background:#edf5f5!important;text-align:left!important;white-space:nowrap}.pivot-level.repeat{border-top-color:transparent;color:transparent}.pivot-table thead tr:nth-child(2) th{top:23px}.pivot-chart{min-height:100%;padding:12px;background:#fff;border:1px solid #d7e3e7;border-radius:8px;overflow:auto}.chart-empty{display:grid;place-items:center;height:100%;color:#71858d}.bar-chart{display:grid;gap:6px}.bar-row{display:grid;grid-template-columns:180px minmax(120px,1fr) 90px;align-items:center;gap:8px}.bar-row>span{font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.bar-row>div{height:17px;background:#edf3f4;border-radius:4px;overflow:hidden}.bar-row i{display:block;height:100%;background:linear-gradient(90deg,#17a19b,#367fc1);border-radius:inherit}.bar-row b{font-size:10px;text-align:right;color:#34515c}.column-chart{height:330px;display:flex;align-items:end;gap:5px;padding:20px 8px 0;border-bottom:1px solid #b9cbd1}.column-chart>div{height:100%;min-width:34px;flex:1;display:flex;flex-direction:column;justify-content:end;align-items:center}.column-chart i{display:block;width:75%;max-width:48px;background:linear-gradient(#1aa59f,#377fc0);border-radius:4px 4px 0 0}.column-chart b{font-size:8px;color:#48616b}.column-chart span{width:100%;padding-top:4px;font-size:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:center}.pivot-chart svg{width:100%;height:340px}.chart-axis{stroke:#9eb2ba;stroke-width:1}.chart-line{fill:none;stroke:#168c98;stroke-width:3}.pivot-chart circle{fill:#fff;stroke:#168c98;stroke-width:3}
+@media(max-width:1000px){.cq-overall{grid-template-columns:140px}}@media(max-width:680px){.bar-row{grid-template-columns:100px minmax(80px,1fr) 65px}.cq-overall{display:none!important}}
 
 /* ============================================================
    v1.18.0: データビュワー再設計 — データ一覧/集計表/グラフの3タブ化と
@@ -1034,57 +1032,70 @@ body > main{max-width:1620px;padding-left:12px;padding-right:12px}
 .viewer-v118 .viewer-note{font-size:10.5px;color:#697c85;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* --- 集計表・グラフ共通：左=カラムリスト / 右=描画領域（縦横ドロップゾーン） --- */
 .viewer-v118 .viewer-analysis{min-height:0;height:100%;display:grid;grid-template-columns:212px minmax(0,1fr);gap:8px}
-.viewer-v118 .analysis-fields{min-height:0;display:grid;grid-template-rows:auto minmax(0,1fr) auto;gap:8px;padding:9px;background:#f5f8f9;border:1px solid #d5e2e6;border-radius:10px}
-.viewer-v118 .analysis-caption{display:grid;gap:6px;padding-bottom:8px;border-bottom:1px solid #dce6e9}
-.viewer-v118 .analysis-caption>div{display:flex;justify-content:space-between;align-items:baseline;gap:6px}
-.viewer-v118 .analysis-caption b{font-size:12.5px;color:#2c505d}
-.viewer-v118 .analysis-caption small{font-size:9px;color:#728891}
-.viewer-v118 .analysis-caption input{height:30px}
-.viewer-v118 .pivot-field-list{display:grid;align-content:start;gap:4px;overflow:auto;padding-right:2px}
-.viewer-v118 .pivot-field-list button{display:flex;align-items:center;gap:6px;min-width:0;padding:7px 9px;background:#fff;color:#2f505c;border:1px solid #ccdce1;border-radius:8px;font-size:11px;text-align:left;cursor:grab}
-.viewer-v118 .pivot-field-list button:hover{border-color:#58aeb5;background:#f0fafa;filter:none}
-.viewer-v118 .pivot-field-list button:active{cursor:grabbing}
-.viewer-v118 .pivot-field-list button.used{opacity:.5;background:#eef3f4}
-.viewer-v118 .pivot-field-list button i{font-style:normal;color:#9db1b8;font-size:11px}
-.viewer-v118 .pivot-field-list button .fl-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.viewer-v118 .pivot-field-list button .fl-tag{flex:none;font-size:8.5px;font-weight:900;border-radius:4px;padding:1px 5px}
-.viewer-v118 .fl-tag.t-rows{background:#e2f1f4;color:#0b6d86}
-.viewer-v118 .fl-tag.t-columns{background:#e6ecfa;color:#3a4d9c}
-.viewer-v118 .fl-tag.t-values{background:#e4f3ea;color:#0b6b4c}
-.viewer-v118 .analysis-agg{display:grid;gap:7px;padding-top:8px;border-top:1px solid #dce6e9}
-.viewer-v118 .agg-field{display:grid;gap:3px;font-size:10px;font-weight:800;color:#5f757f}
-.viewer-v118 .agg-field select{height:31px}
-.viewer-v118 .analysis-agg button{height:30px;padding:5px 9px;font-size:11px}
-/* 描画領域：値(左上)・列(上・横方向)・行(左・縦方向)・キャンバス(右下) */
-.viewer-v118 .analysis-work{min-width:0;min-height:0;display:grid;grid-template-columns:186px minmax(0,1fr);grid-template-rows:auto minmax(0,1fr);gap:7px}
-.viewer-v118 .zone{display:grid;grid-template-rows:auto minmax(0,1fr);gap:4px;background:#fff;border:1px solid #d8e3e7;border-radius:9px;padding:7px 8px;min-height:0;min-width:0}
-.viewer-v118 .zone-values{grid-column:1;grid-row:1}
-.viewer-v118 .zone-cols{grid-column:2;grid-row:1}
-.viewer-v118 .zone-rows{grid-column:1;grid-row:2;min-height:0}
-.viewer-v118 .analysis-canvas{grid-column:2;grid-row:2;min-height:0;min-width:0;display:grid;grid-template-rows:auto minmax(0,1fr);gap:5px}
-.viewer-v118 .zone-head{display:flex;align-items:center;gap:6px;min-width:0}
-.viewer-v118 .zone-head small{font-size:9px;color:#748891;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.viewer-v118 .axis-badge{flex:none;width:22px;height:22px;border-radius:7px;display:grid;place-items:center;font-size:11px;font-weight:900;font-style:normal}
-.viewer-v118 .ab-rows{background:#e2f1f4;color:#0b6d86}
-.viewer-v118 .ab-cols{background:#e6ecfa;color:#3a4d9c}
-.viewer-v118 .ab-vals{background:#e4f3ea;color:#0b6b4c}
-.viewer-v118 .axis-drop{min-height:0;background:#f7fafb;border:1px dashed #a9c2ca;border-radius:7px;padding:5px;overflow:auto}
-.viewer-v118 .drop-wrap{display:flex;flex-wrap:wrap;gap:5px;align-content:start}
-.viewer-v118 .drop-stack{display:grid;align-content:start;gap:5px}
-.viewer-v118 .axis-drop.over{background:#e2f4f5;border-color:#0d8191;border-style:solid}
-.viewer-v118 .axis-ph{font-size:10px;color:#8398a0;margin:auto;text-align:center;padding:6px}
-.viewer-v118 .axis-drop .chip-field{display:flex;align-items:center;gap:6px;min-width:0;padding:5px 7px;background:#eaf5f6;border:1px solid #bfdfe4;border-radius:7px;font-size:11px;color:#22505d;cursor:grab}
-.viewer-v118 .axis-drop.drop-stack .chip-field{width:100%}
-.viewer-v118 .axis-drop .chip-field:active{cursor:grabbing}
-.viewer-v118 .axis-drop .chip-field em{flex:none;display:grid;place-items:center;width:16px;height:16px;border-radius:50%;background:#fff;color:#0d8191;font-size:8px;font-style:normal;font-weight:900}
-.viewer-v118 .axis-drop .chip-field .cf-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.viewer-v118 .axis-drop .chip-field b{flex:none;color:#9a5550;cursor:pointer;font-size:13px;line-height:1}
-.viewer-v118 .axis-drop .chip-field b:hover{color:#b93b32}
-.viewer-v118 .pivot-hint{padding:5px 9px;background:#f0f6f7;border:1px solid #dbe8ea;border-radius:7px;font-size:10.5px;color:#4a6570;line-height:1.5}
 .viewer-v118 .analysis-result{min-height:0;overflow:auto}
 .viewer-v118 .pivot-resultbox{height:100%;border-radius:9px}
+/* 2.1.3 集計表・グラフの組み立て（案 J。tests/ui-proposals/2026-10-pivot）。
+   左にカラムの札（行・列、数のカラムは値も）、右の上に文の欄「［行］ごとに、［列］別の［値］を出す」、その下に結果。
+   役の色は、行=青緑・列=藍・値=緑で、札・文の欄・空の案内で同じにする */
+.viewer-v118 .viewer-analysis.pv{min-height:0;height:100%;display:grid;grid-template-columns:300px minmax(0,1fr);grid-template-rows:minmax(0,1fr);gap:8px}
+.viewer-v118 .pv-fields{min-height:0;display:flex;flex-direction:column;gap:7px;padding:10px;background:#fff;border:1px solid #d5e2e6;border-radius:10px}
+.viewer-v118 .pv-cap{display:flex;align-items:baseline;flex-wrap:wrap;gap:2px 8px}
+.viewer-v118 .pv-cap b{font-size:13.5px;color:#17384e}
+.viewer-v118 .pv-cap small{font-size:10.5px;color:#647581}
+.viewer-v118 #pivot-field-search{height:32px}
+.viewer-v118 .pv-list{flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:5px;padding-right:2px}
+.viewer-v118 .pv-f{flex:none;display:grid;grid-template-columns:minmax(0,1fr) repeat(3,36px);align-items:center;gap:4px;min-height:42px;padding:3px 5px 3px 10px;background:#fff;border:1px solid #d7e2e6;border-radius:8px;cursor:grab}
+.viewer-v118 .pv-f.is-used{background:#f5f9fa;border-color:#c3d6dc}
+.viewer-v118 .pv-fn{min-width:0;display:grid;line-height:1.3}
+.viewer-v118 .pv-fn b{font-size:12.5px;color:#1f3d48;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.viewer-v118 .pv-fn small{font-size:10px;color:#6c8189}
+.viewer-v118 .pv-fn small.is-many{color:#a2b2b8}
+.viewer-v118 .pv-r{height:28px;padding:0;border:1px solid;border-radius:6px;font-size:11.5px;font-weight:900;opacity:.6;filter:none}
+.viewer-v118 .pv-f:hover .pv-r,.viewer-v118 .pv-r:focus-visible{opacity:1}
+.viewer-v118 .pv-r.on{opacity:1;box-shadow:inset 0 0 0 2px currentColor}
+.viewer-v118 .r-rows{background:#e2f1f4;color:#0b6d86;border-color:#a8d2dc}
+.viewer-v118 .r-columns{background:#e6ecfa;color:#3a4d9c;border-color:#bccaee}
+.viewer-v118 .r-values{background:#e4f3ea;color:#0b6b4c;border-color:#a9d6bf}
+.viewer-v118 button.r-rows:hover{background:#d3eaef}.viewer-v118 button.r-columns:hover{background:#d9e2f8}.viewer-v118 button.r-values:hover{background:#d4ecdf}
+.viewer-v118 .pv-work{min-width:0;min-height:0;display:grid;grid-template-rows:auto minmax(0,1fr);gap:8px}
+.viewer-v118 .pv-sentence{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;padding:8px 12px;background:#fff;border:1px solid #d5e2e6;border-radius:10px;font-size:14px;font-weight:700;color:#1f3d48}
+.viewer-v118 .pv-slot{display:inline-flex;flex-wrap:wrap;align-items:center;gap:5px;min-height:34px;padding:1px;border:1px solid transparent;border-radius:8px}
+.viewer-v118 .pv-slot.over{background:#e2f4f5;border-color:#0d8191}
+.viewer-v118 .pv-chip{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 5px 0 10px;border:1px solid;border-radius:7px;font-size:13px;font-weight:800;cursor:grab}
+.viewer-v118 .pv-chip>span{max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.viewer-v118 .pv-chip b{padding:0 4px;color:#9a5550;font-size:14px;line-height:1;cursor:pointer}
+.viewer-v118 .pv-chip b:hover{color:#b93b32}
+.viewer-v118 .pv-hole{display:inline-flex;align-items:center;height:30px;padding:0 12px;border:1px dashed;border-radius:7px;font-size:12px;font-weight:700}
+.viewer-v118 .pv-hole.r-rows{background:#f3fafb}.viewer-v118 .pv-hole.r-columns{background:#f6f8fd}
+.viewer-v118 .pv-measure{width:auto;min-width:110px;height:32px;padding:0 8px;font-size:13px;font-weight:800;color:#0b6b4c;background:#e4f3ea;border:1px solid #a9d6bf;border-radius:7px}
+.viewer-v118 .pv-sp{flex:1}
+.viewer-v118 .pv-ck,.viewer-v118 .pv-opt{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:700;color:#3f5661;cursor:pointer}
+.viewer-v118 .pv-ck input{width:15px;height:15px;margin:0}
+.viewer-v118 .pv.is-chart .pv-ck{display:none}
+.viewer-v118 .pv-opt select{width:auto;height:30px;padding:0 6px;font-size:12px}
+.viewer-v118 .pv-export{position:relative}
+.viewer-v118 #pivot-export-open{height:30px;padding:0 12px;font-size:12px}
+.viewer-v118 .pv-pop{position:absolute;right:0;top:36px;z-index:20;display:grid;gap:8px;min-width:240px;padding:10px;background:#fff;border:1px solid #bcd6de;border-radius:9px;box-shadow:0 14px 30px #17384e30}
+.viewer-v118 #pivot-export{height:32px;font-size:12px;background:#0d8191;color:#fff;border:1px solid #0b6d86}
+.viewer-v118 #pivot-export:hover{background:#0b6d86;filter:none}
+.viewer-v118 .pv-link{padding:0 4px;background:none;color:#087c98;font-size:12px;filter:none}
+.viewer-v118 .pv-link:hover{background:none;text-decoration:underline}
+.viewer-v118 .pv-empty{min-height:0;display:grid;place-content:center;justify-items:center;gap:8px;padding:30px;text-align:center;background:#fff;border:1px dashed #c3d3d9;border-radius:10px}
+.viewer-v118 .pv-empty>b{font-size:16px;color:#17384e}
+.viewer-v118 .pv-empty>span{max-width:620px;font-size:12.5px;line-height:1.6;color:#4d6670}
+.viewer-v118 .pv-quick{display:flex;flex-wrap:wrap;justify-content:center;gap:8px;margin-top:4px}
+.viewer-v118 .pv-quick button{display:grid;gap:1px;padding:9px 16px;background:#f5fafb;color:#17384e;border:1px solid #bcd6de;border-radius:9px;text-align:left}
+.viewer-v118 .pv-quick button:hover{background:#e8f4f6}
+.viewer-v118 .pv-quick b{font-size:13px}
+.viewer-v118 .pv-quick small{font-size:11px;font-weight:600;color:#647581}
+/* 表は中身の幅にする（画面いっぱいに引き伸ばすと、見出しと数字が離れて読みにくい） */
+.viewer-v118 #analysis-pivot-result{min-height:0;display:flex;flex-direction:column;gap:6px;overflow:hidden}
+.viewer-v118 #analysis-pivot-result .pivot-resultbox{flex:0 1 auto;height:auto;max-height:100%;max-width:100%;align-self:flex-start}
+.viewer-v118 .pivot-table td{min-width:84px}
+.viewer-v118 .pv-hint{padding:0 4px;font-size:11px;color:#647581}
+@media(max-width:1000px){.viewer-v118 .viewer-analysis.pv{grid-template-columns:240px minmax(0,1fr)}}
 /* --- ピボット表の見た目：階層行・列見出し／小計／総計の階調 --- */
-.viewer-v118 .pivot-table{border-collapse:separate;border-spacing:0;min-width:100%;font-size:11px}
+.viewer-v118 .pivot-table{border-collapse:separate;border-spacing:0;font-size:11.5px}
 .viewer-v118 .pivot-table th,.viewer-v118 .pivot-table td{border-bottom:1px solid #e5ecef;border-right:1px solid #eef2f4;padding:5px 9px;white-space:nowrap}
 .viewer-v118 .pivot-table thead th{position:sticky;top:0;z-index:3;background:#e8f1f3;color:#26505d;text-align:center;border-bottom:1px solid #c7d6dc;font-weight:800}
 .viewer-v118 .pivot-corner{position:sticky;left:0;z-index:5;background:#dfeaec !important;text-align:left !important;color:#33555f;white-space:pre-line;vertical-align:bottom}
@@ -1130,9 +1141,9 @@ body > main{max-width:1620px;padding-left:12px;padding-right:12px}
 .viewer-v118 .chart-axis{stroke:#9eb2ba;stroke-width:1}
 .viewer-v118 .chart-grid{stroke:#e6edf0;stroke-width:1}
 .viewer-v118 .chart-axis-label{fill:#6a7f88;font-size:10px}
-@media(max-width:1000px){.viewer-v118 .viewer-analysis{grid-template-columns:180px minmax(0,1fr)}.viewer-v118 .analysis-work{grid-template-columns:150px minmax(0,1fr)}}
-@media(max-width:760px){.viewer-v118 .viewer-topbar{flex-wrap:wrap}.viewer-v118 .viewer-meta{order:3;width:100%}.viewer-v118 .viewer-tabs{margin-left:0}.viewer-v118 .viewer-analysis{grid-template-columns:1fr;grid-template-rows:150px minmax(0,1fr)}.viewer-v118 .analysis-work{grid-template-columns:1fr;grid-template-rows:auto auto auto minmax(0,1fr)}.viewer-v118 .zone-values,.viewer-v118 .zone-cols,.viewer-v118 .zone-rows,.viewer-v118 .analysis-canvas{grid-column:1}}
-@media(max-height:720px){.viewer-v118 .vtab{padding:6px 12px;font-size:12px}.viewer-v118 .zone{padding:5px 6px}}
+@media(max-width:1000px){.viewer-v118 .viewer-analysis{grid-template-columns:180px minmax(0,1fr)}}
+@media(max-width:760px){.viewer-v118 .viewer-topbar{flex-wrap:wrap}.viewer-v118 .viewer-meta{order:3;width:100%}.viewer-v118 .viewer-tabs{margin-left:0}.viewer-v118 .viewer-analysis{grid-template-columns:1fr;grid-template-rows:150px minmax(0,1fr)}}
+@media(max-height:720px){.viewer-v118 .vtab{padding:6px 12px;font-size:12px}}
 
 /* ============================================================
    v1.18.1 修正: データビュワーで属性 hidden を最優先で尊重する。
@@ -1142,58 +1153,6 @@ body > main{max-width:1620px;padding-left:12px;padding-right:12px}
    ============================================================ */
 #viewer [hidden]{display:none!important}
 .viewer-v118 [hidden]{display:none!important}
-
-/* ============================================================
-   v1.18.2 修正: 集計表・グラフのレイアウト崩れの解消。
-   原因: 素の main{grid-row:2;overflow:hidden;max-width:1580px;margin:auto} が
-   分析パネルの <main class="analysis-work"> に波及し、描画領域が
-   viewer-analysis グリッドの「行2・列1（=カラムリストの真下・左側の狭い列）」へ
-   押し込まれ、値/列/行のドロップゾーンが左へ縦積みになり、集計表・グラフの
-   描画領域（キャンバス）が画面外へ回り込んでいた。
-   対策(1): HTML側で analysis-work / analysis-fields を <div> 化し、素の main/aside
-            ルールの波及を根本的に断つ。
-   対策(2): 念のためグリッド配置を明示し、波及し得るプロパティを無効化する。
-   ============================================================ */
-.viewer-v118 .viewer-analysis{grid-template-rows:minmax(0,1fr)}
-.viewer-v118 .analysis-fields{grid-column:1;grid-row:1;align-self:stretch;justify-self:stretch}
-.viewer-v118 .analysis-work{grid-column:2;grid-row:1;align-self:stretch;justify-self:stretch;max-width:none!important;margin:0!important;padding:0!important;overflow:visible!important;width:auto!important}
-
-/* ============================================================
-   v1.18.3 修正: データビュワーの集計表・グラフで、カラムの表示用
-   リストボックス（カラムリスト）が高さ不足で表示しきれない不具合の解消。
-   原因: 旧版(v1.14.0)で定義した未スコープの .pivot-field-list に
-         max-height:70px が残存していた。以降の v1.17.0 / v1.18.0 の
-         規則は display 等を上書きするだけで max-height を再宣言して
-         いなかったため、カスケード上 70px の高さ上限が生き続け、
-         カラムリストが約2件分に押し潰され、下部に余白が生じていた。
-   対策: v118スコープでカラムリストの高さ上限を解除し、
-         グリッド行（minmax(0,1fr)）いっぱいに伸びて内部スクロール
-         する本来の挙動へ戻す。ドロップゾーンにも最小高さを与え、
-         配置カラムのチップが見切れないようにする。
-   認知心理学(一貫性・スクロールの局所化) / 情報アーキテクチャ
-   (カラムリスト→行/列/値ゾーンの明快な役割) / 色彩調和(既存ティール基調踏襲)。
-   ============================================================ */
-.viewer-v118 .pivot-field-list{max-height:none!important;min-height:0;height:auto;flex-wrap:nowrap}
-.viewer-v118 .analysis-fields{min-height:0}
-.viewer-v118 .axis-drop{min-height:44px}
-.viewer-v118 .axis-drop.drop-stack{min-height:64px}
-
-/* ============================================================
-   v1.18.4 追加: 実行キュー全体の進捗バー（cq-overall）を待機予約を含めて
-   常時反映。データビュワー集計表・グラフに小計/総計のON/OFFと、
-   集計結果のファイル出力（CSV/TXT/EXCEL）操作を追加。
-   認知心理学(操作の近接・状態の即時フィードバック) / 情報アーキテクチャ
-   (集計方法→小計総計→出力の段階) / 色彩調和(既存ティール基調の踏襲)。
-   ============================================================ */
-.viewer-v118 .agg-toggles{display:grid;gap:5px;padding-top:8px;margin-top:2px;border-top:1px solid #dce6e9}
-.viewer-v118 .agg-toggles-label{font-size:10px;font-weight:900;letter-spacing:.02em;color:#5f757f}
-.viewer-v118 .agg-check{display:flex;align-items:center;gap:7px;font-size:11px;font-weight:700;color:#3f5661;cursor:pointer}
-.viewer-v118 .agg-check input{width:15px;height:15px;flex:none;margin:0}
-.viewer-v118 .agg-export{display:grid;gap:6px;padding-top:8px;margin-top:2px;border-top:1px solid #dce6e9}
-.viewer-v118 .agg-export .agg-field{display:grid;gap:3px;font-size:10px;font-weight:800;color:#5f757f}
-.viewer-v118 .agg-export select{height:31px}
-.viewer-v118 #pivot-export{height:30px;padding:5px 9px;font-size:11px;background:#0d8191;color:#fff;border:1px solid #0b6d86}
-.viewer-v118 #pivot-export:hover{background:#0b6d86;filter:none}
 
 /* ============================================================
    v1.22.0: 対象ファイル設定を5つのタブへ分割
@@ -1617,7 +1576,6 @@ body > main{max-width:1620px;padding-left:12px;padding-right:12px}
 @media(max-width:700px){.rs-line{grid-template-columns:minmax(0,1fr) 62px}.rs-line time{grid-column:1/-1}}
 .rs-fixed{font-style:normal;font-size:10px;color:#93a6ae;margin-left:auto}
 
-
 /* V1.55: 設定は変更した時点で保存する。下のバーは「保存する場所」ではなく
    「保存できているかを見る場所」になったので、状態が一目で分かる形にする。 */
 footer{justify-content:flex-start;gap:10px}
@@ -1677,7 +1635,6 @@ body:has(.autosave-state.is-saving) .autosave-mark{background:#0b8ea8;box-shadow
 .log-act-group{display:inline-flex;align-items:center;gap:4px;padding:3px 6px 3px 4px;border:1px solid #e0e8eb;border-radius:9px;background:#fbfdfd}
 .log-act-group>i{font-style:normal;font-size:10px;font-weight:900;color:#5e747e;letter-spacing:.06em;padding:0 4px}
 .log-act-group.is-danger>i{color:#a4463d}
-
 
 /* V1.56: 調査は「RNEを調査」1つに寄せる。何をどのRNEで調べたのかを常に見せる。 */
 .insp-target{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin:0 0 9px;padding:8px 11px;
@@ -1768,7 +1725,6 @@ body:has(.autosave-state.is-saving) .autosave-mark{background:#0b8ea8;box-shadow
 .rc-hint{margin-left:auto;margin-right:12px;font-size:11px;color:#80939b}
 .rc-hint b{color:#0b6d86}
 @media(max-width:1100px){.rc-hint{display:none}}
-
 
 /* V1.73: 速さを測る。選ぶ場所を1枚にまとめてある。
    以前は「まとめて測る」「1つずつ測る」「軸を比べる」が別々の枠で、同じ設定が
@@ -1877,7 +1833,6 @@ body:has(.autosave-state.is-saving) .autosave-mark{background:#0b8ea8;box-shadow
 @media(max-width:820px){.ai-row{grid-template-columns:30px minmax(0,1fr) auto}.ai-save,.ai-up{display:none}
  .tm-axis-list{grid-template-columns:1fr}.tm-go{margin-left:0;width:100%}}
 
-
 /* V1.67: 設定の入力欄と「このPCでの状態」を1つにまとめる。同じ設定が2か所に出ていて、
    役割の説明は片方にしかなかった。1設定＝1行にし、要らないものは下へ沈める。 */
 #pathform.pathgrid{display:flex!important;flex-wrap:wrap;align-content:flex-start;gap:10px}
@@ -1946,7 +1901,6 @@ body:has(.autosave-state.is-saving) .autosave-mark{background:#0b8ea8;box-shadow
 .mp-fixed>summary{cursor:pointer;font-size:11px;color:#5d7681;padding:7px 2px}
 @media(max-width:820px){.mp-row{grid-template-columns:80px minmax(0,1fr)}.mp-row button{grid-column:1/-1}}
 
-
 /* V1.58: Navigator APIの状態は1枚に。判定はサーバーの1か所、画面はそれを出すだけ。 */
 .ar-head{display:flex;align-items:center;gap:12px;margin-bottom:9px}
 .ar-head>div{display:grid;gap:2px;min-width:0}
@@ -2006,7 +1960,6 @@ body:has(.autosave-state.is-saving) .autosave-mark{background:#0b8ea8;box-shadow
 .insp-next.is-ok b{color:#0c6b4d}
 .insp-next.is-ng{border-left-color:#b93b32;background:#fdf6f5}
 .insp-next.is-ng b{color:#a4463d}
-
 
 /* ============================================================
    V1.59: 画面の器（シェル）を1か所で決める。
@@ -2131,7 +2084,6 @@ body>main{width:var(--app-shell);max-width:var(--app-shell);
 .bulk-preview small{color:#7f929a;line-height:1.6}
 @media(max-width:700px){.bulk-field{grid-template-columns:minmax(0,1fr)}}
 
-
 /* V1.74: 一覧の「状態」バッジは押せる。見た目が同じままだと押せると気づけないので、
    触れたときに枠と持ち上がりを出す。有効・無効は設定というより状態で、
    切り替えるたびに編集画面を開かせるのは遠すぎた。 */
@@ -2152,7 +2104,6 @@ body>main{width:var(--app-shell);max-width:var(--app-shell);
  font-weight:800;color:#0b6d86;background:#e3f3f7;border:1px dashed #9fd0da;
  border-radius:7px;padding:5px 10px}
 .insp-next.is-ng .in-here{color:#a4463d;background:#fbe9e6;border-color:#e7bdb6}
-
 
 /* V1.79: 固定長テキストの読取マスタ。RNEの登録と並ぶもう1つの「入力の決め方」。 */
 .src-pick{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:0 0 9px}
@@ -2226,7 +2177,6 @@ body>main{width:var(--app-shell);max-width:var(--app-shell);
  .lay-cols-head,.lay-col{grid-template-columns:minmax(90px,1.2fr) 58px 58px 58px 78px 30px}
  .lay-cols-head span:nth-child(6),.lay-cols-head span:nth-child(7),
  .lay-col .lay-fmt,.lay-col .lay-memo{display:none}}
-
 
 /* V1.80: ファイル結合。繋がっているものを、繋がって見えるように置く。
    カードを左から右へ並べ、その「あいだ」に、つなぎ方そのものを置く ――
@@ -2485,7 +2435,6 @@ body>main{width:var(--app-shell);max-width:var(--app-shell);
 /* いちばん下のフォルダー名だけ出しているときは、それが省略形だと分かるようにする。 */
 .output-link.is-tail{color:#3d5966;font-weight:700}
 .output-link.is-tail:hover{color:#087c98}
-
 
 /* ==== 登録内容の持ち出し・持ち込み ==========================================
    選ぶ・押す・結果を見る、の3つだけ。件数を札に出しておくと、何が入るのかを

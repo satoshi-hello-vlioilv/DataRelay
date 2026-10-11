@@ -3517,10 +3517,11 @@ tmApplyOptions();
 
 /* ============================================================
    v1.18.0 データビュワー：データ一覧 / 集計表 / グラフ の3タブ構成。
-   集計表・グラフはカラムリスト(左) + 行・列・値のドロップゾーン(右)で構成し、
    Excelピボット互換の階層集計（行/列の多段階層・小計・総計・件数/合計/平均/最小/最大）を提供する。
+   2.1.3: 組み立ては、左のカラムの札（行・列、数のカラムは値も）を押すと、上の文
+   「［行］ごとに、［列］別の［値］を出す」に入る形（案 J。tests/ui-proposals/2026-10-pivot）。D&D も残す。
    ============================================================ */
-let viewerData=null,viewerRows=[],viewerFiltered=[],viewerPage=1,viewerSort={col:-1,dir:1};
+let viewerData=null,viewerRows=[],viewerFiltered=[],viewerPage=1,viewerSort={col:-1,dir:1},viewerCols=[];
 let viewerView='list',pivotState={rows:[],columns:[],values:[],aggregate:'count',showSubtotals:true,showGrandTotal:true};
 const VIEWER_PAGE_SIZE=100,PSEP='\u001f',CSEP='\u001e';
 const CHART_COLORS=['#0d8191','#3a4d9c','#0b6b4c','#b5822a','#7658ae','#c9564a','#1f6aa8','#8a5f18','#5c8a2a','#a5372c','#5a6f77','#2c9c9c'];
@@ -3560,15 +3561,49 @@ function sortViewer(c){viewerSort=viewerSort.col===c?{col:c,dir:-viewerSort.dir}
 function renderViewerList(){if(!viewerData)return;let pages=Math.max(1,Math.ceil(viewerFiltered.length/VIEWER_PAGE_SIZE));viewerPage=Math.max(1,Math.min(pages,viewerPage));let start=(viewerPage-1)*VIEWER_PAGE_SIZE,rows=viewerFiltered.slice(start,start+VIEWER_PAGE_SIZE);$('#viewer-head').innerHTML='<tr><th class="viewer-rownum">No.</th>'+viewerData.headers.map((h,i)=>`<th class="viewer-sortable ${viewerSort.col===i?'sorted':''}" data-col="${i}">${E(h||'(空欄)')}<span>${viewerSort.col===i?(viewerSort.dir>0?'▲':'▼'):''}</span></th>`).join('')+'</tr>';$('#viewer-body').innerHTML=rows.length?rows.map((r,n)=>`<tr><td class="viewer-rownum">${start+n+1}</td>`+viewerData.headers.map((_,i)=>`<td title="${E(r[i]??'')}">${E(r[i]??'')}</td>`).join('')+'</tr>').join(''):`<tr><td class="viewer-nohit" colspan="${viewerData.headers.length+1}">一致するデータはありません</td></tr>`;$$('#viewer-head .viewer-sortable').forEach(x=>x.onclick=()=>sortViewer(+x.dataset.col));$('#viewer-page').textContent=`${viewerPage} / ${pages}`;$('#viewer-prev').disabled=viewerPage<=1;$('#viewer-next').disabled=viewerPage>=pages;$('#viewer-filter-summary').textContent=`${viewerFiltered.length.toLocaleString()} / ${viewerRows.length.toLocaleString()}行`}
 
 /* ---------- 3タブ切替 ---------- */
-function setViewerView(view){viewerView=view;['list','pivot','chart'].forEach(v=>$('#vtab-'+v)?.classList.toggle('on',v===view));let has=!!viewerData;$('#viewer-empty').hidden=has;$('#viewer-list').hidden=!has||view!=='list';$('#viewer-analysis').hidden=!has||view==='list';$('#chart-type-wrap').hidden=view!=='chart';if(!has)return;if(view==='list'){renderViewerList();return}$('#analysis-pivot-result').hidden=view!=='pivot';$('#analysis-chart-result').hidden=view!=='chart';buildPivotFields();renderAnalysis()}
+function setViewerView(view){viewerView=view;['list','pivot','chart'].forEach(v=>$('#vtab-'+v)?.classList.toggle('on',v===view));let has=!!viewerData;$('#viewer-empty').hidden=has;$('#viewer-list').hidden=!has||view!=='list';$('#viewer-analysis').hidden=!has||view==='list';$('#chart-type-wrap').hidden=view!=='chart';$('#viewer-analysis').classList.toggle('is-chart',view==='chart');if(!has)return;if(view==='list'){renderViewerList();return}buildPivotFields();renderAnalysis()}
 
-/* ---------- カラムリスト & ドロップゾーン ---------- */
+/* ---------- カラムの札と上の文 ---------- */
+const PIVOT_ROLE_NAME={rows:'行',columns:'列',values:'値'},KINDS_CAP=10000;
+/* カラムごとの「値の種類の数」と「数のカラムか」。行・列に向くか（種類が少ないか）、値にできるか（数か）を選ぶ手がかりにする */
+function viewerColumnInfo(rows,headers){return headers.map((_,i)=>{let seen=new Set(),sampled=0,nums=0;for(const r of rows){let v=r[i];if(seen.size<KINDS_CAP)seen.add(String(v??''));let t=String(v??'').trim();if(t!==''&&sampled<300){sampled++;if(numericVal(t)!==null)nums++}}return{kinds:seen.size,many:seen.size>=KINDS_CAP,numeric:sampled>0&&nums===sampled}})}
+const kindsText=c=>c?(c.many?`${(KINDS_CAP/10000).toLocaleString()}万種類以上`:`${c.kinds.toLocaleString()} 種類`):'';
 function usedRole(i){for(const r of['rows','columns','values'])if(pivotState[r].includes(i))return r;return null}
-function buildPivotFields(){if(!viewerData)return;let q=($('#pivot-field-search')?.value||'').toLowerCase();let b=$('#pivot-field-list');b.innerHTML=viewerData.headers.map((h,i)=>({h:h||'(空欄)',i})).filter(x=>!q||x.h.toLowerCase().includes(q)).map(x=>{let ur=usedRole(x.i),tag=ur?`<span class="fl-tag t-${ur}">${ur==='rows'?'行':ur==='columns'?'列':'値'}</span>`:'';return `<button type="button" draggable="true" data-col="${x.i}" class="${ur?'used':''}"><i>⋮⋮</i><span class="fl-name">${E(x.h)}</span>${tag}</button>`}).join('');bindDraggables(b)}
+function buildPivotFields(){if(!viewerData)return;let q=($('#pivot-field-search')?.value||'').toLowerCase(),b=$('#pivot-field-list');
+ b.innerHTML=viewerData.headers.map((h,i)=>({h:h||'(空欄)',i})).filter(x=>!q||x.h.toLowerCase().includes(q)).map(x=>{let ur=usedRole(x.i),c=viewerCols[x.i],roles=['rows','columns'].concat(c?.numeric?['values']:[]);
+  return `<div class="pv-f${ur?' is-used':''}" draggable="true" data-col="${x.i}"><span class="pv-fn" title="${E(x.h)}"><b>${E(x.h)}</b><small class="${c&&c.kinds>50?'is-many':''}">${E(kindsText(c))}</small></span>${roles.map(r=>`<button type="button" class="pv-r r-${r}${ur===r?' on':''}" data-role="${r}" data-col="${x.i}" aria-pressed="${ur===r}" title="${ur===r?PIVOT_ROLE_NAME[r]+'から外す':PIVOT_ROLE_NAME[r]+'に入れる'}">${PIVOT_ROLE_NAME[r]}</button>`).join('')}${c?.numeric?'':'<i></i>'}</div>`}).join('');
+ b.querySelectorAll('.pv-r').forEach(x=>x.onclick=()=>togglePivotField(x.dataset.role,x.dataset.col));bindDraggables(b)}
 function bindDraggables(root){root.querySelectorAll('[draggable][data-col]').forEach(x=>{x.ondragstart=e=>{e.dataTransfer.setData('text/plain',x.dataset.col);e.dataTransfer.setData('role',x.dataset.role||'');e.dataTransfer.effectAllowed='copyMove'}})}
-function renderAxis(role){let zone=$('#pivot-'+role),arr=pivotState[role];let ph={rows:'行に展開するカラムをドロップ',columns:'列に展開するカラムをドロップ（任意）',values:'件数以外はここへ'}[role];zone.innerHTML=arr.length?arr.map((i,n)=>`<div class="chip-field" draggable="true" data-col="${i}" data-role="${role}" data-pos="${n}"><em>${n+1}</em><span class="cf-name" title="${E(fieldName(i))}">${E(fieldName(i))}</span><b data-remove="1" title="外す">×</b></div>`).join(''):`<span class="axis-ph">${ph}</span>`;bindDraggables(zone);zone.querySelectorAll('[data-remove]').forEach(b=>b.onclick=e=>{e.stopPropagation();let p=Number(b.parentElement.dataset.pos);pivotState[role].splice(p,1);refreshDesigner()})}
-function refreshDesigner(){['rows','columns','values'].forEach(renderAxis);buildPivotFields();renderAnalysis()}
-function addPivotField(role,index){index=Number(index);if(Number.isNaN(index))return;['rows','columns','values'].forEach(r=>{let p=pivotState[r].indexOf(index);if(p>=0)pivotState[r].splice(p,1)});if(role==='values')pivotState.values=[index];else pivotState[role].push(index);refreshDesigner()}
+function renderSlot(role){let zone=$('#pivot-'+role),arr=pivotState[role];
+ zone.innerHTML=arr.length?arr.map((i,n)=>`<span class="pv-chip r-${role}" draggable="true" data-col="${i}" data-role="${role}" data-pos="${n}"><span title="${E(fieldName(i))}">${E(fieldName(i))}</span><b data-remove="1" title="外す">×</b></span>`).join(''):`<span class="pv-hole r-${role}">${role==='rows'?'行のカラム':'列のカラム（任意）'}</span>`;
+ bindDraggables(zone);zone.querySelectorAll('[data-remove]').forEach(b=>b.onclick=e=>{e.stopPropagation();pivotState[role].splice(Number(b.parentElement.dataset.pos),1);refreshDesigner()})}
+/* 値は1つの選択にまとめる（件数か、数のカラムの合計・平均・最小・最大）。集計方法と値の置き場を分けない */
+function measureKey(){return pivotState.aggregate==='count'||pivotState.values[0]==null?'count':`${pivotState.aggregate}:${pivotState.values[0]}`}
+function renderMeasure(){let sel=$('#pivot-measure');if(!sel||!viewerData)return;
+ sel.innerHTML='<option value="count">件数</option>'+viewerData.headers.map((h,i)=>viewerCols[i]?.numeric?`<optgroup label="${E(h||'(空欄)')}">${['sum','avg','min','max'].map(k=>`<option value="${k}:${i}">${E(h||'(空欄)')} の${AGG_LABEL[k]}</option>`).join('')}</optgroup>`:'').join('');
+ sel.value=measureKey();if(sel.value!==measureKey()){pivotState.aggregate='count';pivotState.values=[];sel.value='count'}}
+function setMeasure(key){let [k,i]=String(key||'count').split(':');if(k==='count'||i==null){pivotState.aggregate='count';pivotState.values=[]}else{pivotState.aggregate=k;pivotState.values=[Number(i)]}refreshDesigner()}
+function refreshDesigner(){['rows','columns'].forEach(renderSlot);renderMeasure();buildPivotFields();renderAnalysis()}
+/* 札を押す: 入っていなければ入れ（ほかの役からは外す）、入っていれば外す。値は数のカラムの合計にする */
+function togglePivotField(role,index){index=Number(index);if(Number.isNaN(index))return;
+ if(role==='values'){if(pivotState.values[0]===index&&pivotState.aggregate!=='count')return setMeasure('count');return addPivotField('values',index)}
+ if(pivotState[role].includes(index)){pivotState[role]=pivotState[role].filter(x=>x!==index);return refreshDesigner()}
+ addPivotField(role,index)}
+function addPivotField(role,index){index=Number(index);if(Number.isNaN(index))return;
+ if(role==='values'){if(!viewerCols[index]?.numeric)return toast('値にできるのは数のカラムだけです（件数は、上の文の［件数］のままで数えます）');['rows','columns'].forEach(r=>pivotState[r]=pivotState[r].filter(x=>x!==index));return setMeasure(`${pivotState.aggregate==='count'?'sum':pivotState.aggregate}:${index}`)}
+ ['rows','columns'].forEach(r=>pivotState[r]=pivotState[r].filter(x=>x!==index));if(pivotState.values[0]===index){pivotState.values=[];pivotState.aggregate='count'}
+ pivotState[role].push(index);refreshDesigner()}
+/* 何も置いていないとき、すぐ見られる組み方を出す（種類の少ないカラムどうし・数のカラムの合計） */
+function pivotQuickPicks(){let H=viewerData?.headers||[],few=H.map((_,i)=>i).filter(i=>{let c=viewerCols[i];return c&&!c.numeric&&c.kinds>=2&&c.kinds<=12}).sort((a,b)=>viewerCols[a].kinds-viewerCols[b].kinds||a-b),num=H.map((_,i)=>i).find(i=>viewerCols[i]?.numeric),out=[];
+ // 同じカラムばかりにならないよう、組み合わせを散らして選ぶ
+ [[0,1],[2,3],[1,2],[0,3],[0,2],[1,3]].filter(([a,b])=>few[a]!=null&&few[b]!=null).slice(0,3).forEach(([a,b])=>out.push({rows:[few[a]],columns:[few[b]],m:'count'}));
+ if(num!=null)few.slice(0,2).forEach(i=>out.push({rows:[i],columns:[],m:`sum:${num}`}));
+ if(!out.length&&few.length)out.push({rows:[few[0]],columns:[],m:'count'});
+ return out.slice(0,5)}
+function paintPivotEmpty(){let box=$('#pivot-empty'),onlyCols=!pivotState.rows.length&&pivotState.columns.length,picks=onlyCols?[]:pivotQuickPicks();
+ box.innerHTML=`<b>${onlyCols?'行のカラムを1つ以上選んでください':'カラムの［行］を押すと、値ごとの件数が出ます'}</b><span>${onlyCols?'列だけでは表になりません。いま列にあるカラムを行にするなら、そのカラムの［行］を押します。':'種類の少ないカラムが、行・列に向いています。'+(picks.length?'すぐに見るなら:':'')}</span>`+(picks.length?`<div class="pv-quick">${picks.map((q,n)=>{let [k,i]=q.m.split(':');return `<button type="button" data-n="${n}"><b>${E(fieldName(q.rows[0]))}${q.columns.length?' × '+E(fieldName(q.columns[0])):' ごと'}</b><small>${k==='count'?'件数':E(fieldName(i))+' の'+AGG_LABEL[k]}</small></button>`}).join('')}</div>`:'');
+ box.querySelectorAll('.pv-quick button').forEach(b=>b.onclick=()=>{let q=picks[Number(b.dataset.n)];pivotState.rows=q.rows.slice();pivotState.columns=q.columns.slice();setMeasure(q.m)})}
+function paintAnalysisPanes(empty){$('#pivot-empty').hidden=!empty;$('#analysis-pivot-result').hidden=empty||viewerView!=='pivot';$('#analysis-chart-result').hidden=empty||viewerView!=='chart';if(empty)paintPivotEmpty()}
 
 /* ---------- ピボット集計エンジン（階層・小計・総計） ---------- */
 function leafIdsForPath(fp,depth){if(depth===0)return['ALL:'];const ids=['D:'+fp.join(PSEP)];for(let p=1;p<depth;p++)ids.push('S:'+fp.slice(0,p).join(PSEP));ids.push('G:');return ids}
@@ -3587,15 +3622,14 @@ function pivotFormat(v){if(v===null||v===undefined||v==='')return '';if(typeof v
 function cellClass(rleaf,cleaf){let c=[];if(rleaf.type==='grand')c.push('col-x');if(cleaf.type==='grand')c.push('col-grand');if(cleaf.type==='subtotal')c.push('col-subtotal');return c.join(' ')}
 
 /* ---------- 集計表・グラフの描画 ---------- */
-function renderAnalysis(){if(!viewerData)return;pivotState.aggregate=$('#pivot-aggregate').value;pivotState.showSubtotals=$('#pivot-show-subtotal')?$('#pivot-show-subtotal').checked:(pivotState.showSubtotals!==false);pivotState.showGrandTotal=$('#pivot-show-grand')?$('#pivot-show-grand').checked:(pivotState.showGrandTotal!==false);let kind=pivotState.aggregate,value=pivotState.values[0]??null;let hint=$('#pivot-hint');if(!pivotState.rows.length&&!pivotState.columns.length){hint.textContent='「行」に1つ以上カラムを配置してください。1つでも配置すれば値ごとの件数（グルーピング集計）を表示します。';$('#pivot-head').innerHTML='';$('#pivot-body').innerHTML='';$('#pivot-chart').innerHTML='<div class="chart-empty">行にカラムを配置すると集計を表示します。</div>';return}
- if(!pivotState.rows.length){hint.textContent='「行」に少なくとも1つカラムを配置してください（列だけの集計は行へ移してください）。';$('#pivot-head').innerHTML='';$('#pivot-body').innerHTML='';$('#pivot-chart').innerHTML='<div class="chart-empty">行にカラムを配置してください。</div>';return}
- if(kind!=='count'&&value===null){hint.textContent='カウント以外の集計では「値」へ数値カラムを配置してください。';$('#pivot-head').innerHTML='';$('#pivot-body').innerHTML='';$('#pivot-chart').innerHTML='<div class="chart-empty">値へ数値カラムを配置してください。</div>';return}
+function renderAnalysis(){if(!viewerData)return;pivotState.showSubtotals=$('#pivot-show-subtotal')?$('#pivot-show-subtotal').checked:(pivotState.showSubtotals!==false);pivotState.showGrandTotal=$('#pivot-show-grand')?$('#pivot-show-grand').checked:(pivotState.showGrandTotal!==false);let kind=pivotState.aggregate,value=pivotState.values[0]??null;let hint=$('#pivot-hint');if(kind!=='count'&&value===null){kind='count';pivotState.aggregate='count'}
+ paintAnalysisPanes(!pivotState.rows.length);if(!pivotState.rows.length){$('#pivot-head').innerHTML='';$('#pivot-body').innerHTML='';$('#pivot-chart').innerHTML='';hint.textContent='';return}
  let measureLabel=kind==='count'?'件数':`${fieldName(value)} の${AGG_LABEL[kind]}`;
  let opts={subtotals:pivotState.showSubtotals!==false,grand:pivotState.showGrandTotal!==false};
  let model=buildPivot(viewerFiltered,pivotState.rows,pivotState.columns,value,kind,opts);
  let rowData=model.rowLeaves.filter(l=>l.type==='data').length,colData=model.colLeaves.filter(l=>l.type==='data'||l.type==='all').length;
  let totalsNote=[opts.subtotals?'小計':'',opts.grand?'総計':''].filter(Boolean).join('・')||'小計・総計なし';
- hint.textContent=`行グループ ${rowData} × 列グループ ${colData} / 集計: ${measureLabel}（${totalsNote}）`;
+ hint.textContent=`行 ${rowData.toLocaleString()} × 列 ${colData.toLocaleString()} ・ ${measureLabel}（${totalsNote}）・ ${viewerFiltered.length.toLocaleString()} 行から`;
  renderPivotTable(model,measureLabel);renderPivotChart(model,measureLabel)}
 function renderPivotTable(model,measureLabel){let R=pivotState.rows.length,C=pivotState.columns.length;let rowNames=pivotState.rows.map(fieldName);let headRows=buildColHeaderRows(model.colLeaves,C,rowNames,measureLabel);$('#pivot-head').innerHTML=headRows.map(cells=>'<tr>'+cells.map(c=>`<th class="${c.cls}" colspan="${c.colspan||1}" rowspan="${c.rowspan||1}">${E(c.label)}</th>`).join('')+'</tr>').join('');
  let rowHdr=computeRowHeaderCells(model.rowLeaves,R);
@@ -3618,7 +3652,7 @@ function renderPivotChart(model,measureLabel){let box=$('#pivot-chart');let cats
  box.innerHTML=`${legend}${note}<div class="chart-scroll"><svg viewBox="0 0 ${w} ${h}" role="img" aria-label="集計折れ線グラフ">${grid}<line class="chart-axis" x1="${padL}" y1="${h-padB}" x2="${w-padR}" y2="${h-padB}"/><line class="chart-axis" x1="${padL}" y1="${padT}" x2="${padL}" y2="${h-padB}"/>${lines}${xlabels}</svg></div>`}
 
 /* ---------- 読み込み ---------- */
-async function openViewer(){let {id,value}=viewerParse($('#viewer-job').value);if(!id)return;showWaiting('データを読み込み中','公開済みファイルを読み取り専用で確認しています...');try{let d=await fetch('/api/data-viewer/'+encodeURIComponent(id)+(value==null?'':'?value='+encodeURIComponent(value)),{cache:'no-store'}).then(r=>r.json());if(!d.ok)return showViewerError(d.error);if(d.value){$('#viewer-job').value=viewerKey(id,d.value)}paintViewerValues(id,d.value||null);viewerData=d;viewerRows=d.rows||[];viewerFiltered=viewerRows.slice();viewerSort={col:-1,dir:1};viewerPage=1;pivotState={rows:[],columns:[],values:[],aggregate:'count',showSubtotals:($('#pivot-show-subtotal')?$('#pivot-show-subtotal').checked:true),showGrandTotal:($('#pivot-show-grand')?$('#pivot-show-grand').checked:true)};$('#pivot-aggregate').value='count';$('#viewer-error').hidden=true;$('#viewer-meta').hidden=false;let vname=d.value?`${d.name} · ${d.value}`:d.name;$('#viewer-name').textContent=vname;$('#viewer-name').title=d.path||vname;$('#viewer-format').textContent=formatName(d.format);$('#viewer-count').textContent=`${Number(d.total_rows??viewerRows.length).toLocaleString()}行 × ${Number(d.total_columns??d.headers.length).toLocaleString()}列`;$('#viewer-modified').textContent=(d.modified||'').replace('T',' ');$('#viewer-search').value='';$('#viewer-note').textContent=d.truncated?`先頭${Number(d.preview_limit).toLocaleString()}行を表示（全${Number(d.total_rows).toLocaleString()}行）`+(d.row_budget_limited?`／${Number(d.total_columns).toLocaleString()}列と幅があるため行数を抑えています（列はすべて出しています）`:''):d.path;refreshDesigner();renderViewerList();setViewerView('list')}catch{showViewerError('データを読み込めませんでした')}finally{hideWaiting()}}
+async function openViewer(){let {id,value}=viewerParse($('#viewer-job').value);if(!id)return;showWaiting('データを読み込み中','公開済みファイルを読み取り専用で確認しています...');try{let d=await fetch('/api/data-viewer/'+encodeURIComponent(id)+(value==null?'':'?value='+encodeURIComponent(value)),{cache:'no-store'}).then(r=>r.json());if(!d.ok)return showViewerError(d.error);if(d.value){$('#viewer-job').value=viewerKey(id,d.value)}paintViewerValues(id,d.value||null);viewerData=d;viewerRows=d.rows||[];viewerFiltered=viewerRows.slice();viewerCols=viewerColumnInfo(viewerRows,d.headers||[]);viewerSort={col:-1,dir:1};viewerPage=1;pivotState={rows:[],columns:[],values:[],aggregate:'count',showSubtotals:($('#pivot-show-subtotal')?$('#pivot-show-subtotal').checked:true),showGrandTotal:($('#pivot-show-grand')?$('#pivot-show-grand').checked:true)};$('#viewer-error').hidden=true;$('#viewer-meta').hidden=false;let vname=d.value?`${d.name} · ${d.value}`:d.name;$('#viewer-name').textContent=vname;$('#viewer-name').title=d.path||vname;$('#viewer-format').textContent=formatName(d.format);$('#viewer-count').textContent=`${Number(d.total_rows??viewerRows.length).toLocaleString()}行 × ${Number(d.total_columns??d.headers.length).toLocaleString()}列`;$('#viewer-modified').textContent=(d.modified||'').replace('T',' ');$('#viewer-search').value='';$('#viewer-note').textContent=d.truncated?`先頭${Number(d.preview_limit).toLocaleString()}行を表示（全${Number(d.total_rows).toLocaleString()}行）`+(d.row_budget_limited?`／${Number(d.total_columns).toLocaleString()}列と幅があるため行数を抑えています（列はすべて出しています）`:''):d.path;refreshDesigner();renderViewerList();setViewerView('list')}catch{showViewerError('データを読み込めませんでした')}finally{hideWaiting()}}
 
 /* ---------- イベント結線 ---------- */
 if($('#viewer-load'))$('#viewer-load').onclick=openViewer;
@@ -3629,12 +3663,16 @@ if($('#viewer-next'))$('#viewer-next').onclick=()=>{viewerPage++;renderViewerLis
 ['list','pivot','chart'].forEach(v=>{let b=$('#vtab-'+v);if(b)b.onclick=()=>setViewerView(v)});
 if($('#pivot-field-search'))$('#pivot-field-search').oninput=buildPivotFields;
 $$('.viewer-v118 .axis-drop').forEach(z=>{z.ondragover=e=>{e.preventDefault();z.classList.add('over')};z.ondragleave=()=>z.classList.remove('over');z.ondrop=e=>{e.preventDefault();z.classList.remove('over');addPivotField(z.dataset.role,e.dataTransfer.getData('text/plain'))}});
-if($('#pivot-aggregate'))$('#pivot-aggregate').onchange=()=>{pivotState.aggregate=$('#pivot-aggregate').value;renderAnalysis()};
+if($('#pivot-measure'))$('#pivot-measure').onchange=()=>setMeasure($('#pivot-measure').value);
 if($('#chart-type'))$('#chart-type').onchange=renderAnalysis;
-if($('#pivot-clear'))$('#pivot-clear').onclick=()=>{pivotState={rows:[],columns:[],values:[],aggregate:$('#pivot-aggregate').value,showSubtotals:($('#pivot-show-subtotal')?$('#pivot-show-subtotal').checked:true),showGrandTotal:($('#pivot-show-grand')?$('#pivot-show-grand').checked:true)};refreshDesigner()};
+if($('#pivot-clear'))$('#pivot-clear').onclick=()=>{pivotState={rows:[],columns:[],values:[],aggregate:'count',showSubtotals:($('#pivot-show-subtotal')?$('#pivot-show-subtotal').checked:true),showGrandTotal:($('#pivot-show-grand')?$('#pivot-show-grand').checked:true)};refreshDesigner()};
 if($('#pivot-show-subtotal'))$('#pivot-show-subtotal').onchange=()=>{pivotState.showSubtotals=$('#pivot-show-subtotal').checked;renderAnalysis()};
 if($('#pivot-show-grand'))$('#pivot-show-grand').onchange=()=>{pivotState.showGrandTotal=$('#pivot-show-grand').checked;renderAnalysis()};
-if($('#pivot-export'))$('#pivot-export').onclick=exportPivot;
+if($('#pivot-export'))$('#pivot-export').onclick=()=>{openPivotExport(false);exportPivot()};
+/* 出力の形式は「出力…」の小窓で選ぶ（いつも使う設定ではないので、上の文の欄に並べない） */
+function openPivotExport(on){let pop=$('#pivot-export-pop'),btn=$('#pivot-export-open');if(!pop||!btn)return;pop.hidden=!on;btn.setAttribute('aria-expanded',String(!!on))}
+if($('#pivot-export-open'))$('#pivot-export-open').onclick=e=>{e.stopPropagation();openPivotExport($('#pivot-export-pop').hidden)};
+document.addEventListener('click',e=>{if(!e.target.closest('.pv-export'))openPivotExport(false)});
 /* ---------- 集計結果のファイル出力（CSV / TXT / EXCEL）。現在の小計・総計の表示設定を反映した集計結果を出力する。 ---------- */
 function buildFlatPivotMatrix(){
  if(!viewerData)return null;
@@ -3661,7 +3699,7 @@ function buildFlatPivotMatrix(){
 }
 async function exportPivot(){
  let built=buildFlatPivotMatrix();
- if(!built){toast('先に「行」（必要に応じて「値」）を配置してください');return}
+ if(!built){toast('先に、カラムの［行］を押して表を作ってください');return}
  let fmt=$('#pivot-export-format')?$('#pivot-export-format').value:'csv',base=(viewerData&&viewerData.name)||'集計結果';
  showWaiting('集計結果を出力中','ファイルを作成しています...');
  try{
@@ -4626,6 +4664,10 @@ window.addEventListener('drop',async e=>{
  e.preventDefault();
  await importMaster(k,f);
 });
+// 落とし先の無い所へファイルを落としたとき、WebView がそのファイルを開きに行かないようにする
+// （窓は D&D を画面へ渡しているので、何もしないと既定の動きでファイルへ移ろうとする）。
+window.addEventListener('dragover',e=>{if(!e.defaultPrevented&&[...(e.dataTransfer?.types||[])].includes('Files')){e.preventDefault();e.dataTransfer.dropEffect='none'}});
+window.addEventListener('drop',e=>{if(e.dataTransfer?.files?.length)e.preventDefault()});
 async function fillRecipePicker(selected){
  let sel=$('#m-recipe');if(!sel)return;
  let items=await loadJoins();
