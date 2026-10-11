@@ -56,7 +56,7 @@ class DataRootOrderTest(unittest.TestCase):
 
 class ResolveAgainstDataRootTest(unittest.TestCase):
  def setUp(self):
-  self.saved=(navi_paths.DATA_ROOT,navi_paths.LOCAL_ROOT)
+  self.saved=(navi_paths.DATA_ROOT,navi_paths.LOCAL_ROOT,navi_paths.PROGRAM_ROOT,navi_paths.DATA_SOURCE)
   self.addCleanup(lambda:navi_paths.setup(*self.saved) if self.saved[0] else None)
 
  def test_relative_paths_point_to_the_share_from_a_local_copy(self):
@@ -78,6 +78,30 @@ class ResolveAgainstDataRootTest(unittest.TestCase):
    self.assertEqual(navi_paths.resolve_path('assets/empty.accdb'),prog/'assets'/'empty.accdb','データの基準に無く、プログラムにある物')
    self.assertEqual(navi_paths.resolve_path('rne/A.RNE'),data/'rne'/'A.RNE','両方にあればデータの基準が先')
    self.assertEqual(navi_paths.resolve_path('rne/B.RNE'),data/'rne'/'B.RNE','どちらにも無ければデータの基準（作る物はそこへ）')
+
+
+ def test_relative_paths_follow_the_running_version(self):
+  """2.2.0: 2.0.0 より前に写したPC（データの基準が install.json の data_root ＝ 最初に入れた共有）でも、相対パスは
+  いま動いている版のアプリのフォルダーを先に見る。前の共有にだけある物はそちらを使い、まだ無い物はいまの版のフォルダーに作る。"""
+  with tempfile.TemporaryDirectory() as t:
+   root=Path(t).resolve();prog=root/'DataRelay';share=root/'old-share'/'DataRelay'
+   for d in (prog/'rne',share/'rne',prog/'config',share/'config'):d.mkdir(parents=True)
+   (prog/'rne'/'A.RNE').write_text('new');(share/'rne'/'A.RNE').write_text('old');(share/'rne'/'B.RNE').write_text('old only')
+   (prog/'config'/'symnavim.conf').write_text('new');(share/'config'/'symnavim.conf').write_text('old')
+   navi_paths.setup(share,root/'local',prog,'install')
+   self.assertEqual(navi_paths.rel_root(),prog,'相対パスの主な基準は、いま動いている版のアプリのフォルダー')
+   self.assertEqual(navi_paths.resolve_path('.\\rne\\A.RNE'),prog/'rne'/'A.RNE','両方にあれば、いまの版のフォルダーの物（最初に起動した場所を指さない）')
+   self.assertEqual(navi_paths.resolve_path('.\\config\\symnavim.conf'),prog/'config'/'symnavim.conf')
+   self.assertEqual(navi_paths.resolve_path('.\\rne\\B.RNE'),share/'rne'/'B.RNE','いまの版に無く前の共有にだけある物は、止めずにそちらを使う')
+   self.assertEqual(navi_paths.resolve_path('.\\output'),prog/'output','まだ無い物は、いまの版のフォルダーに作る')
+   self.assertEqual(navi_paths.resolve_path('X.RNE',share/'rne'),share/'rne'/'X.RNE','基準を渡したときは、その基準だけ')
+   # 人が決めた基準（local.json・環境変数）と、写しの data（pc）は、これまでどおりデータの基準が先
+   for src in ('local','env'):
+    navi_paths.setup(share,root/'local',prog,src)
+    self.assertEqual(navi_paths.resolve_path('.\\rne\\A.RNE'),share/'rne'/'A.RNE',src)
+   navi_paths.setup(prog/'data',root/'local',prog,'pc')
+   self.assertEqual(navi_paths.rel_root(),prog/'data')
+   self.assertEqual(navi_paths.resolve_path('.\\rne\\A.RNE'),prog/'rne'/'A.RNE','写しの data に無ければプログラムの場所')
 
 
 class PortableTest(unittest.TestCase):

@@ -1200,15 +1200,17 @@ def delete_old_log():
 @app.post('/api/path-convert')
 def path_convert():
  data=request.get_json(silent=True) or {}; value=str(data.get('value') or '').strip(); mode=data.get('mode','absolute')
- if not value:return jsonify(value='',resolved=str(DATA_ROOT),base=str(DATA_ROOT),is_relative=False)
+ # 相対へ直す基準は、相対パスを読む基準（navi_paths.rel_root。いま動いている版のアプリのフォルダー・データの基準）と同じ
+ root=navi_paths.rel_root().resolve()
+ if not value:return jsonify(value='',resolved=str(root),base=str(root),is_relative=False)
  resolved=resolve_path(value).resolve()
  if mode=='relative':
-  try:converted='.\\'+str(resolved.relative_to(DATA_ROOT.resolve())).replace('/','\\')
+  try:converted='.\\'+str(resolved.relative_to(root)).replace('/','\\')
   except ValueError:
-   try:converted=os.path.relpath(str(resolved),str(DATA_ROOT.resolve())).replace('/','\\')
+   try:converted=os.path.relpath(str(resolved),str(root)).replace('/','\\')
    except ValueError:return jsonify(error='別ドライブまたはUNC経路のため、このアプリ基準の相対パスへ変換できません。絶対パスを使用してください。'),400
  else:converted=str(resolved)
- return jsonify(value=converted,resolved=str(resolved),base=str(DATA_ROOT.resolve()),is_relative=not Path(converted).is_absolute())
+ return jsonify(value=converted,resolved=str(resolved),base=str(root),is_relative=not Path(converted).is_absolute())
 
 @app.get('/api/output-capabilities')
 def output_capabilities():
@@ -1248,7 +1250,7 @@ def _shortcut_offer():
 def release_status():
  """画面「配布と更新」の全部（置き場・配る版・置いてある版・入口・各PCの版）。置き場に届かなければ 3 秒で打ち切る。"""
  out=navi_release.status(BASE,DATA_ROOT,APP_VERSION,release_shared(),release_place())
- out.update(dataRootSource=DATA_ROOT_SOURCE,restartBlock=restart_block_reason(),shortcut=_shortcut_offer(),
+ out.update(dataRootSource=DATA_ROOT_SOURCE,relRoot=str(navi_paths.rel_root()),restartBlock=restart_block_reason(),shortcut=_shortcut_offer(),
             progress=navi_release.progress())
  return jsonify(ok=True,**out)
 

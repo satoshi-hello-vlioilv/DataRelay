@@ -50,6 +50,36 @@ class PivotDesignerTest(unittest.TestCase):
   self.assertRegex(HTML,r'id="pivot-rows"[^>]*class="pv-slot axis-drop"|class="pv-slot axis-drop"[^>]*data-role="rows"','D&D の落とし先も残す')
 
 
+class ViewerColumnsTest(unittest.TestCase):
+ """データビュワーの表示列・条件・日付のまとめ（2.2.0 案 K）。中身は static/viewer-model.js、画面は app.js"""
+ def test_model_loads_before_the_script(self):
+  m=HTML.index('/static/viewer-model.js');a=HTML.index('/static/app.js')
+  self.assertLess(m,a,'app.js が使う DRV を先に読む')
+
+ def test_band_is_shared_by_all_tabs(self):
+  bar=HTML.index('id="viewer-bar"');lst=HTML.index('id="viewer-list"');ana=HTML.index('id="viewer-analysis"')
+  self.assertLess(bar,lst,'帯は一覧の外（一覧・集計表・グラフで共通）')
+  self.assertLess(lst,ana)
+  for i in ('viewer-search','viewer-conds','viewer-cond-add','viewer-cond-pop','viewer-cols-open','viewer-cols-pop','viewer-filter-summary','pivot-date-pop'):
+   self.assertIn(f'id="{i}"',HTML,i)
+  self.assertNotIn('viewer-list-tools',HTML,'一覧だけの検索欄はやめた')
+
+ def test_every_condition_has_a_chip_text(self):
+  model=(ROOT/'static'/'viewer-model.js').read_text(encoding='utf-8')
+  ops=re.findall(r"\['(\w+)','[^']+'\]",model[model.index('const OPS='):model.index('const noValueOp')])
+  block=JS[JS.index('const COND_TEXT='):JS.index('function labelOf(')]
+  self.assertEqual(len(ops),12)
+  self.assertEqual(sorted(ops),sorted(re.findall(r'(\w+):\(?c[,)=]',block)),'帯の札の文は 12 の比べ方すべてにある')
+
+ def test_settings_are_saved_per_job(self):
+  self.assertIn('j.viewer=v;dirty()',JS,'表示の設定は対象（cfg.jobs[i].viewer）に、変えた時点で保存する')
+  self.assertIn('viewerSpec=specClone(viewerJob()?.viewer)',JS,'開くときに対象の表示の設定を読む')
+
+ def test_pivot_uses_the_filtered_rows(self):
+  self.assertIn('base=viewerCondRows||viewerRows',JS,'検索は条件で絞った行から')
+  self.assertIn('buildPivot(viewerFiltered,',JS,'集計表・グラフは絞った行から数える')
+
+
 LOG='''2026-10-10 15:22:10,440 [INFO] [pid 4120] 設定保存 job=設備単位実績 値ごと=7値
 2026-10-11 06:00:00,102 [INFO] [pid 4120] 処理開始 trigger=schedule-batch:3 jobs=3
 2026-10-11 06:00:01,870 [INFO] [pid 4120] WORKER_START batch_id=b1 line=1 pid=5124 job=設備単位実績 queue_index=1/3

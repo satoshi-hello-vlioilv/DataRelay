@@ -27,11 +27,12 @@ from app import (
     settings_connection,
 )
 import navi_secret
+import navi_paths
 
 # データの基準（相対パスと設定のマスターの基準）をどこで決めたか（navi_paths.data_root の出どころ）。
 DATA_ROOT_NOTES={'app':'相対パスと設定のマスターの基準。共有から直に動かしているので、アプリの場所と同じ',
                  'pc':'相対パスと設定のマスターの基準。このPCの手元（写しの data）。置き場の「既定の設定」から作りました',
-                 'install':'相対パスと設定のマスターの基準。共有の設定を使っています（2.0.0 より前に写したPC。手元へ移すかを画面で選べます）',
+                 'install':'設定のマスターの基準。共有の設定を使っています（2.0.0 より前に写したPC。手元へ移すかを画面で選べます）。相対パスは「相対パスの基準」（いまの版のアプリの場所）を先に見ます',
                  'local':'相対パスと設定のマスターの基準。このPCだけの上書き（config\\local.json）',
                  'env':'相対パスと設定のマスターの基準。環境変数 NAVI_DATA_ROOT（確かめるとき）'}
 
@@ -469,6 +470,7 @@ def machine_path_view():
                'foreign':foreign or '','state':state,'note':note})
  fixed=[{'label':'アプリの場所','path':str(BASE),'note':'動いているプログラムの実体'},
         {'label':'データの基準','path':str(DATA_ROOT),'note':DATA_ROOT_NOTES.get(DATA_ROOT_SOURCE,'')},
+        {'label':'相対パスの基準','path':str(navi_paths.rel_root()),'note':'相対パス（.\\rne\\… など）を先に見る場所。ここに無い物は、もう片方の基準にあればそちらを使います'},
         {'label':'このPCのローカル領域','path':str(LOCAL_ROOT),'note':'<PC> が指す先。作業・控え・ログ・キャッシュの親'},
         {'label':'作業フォルダー','path':str(LOCAL_ROOT/'work'),'note':'抽出の途中ファイル。起動時に空にします'},
         {'label':'ログ','path':str(LOCAL_LOGS),'note':'実行ログの実体'},
