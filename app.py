@@ -2193,7 +2193,7 @@ def load():
   _prev_profile=cfg['settings'].get('stability_profile')
   if _prev_profile in (None,'stable_api_serial'):
    cfg['settings']['api_parallel_lines']=6; cfg['settings']['stability_profile']='balanced_api_parallel'
-  cfg['settings'].setdefault('api_parallel_lines',6); cfg['settings'].setdefault('stability_profile','balanced_api_parallel'); cfg['settings'].setdefault('backup_enabled',True); _backup_mode_missing='backup_mode' not in cfg['settings']; cfg['settings'].setdefault('backup_mode','generations'); cfg['settings'].setdefault('backup_retention_days',30); cfg['settings'].setdefault('backup_generation_limit_enabled',True); cfg['settings'].setdefault('backup_generations',3); cfg['settings'].setdefault('schedule_catchup_minutes',30); cfg['settings'].setdefault('api_worker_stagger_ms',700); cfg['settings'].setdefault('api_worker_timeout_minutes',120); cfg['settings'].setdefault('local_parallel_lines',0); cfg['settings'].setdefault('split_trial_timeout_seconds',1800); cfg['settings'].setdefault('split_anchor_limit',3); cfg['settings'].setdefault('split_min_part_mb',2.0); cfg['settings'].setdefault('split_min_gain_seconds',5.0); cfg['settings'].setdefault('split_min_speedup',1.05); cfg['settings'].setdefault('split_fixed_seconds',SPLIT_FIXED_SECONDS); cfg['settings'].setdefault('split_run_enabled',True); cfg['settings'].setdefault('retry_enabled',True); cfg['settings'].setdefault('retry_max',1); cfg['settings'].setdefault('retry_delay_minutes',5); cfg['settings'].setdefault('log_max_mb',10); cfg['settings'].setdefault('log_keep',5)
+  cfg['settings'].setdefault('api_parallel_lines',6); cfg['settings'].setdefault('stability_profile','balanced_api_parallel'); cfg['settings'].setdefault('backup_enabled',True); _backup_mode_missing='backup_mode' not in cfg['settings']; cfg['settings'].setdefault('backup_mode','generations'); cfg['settings'].setdefault('backup_retention_days',30); cfg['settings'].setdefault('backup_generation_limit_enabled',True); cfg['settings'].setdefault('backup_generations',3); cfg['settings'].setdefault('schedule_catchup_minutes',30); cfg['settings'].setdefault('api_worker_stagger_ms',700); cfg['settings'].setdefault('api_worker_timeout_minutes',120); cfg['settings'].setdefault('local_parallel_lines',0); cfg['settings'].setdefault('split_trial_timeout_seconds',1800); cfg['settings'].setdefault('split_anchor_limit',3); cfg['settings'].setdefault('split_min_part_mb',2.0); cfg['settings'].setdefault('split_min_gain_seconds',5.0); cfg['settings'].setdefault('split_min_speedup',1.05); cfg['settings'].setdefault('split_fixed_seconds',SPLIT_FIXED_SECONDS); cfg['settings'].setdefault('split_run_enabled',True); cfg['settings'].setdefault('variant_method',navi_variants.DEFAULT_METHOD); cfg['settings'].setdefault('retry_enabled',True); cfg['settings'].setdefault('retry_max',1); cfg['settings'].setdefault('retry_delay_minutes',5); cfg['settings'].setdefault('log_max_mb',10); cfg['settings'].setdefault('log_keep',5)
   # 結合の順番と待ち合わせ（判断は navi_order.py。既定値もあちらが持つ）。
   for _k,_v in navi_order.WAIT_DEFAULTS.items():cfg['settings'].setdefault(_k,_v)
   if _backup_mode_missing:cfg['settings']['backup_generations']=3
@@ -3918,8 +3918,77 @@ def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,
      'rne_keys':next((c['keys'] for c in conds if c['name']==v['item']),[]),
      # 表側に同じ名前の管理ポイントがあれば、そのカテゴリを指定の値だけにして、サーバー側で絞る
      'side_index':side.index(v['item']) if v['item'] in side else None}
- log.info('VARIANTS_START line=%s job=%s item=%s values=%s rne_keys=%s side_index=%s',line_name,j.get('name'),ov['item'],ov['values'],ov['rne_keys'],ov['side_index'])
+ how=navi_variants.method(j,cfg.get('settings'))
+ log.info('VARIANTS_START line=%s job=%s method=%s item=%s values=%s rne_keys=%s side_index=%s',line_name,j.get('name'),how,ov['item'],ov['values'],ov['rne_keys'],ov['side_index'])
+ if how=='parallel':
+  return _variants_in_parallel(j,parts,ov,job_index,total_jobs,cfg,user,server,dde_work,backup,line_name,rp)
  return _process_api_job_once({**j,'_cond_override':ov,'_variant_parts':parts},job_index,total_jobs,cfg,user,pw,server,dde_work,backup)
+
+def _variant_item(value,state,percent=0,rows=None,error=''):
+ """進み具合に載せる値1つぶん（一覧の行と進捗の窓の区切りバーが読む）。state: ok（作成済み）・ng（失敗）・run（作成中）・wait（待ち）。"""
+ return {'value':value,'state':state,'percent':round(max(0.0,min(100.0,float(percent or 0))),1),
+         'rows':None if rows is None else int(rows),'error':str(error or '')[:120]}
+
+def _variant_state(items):
+ """途中の状態の文字。『完了』『失敗』は入れない（一覧の行が、その文字で終わった・失敗したと受け取るため）。"""
+ return f'ファイル {sum(1 for x in items if x["state"]=="ok")}/{len(items)} 済'
+
+def _variants_in_parallel(j,parts,ov,job_index,total_jobs,cfg,user,server,dde_work,backup,line,rp):
+ """値ごとに並列: 値ごとに別のワーカーを起こし、それぞれ表側をその値だけに絞って問い合わせる（RNE を値の数に分けたのと同じ）。
+ 各ワーカーは、まとめて1回と同じ道（_process_api_job_once → _finish_variants）を値1つで通る。条件の外し方・絞り方・
+ 手元での振り分け・公開は同じなので、取り方を変えても出るファイルは同じ。
+ 同時に動かす数は、この対象に回せるライン数（_split_budget。並列ライン数 ÷ 対象の数）まで。設定した並列数は超えない。"""
+ n=len(parts);name=j.get('name','');jid=j.get('id','');started=time.perf_counter()
+ limit=max(1,min(n,int(j.get('_split_budget') or 1)))
+ minutes=float((cfg.get('settings') or {}).get('api_worker_timeout_minutes',120) or 0)
+ timeout=int(minutes*60) if minutes>0 else 7*24*3600
+ fmt=normalize_output_format(j.get('output_format'),j.get('output_file'))
+ work=Path(dde_work)/f'variants_{datetime.now():%Y%m%d_%H%M%S_%f}';work.mkdir(parents=True,exist_ok=True)
+ specs=[{'index':k,'label':f'{line} · {one["_variant_value"]}','value':one['_variant_value'],
+         'job':{**one,'_cond_override':{**ov,'values':[one['_variant_value']]},'_variant_parts':[one]}} for k,one in enumerate(parts)]
+ def payload(spec,d):
+  return {'job':spec['job'],'job_index':job_index,'total_jobs':total_jobs,'cfg':cfg,'user':user,'server':server,
+          'dde_work':str(d/'work'),'backup':str(backup)}
+ def board(st):
+  items=[];running=[]
+  for x in st:
+   v=x['spec']['value'];r=x.get('result');sx=x.get('status') or {}
+   if x['done']:
+    got=(r or {}).get('variant_results') or []
+    ok=bool((r or {}).get('ok')) and bool(got) and bool(got[0].get('ok'))
+    items.append(_variant_item(v,'ok' if ok else 'ng',100,(got[0].get('rows') if got else None),'' if ok else (r or {}).get('error')))
+   elif x['started']:
+    items.append(_variant_item(v,'run',sx.get('percent') or 0))
+    running.append(f'{v} {sx.get("state") or "開始"}')
+   else:items.append(_variant_item(v,'wait'))
+  pct=sum(x['percent'] if x['state']=='run' else 100 if x['state'] in ('ok','ng') else 0 for x in items)/max(1,len(items))
+  return items,pct,running
+ def tick(el,st):
+  items,pct,running=board(st)
+  update_parallel_line(line,job=name,job_id=jid,state=_variant_state(items),percent=round(pct,1),phase='execute',
+                       detail=(f'{len(running)}本同時 · '+'・'.join(running))[:160] if running else '次の値を準備中',
+                       elapsed=round(el,1),variants=items)
+ update_parallel_line(line,job=name,job_id=jid,state=_variant_state([_variant_item(x['value'],'wait') for x in specs]),percent=0,phase='session',
+                      detail=f'{n}値を {limit}本ずつ並列で問い合わせます',variants=[_variant_item(x['value'],'wait') for x in specs])
+ log.info('VARIANTS_PARALLEL line=%s job=%s values=%s limit=%s timeout=%ss',line,name,ov['values'],limit,timeout)
+ try:
+  done=_spawn_racers(j,cfg,user,'',server,work,specs,timeout,on_tick=tick,payload_of=payload,limit=limit)   # パスワードは渡さない（ワーカーが置き場から読む）
+ finally:
+  shutil.rmtree(work,ignore_errors=True)
+ results=[];note={'relax':'','restrict':'','restrict_error':''};cols=0
+ for spec,r in zip(specs,done):
+  got=(r.get('variant_results') or [None])[0]
+  if got:results.append(got)   # ワーカーの中のまとめ（_variants_result）が、値1つぶんの結果を返す
+  else:results.append({'value':spec['value'],'ok':False,'rows':0,'target':'','published':False,'pending':'','unchanged':False,'checked':False,
+                       'error':str(r.get('error') or '結果を受け取れませんでした')})
+  for k2 in ('relax','restrict','restrict_error'):
+   if (r.get('variant_note') or {}).get(k2) and not note[k2]:note[k2]=r['variant_note'][k2]
+  cols=cols or int(r.get('columns') or 0)
+  log.info('VARIANT_RESULT line=%s job=%s value=%s ok=%s rows=%s error=%s',line,name,spec['value'],results[-1]['ok'],results[-1]['rows'],results[-1]['error'])
+ return _variants_result(j,results,note,rp,fmt,cols,time.perf_counter()-started,line,
+                         {'execute_seconds':round(max([float(r.get('execute_seconds') or 0) for r in done] or [0]),2),
+                          'save_seconds':round(max([float(r.get('save_seconds') or 0) for r in done] or [0]),2),
+                          'query_rows':sum(int(r.get('query_rows') or 0) for r in done),'variant_method':'parallel','variant_lines':limit})
 
 def _variant_conditions(api,handle,j,ov,line):
  """値ごとに分けて出す回の問い合わせ条件。指定の値だけが返るようにする（実行前に呼ぶ）。
@@ -3952,7 +4021,11 @@ def _finish_variants(j,cfg,*,intermediate,backup,local_export,stamp,fmt,extras,e
  """まとめて受け取った中間CSVを値ごとに分け、値ごとに 変換 → 公開 する。1つの値が失敗しても残りは出す。
  進み具合は「値ごとに作成 k/N」で出す（途中の値で「完了」「失敗」を出すと、一覧の行がそこで終わったことになる）。"""
  ov=j['_cond_override'];parts=j['_variant_parts'];n=len(parts);name=j.get('name','');jid=j.get('id','')
- update_parallel_line(line,job=name,job_id=jid,state='値ごとに分ける',percent=_variant_percent(0,n),detail=f'{ov["item"]} で {n}ファイルに分けています',phase='convert')
+ def items(k=-1,frac=0.0):
+  return [_variant_item(r['value'],'ok' if r['ok'] else 'ng',100,r['rows'],r['error']) for r in results]+\
+         [_variant_item(one['_variant_value'],'run' if i==k else 'wait',frac*100 if i==k else 0) for i,one in enumerate(parts[len(results):],len(results))]
+ results=[]
+ update_parallel_line(line,job=name,job_id=jid,state='値ごとに分ける',percent=_variant_percent(0,n),detail=f'{ov["item"]} で {n}ファイルに分けています',phase='convert',variants=items())
  split_dir=Path(local_export)/f'split_{stamp}'
  sp=navi_variants.split_csv(intermediate,ov['item'],ov['values'],split_dir)
  try:
@@ -3963,13 +4036,13 @@ def _finish_variants(j,cfg,*,intermediate,backup,local_export,stamp,fmt,extras,e
   extra=[x for x in sp['found'] if x not in set(ov['values'])]
   log.info('VARIANT_SPLIT line=%s job=%s rows=%s found=%s per_value=%s outside=%s',line,name,sp['rows'],sp['found'][:20],
            {k2:v2['rows'] for k2,v2 in sp['parts'].items()},extra[:10])
-  results=[]
   for k,one in enumerate(parts):
    value=one['_variant_value'];part=sp['parts'][value];t0=time.perf_counter();db=None
    def rep(stage,k=k,value=value,**kw):
     label={'convert_start':'変換・検証','unchanged':'前回と同じ','publish':'公開','extras':'同時出力'}.get(stage,stage)
     frac={'convert_start':0.1,'unchanged':0.9,'publish':0.6,'extras':0.8}.get(stage,0.5)
-    update_parallel_line(line,job=name,job_id=jid,state=f'値ごとに作成 {k+1}/{n}',percent=_variant_percent(k,n,frac),
+    now=items(k,frac)
+    update_parallel_line(line,job=name,job_id=jid,state=_variant_state(now),percent=_variant_percent(k,n,frac),variants=now,
                          detail=f'{value} · {label} · {int(part["rows"]):,}件',phase='publish' if stage in ('publish','extras') else 'convert')
    try:
     fmt1=validate_output_contract(one,'before-extraction')
@@ -3994,11 +4067,16 @@ def _finish_variants(j,cfg,*,intermediate,backup,local_export,stamp,fmt,extras,e
    log.info('VARIANT_RESULT line=%s job=%s value=%s ok=%s rows=%s error=%s',line,name,value,results[-1]['ok'],results[-1]['rows'],results[-1]['error'])
  finally:
   shutil.rmtree(split_dir,ignore_errors=True)
- total=time.perf_counter()-job_started;text=navi_variants.summary(results);ok=all(x['ok'] for x in results)
+ return _variants_result(j,results,note,rp,fmt,expected_cols,time.perf_counter()-job_started,line,{**run_metrics,'variant_method':'combined'})
+
+def _variants_result(j,results,note,rp,fmt,cols,total,line,run_metrics):
+ """値ごとの結果をまとめ、最後の状態（完了・一部失敗）を1回だけ出す。2つの取り方で共通。"""
+ name=j.get('name','');text=navi_variants.summary(results);ok=bool(results) and all(x['ok'] for x in results)
  if note.get('restrict_error'):text+=f' / サーバー側では絞れず全部の値を取りました（{note["restrict_error"][:80]}）'
- update_parallel_line(line,job=name,job_id=jid,state='完了' if ok else '一部失敗',percent=100,detail=text[:160],elapsed=round(total,1))
+ update_parallel_line(line,job=name,job_id=j.get('id',''),state='完了' if ok else '一部失敗',percent=100,detail=text[:160],elapsed=round(total,1),
+                      variants=[_variant_item(r['value'],'ok' if r['ok'] else 'ng',100,r['rows'],r['error']) for r in results])
  first=next((x['target'] for x in results if x['ok']),'')
- base={'job':name,'elapsed':total,'rows':sum(x['rows'] for x in results if x['ok']),'columns':int(expected_cols or 0),'target':first,
+ base={'job':name,'elapsed':total,'rows':sum(x['rows'] for x in results if x['ok']),'columns':int(cols or 0),'target':first,
        'variant_results':results,'variant_note':note,'rne_path':str(rp),'format':fmt,
        'published':all(x['published'] for x in results if x['ok']),'pending':'・'.join(x['pending'] for x in results if x['pending']),
        **run_metrics}
@@ -4982,20 +5060,25 @@ def _spawn_split_parts(job,cfg,user,pw,server,work,jobs_spec,timeout=1800):
  """パートを同時に走らせ、全部そろうのを待つ。戻り値は投入順の結果一覧。"""
  return _spawn_racers(job,cfg,user,pw,server,work,jobs_spec,timeout)
 
-def _spawn_racers(job,cfg,user,pw,server,work,jobs_spec,timeout=1800,stop_when=None,on_tick=None):
+def _spawn_racers(job,cfg,user,pw,server,work,jobs_spec,timeout=1800,stop_when=None,on_tick=None,payload_of=None,limit=None):
  """指定した取り方を独立プロセスで同時に起こし、終わった順に結果を集める。
 
  終わった順が要るのは競争のためだけではない。どのパートが足を引っ張ったかも、これで分かる。
  stop_when(done) が True を返した時点で、残っているプロセスは中断して打ち切る。
  中断されたプロセスの結果は ok=False / aborted=True で返す（失敗ではなく、要らなくなっただけ）。
- 応答が返らないものがあると呼び出し側が返らなくなるため、必ず時間制限もつける。
+ 応答が返らないものがあると呼び出し側が返らなくなるため、必ず時間制限もつける（1本ごとに、起こした時から数える）。
+ payload_of(spec, 作業フォルダー) で、ワーカーへ渡す中身を差し替えられる（省けば分割の1片）。
+ limit で同時に動かす数を抑える（省けば全部いっぺんに。終わった数だけ次を起こす）。
  """
- procs=[];started=time.perf_counter();deadline=started+max(60,int(timeout))
- for spec in jobs_spec:
+ procs=[];started=time.perf_counter();waiting=deque(jobs_spec)
+ cap=len(jobs_spec) if not limit else max(1,int(limit))
+ def _start(spec):
   d=work/f'part{spec["index"]}';d.mkdir(parents=True,exist_ok=True)
-  payload={'job':job,'cfg':cfg,'user':user,'server':server,   # パスワードは書かない（ワーカーが置き場から読む）
-           'split_part':{'out_csv':str(spec['out_csv']),'drop':spec['drop'],'label':spec['label'],
-                         'row':spec.get('row'),'row_axis':spec.get('row_axis')}}
+  if payload_of:payload=payload_of(spec,d)
+  else:
+   payload={'job':job,'cfg':cfg,'user':user,'server':server,   # パスワードは書かない（ワーカーが置き場から読む）
+            'split_part':{'out_csv':str(spec['out_csv']),'drop':spec['drop'],'label':spec['label'],
+                          'row':spec.get('row'),'row_axis':spec.get('row_axis')}}
   pp=d/'payload.json';pp.write_text(json.dumps(payload,ensure_ascii=False),encoding='utf-8')
   env=os.environ.copy();env['NAVI_WORKER_RESULT']=str(d/'result.json');env['NAVI_WORKER_LINE']=spec['label']
   env['NAVI_WORKER_STATUS']=str(d/'status.json')
@@ -5005,26 +5088,34 @@ def _spawn_racers(job,cfg,user,pw,server,work,jobs_spec,timeout=1800,stop_when=N
   # 起こしたら必ず管理下へ置く。ここを飛ばしていたため、中止でもアプリ終了でも
   # 誰にも止められず、親が消えたあとも時間制限まで動き続けるワーカーが残っていた。
   _key=f'split:{id(procs)}:{spec["index"]}';register_worker(_key,_p)
-  procs.append({'spec':spec,'proc':_p,'key':_key,
+  procs.append({'spec':spec,'proc':_p,'key':_key,'deadline':time.perf_counter()+max(60,int(timeout)),
                 'result':d/'result.json','status':d/'status.json','done':False})
+ def _fill():
+  while waiting and sum(1 for p in procs if not p['done'])<cap:_start(waiting.popleft())
+ _fill()
  done={};order=0
  def _finish(p):
   p['done']=True;unregister_worker(p.get('key'))
- while any(not p['done'] for p in procs):
+ def _abort_all(why):
+  for p in procs:
+   if p['done']:continue
+   _kill_proc(p['proc']);_finish(p)
+   done[p['spec']['label']]=dict(ok=False,aborted=True,part=p['spec']['label'],group=p['spec'].get('group',''),
+                                 error=why,finished_at=round(time.perf_counter()-started,2))
+  while waiting:
+   spec=waiting.popleft()
+   done[spec['label']]=dict(ok=False,aborted=True,part=spec['label'],group=spec.get('group',''),error=why,finished_at=round(time.perf_counter()-started,2))
+ while waiting or any(not p['done'] for p in procs):
   now=time.perf_counter()
   if cancel_requested.is_set():
    # 中止を一度も見ていなかったので、押しても分割のワーカーだけ走り続けていた。
-   for p in procs:
-    if p['done']:continue
-    _kill_proc(p['proc']);_finish(p)
-    done[p['spec']['label']]=dict(ok=False,aborted=True,part=p['spec']['label'],group=p['spec'].get('group',''),
-                                  error='ユーザーにより中断されました',finished_at=round(time.perf_counter()-started,2))
+   _abort_all('ユーザーにより中断されました')
    break
   for p in procs:
    if p['done']:continue
    rc=p['proc'].poll()
    if rc is None:
-    if now>deadline:
+    if now>p['deadline']:
      _kill_proc(p['proc'])
      log.warning('SPLIT_PART_TIMEOUT part=%s timeout=%ss',p['spec']['label'],timeout)
      _finish(p);order+=1
@@ -5036,18 +5127,15 @@ def _spawn_racers(job,cfg,user,pw,server,work,jobs_spec,timeout=1800,stop_when=N
    r['group']=p['spec'].get('group','');r['order']=order;r['finished_at']=round(now-started,2)
    done[p['spec']['label']]=r
   if stop_when and done and stop_when(list(done.values())):
-   for p in procs:
-    if p['done']:continue
-    _kill_proc(p['proc']);_finish(p)
-    done[p['spec']['label']]=dict(ok=False,aborted=True,part=p['spec']['label'],group=p['spec'].get('group',''),
-                                  error='先に決着がついたため中断しました',finished_at=round(time.perf_counter()-started,2))
+   _abort_all('先に決着がついたため中断しました')
    break
-  if any(not p['done'] for p in procs):
+  _fill()
+  if waiting or any(not p['done'] for p in procs):
    # 進み具合を知らせる。書きかけのファイルの大きさが唯一の実測なので、それを見てもらう。
    if on_tick:
-    try:on_tick(time.perf_counter()-started,[{'spec':p['spec'],'done':p['done'],
+    try:on_tick(time.perf_counter()-started,[{'spec':p['spec'],'done':p['done'],'started':True,'result':done.get(p['spec']['label']),
                                               'status':_read_worker_json(p['status'],{}) if p['status'].is_file() else {}}
-                                             for p in procs])
+                                             for p in procs]+[{'spec':x,'done':False,'started':False,'result':None,'status':{}} for x in waiting])
     except Exception:pass
    time.sleep(0.2)
  return [done[s['label']] for s in jobs_spec]

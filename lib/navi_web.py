@@ -327,10 +327,11 @@ def variants_preview():
  data=request.get_json(silent=True) or {}
  c=load();job={k:data.get(k) for k in ('rne','rne_path','name','table','output_format','output_file','naming_mode','output_pattern','output_folder','variants')}
  job['source']='rne'
- conditions=None
+ conditions=None;side=[]
  try:
   rp=resolve_rne_path(job,c)
-  if rp and Path(rp).is_file():conditions=navi_crosstab.read_conditions(rp)
+  if rp and Path(rp).is_file():
+   conditions=navi_crosstab.read_conditions(rp);side=list((navi_crosstab.read_rne_layout(rp) or {}).get('side') or [])
  except Exception:conditions=None
  files=[];error=''
  if navi_variants.normalize(job.get('variants'))['values']:
@@ -339,7 +340,14 @@ def variants_preview():
     folder=str(resolve_path(one.get('output_folder') or c['default_output_folder']))
     files.append({'value':one['_variant_value'],'file':one['output_file'],'folder':folder,'path':str(Path(folder)/one['output_file'])})
   except Exception as e:error=str(e)
- return jsonify(ok=not error,error=error,conditions=conditions,files=files,tokens=list(navi_variants.TOKENS))
+ v=navi_variants.normalize(job.get('variants'));st=c.get('settings') or {}
+ # 取り方: 実際に動く方（対象の選択か共通の既定）と、並列のときに同時に動かす数の見込み（1つだけ動かすとき。
+ # 同時に動かす対象が多いと、並列ライン数を対象で分けるぶん減る）
+ how=navi_variants.method(job,st)
+ lines=max(1,min(len(v['values']) or 1,int(st.get('api_parallel_lines',6) or 1)))
+ return jsonify(ok=not error,error=error,conditions=conditions,files=files,tokens=list(navi_variants.TOKENS),
+                method=how,method_name=navi_variants.METHOD_NAMES[how],default_method=navi_variants.default_method(st),
+                parallel_lines=lines,side_has_item=bool(v['item'] and v['item'] in side))
 
 @app.post('/api/preview-filename')
 def preview_filename():

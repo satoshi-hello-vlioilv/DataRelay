@@ -27,6 +27,7 @@ function collectSettings(){if(!cfg||!cfg.settings)return;let s=cfg.settings,v=id
  if(v('#api-lines'))s.api_parallel_lines=Math.max(1,Math.min(24,Number(v('#api-lines').value)||6));
  if(v('#local-lines'))s.local_parallel_lines=Math.max(0,Math.min(12,Number(v('#local-lines').value)||0));
  if(v('#zero'))s.reject_zero_rows=v('#zero').checked;
+ let vm=document.querySelector('input[name="variant-method"]:checked');if(vm)s.variant_method=vm.value;
  if(v('#retry-enabled'))s.retry_enabled=v('#retry-enabled').checked;
  if(v('#retry-delay'))s.retry_delay_minutes=Math.max(1,Math.min(180,Number(v('#retry-delay').value)||5));
  if(v('#retry-max'))s.retry_max=Math.max(0,Math.min(5,Number(v('#retry-max').value)||0));
@@ -763,7 +764,7 @@ function collectJob(){
   source:currentSource(),text_path:($('#m-text-path')?.value||'').trim(),
   layout_id:($('#m-layout')?.value||''),recipe_id:($('#m-recipe')?.value||''),variants:currentVariants()};
 }
-/* 条件の値ごとに分けて出す（2.1.0。案 K: タブ「5 値ごとに分ける」＝番号順に決めて右にできあがるファイル、上に1文、1ページ目に札）。
+/* 条件の値ごとに分けて出す（2.1.0。2.1.1 でタブを「3」へ・取り方を入切の下に。案 K: タブ「値ごとに分ける」＝番号順に決めて右にできあがるファイル、上に1文、1ページ目に札）。
    RNE の条件欄の項目といまのキーを先に読み、項目と値を先回りして出す（RNE の中身を思い出させない）。
    出し先の決まり（名前・置き場・同じ名前の断り）はバックエンドの navi_variants が持ち、画面は見込みを受け取って並べるだけ。 */
 let varValues=[],varPreviewTimer=0,varPreviewSeq=0,varLast=null;
@@ -773,14 +774,21 @@ function variantBadge(j){
  let v=j.variants;
  return ` <span class="var-badge" title="${E(v.item)} = ${E(v.values.join('・'))}">値ごと ×${v.values.length}</span>`;
 }
+/* 取り方（2.1.1）: 対象で選ぶか、共通設定の既定に従う。名前は画面のどこでも同じ言葉を使う */
+const VAR_METHOD_NAME={combined:'まとめて1回',parallel:'値ごとに並列'};
+const varDefaultMethod=()=>VAR_METHOD_NAME[cfg?.settings?.variant_method]?cfg.settings.variant_method:'combined';
+const varMethodPicked=()=>document.querySelector('input[name="m-var-method"]:checked')?.value||'default';
+const varMethodOf=m=>VAR_METHOD_NAME[m]?m:varDefaultMethod();
 function currentVariants(){
  return {enabled:!!$('#m-var-enabled')?.checked,item:($('#m-var-item')?.value||'').trim(),values:varValues.slice(),
-  pattern:($('#m-var-pattern')?.value||'').trim(),folder:($('#m-var-folder')?.value||'').trim()};
+  pattern:($('#m-var-pattern')?.value||'').trim(),folder:($('#m-var-folder')?.value||'').trim(),method:varMethodPicked()};
 }
 function fillVariants(job){
  let v=job.variants||{};
  $('#m-var-enabled').checked=!!v.enabled;$('#m-var-item').value=v.item||'';
  $('#m-var-pattern').value=v.pattern||'';$('#m-var-folder').value=v.folder||'';
+ let m=VAR_METHOD_NAME[v.method]?v.method:'default';
+ $$('input[name="m-var-method"]').forEach(r=>r.checked=r.value===m);
  varValues=(v.values||[]).map(String);varLast=null;renderVarChips();varPreview(true);
 }
 function renderVarChips(){
@@ -829,21 +837,31 @@ function paintVariants(){
   :!v.values.length?'<p class="var-empty">値を足すと、ここに値ごとのファイルの名前と置き場が並びます。</p>'
   :`<table class="rel-table var-table"><thead><tr><th>値</th><th>できあがるファイル</th></tr></thead><tbody>${files.map(f=>`<tr><td><b>${E(f.value)}</b>${cur.includes(f.value)?'<i class="rel-tag is-here">RNE の今の値</i>':''}</td><td><code title="${E(f.path)}">${E(f.path)}</code></td></tr>`).join('')}</tbody></table>`;
  // 上の1文: いまの設定を読める形で（入っていないときは、入れると何が起きるか）
- $('#m-var-say').innerHTML=on?`<b>${E(v.item)}</b> が <b>${v.values.map(E).join('・')}</b> のそれぞれについて問い合わせ、<b>${v.values.length}ファイル</b>を作ります。`
+ let how=varMethodOf(v.method),lines=Math.max(1,Math.min(v.values.length||1,Number(d.parallel_lines||cfg.settings?.api_parallel_lines||6)));
+ $('#m-var-method-default').textContent=`いまは ${VAR_METHOD_NAME[varDefaultMethod()]}`;
+ $('#m-var-method-parallel').textContent=`値ごとに同時に問い合わせ · 最大${lines}本`;
+ $$('.var-method-seg label').forEach(l=>l.classList.toggle('on',!!l.querySelector('input')?.checked));
+ $('#m-var-say').innerHTML=on?(how==='parallel'
+   ?`<b>${E(v.item)}</b> の <b>${v.values.map(E).join('・')}</b> を<b>値ごとに並列</b>で問い合わせ（${v.values.length}回・同時に最大${lines}本）、<b>${v.values.length}ファイル</b>を作ります。`
+   :`<b>${E(v.item)}</b> の <b>${v.values.map(E).join('・')}</b> を<b>まとめて1回</b>で問い合わせ、受け取ってから値ごとに分けて <b>${v.values.length}ファイル</b>を作ります。`)
   :v.enabled?'項目と値を決めると、値ごとのファイルができます。':`切っています。入れると、${E(v.item||'条件の項目')}の値ごとに別のファイルを作ります（いまは1ファイル）。`;
  $('#m-var-say').classList.toggle('is-off',!on);
  let warn=src!=='rne'?'値ごとに分けて出せるのは RNE の対象だけです。'
-  :(cfg.settings?.extract_engine==='dde'?'いまの抽出方式は DDE です。値ごとに分けて出すのは API 方式でだけ動きます（DDE では実行時に止めます）。':'');
+  :(cfg.settings?.extract_engine==='dde'?'いまの抽出方式は DDE です。値ごとに分けて出すのは API 方式でだけ動きます（DDE では実行時に止めます）。'
+  :(on&&d.conditions&&d.side_has_item===false?`RNE の表側に「${v.item}」が無いため、サーバー側では指定の値に絞れません。全部の値を受け取ってから分けるので、ファイルは正しくできますが遅くなります（表側に「${v.item}」を置くと速くなります）。`:''));
  $('#m-var-warn').hidden=!warn;$('#m-var-warn').textContent=warn;
  let cnt=$('#etab-variant-count');cnt.hidden=!on;cnt.textContent=v.values.length;
  // 1ページ目の札: 入なら何ファイルできるか、切ってあっても RNE が条件で絞っていれば先回りして知らせる
  let card=$('#m-var-card'),hint=keyed[0];
  card.hidden=src!=='rne'||!(on||hint);
- card.innerHTML=on?`<span class="var-card-t"><span class="var-card-k">値ごとに分けて出す</span><b>入 · ${v.values.length}ファイル</b></span><span class="var-card-v">${E(v.item)} = ${v.values.map(E).join('・')}</span><button type="button" class="textbtn var-open">設定を開く ›</button>`
+ card.innerHTML=on?`<span class="var-card-t"><span class="var-card-k">値ごとに分けて出す</span><b>入 · ${v.values.length}ファイル · ${VAR_METHOD_NAME[how]}</b></span><span class="var-card-v">${E(v.item)} = ${v.values.map(E).join('・')}</span><button type="button" class="textbtn var-open">設定を開く ›</button>`
   :hint?`<span class="var-card-t"><span class="var-card-k">値ごとに分けて出せます</span><b>この RNE は「${E(hint.name)} = ${E(hint.keys.join('・'))}」で絞っています</b></span><span class="var-card-v">ほかの値の分も、値ごとに別のファイルで作れます</span><button type="button" class="textbtn var-open">設定を開く ›</button>`:'';
  card.classList.toggle('is-on',!!on);
  card.querySelector('.var-open')?.addEventListener('click',()=>setEditorTab('variant'));
 }
+$$('input[name="m-var-method"]').forEach(r=>r.addEventListener('change',()=>varPreview(true)));
+function paintVarMethodCards(){$$('#variant-method-block .var-method-seg label').forEach(l=>l.classList.toggle('on',!!l.querySelector('input')?.checked))}
+$$('input[name="variant-method"]').forEach(r=>r.addEventListener('change',()=>{paintVarMethodCards();dirty()}));
 if($('#m-var-add')){
  let add=$('#m-var-add');
  add.addEventListener('keydown',e=>{
@@ -1059,7 +1077,7 @@ async function init(){cfg=await fetch('/api/config').then(r=>r.json());cfg.jobs.
 // 参照ボタンは .pathpick で名指しする。data-k だけで拾うと、確認ボタンが先に居る4件で
 // 参照の代わりに確認へ結びついてしまい、参照が何も起きなくなる。
 Object.entries(paths).filter(([k])=>k!=='navigator_api_dll').forEach(([k,a])=>{$('#'+k).onchange=e=>{cfg[k]=e.target.value;dirty();refreshMachinePaths()};document.querySelector(`.pathpick[data-k="${k}"]`).onclick=async()=>{let p=await browse(a[1],cfg[k],a[2]);if(p){cfg[k]=p;$('#'+k).value=p;$('#'+k)._refreshPathControl?.();dirty();refreshMachinePaths()}}});
-$$('.pf-goto').forEach(b=>b.onclick=()=>document.querySelector(`#settings-nav .settings-navbtn[data-cat="${b.dataset.cat}"]`)?.click());$('#extract-engine').value=cfg.settings.extract_engine||'api';updateEngineUI();$('#dde').value=cfg.settings.dde_timeout_seconds;$('#wait').value=cfg.settings.output_wait_seconds;$('#gens').value=cfg.settings.backup_generations||3;if($('#backup-enabled'))$('#backup-enabled').checked=cfg.settings.backup_enabled!==false;if($('#backup-mode'))$('#backup-mode').value=cfg.settings.backup_mode||'generations';if($('#backup-retention-days'))$('#backup-retention-days').value=Number(cfg.settings.backup_retention_days||30);if($('#schedule-catchup'))$('#schedule-catchup').value=Number(cfg.settings.schedule_catchup_minutes??30);if($('#join-wait-enabled')){$('#join-wait-enabled').checked=cfg.settings.join_wait_enabled!==false;$('#join-wait-lookahead').value=Number(cfg.settings.join_wait_lookahead_seconds??60);$('#join-wait-max').value=Number(cfg.settings.join_wait_max_seconds??600);updateJoinWaitOptions()}if($('#worker-stagger'))$('#worker-stagger').value=Number(cfg.settings.api_worker_stagger_ms??700);if($('#local-lines')){$('#local-lines').value=Number(cfg.settings.local_parallel_lines??0);$('#local-lines').title='0なら自動（同時実行ラインに合わせて最大4ライン）。RNEとは別枠で、同時に流れます。'}updateBackupOptions();if($('#api-lines')){$('#api-lines').value=Math.max(1,Math.min(24,Number(cfg.settings.api_parallel_lines||6)));$('#api-lines').title='既定は6ライン、設定可能範囲は1～24ラインです。変更した時点で保存されます。'}$('#zero').checked=cfg.settings.reject_zero_rows;if($('#retry-enabled')){$('#retry-enabled').checked=cfg.settings.retry_enabled!==false;$('#retry-delay').value=Number(cfg.settings.retry_delay_minutes??5);$('#retry-max').value=Number(cfg.settings.retry_max??1);updateRetryOptions()}if($('#log-max-mb')){$('#log-max-mb').value=Number(cfg.settings.log_max_mb??10);$('#log-keep').value=Number(cfg.settings.log_keep??5)}let hp=cfg.settings.symnavi_hide_profile||'balanced';if(hp==='light')hp='action_only';$('#hide-profile').value=hp;$('#hide-action-duration').value=Number(cfg.settings.symnavi_hide_action_duration_seconds||0.5);updateHideProfileUI();Object.keys(paths).filter(k=>k!=='navigator_api_dll').forEach(k=>enhancePathInput($('#'+k),paths[k][1]));let dllInput=$('#navigator-api-dll');if(dllInput){dllInput.value=cfg.navigator_api_dll||'';dllInput.oninput=()=>{cfg.navigator_api_dll=dllInput.value;dirty();
+$$('.pf-goto').forEach(b=>b.onclick=()=>document.querySelector(`#settings-nav .settings-navbtn[data-cat="${b.dataset.cat}"]`)?.click());$('#extract-engine').value=cfg.settings.extract_engine||'api';updateEngineUI();$('#dde').value=cfg.settings.dde_timeout_seconds;$('#wait').value=cfg.settings.output_wait_seconds;$('#gens').value=cfg.settings.backup_generations||3;if($('#backup-enabled'))$('#backup-enabled').checked=cfg.settings.backup_enabled!==false;if($('#backup-mode'))$('#backup-mode').value=cfg.settings.backup_mode||'generations';if($('#backup-retention-days'))$('#backup-retention-days').value=Number(cfg.settings.backup_retention_days||30);if($('#schedule-catchup'))$('#schedule-catchup').value=Number(cfg.settings.schedule_catchup_minutes??30);if($('#join-wait-enabled')){$('#join-wait-enabled').checked=cfg.settings.join_wait_enabled!==false;$('#join-wait-lookahead').value=Number(cfg.settings.join_wait_lookahead_seconds??60);$('#join-wait-max').value=Number(cfg.settings.join_wait_max_seconds??600);updateJoinWaitOptions()}if($('#worker-stagger'))$('#worker-stagger').value=Number(cfg.settings.api_worker_stagger_ms??700);if($('#local-lines')){$('#local-lines').value=Number(cfg.settings.local_parallel_lines??0);$('#local-lines').title='0なら自動（同時実行ラインに合わせて最大4ライン）。RNEとは別枠で、同時に流れます。'}updateBackupOptions();if($('#api-lines')){$('#api-lines').value=Math.max(1,Math.min(24,Number(cfg.settings.api_parallel_lines||6)));$('#api-lines').title='既定は6ライン、設定可能範囲は1～24ラインです。変更した時点で保存されます。'}$('#zero').checked=cfg.settings.reject_zero_rows;$$('input[name="variant-method"]').forEach(r=>r.checked=r.value===varDefaultMethod());paintVarMethodCards();if($('#retry-enabled')){$('#retry-enabled').checked=cfg.settings.retry_enabled!==false;$('#retry-delay').value=Number(cfg.settings.retry_delay_minutes??5);$('#retry-max').value=Number(cfg.settings.retry_max??1);updateRetryOptions()}if($('#log-max-mb')){$('#log-max-mb').value=Number(cfg.settings.log_max_mb??10);$('#log-keep').value=Number(cfg.settings.log_keep??5)}let hp=cfg.settings.symnavi_hide_profile||'balanced';if(hp==='light')hp='action_only';$('#hide-profile').value=hp;$('#hide-action-duration').value=Number(cfg.settings.symnavi_hide_action_duration_seconds||0.5);updateHideProfileUI();Object.keys(paths).filter(k=>k!=='navigator_api_dll').forEach(k=>enhancePathInput($('#'+k),paths[k][1]));let dllInput=$('#navigator-api-dll');if(dllInput){dllInput.value=cfg.navigator_api_dll||'';dllInput.oninput=()=>{cfg.navigator_api_dll=dllInput.value;dirty();
    let v=$('#api-readiness');if(v)v.className='api-readiness is-stale';};}let dllPick=$('#api-dll-pick');if(dllPick)dllPick.onclick=async()=>{let q=await browse('file',dllInput.value,paths.navigator_api_dll[2]);if(q){dllInput.value=q;cfg.navigator_api_dll=q;dirty();await testNavigatorApi()}};let dllCheck=$('#api-dll-check');if(dllCheck)dllCheck.onclick=()=>testNavigatorApi();if(!Array.isArray(cfg.navigator_api_search_roots))cfg.navigator_api_search_roots=DLL_DEFAULT_ROOTS.slice();renderDllRoots();loadDllRequirement();fillSuggestions();loadColumns();render();loadMachinePaths();loadFreshness();saveState('設定を読み込みました／変更はすべて自動で保存されます','');$$('.pathcheck').forEach(b=>b.onclick=()=>checkConfiguredPath(b.dataset.k))}
 ['search','filter-enabled','filter-schedule','sort'].forEach(k=>$('#'+k).addEventListener(k==='search'?'input':'change',render));$$('.sortable').forEach(h=>h.onclick=()=>{$('#sort').value=h.dataset.sort;sortDir*=-1;render()});$('#add').onclick=()=>openEditor(null);$('#select-visible').onclick=()=>{setAllSelected(true)};$('#clear-selection').onclick=()=>{setAllSelected(false)};if($('#export-selected'))$('#export-selected').onclick=()=>exportJobs($$('#jobs-body tr.selected').map(tr=>tr.dataset.id));function resetProgressView(){let q=$('#queue-summary');if(q){q.hidden=true;q.innerHTML=''}let pr=$('#p-results');if(pr){pr.hidden=true;pr.innerHTML=''}let b=$('#p-parallel-lines');if(b){b.hidden=true;b.innerHTML=''}document.querySelector('.current-box')?.classList.remove('parallel-hidden');$('#p-steps')?.classList.remove('parallel-hidden');$('#p-count').textContent='全体 0 / 0';$('#p-percent').textContent='0%';$('#p-bar').style.width='0%';$('#p-job').textContent='準備中';$('#p-output').textContent='';}async function runJobs(ids){resetProgressView();showWaiting(currentEngine()==='api'?'API処理を開始しています':'DDE処理を開始しています',currentEngine()==='api'?'APIセッションと実行対象を準備しています...':'SymfoNavi起動とDDE接続を準備しています...','engine');let r=await fetch('/api/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_ids:ids,parallel_lines:Math.max(1,Math.min(24,Number($('#api-lines')?.value||6)||6))})}),d=await r.json();hideWaiting();if(r.ok){toast(`実行キュー ${d.position}番へ追加しました`);await loadCommandQueue()}else toast(d.error)}$('#run-all').onclick=()=>runJobs(null);$('#run-selected').onclick=()=>{let ids=$$('#jobs-body tr.selected').map(tr=>tr.dataset.id);if(ids.length)runJobs(ids)};/* 保存ボタンの代わりに、値が変わったところで保存する。数値欄は打っている途中に
    何度も飛ばさないよう、まとめて少し待ってから送る（scheduleSave）。 */
@@ -1157,7 +1175,7 @@ function renderRunResults(list){
 function laneColumns(n){return n<=4?n:n<=12?4:6}function applyProgressEngine(engine){let api=engine==='api';$$('#p-steps li[data-api]').forEach(li=>li.textContent=api?li.dataset.api:li.dataset.dde)}function updateProgress(s){if(activeRunId&&s.run_id!==activeRunId)return;let engine=s.extract_engine||cfg?.settings?.extract_engine||'api';applyProgressEngine(engine);let isParallel=(s.execution_mode==='parallel');$('#progress-dialog .progress-modal').classList.toggle('serial-mode',!isParallel);$('#progress-dialog .progress-modal').classList.toggle('parallel-mode',isParallel);let overall=s.total_jobs?Math.round(((Math.max(0,s.current_index-1)+(s.step_percent||0)/100)/s.total_jobs)*100):(s.step_percent||0);if(s.step==='complete'||s.step==='error')overall=100;$('#p-title').textContent=s.step_label||'処理中';$('#p-count').textContent=`全体 ${s.completed_jobs||0} / ${s.total_jobs||0}`;$('#p-percent').textContent=overall+'%';$('#p-bar').style.width=overall+'%';$('#p-job').textContent=s.current_job_name||'準備中';let j=cfg?.jobs?.find(x=>x.id===s.current_job_id),fmt=s.output_format||j?.output_format,file=s.output_file||j?.output_file,target=s.output_target||(j?`${j.output_folder||cfg.default_output_folder}\\${file}`:'');$('#p-output').textContent=fmt?`${formatName(fmt)} → ${target}`:'';let liveElapsed=s.started_at?Math.max(Number(s.elapsed_seconds)||0,Math.floor((Date.now()-new Date(s.started_at).getTime())/1000)):(s.elapsed_seconds||0);$('#p-elapsed').textContent='経過時間 '+hhmmss(liveElapsed);$('#p-activity span').textContent=[s.activity_detail,s.activity_value].filter(Boolean).join(' / ')||'処理を継続しています';$('#p-engine').textContent=(engine==='dde'?'DDE互換 / 1件ずつ直列':(s.execution_mode==='parallel'?`Navigator API 並列 ${s.requested_lines||1}ライン`:'Navigator API / 1件ずつ直列'))+' / '+(s.running?'処理中':'終了');let box=document.querySelector('#p-parallel-lines');if(!box){box=document.createElement('div');box.id='p-parallel-lines';box.className='parallel-lines fixed-lanes';document.querySelector('.current-box')?.after(box)}let pls=(s.parallel_lines||[]).slice().sort((a,b)=>Number(String(a.line).match(/\d+/)?.[0]||0)-Number(String(b.line).match(/\d+/)?.[0]||0));let total=Number(s.queue_total||0),waiting=Number(s.queue_waiting||0),active=Number(s.queue_active||0),completed=Number(s.queue_completed||0),lineCount=Number(s.parallel_max_lines||pls.length||0),parallel=(s.execution_mode==='parallel'&&s.run_id===activeRunId);if(lineCount)box.style.setProperty('--lane-cols',laneColumns(lineCount));let queue=$('#queue-summary');if(queue){queue.hidden=!parallel;
  /* 数値だけでは全体のどこまで進んだか掴みにくいため、実行キュー一覧の帯へデータバーを併記する。 */
  let qPct=total?Math.round(completed/total*100):0;
- queue.innerHTML=parallel?`<div><small>予約総数</small><strong>${total}</strong></div><div class="queue-arrow">→</div><div class="q-active"><small>実行中</small><strong>${active}</strong><span>${lineCount}ライン</span></div><div class="q-wait"><small>待機</small><strong>${waiting}</strong></div><div class="q-done"><small>完了</small><strong>${completed}</strong></div><div class="q-overall" title="完了 ${completed} / 実行中 ${active} / 待機 ${waiting} / 全体 ${total}"><small>実行キュー全体 ${completed} / ${total} 完了${active?`（実行中 ${active}）`:''}</small><b>${qPct}%</b><div class="q-overall-track"><i style="width:${qPct}%"></i></div></div>`:'';}document.querySelector('.current-box')?.classList.toggle('parallel-hidden',parallel);$('#p-steps')?.classList.toggle('parallel-hidden',parallel);box.hidden=!parallel;if(parallel){let byLine=new Map(pls.map(x=>[x.line,x]));let stable=[];for(let n=1;n<=lineCount;n++)stable.push(byLine.get(`ライン ${n}`)||{line:`ライン ${n}`,job:'',state:'待機',percent:0,detail:'次の予約を待機',elapsed:0});box.innerHTML=stable.map(x=>{let state=String(x.state||'待機'),cls=state.includes('完了')?'is-done':state.includes('失敗')?'is-error':state.includes('中断')?'is-error':state.includes('待機')||state.includes('終了')?'is-wait':'is-running';return `<article class="pline ${cls}"><header><b>${E(x.line)}</b><span>${E(state)}</span></header><strong title="${E(x.job||'')}">${E(x.job||'予約待ち')}</strong><div class="lane-progress"><i style="width:${Math.max(0,Math.min(100,Number(x.percent||0)))}%"></i></div><footer><small>${E(x.detail||'')}</small><time>${hhmmss(x.elapsed||0)}</time></footer></article>`}).join('')}else box.innerHTML='';let current=stepOrder.indexOf(s.step);$$('#p-steps li').forEach(li=>{let i=stepOrder.indexOf(li.dataset.step);li.className=s.step==='error'&&i===Math.max(0,current)?'error':i<current?'done':i===current?'active':''});let failed=s.step==='error',cancelled=s.step==='cancelled',done=s.step==='complete'||cancelled;$('#p-state').textContent=failed?'失敗':cancelled?'中断済み':done?'完了':'実行中';$('#p-state').classList.toggle('running',!failed&&!done);$('#p-activity i').style.display=(failed||done)?'none':'block';$('#p-state').style.background=failed?'#fff0ee':cancelled?'#f3eee0':done?'#e5f5ef':'#e6f4f6';renderRunResults(s.job_results||[]);$('#p-error').hidden=!failed;if(failed){let errs=s.job_errors||[];$('#p-error').innerHTML=errs.length?`<div class="perr-head">失敗した対象 ${errs.length}件</div>`+errs.map(x=>`<div class="perr-item"><b>${E(x.job||'対象')}</b><span>${E(x.error||'')}</span></div>`).join('')+`<div class="perr-foot">詳しい経過は「ログ・診断」で確認できます。</div>`:E(s.error_detail||s.last_result||'処理を完了できませんでした')}else $('#p-error').textContent='';$('#p-background').hidden=failed||done;$('#p-close').hidden=!(failed||done);/* 終わっても進捗の窓は開かない（1.99.0）。成否は一覧の各行と上の状態に出ているので、毎回窓で遮らない。見たいときは上の状態を押す */}$('#p-background').onclick=()=>{$('#progress-dialog').close();toast('上部の処理インジケータから進捗を再表示できます')};$('#p-close').onclick=()=>{$('#progress-dialog').close();resetProgressView()};/* 実行中でなくても開けるようにする。終わった実行の結果を見る手段がこれしかない。 */
+ queue.innerHTML=parallel?`<div><small>予約総数</small><strong>${total}</strong></div><div class="queue-arrow">→</div><div class="q-active"><small>実行中</small><strong>${active}</strong><span>${lineCount}ライン</span></div><div class="q-wait"><small>待機</small><strong>${waiting}</strong></div><div class="q-done"><small>完了</small><strong>${completed}</strong></div><div class="q-overall" title="完了 ${completed} / 実行中 ${active} / 待機 ${waiting} / 全体 ${total}"><small>実行キュー全体 ${completed} / ${total} 完了${active?`（実行中 ${active}）`:''}</small><b>${qPct}%</b><div class="q-overall-track"><i style="width:${qPct}%"></i></div></div>`:'';}document.querySelector('.current-box')?.classList.toggle('parallel-hidden',parallel);$('#p-steps')?.classList.toggle('parallel-hidden',parallel);box.hidden=!parallel;if(parallel){let byLine=new Map(pls.map(x=>[x.line,x]));let stable=[];for(let n=1;n<=lineCount;n++)stable.push(byLine.get(`ライン ${n}`)||{line:`ライン ${n}`,job:'',state:'待機',percent:0,detail:'次の予約を待機',elapsed:0});box.innerHTML=stable.map(x=>{let state=String(x.state||'待機'),cls=state.includes('完了')?'is-done':state.includes('失敗')?'is-error':state.includes('中断')?'is-error':state.includes('待機')||state.includes('終了')?'is-wait':'is-running';return `<article class="pline ${cls}"><header><b>${E(x.line)}</b><span>${E(state)}</span></header><strong title="${E(x.job||'')}">${E(x.job||'予約待ち')}</strong>${x.variants&&x.variants.length?variantSegHtml(x.variants):`<div class="lane-progress"><i style="width:${Math.max(0,Math.min(100,Number(x.percent||0)))}%"></i></div>`}<footer><small>${E(x.detail||'')}</small><time>${hhmmss(x.elapsed||0)}</time></footer></article>`}).join('')}else box.innerHTML='';let current=stepOrder.indexOf(s.step);$$('#p-steps li').forEach(li=>{let i=stepOrder.indexOf(li.dataset.step);li.className=s.step==='error'&&i===Math.max(0,current)?'error':i<current?'done':i===current?'active':''});let failed=s.step==='error',cancelled=s.step==='cancelled',done=s.step==='complete'||cancelled;$('#p-state').textContent=failed?'失敗':cancelled?'中断済み':done?'完了':'実行中';$('#p-state').classList.toggle('running',!failed&&!done);$('#p-activity i').style.display=(failed||done)?'none':'block';$('#p-state').style.background=failed?'#fff0ee':cancelled?'#f3eee0':done?'#e5f5ef':'#e6f4f6';renderRunResults(s.job_results||[]);$('#p-error').hidden=!failed;if(failed){let errs=s.job_errors||[];$('#p-error').innerHTML=errs.length?`<div class="perr-head">失敗した対象 ${errs.length}件</div>`+errs.map(x=>`<div class="perr-item"><b>${E(x.job||'対象')}</b><span>${E(x.error||'')}</span></div>`).join('')+`<div class="perr-foot">詳しい経過は「ログ・診断」で確認できます。</div>`:E(s.error_detail||s.last_result||'処理を完了できませんでした')}else $('#p-error').textContent='';$('#p-background').hidden=failed||done;$('#p-close').hidden=!(failed||done);/* 終わっても進捗の窓は開かない（1.99.0）。成否は一覧の各行と上の状態に出ているので、毎回窓で遮らない。見たいときは上の状態を押す */}$('#p-background').onclick=()=>{$('#progress-dialog').close();toast('上部の処理インジケータから進捗を再表示できます')};$('#p-close').onclick=()=>{$('#progress-dialog').close();resetProgressView()};/* 実行中でなくても開けるようにする。終わった実行の結果を見る手段がこれしかない。 */
 async function openProgressModal(){try{let s=await fetch('/api/status',{cache:'no-store'}).then(r=>r.json());if(s.run_id){activeRunId=s.run_id;activeExecutionMode=s.execution_mode||'serial';updateProgress(s);showProgress()}}catch{toast('進捗情報を取得できませんでした')}}$('.runtime').onclick=openProgressModal;async function poll(){if(appExiting)return;try{let s=await fetch('/api/status',{cache:'no-store'}).then(r=>r.json());statusFailCount=0;hideServerLost();latestStatus=s;lastRunning=s.running;/* activeRunId を空のときにしか入れ替えていなかったため、1回目の実行が終わっても
     その run_id を握ったままになり、2回目以降は進捗が1回目の最終状態で止まっていた。
     新しい実行を見たら必ず張り替える。 */
@@ -1655,12 +1673,28 @@ function scheduleRowHtml(j,info){
 }
 function rowProgressCell(j){
  let info=scheduleInfo[j.id];
- return `<div class="rowprogress" data-jobid="${j.id}"><div class="rp-schedule"><div class="rp-plan">${scheduleRowHtml(j,info)}</div>${lastMetricsRow(info,j.id,j)}</div><div class="rp-live"><div class="rp-live-top"><span class="rp-state"></span><span class="rp-dots"></span><time class="rp-elapsed"></time></div><div class="rp-track"><i class="rp-bar"></i></div><div class="rp-detail"></div></div></div>`;
+ return `<div class="rowprogress" data-jobid="${j.id}"><div class="rp-schedule"><div class="rp-plan">${scheduleRowHtml(j,info)}</div>${lastMetricsRow(info,j.id,j)}</div><div class="rp-live"><div class="rp-live-top"><span class="rp-state"></span><span class="rp-dots"></span><time class="rp-elapsed"></time></div><div class="rp-track"><i class="rp-bar"></i></div><div class="rp-vseg" hidden></div><div class="rp-detail"></div></div></div>`;
 }
 async function loadSchedulePreview(){if(appExiting)return;try{let d=await fetch('/api/schedule-preview').then(r=>r.json());scheduleInfo=Object.fromEntries((d.items||[]).map(x=>[x.id,x]));applyScheduleCells()}catch{}}
 function applyScheduleCells(){$$('.rowprogress').forEach(el=>{if(el.classList.contains('is-running')||el.classList.contains('is-wait')||el.classList.contains('is-done')||el.classList.contains('is-error'))return;let j=cfg?.jobs?.find(x=>x.id===el.dataset.jobid);if(!j)return;let info=scheduleInfo[j.id];
  let pl=el.querySelector('.rp-plan');if(pl)pl.innerHTML=scheduleRowHtml(j,info);
  let sc=el.querySelector('.rp-schedule'),mt=el.querySelector('.rp-metrics');if(sc){let html=lastMetricsRow(info,j.id,j);if(mt)mt.remove();if(html)sc.insertAdjacentHTML('beforeend',html)}})}
+/* 値ごとに分けて出す回の進み具合: 値の数で区切ったバー（2.1.1。案の比べ方は tests/ui-proposals/2026-10-variant-progress）。
+   区切りの色が状態（緑=作成済み・青緑=作成中で塗りが進む・灰=待ち・赤=失敗）。値が8個までは区切りの中に値の名前、
+   9個以上は名前を省き、区切りに重ねると値・状態・件数が出る。一覧の行と進捗の窓のラインで同じものを使う。 */
+const VAR_SEG_STATE={ok:'作成済み',ng:'失敗',run:'作成中',wait:'待ち'},VAR_SEG_NAMED=8;
+function variantSegHtml(vs){
+ let named=vs.length<=VAR_SEG_NAMED;
+ return `<span class="var-seg${named?' is-named':''}" style="--n:${vs.length}">${vs.map(x=>{
+  let st=VAR_SEG_STATE[x.state]?x.state:'wait',rows=x.rows!=null&&st!=='run'&&st!=='wait'?` · ${Number(x.rows).toLocaleString()}件`:'';
+  let tip=`${x.value}: ${VAR_SEG_STATE[st]}${st==='run'?` ${Math.round(Number(x.percent)||0)}%`:''}${rows}${x.error?` · ${x.error}`:''}`;
+  return `<i class="vs-${st}" style="--p:${st==='run'?Math.max(0,Math.min(100,Number(x.percent)||0)):0}%" title="${E(tip)}">${named?`<b>${E(x.value)}</b>`:''}</i>`}).join('')}</span>`;
+}
+function paintVariantSeg(el,vs){
+ let box=el.querySelector('.rp-vseg'),track=el.querySelector('.rp-track'),on=!!(vs&&vs.length);
+ if(!box||!track)return;
+ box.hidden=!on;track.hidden=on;box.innerHTML=on?variantSegHtml(vs):'';
+}
 function jobStateClass(stateText){stateText=String(stateText||'');if(stateText.includes('失敗')||stateText.includes('中断'))return'is-error';if(stateText.includes('完了'))return'is-done';return'is-running'}
 const ROW_DONE_HOLD_MS=6000;
 /* 実行中の1バッチについて、対象(job_id)ごとの確定状態をクライアント側でも保持する。
@@ -1674,9 +1708,9 @@ function applyRowLiveProgress(s){
  // 現在ラインで処理中の対象（進捗つき）。完了・失敗はここではなく確定集合で扱う。
  if(s.running&&s.execution_mode==='parallel'){
   (s.parallel_lines||[]).forEach(x=>{if(!x.job_id||!x.job)return;let cls=jobStateClass(x.state);
-   if(cls==='is-done'){runCompletedIds.add(x.job_id);runDoneMeta[x.job_id]={cls:'is-done',state:x.state||'完了',detail:x.detail||'処理が完了しました',elapsed:x.elapsed||0,percent:100};}
-   else if(cls==='is-error'){runFailedIds.add(x.job_id);runDoneMeta[x.job_id]={cls:'is-error',state:x.state||'失敗',detail:x.detail||'',elapsed:x.elapsed||0,percent:100};}
-   else{runningInfo[x.job_id]={cls:'is-running',state:x.state||'',detail:x.detail||'',elapsed:x.elapsed||0,percent:x.percent||0,phase:x.phase||'',measured:!!x.measured};}
+   if(cls==='is-done'){runCompletedIds.add(x.job_id);runDoneMeta[x.job_id]={cls:'is-done',state:x.state||'完了',detail:x.detail||'処理が完了しました',elapsed:x.elapsed||0,percent:100,variants:x.variants||null};}
+   else if(cls==='is-error'){runFailedIds.add(x.job_id);runDoneMeta[x.job_id]={cls:'is-error',state:x.state||'失敗',detail:x.detail||'',elapsed:x.elapsed||0,percent:100,variants:x.variants||null};}
+   else{runningInfo[x.job_id]={cls:'is-running',state:x.state||'',detail:x.detail||'',elapsed:x.elapsed||0,percent:x.percent||0,phase:x.phase||'',measured:!!x.measured,variants:x.variants||null};}
   });
  }else if(s.running&&s.current_job_id){
   let cls=s.step==='error'?'is-error':(s.step==='complete'?'is-done':'is-running');
@@ -1745,6 +1779,7 @@ function paintRowProgress(){
    // 実測で伸びているのか、経過時間からの見当なのかを見分けられるようにする（影実行のバーと同じ約束）。
    bar.classList.toggle('guess',live.cls==='is-running'&&live.measured===false);
    el.querySelector('.rp-detail').textContent=live.detail;
+   paintVariantSeg(el,live.variants);
    let dots=el.querySelector('.rp-dots');if(dots)dots.innerHTML=live.cls==='is-running'?stepDotsHtml(live.phase):'';
    el.title='クリックで進捗を表示';
   }else if(rowQueue[id]){
@@ -1752,6 +1787,7 @@ function paintRowProgress(){
    el.querySelector('.rp-state').textContent='実行キュー待ち';
    el.querySelector('.rp-elapsed').textContent='';
    el.querySelector('.rp-bar').style.width='0%';
+   paintVariantSeg(el,null);
    let qd=el.querySelector('.rp-dots');if(qd)qd.innerHTML='';
    el.querySelector('.rp-detail').textContent=`${rowQueue[id]}番目に実行予定`;
    el.title='クリックで進捗を表示';
@@ -3556,6 +3592,9 @@ function setSource(src){
  if(tool){tool.hidden=(src!=='rne');if(src!=='rne'&&tool.classList.contains('on'))setEditorTab('basic')}
  let period=$('.editor-tab[data-etab="period"]');
  if(period)period.hidden=(src!=='rne');
+ // 値ごとに分けて出すのも RNE だけ（条件と表側を API で変えるため）。同じ理由で隠す
+ let vtab=$('.editor-tab[data-etab="variant"]');
+ if(vtab){vtab.hidden=(src!=='rne');if(src!=='rne'&&vtab.classList.contains('on'))setEditorTab('basic')}
  // 番号は「上から何番目か」を表す。隠したぶんを飛ばすと 1・2・4 と並び、
  // 3が押せないのかと探すことになる。見えているものへ振り直す。
  // 出力の表の名前は、入力の種類で自然な既定が違う。RNEは業務の呼び名（仕掛など）が

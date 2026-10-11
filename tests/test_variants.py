@@ -17,7 +17,7 @@ import navi_variants as V
 class RulesTest(unittest.TestCase):
  def test_normalize(self):
   v=V.normalize({'enabled':1,'item':' BOX実績_設備名 ','values':['LS3',' LS4','LS3','',None,'DL2'],'pattern':' {値}_実績 '})
-  self.assertEqual(v,{'enabled':True,'item':'BOX実績_設備名','values':['LS3','LS4','DL2'],'pattern':'{値}_実績','folder':''},
+  self.assertEqual(v,{'enabled':True,'item':'BOX実績_設備名','values':['LS3','LS4','DL2'],'pattern':'{値}_実績','folder':'','method':'default'},
                    '前後の空白を落とし、重ねず、空は捨てる')
   self.assertEqual(V.normalize(None)['values'],[])
   self.assertEqual(len(V.normalize({'values':[str(i) for i in range(200)]})['values']),V.MAX_VALUES)
@@ -26,6 +26,18 @@ class RulesTest(unittest.TestCase):
   self.assertFalse(V.active({'variants':{'enabled':True,'item':'x','values':[]}}),'値が無ければ分けない')
   self.assertFalse(V.active({'variants':{'enabled':False,'item':'x','values':['a']}}),'切ってあれば分けない')
   self.assertTrue(V.active({'variants':{'enabled':True,'item':'x','values':['a']}}))
+
+ def test_method(self):
+  """取り方: 対象で選んでいればそれ、「既定に従う」なら共通設定の既定、どちらも無ければまとめて1回。"""
+  self.assertEqual(V.normalize({'method':'parallel'})['method'],'parallel')
+  self.assertEqual(V.normalize({'method':'どれか'})['method'],'default','知らない値は既定に従う')
+  self.assertEqual(V.default_method({}),'combined')
+  self.assertEqual(V.default_method({'variant_method':'parallel'}),'parallel')
+  self.assertEqual(V.default_method({'variant_method':'x'}),'combined')
+  job=lambda m:{'variants':{'enabled':True,'item':'x','values':['a'],'method':m}}
+  self.assertEqual(V.method(job('default'),{'variant_method':'parallel'}),'parallel','既定に従う')
+  self.assertEqual(V.method(job('combined'),{'variant_method':'parallel'}),'combined','対象の選択が勝つ')
+  self.assertEqual(V.method(job('parallel'),{}),'parallel')
 
  def test_plan_names(self):
   render=lambda t,v:t.replace('{値}',v).replace('{value}',v)
@@ -162,21 +174,39 @@ if mode=='folders':v.update(pattern='{値}_実績',folder=str(out/'{値}'))
 if mode=='same':v.update(pattern='実績')
 if mode=='partial':v['values']=['LS3','ZERO','KEN']
 if mode=='onlykey':v['values']=['LS4']
+if mode in ('parallel','parallelfail'):v['method']='parallel'
+if mode=='defaultparallel':cfg['settings']['variant_method']='parallel'
+if mode=='jobcombined':cfg['settings']['variant_method']='parallel';v['method']='combined'
+if mode=='parallelfail':v['values']=['LS3','ZERO','KEN']
 job={'id':'j1','name':'LOT実績','enabled':True,'source':'rne','rne':'LOTACH.RNE','rne_path':str(rne),'output_folder':str(out),
      'output_format':'csv','output_file':'LOTACH.csv','naming_mode':'fixed','type':'詳細データ','sheet':'Page1','table':'t',
      'schedules':[],'variants':v if mode!='plain' else {}}
 cfg['jobs']=[job];app.save(cfg,quiet=True);job=app.load()['jobs'][0]
 lines=[]
 _upd=app.update_parallel_line
-def spy(line,**kw):lines.append({k:kw.get(k) for k in ('state','percent','detail')});return _upd(line,**kw)
+def spy(line,**kw):lines.append({'line':line,**{k:kw.get(k) for k in ('state','percent','detail','variants')}});return _upd(line,**kw)
 app.update_parallel_line=spy
+racers=[]
+def fake_racers(job,cfg_,user,pw,server,work_,specs,timeout=1800,stop_when=None,on_tick=None,payload_of=None,limit=None):
+ # ワーカーを起こす代わりに、同じプロセスで1つずつ動かす（中身は api_worker.py の既定の道と同じ呼び方）
+ racers.append({'limit':limit,'timeout':timeout,'labels':[x['label'] for x in specs]});done=[]
+ for k,spec in enumerate(specs):
+  d=work_/f'part{k}';d.mkdir(parents=True,exist_ok=True);pl=json.loads(json.dumps(payload_of(spec,d),ensure_ascii=False))
+  racers[-1].setdefault('jobs',[]).append({'values':pl['job']['_cond_override']['values'],'file':pl['job']['output_file'],'has_password':'password' in pl})
+  st=[{'spec':x,'done':i<k,'started':i<=k,'result':done[i] if i<k else None,'status':{'state':'問い合わせ実行','percent':50} if i==k else {}} for i,x in enumerate(specs)]
+  on_tick(1.0,st)
+  r=app.process_api_parallel_job(pl['job'],pl['job_index'],pl['total_jobs'],pl['cfg'],'u','p',pl['server'],Path(pl['dde_work']),Path(pl['backup']))
+  done.append(json.loads(json.dumps(r,ensure_ascii=False,default=str)))
+ return done
+app._spawn_racers=fake_racers
+job['_split_budget']=3
 res=app.process_api_parallel_job(job,1,1,cfg,'u','p','srv',work/'dde',work/'backup')
 files={}
 for p in sorted(out.rglob('*.csv')):
  rows=list(__import__('csv').reader(open(p,encoding='utf-8-sig')))   # 公開する CSV は UTF-8（BOM 付き）
  files[str(p.relative_to(out)).replace('\\','/')]=sorted({r[1] for r in rows[1:]})
 print(json.dumps({'ok':res.get('ok'),'error':res.get('error',''),'result':res.get('result',''),'files':files,'calls':calls,
-                  'saved':job.get('variants'),'lines':lines,
+                  'saved':job.get('variants'),'lines':lines,'racers':racers,
                   'variants':[{k:x[k] for k in ('value','ok','rows')} for x in res.get('variant_results') or []]},ensure_ascii=False))
 """
 
@@ -220,15 +250,68 @@ class FlowTest(unittest.TestCase):
   self.assertEqual(v['saved']['values'],['LS3','LS4','DL2','KEN'],'設定に保存して読み戻せる')
 
  def test_progress_does_not_finish_early(self):
-  """進捗: 途中の値で「完了」「失敗」を出さない（一覧の行がそこで終わったことになる）。値ごとに k/N で進み、最後に1回だけ完了。"""
+  """進捗: 途中の値で「完了」「失敗」を出さない（一覧の行がそこで終わったことになる）。「ファイル k/N 済」で進み、最後に1回だけ完了。
+  値ごとの様子（variants）を一緒に渡す: 作成済みは ok、作っている値は run、残りは wait（一覧の行と進捗の窓の区切りバーが読む）。"""
   v=self.run_flow('four')
   states=[x['state'] for x in v['lines']]
   done=[i for i,s2 in enumerate(states) if s2 in ('完了','一部失敗','失敗')]
   self.assertEqual(done,[len(states)-1],'完了は最後の1回だけ')
-  made=[x for x in v['lines'] if str(x['state']).startswith('値ごとに作成')]
-  self.assertEqual(sorted({x['state'] for x in made}),[f'値ごとに作成 {k}/4' for k in range(1,5)])
+  made=[x for x in v['lines'] if str(x['state']).startswith('ファイル ')]
+  self.assertEqual(sorted({x['state'] for x in made}),[f'ファイル {k}/4 済' for k in range(0,4)])
+  for x in made:
+   k=int(x['state'].split()[1].split('/')[0]);got=[y['state'] for y in x['variants']]
+   self.assertEqual(got,['ok']*k+['run']+['wait']*(3-k),x)
+  self.assertEqual([(y['value'],y['state'],y['rows']) for y in v['lines'][-1]['variants']],[(n,'ok',2) for n in ('LS3','LS4','DL2','KEN')],'最後は全部 ok と件数')
+  self.assertFalse(any(x['variants'] for x in v['lines'] if x['state'] in ('開始','API接続','問い合わせ実行','受信・保存')),
+                   'まとめて1回では、問い合わせ中は値ごとの進みが無いので区切りを出さない（ふつうのバー）')
   pct=[x['percent'] for x in v['lines'] if x['percent'] is not None]
   self.assertEqual(pct,sorted(pct),'進み具合は戻らない')
+
+ def test_parallel_one_value_per_worker(self):
+  """値ごとに並列: 値ごとに1本のワーカー。各ワーカーは表側をその値1つに絞って問い合わせ、まとめて1回と同じ道で出す。
+  同時に動かす数は、この対象に回せるライン数（_split_budget）まで。パスワードはワーカーへ書かない。"""
+  v=self.run_flow('parallel')
+  self.assertTrue(v['ok'],v['error'])
+  self.assertEqual(v['files'],{'LOTACH_LS3.csv':['LS3'],'LOTACH_LS4.csv':['LS4'],'LOTACH_DL2.csv':['DL2'],'LOTACH_KEN.csv':['KEN']},
+                   '出るファイルはまとめて1回と同じ')
+  r=v['racers'][0]
+  self.assertEqual(r['limit'],3,'_split_budget=3 なら 4値でも同時は3本')
+  self.assertEqual([x['values'] for x in r['jobs']],[['LS3'],['LS4'],['DL2'],['KEN']],'ワーカーごとに値1つ')
+  self.assertEqual([x['file'] for x in r['jobs']],['LOTACH_LS3.csv','LOTACH_LS4.csv','LOTACH_DL2.csv','LOTACH_KEN.csv'])
+  self.assertFalse(any(x['has_password'] for x in r['jobs']),'パスワードは payload.json に書かない')
+  cats=[c for c in v['calls'] if c[0]=='categories']
+  self.assertEqual([c[3] for c in cats],[['LS3'],['LS4'],['DL2'],['KEN']],'表側のカテゴリをその値だけに絞る')
+  self.assertEqual([c[0] for c in v['calls']].count('execute'),4,'値の数だけ問い合わせる')
+  self.assertEqual([(x['value'],x['ok'],x['rows']) for x in v['variants']],[(x,True,2) for x in ('LS3','LS4','DL2','KEN')])
+  self.assertIn('4/4ファイル',v['result'])
+
+ def test_parallel_progress(self):
+  """値ごとに並列の進み具合: 親のラインに、値ごとの済・作成中・待ちと、全体の割合（済=100・作成中はワーカーの割合・待ち=0 の平均）。"""
+  v=self.run_flow('parallel')
+  mine=[x for x in v['lines'] if x['line']!=v['racers'][0]['labels'][0] and x['variants'] and str(x['state']).startswith('ファイル ')]
+  firsts=[x for x in mine if x['detail'] and '本同時' in x['detail']]
+  self.assertEqual([y['state'] for y in firsts[1]['variants']],['ok','run','wait','wait'])
+  self.assertEqual(firsts[1]['percent'],round((100+50)/4,1))
+  self.assertIn('LS4 問い合わせ実行',firsts[1]['detail'])
+  last=v['lines'][-1]
+  self.assertEqual(last['state'],'完了')
+  self.assertEqual([y['state'] for y in last['variants']],['ok']*4)
+
+ def test_parallel_partial_failure(self):
+  """値ごとに並列で1つの値が失敗しても、残りは出す。最後は一部失敗で、失敗した値は ng。"""
+  v=self.run_flow('parallelfail')
+  self.assertFalse(v['ok'])
+  self.assertEqual(sorted(v['files']),['LOTACH_KEN.csv','LOTACH_LS3.csv'])
+  self.assertEqual([(x['value'],x['ok']) for x in v['variants']],[('LS3',True),('ZERO',False),('KEN',True)])
+  self.assertEqual(v['lines'][-1]['state'],'一部失敗')
+  self.assertEqual([y['state'] for y in v['lines'][-1]['variants']],['ok','ng','ok'])
+
+ def test_default_method_switch(self):
+  """共通設定の既定を「値ごとに並列」にすると、既定に従う対象は並列で動き、まとめて1回を選んだ対象はそのまま。"""
+  self.assertEqual(len(self.run_flow('defaultparallel')['racers']),1)
+  v=self.run_flow('jobcombined')
+  self.assertEqual(v['racers'],[])
+  self.assertEqual([c[0] for c in v['calls']].count('execute'),1)
 
  def test_name_and_folder_patterns(self):
   v=self.run_flow('folders')
@@ -294,6 +377,49 @@ class FlowTest(unittest.TestCase):
   self.assertTrue(v['four']['files'][0]['path'].endswith(f'LS3_{ym}.xlsx'))
   self.assertFalse(v['same']['ok']);self.assertIn('同じファイル名',v['same']['error'])
 
+
+
+# _spawn_racers の同時に動かす数（limit）と、渡す中身の差し替え（payload_of）。プロセスは偽物
+RACERS=r"""
+import json,os,sys
+from pathlib import Path
+sys.path[:0]=[sys.argv[1],sys.argv[1]+'/lib']
+import app
+work=Path(sys.argv[2]);running=[];peak=[0];started=[]
+class P:
+ def __init__(self,cmd,cwd=None,env=None,creationflags=0):
+  self.env=env;self.left=3;self.pid=0;running.append(self);started.append(json.loads(Path(cmd[-1]).read_text(encoding='utf-8')))
+  peak[0]=max(peak[0],len(running))
+ def poll(self):
+  self.left-=1
+  if self.left>0:return None
+  if self in running:
+   running.remove(self);Path(self.env['NAVI_WORKER_RESULT']).write_text(json.dumps({'ok':True,'part':self.env['NAVI_WORKER_LINE']}),encoding='utf-8')
+  return 0
+app.subprocess.Popen=P;app.time.sleep=lambda s:None
+specs=[{'index':i,'label':f'v{i}'} for i in range(5)];ticks=[]
+r=app._spawn_racers({},{},'u','',None,work,specs,60,payload_of=lambda spec,d:{'job':{'n':spec['index']}},limit=2,
+                    on_tick=lambda el,st:ticks.append(sum(1 for x in st if x['started'] and not x['done'])))
+r2=app._spawn_racers({'name':'x'},{},'u','',None,work/'b',[{'index':0,'label':'a','out_csv':'a.csv','drop':[]}],60)
+print(json.dumps({'peak':peak[0],'order':[x['job']['n'] for x in started[:5]],'ok':[x['ok'] for x in r],'labels':[x['part'] for x in r],
+                  'ticks_max':max(ticks),'default_payload':sorted(started[5]),'split_part':started[5].get('split_part',{}).get('out_csv')},ensure_ascii=False))
+"""
+
+
+class RacersTest(unittest.TestCase):
+ def test_limit_and_payload(self):
+  with tempfile.TemporaryDirectory() as d:
+   env=dict(os.environ,NAVI_LOCAL_ROOT=str(Path(d)/'local'),NAVI_DATA_ROOT=str(Path(d)/'data'),NAVI_CONFIG_DIR=str(Path(d)/'data'/'Config'),
+            NAVI_SECRET_FILE=str(Path(d)/'local'/'s.json'),DATARELAY_NO_BOOT='1',PYTHONIOENCODING='utf-8')
+   r=subprocess.run([sys.executable,'-c',RACERS,str(ROOT),d],env=env,capture_output=True,text=True,encoding='utf-8',timeout=120)
+   self.assertEqual(r.returncode,0,r.stderr[-3000:])
+   v=json.loads(r.stdout.strip().splitlines()[-1])
+  self.assertEqual(v['peak'],2,'同時に動くのは limit=2 本まで')
+  self.assertEqual(v['ticks_max'],2)
+  self.assertEqual(v['order'],[0,1,2,3,4],'終わった数だけ、並べた順に次を起こす')
+  self.assertEqual(v['ok'],[True]*5);self.assertEqual(v['labels'],['v0','v1','v2','v3','v4'],'結果は並べた順')
+  self.assertEqual(v['default_payload'],['cfg','job','server','split_part','user'],'payload_of を省けば、これまでどおり分割の1片（パスワードは書かない）')
+  self.assertEqual(v['split_part'],'a.csv')
 
 if __name__=='__main__':
  unittest.main()

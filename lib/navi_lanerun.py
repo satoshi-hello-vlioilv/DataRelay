@@ -356,7 +356,7 @@ def run_api_process_batch(jobs,cfg,user,pw,server,dde_work,backup,max_lines,trig
    else:
     set_status(job_results=seed(batch_results))
    record_job_run(item['job']['id'],item['job']['name'],'ok' if result.get('ok') else 'failed',trigger,detail=(result.get('result') or result.get('error') or ''),rows=result.get('rows'),cols=result.get('columns'),output_file=Path(result.get('target') or '').name,
-                  metrics={**{k:result.get(k) for k in ('elapsed','execute_seconds','save_seconds','merge_seconds','transfer_bytes','transfer_kbs','split_parts','split_shape','split_how','row_axis','axis_seconds','race_winner','format','variant_results') if result.get(k) is not None},
+                  metrics={**{k:result.get(k) for k in ('elapsed','execute_seconds','save_seconds','merge_seconds','transfer_bytes','transfer_kbs','split_parts','split_shape','split_how','row_axis','axis_seconds','race_winner','format','variant_results','variant_method','variant_lines') if result.get(k) is not None},
                            # 公開できたか。鮮度の判定がこれを見る（実行できても差し替わっていない場合がある）
                            'published':bool(result.get('published',True)),'pending':str(result.get('pending') or ''),
                            # 差し替えられなかったなら、その理由と、粘った時間と、次にすること。

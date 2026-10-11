@@ -1,11 +1,16 @@
-"""条件の値ごとに分けて出す（2.1.0）。
+"""条件の値ごとに分けて出す（2.1.0。取り方は 2.1.1 で作り直し）。
 
-1つの対象（RNE）を、条件欄のデータ項目のキーだけ差し替えて値の数だけ問い合わせ、値ごとに別のファイルへ出す。
-例: BOX実績_設備名 に LS3・LS4・DL2・KEN → 4回問い合わせて4ファイル。RNEファイルは書き換えない
-（API の NaviChangeConditionDI で、開いたカタログの条件だけを差し替える）。
+1つの対象（RNE）から、指定した値ごとに別のファイルを出す。例: BOX実績_設備名 に LS3・LS4・DL2・KEN → 4ファイル。
+RNEファイルは書き換えない（開いたカタログの条件と表側のカテゴリだけを、API で変える）。
 
-ここは決まりだけを持つ（設定の形・ファイル名と置き場の決め方・絞れたかの確かめ）。DBも画面もAPIも触らないので、
-実機なしで確かめられる。問い合わせそのものは app.process_api_parallel_job が値ごとに1回ずつ行う。
+取り方は2つ（METHODS）。どちらも、RNE の条件欄の絞り込み（例: LS4 だけ）を外し、表側の同じ名前の管理ポイントを
+指定の値だけに絞って問い合わせ、受け取ったCSVを手元で値ごとに振り分けてから出す（ほかの値の行は混ざらない）。
+- combined（まとめて1回）: 指定の値を全部入れて1回だけ問い合わせ、受け取ってから値ごとに分ける
+- parallel（値ごとに並列）: 値ごとに別のワーカーで問い合わせる（RNE を値の数に分けたのと同じ）。データが大きいと速いことがある
+対象ごとに選べ、「既定に従う」なら共通設定の既定（settings.variant_method）を使う。
+
+ここは決まりだけを持つ（設定の形・取り方・ファイル名と置き場の決め方・分け方・外せたかの確かめ）。DBも画面もAPIも
+触らないので、実機なしで確かめられる。問い合わせそのものは app.process_api_parallel_job が行う。
 """
 import csv
 from pathlib import Path
@@ -13,13 +18,15 @@ from pathlib import Path
 # ファイル名・置き場に書く「その回の値」。{値} と {value} のどちらでも書ける
 TOKENS = ('値', 'value')
 MAX_VALUES = 50          # 1つの対象で分ける数の上限（打ち間違いで数百回問い合わせないように）
-SAMPLE_OTHERS = 3        # 絞れていなかったとき、知らせに出す「ほかの値」の数
+METHODS = ('combined', 'parallel')     # まとめて1回 / 値ごとに並列
+DEFAULT_METHOD = 'combined'            # 共通設定に何も無いときの既定（問い合わせが1回で済み、サーバーの負担が小さい）
+METHOD_NAMES = {'combined': 'まとめて1回', 'parallel': '値ごとに並列', 'default': '既定に従う'}
 
 
 def normalize(v):
     """画面・持ち込みから来た形を、保存する形にそろえる。
     → {'enabled', 'item'（条件欄の項目名）, 'values'（重ねない・前後の空白を落とす）, 'pattern'（ファイル名の型。空なら対象の名前の決め方）,
-       'folder'（置き場の型。空なら対象の出力先）}"""
+       'folder'（置き場の型。空なら対象の出力先）, 'method'（'default'・'combined'・'parallel'。知らない値は 'default'）}"""
     v = v if isinstance(v, dict) else {}
     seen, values = set(), []
     for x in v.get('values') or []:
@@ -29,7 +36,20 @@ def normalize(v):
             values.append(s)
     return {'enabled': bool(v.get('enabled')), 'item': str(v.get('item') or '').strip(),
             'values': values[:MAX_VALUES], 'pattern': str(v.get('pattern') or '').strip(),
-            'folder': str(v.get('folder') or '').strip()}
+            'folder': str(v.get('folder') or '').strip(),
+            'method': str(v.get('method') or '') if str(v.get('method') or '') in METHODS else 'default'}
+
+
+def default_method(settings):
+    """共通設定の既定の取り方。知らない値・空なら DEFAULT_METHOD。"""
+    m = str((settings or {}).get('variant_method') or '')
+    return m if m in METHODS else DEFAULT_METHOD
+
+
+def method(job, settings):
+    """この対象を実際にどちらの取り方で動かすか。対象で選んでいればそれ、「既定に従う」なら共通設定の既定。"""
+    m = normalize((job or {}).get('variants'))['method']
+    return m if m in METHODS else default_method(settings)
 
 
 def active(job):
