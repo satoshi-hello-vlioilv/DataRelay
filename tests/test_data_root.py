@@ -212,6 +212,29 @@ class PathKindAndLocateTest(unittest.TestCase):
    os.environ['DR_TEST_PLACE']=str(place);self.addCleanup(os.environ.pop,'DR_TEST_PLACE',None)
    d=L('%DR_TEST_PLACE%\\rne');self.assertEqual((d['kind'],d['exists']),('env',True),'%NAME% と \\ の区切りは、どの OS でも Windows と同じに読む')
    self.assertEqual(L('')['kind'],'empty')
+   self.assertEqual(L('.\\output')['label'],'データの基準','言葉もサーバーが渡す（画面と知らせで同じ言葉）')
+
+ def test_missing_message_lists_every_place_in_order(self):
+  """見つからないときは、探した場所を先に見た順にすべて出す（2.2.3 までは最初の1か所だけ）。"""
+  with tempfile.TemporaryDirectory() as t:
+   root=Path(t).resolve();place=root/'place';data=root/'data';prog=root/'prog'
+   for d in (place,data,prog):d.mkdir()
+   navi_paths.setup(data,root/'local',prog,'pc');navi_paths.set_place(place)
+   m=navi_paths.missing_message('RNE','.\\rne\\X.RNE')
+   self.assertTrue(m.startswith('RNEが見つかりません（設定: .\\rne\\X.RNE）。探した順: 置き場 '),m)
+   order=[m.index(str(x/'rne'/'X.RNE')) for x in (place,data,prog)]
+   self.assertEqual(order,sorted(order),'置き場 → データの基準 → アプリの場所の順')
+   self.assertIn('データの基準 '+str(data/'rne'/'X.RNE'),m)
+   m=navi_paths.missing_message('RNE','X.RNE','.\\rne')
+   self.assertEqual(m,'RNEが見つかりません: 置き場 '+str(place/'rne'/'X.RNE'),'名前だけはフォルダーの中だけを探す（読む決まりと同じ）')
+
+ def test_no_single_place_missing_messages_remain(self):
+  """RNE・テキストが見つからない知らせは、どこからも rne_missing_message・text_missing_message・missing_message を通す。"""
+  import re
+  for f in [ROOT/'app.py',*sorted((ROOT/'lib').glob('*.py'))]:
+   if f.name=='navi_changelog.py':continue
+   text=f.read_text(encoding='utf-8')
+   self.assertIsNone(re.search(r"RNEが見つかりません: \{rp\}|RNEがありません: '|テキストファイルがありません: '",text),f.name)
 
 
 class PortableTest(unittest.TestCase):

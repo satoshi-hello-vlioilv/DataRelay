@@ -259,6 +259,7 @@ def path_kind(value):
  if re.match(r'^[A-Za-z]:[\\/]',raw) or raw.startswith(('/','\\')):return 'abs'
  return 'rel'
 
+BASE_LABEL={'place':'置き場','data':'データの基準','app':'アプリの場所','local':'このPC'}   # 画面・知らせの言葉（ここだけで持つ）
 def base_key(root):
  """基準の場所の名前（'place' 置き場・'data' データの基準・'app' アプリの場所）。同じ場所なら置き場を先に名乗る。"""
  for key,x in (('place',PLACE_ROOT),('data',DATA_ROOT),('app',PROGRAM_ROOT)):
@@ -276,23 +277,37 @@ def locate(value,folder=None):
 ne など）。
  primary: 主な基準（いつもはここを先に見る）。fell: 主な基準に無いので、ほかの基準の物を使っている。tried: 探した道（先に見た順）。
  folder を渡すと、名前だけの指定（X.RNE）はそのフォルダーの中として読む（resolve_in と同じ決まり）。"""
+ out=_locate(value,folder)
+ out['label']=BASE_LABEL.get(out['base'],'');out['primary_label']=BASE_LABEL.get(out['primary'],'')
+ return out
+
+def _locate(value,folder):
  raw=str(value or '').strip();kind=path_kind(raw)
- out={'kind':kind,'resolved':'','exists':False,'base':'','rest':'','primary':base_key(rel_root()),'fell':False,'tried':[]}
+ out={'kind':kind,'resolved':'','exists':False,'base':'','rest':'','primary':base_key(rel_root()),'fell':False,'tried':[],'tried_from':[]}
  if kind=='empty':return out
  if folder is not None and kind=='rel' and not raw.startswith(EXPLICIT_RELATIVE):
   inner=locate(folder);root=Path(inner['resolved']);real=resolve_path(raw,root)
-  out.update(resolved=str(real),exists=real.exists(),base=inner['base'],fell=inner['fell'],tried=[str(real)],
+  out.update(resolved=str(real),exists=real.exists(),base=inner['base'],fell=inner['fell'],tried=[str(real)],tried_from=[BASE_LABEL.get(inner['base'],'')],
              rest=(inner['rest'].rstrip('\\')+'\\'+raw.replace('/','\\')) if inner['base'] else '')
   return out
  if kind=='rel':
   p=Path(expand(raw).replace('\\','/') if os.sep=='/' else expand(raw))
   got,i,tried=_search(p);bases=rel_bases();key=base_key(bases[i])
-  out.update(resolved=str(got),exists=got.exists(),base=key,rest=_tail(got,bases[i]),fell=i>0,tried=[str(x) for x in tried])
+  out.update(resolved=str(got),exists=got.exists(),base=key,rest=_tail(got,bases[i]),fell=i>0,tried=[str(x) for x in tried],
+             tried_from=[BASE_LABEL.get(base_key(b),'') for b in bases])
   return out
  real=resolve_path(raw)
- out.update(resolved=str(real),exists=Path(real).exists(),tried=[str(real)])
- if kind=='pc':out.update(base='local',rest=_tail(real,LOCAL_ROOT))
+ out.update(resolved=str(real),exists=Path(real).exists(),tried=[str(real)],tried_from=[''])
+ if kind=='pc':out.update(base='local',rest=_tail(real,LOCAL_ROOT),tried_from=[BASE_LABEL['local']])
  return out
+
+def missing_message(what,value,folder=None):
+ r"""ファイルが見つからないときの知らせ。探した場所を、先に見た順にすべて並べる（2.2.3 までは最初に見た1か所だけで、
+ 置き場・データの基準・アプリの場所のどこを探したか、どこへ置けばよいかが分からなかった）。
+ 例: RNEが見つかりません（設定: .ne\X.RNE）。探した順: 置き場 C:\…ne\X.RNE → データの基準 C:\…\datane\X.RNE"""
+ d=locate(value,folder);where=[(f'{lb} ' if lb else '')+x for x,lb in zip(d['tried'],d['tried_from'])]
+ if len(where)<=1:return f'{what}が見つかりません: {(where or [str(value or "")])[0]}'
+ return f'{what}が見つかりません（設定: {str(value or "").strip()}）。探した順: '+' → '.join(where)
 
 EXPLICIT_RELATIVE=('.\\','..\\','./','../')
 def resolve_in(value,folder):

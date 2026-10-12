@@ -62,7 +62,7 @@ from app import (
     os, output_extension, pick_anchor_columns, pick_row_axis_by_mode, plan_run_split,
     queue_snapshot, re, read_copy, read_header_names, read_log_lines, read_preview_data,
     recommend_split_parts, render_filename_segments, render_template, request,
-    resolve_output_filename, resolve_path, resolve_rne_path, retry_lock, retry_view,
+    resolve_output_filename, resolve_path, resolve_rne_path, rne_missing_message, retry_lock, retry_view,
     retry_waiting, rne_master_view, rne_run_stats, rotate_log_if_needed, row_axis_choice,
     row_split_breakdown, row_split_candidates, run_inspect_worker, runtime_split_view, save,
     save_axis_survey, save_column_cache, save_column_classification, save_condition_items,
@@ -381,7 +381,7 @@ def rne_shape():
  if not value:return jsonify(ok=False,error='RNEファイルを指定してください'),200
  try:rp=resolve_rne_path({'rne_path':value,'rne':Path(value).name},c)
  except Exception as e:return jsonify(ok=False,error=f'RNEパスの解決に失敗しました: {e}'),200
- if not Path(rp).is_file():return jsonify(ok=False,error=f'RNEが見つかりません: {rp}'),200
+ if not Path(rp).is_file():return jsonify(ok=False,error=rne_missing_message({'rne_path':value},c)),200
  lay=navi_crosstab.read_rne_layout(rp)
  if not lay:return jsonify(ok=False,error='RNEの配置を読み取れませんでした（明細として読みます）'),200
  # 表頭の値は実行するまで分からないので、例は「名前#〈表頭名〉」の形で見せる。
@@ -400,7 +400,7 @@ def period_control_points():
  tmp={'rne_path':rne_value,'rne':Path(rne_value).name}
  try:rp=resolve_rne_path(tmp,c)
  except Exception as e:return jsonify(ok=False,error=f'RNEパスの解決に失敗しました: {e}'),200
- if not Path(rp).is_file():return jsonify(ok=False,error=f'RNEが見つかりません: {rp}'),200
+ if not Path(rp).is_file():return jsonify(ok=False,error=rne_missing_message(tmp,c)),200
  try:
   user,pw,server,_=navi_login(c)
   known=(load_column_cache(rp) or {}).get('columns') or []
@@ -452,7 +452,7 @@ def column_plan():
  force=bool(data.get('force'));allow_probe=bool(data.get('allow_probe',False))
  try:rp=resolve_rne_path(job,c)
  except Exception as e:return jsonify(ok=False,error=f'RNEパスの解決に失敗しました: {e}'),200
- if not Path(rp).is_file():return jsonify(ok=False,error=f'RNEが見つかりません: {rp}'),200
+ if not Path(rp).is_file():return jsonify(ok=False,error=rne_missing_message(job,c)),200
  started=time.perf_counter();state,cached=column_cache_state(rp)
  columns=[];source='';notes=[];probe_info={}
  if cached and not cached['stale'] and not force:
@@ -604,7 +604,7 @@ def row_split_plan():
  if not job:return jsonify(ok=False,error='保存済みの対象を選んでください'),200
  try:rp=resolve_rne_path(job,c)
  except Exception as e:return jsonify(ok=False,error=f'RNEパスの解決に失敗しました: {e}'),200
- if not Path(rp).is_file():return jsonify(ok=False,error=f'RNEが見つかりません: {rp}'),200
+ if not Path(rp).is_file():return jsonify(ok=False,error=rne_missing_message(job,c)),200
  parts=max(2,min(8,int(data.get('parts') or 2)))
  started=time.perf_counter()
  # 行を絞れるのは管理ポイントだけ。まずRNEから軸を読む。ここは直近の出力に依存しないので、
@@ -1746,6 +1746,8 @@ def path_check():
   if not j:return jsonify(error='対象が見つかりません'),404
   if d.get('value') is not None:j=dict(j,rne_path=d.get('value'),rne=d.get('expected_name') or j.get('rne'))
   rp=resolve_rne_path(j,c); result={'ok':rp.is_file(),'configured':str(j.get('rne_path') or j.get('rne')),'resolved':str(rp),'candidates':[],'needs_reselect':False}; result['candidates']=find_nearby_file(j.get('rne')) if not result['ok'] else []; result['needs_reselect']=not result['ok'] and not result['candidates']; result.update(item='rne',job_id=job_id,label=j.get('rne'))
+  # 見つからないときは、探した場所を先に見た順にすべて出す（読み方は resolve_rne_path と同じ）
+  w=navi_paths.locate(j.get('rne_path') or j.get('rne'),c.get('rne_folder') or '.\\rne');result['tried']=[{'path':x,'label':lb} for x,lb in zip(w['tried'],w['tried_from'])]
  else:return jsonify(error='確認対象が不正です'),400
  return jsonify(result)
 
