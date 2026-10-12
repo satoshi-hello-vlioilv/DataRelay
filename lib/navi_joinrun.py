@@ -32,6 +32,7 @@ for _n in ('_mark_settings_dirty',
            'normalize_join_recipe',
            'normalize_output_format',
            'read_preview_data',
+           'resolve_in',
            'resolve_path',
            'settings_connection',
            'validate_join_recipe'):globals()[_n]=_borrow(_n)
@@ -99,15 +100,9 @@ def delete_join_recipe(recipe_id):
  return bool(n)
 
 def resolve_join_path(value,cfg):
- """結合で読むファイルの場所。書き方の決まりはRNE・テキストと同じ。"""
- raw=str(value or '').strip()
- if not raw:return Path('')
- import os
- raw=os.path.expandvars(os.path.expanduser(raw))
- p=Path(raw)
- if p.is_absolute() or raw.startswith('\\\\'):return p
- if raw.startswith(('.\\','..\\','./','../')):return resolve_path(raw,app.DATA_ROOT)
- return resolve_path(raw,resolve_path(str((cfg or {}).get('text_folder') or app.TEXT_FOLDER_DEFAULT)))
+ """結合で読むファイルの場所。書き方の決まりはRNE・テキストと同じ（navi_paths.resolve_in）。"""
+ if not str(value or '').strip():return Path('')
+ return resolve_in(value,str((cfg or {}).get('text_folder') or app.TEXT_FOLDER_DEFAULT))
 
 def join_reader(cfg):
  """navi_join へ渡す読み手。これまでの出力形式は、データビュワーと同じ経路で読む。"""

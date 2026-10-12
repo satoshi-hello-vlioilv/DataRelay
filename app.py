@@ -2167,17 +2167,10 @@ def job_table_name(job):
 def resolve_text_path(job,cfg):
  """読むテキストファイルの場所。書き方の決まりはRNEと同じにする。
 
- 絶対パス・UNCはそのまま。「.\\」で始まればアプリの場所から。それ以外（名前だけ）は
+ 絶対パス・UNCはそのまま。「.\\」で始まれば相対パスの基準（配布の置き場）から。それ以外（名前だけ）は
  共通設定の読取フォルダーから探す ―― RNEで慣れた書き方をそのまま使えるようにする。
  """
- value=str(job.get('text_path') or '').strip()
- root=resolve_path(str(cfg.get('text_folder') or TEXT_FOLDER_DEFAULT))
- if not value:return root
- raw=os.path.expandvars(os.path.expanduser(value))
- p=Path(raw)
- if p.is_absolute() or raw.startswith('\\\\'):return p
- if raw.startswith(('.\\','..\\','./','../')):return resolve_path(raw,DATA_ROOT)
- return resolve_path(raw,root)
+ return resolve_in(job.get('text_path'),str(cfg.get('text_folder') or TEXT_FOLDER_DEFAULT))
 
 # 共通設定の既定値。読み込みで足りないものを埋め、画面はこれを「推奨」として出す（2.1.2。出どころを1つにする）。
 # 結合の待ち合わせの既定値は navi_order が持つ（判断もあちら）。
@@ -2308,20 +2301,12 @@ def update_parallel_line(line,**v):
 import navi_paths
 navi_paths.setup(DATA_ROOT,LOCAL_ROOT,BASE,DATA_ROOT_SOURCE)
 import navi_release as _rel0; navi_paths.set_place(_rel0.place_root(BASE))   # 相対パスの基準＝配布の置き場（2.2.1）
-from navi_paths import PC_TOKEN,pc_path,is_pc_path,foreign_profile_path,resolve_path,clean_work_folder,_split_any,_profile_root,_looks_generated_backup
+from navi_paths import PC_TOKEN,pc_path,is_pc_path,foreign_profile_path,resolve_path,resolve_in,clean_work_folder,_split_any,_profile_root,_looks_generated_backup
 
 
 def resolve_rne_path(job,cfg):
- """Canonical RNE resolution shared by diagnosis and execution."""
- value=str(job.get('rne_path') or job.get('rne') or '').strip()
- if not value:return resolve_path(job.get('rne',''),resolve_path(cfg.get('rne_folder','.\\rne')))
- raw=os.path.expandvars(os.path.expanduser(value))
- p=Path(raw)
- if p.is_absolute() or raw.startswith('\\\\'):return p
- # Explicit relative paths (./, ../, .\, ..\) are relative to the data root (the shared app folder).
- if raw.startswith(('.\\','..\\','./','../')):return resolve_path(raw,DATA_ROOT)
- # Bare filename is relative to configured RNE base folder.
- return resolve_path(raw,resolve_path(cfg.get('rne_folder','.\\rne')))
+ """Canonical RNE resolution shared by diagnosis and execution（読み方の決まりは navi_paths.resolve_in）。"""
+ return resolve_in(job.get('rne_path') or job.get('rne'),cfg.get('rne_folder') or '.\\rne')
 
 def attach_rne_layout(job,rp,line=''):
  """RNEの配置（表側・表頭・データ項目）を読み、実行中の対象に添える。

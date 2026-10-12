@@ -211,9 +211,11 @@ def resolve_path(value,base=None):
  """Resolve absolute, UNC, or app-relative paths without changing stored values.
 
  base の既定は相対パスの基準（rel_bases()。配布の置き場・データの基準・プログラムの場所）。定義時ではなく呼ばれた時点で
- 解決する（既定引数に入れると、setup より前の値で固定されてしまう）。"""
- default=base is None or base is DATA_ROOT
- if base is None:base=rel_root()
+ 解決する（既定引数に入れると、setup より前の値で固定されてしまう）。base を渡したときは、その基準だけを見る。
+ （2.2.2 までは「base が DATA_ROOT と同じ物なら既定と同じ」と物の同一性で見分けていたが、setup が Path() で作り直すので
+ app.DATA_ROOT とは別の物になり、.\ で始まる RNE・テキストだけが置き場を見ずにデータの基準で読まれていた）"""
+ default=base is None
+ if default:base=rel_root()
  if value is None:return base
  raw=str(value).strip()
  # <PC> は、いま動いているPCのローカル領域へ直す。設定にはPC固有の値を残さない。
@@ -239,6 +241,31 @@ def resolve_path(value,base=None):
     logging.getLogger('navi').info('RELATIVE_FALLBACK path=%s base=%s used=%s note=相対パスの基準に無いので、ほかの場所の物を使いました',raw,bases[0],alt)
    return alt
  return got
+
+EXPLICIT_RELATIVE=('.\\','..\\','./','../')
+def resolve_in(value,folder):
+ r"""ファイルの指定を読む（RNE・テキスト・結合で同じ決まり）。
+ 空ならフォルダーそのもの。絶対パス・UNC はそのまま。.\ ..\ ./ ../ で始まれば相対パスの基準（resolve_path の既定）から。
+ それ以外（名前だけ）は folder（共通設定の読取フォルダー。これも相対なら相対パスの基準から）の中。"""
+ root=resolve_path(folder)
+ raw=os.path.expandvars(os.path.expanduser(str(value or '').strip()))
+ if not raw:return root
+ if raw.startswith(EXPLICIT_RELATIVE):return resolve_path(raw)
+ return resolve_path(raw,root)
+
+def to_relative(path,inside_only=False):
+ r"""絶対パスを、相対パスの基準からの書き方（.\… ／ ..\…）へ直す。直せないときは None。
+ 直した値を resolve_path で読み直して同じ物に着くときだけ返す（別ドライブ・UNC、基準に無くてほかの基準の同じ名前の物へ
+ 着いてしまうときは None）。inside_only なら、基準の外（..\ で始まる）も None。"""
+ root=rel_root().resolve();target=Path(path).resolve()
+ try:rel=os.path.relpath(str(target),str(root))
+ except ValueError:return None
+ rel=rel.replace('/','\\')
+ if rel.startswith('..'):
+  if inside_only:return None
+  text=rel
+ else:text='.\\'+rel
+ return text if resolve_path(text).resolve()==target else None
 
 # ==== このPCのローカル領域の後始末 =====================================
 def clean_work_folder(work=None):
