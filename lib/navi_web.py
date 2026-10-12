@@ -1200,15 +1200,13 @@ def delete_old_log():
 @app.post('/api/path-convert')
 def path_convert():
  data=request.get_json(silent=True) or {}; value=str(data.get('value') or '').strip(); mode=data.get('mode','absolute')
- # 相対へ直す基準は、相対パスを読む基準（navi_paths.rel_root。いま動いている版のアプリのフォルダー・データの基準）と同じ
+ # 相対へ直す基準は、相対パスを読む基準（navi_paths.rel_root。配布の置き場）と同じ。直し方は navi_paths.to_relative
  root=navi_paths.rel_root().resolve()
  if not value:return jsonify(value='',resolved=str(root),base=str(root),is_relative=False)
  resolved=resolve_path(value).resolve()
  if mode=='relative':
-  try:converted='.\\'+str(resolved.relative_to(root)).replace('/','\\')
-  except ValueError:
-   try:converted=os.path.relpath(str(resolved),str(root)).replace('/','\\')
-   except ValueError:return jsonify(error='別ドライブまたはUNC経路のため、このアプリ基準の相対パスへ変換できません。絶対パスを使用してください。'),400
+  converted=navi_paths.to_relative(resolved)
+  if converted is None:return jsonify(error=f'相対パスの基準（{root}）から辿れない場所（別ドライブ・UNC）か、相対にすると別の場所の同じ名前の物を指すため、相対パスへ変換できません。絶対パスを使用してください。'),400
  else:converted=str(resolved)
  return jsonify(value=converted,resolved=str(resolved),base=str(root),is_relative=not Path(converted).is_absolute())
 
@@ -1754,9 +1752,8 @@ def apply_path_suggestion():
  if not candidate or not Path(candidate).is_file():return jsonify(error='修正候補が存在しません'),400
  with settings_sync_lock:
   c=load()
-  try:stored=str(Path(candidate).resolve().relative_to(DATA_ROOT.resolve()))
-  except ValueError:stored=str(Path(candidate).resolve())
-  if not stored.startswith('.') and not Path(stored).is_absolute():stored='.\\'+stored.replace('/','\\')
+  # 相対パスの基準（置き場）の中なら .\… で持つ（読み直して同じ物に着くときだけ）。外なら絶対パス
+  stored=navi_paths.to_relative(candidate,inside_only=True) or str(Path(candidate).resolve())
   if item in ('symnavim_conf','accdb_template'):c[item]=stored
   elif item=='rne':
    j=next((x for x in c['jobs'] if x['id']==job_id),None)

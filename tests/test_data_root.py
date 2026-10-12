@@ -118,6 +118,68 @@ class ResolveAgainstDataRootTest(unittest.TestCase):
    navi_paths.setup(old,root/'local',v2,'install');navi_paths.set_place(None)
    self.assertEqual(navi_paths.rel_root(),v2)
 
+class RelativeEqualsAbsoluteTest(unittest.TestCase):
+ """同じファイルを絶対パスと相対パス（.\\… ／ ./… ／ 名前だけ）で設定したとき、同じ実体に着くか。
+ app.py を本当に読み込み、起動と同じ渡し方（navi_paths.setup(app.DATA_ROOT,…)）で、実際に読む関数（RNE・テキスト・結合・
+ symnavim.conf）と、画面の「相対に直す」・候補の適用を通す。2.2.1 までは navi_paths.resolve_path だけを試していたため、
+ .\\ で始まる RNE・テキスト・結合だけが置き場を見ずにデータの基準で読まれていたのを見逃した。"""
+ def test_relative_and_absolute_reach_the_same_file(self):
+  code=r'''
+import json,os,sys,tempfile
+from pathlib import Path
+tmp=Path(sys.argv[2]).resolve();sys.path[:0]=[sys.argv[1],sys.argv[1]+'/lib']
+import app,navi_paths,navi_joinrun,navi_web
+place=tmp/'share'/'DataRelay';copy=tmp/'pc'/'DataRelay';data=copy/'data'
+for d in (place/'rne',place/'text',place/'conf',data,copy/'assets'):d.mkdir(parents=True,exist_ok=True)
+for f in (place/'rne'/'A.RNE',place/'text'/'T.txt',place/'conf'/'s.conf',copy/'assets'/'x.accdb'):f.write_text('x')
+app.DATA_ROOT=Path(str(data))      # 起動と同じく、navi_paths とは別の物（中身は同じ）
+navi_paths.setup(app.DATA_ROOT,tmp/'local',copy,'pc');navi_paths.set_place(place)
+cfg={'rne_folder':'.\\rne','text_folder':'.\\text'}
+read={'rne':lambda v:app.resolve_rne_path({'rne_path':v,'rne':'A.RNE'},cfg),'text':lambda v:app.resolve_text_path({'text_path':v},cfg),
+      'join':lambda v:navi_joinrun.resolve_join_path(v,cfg),'conf':lambda v:app.legacy_conf_path({'symnavim_conf':v})}
+cases=[('rne',place/'rne'/'A.RNE',['.\\rne\\A.RNE','./rne/A.RNE','A.RNE']),('text',place/'text'/'T.txt',['.\\text\\T.txt','./text/T.txt','T.txt']),
+       ('join',place/'text'/'T.txt',['.\\text\\T.txt','./text/T.txt','T.txt']),('conf',place/'conf'/'s.conf',['.\\conf\\s.conf','./conf/s.conf'])]
+out=[]
+for kind,target,rels in cases:
+ for v in [str(target)]+rels:out.append([kind,v,str(read[kind](v)),str(target)])
+c=app.app.test_client()
+r=c.post('/api/path-convert',json={'value':str(place/'rne'/'A.RNE'),'mode':'relative'}).get_json()
+out.append(['convert',r['value'],str(navi_paths.resolve_path(r['value'])),str(place/'rne'/'A.RNE')])
+saved={};navi_web.save=lambda c_,*a,**k:saved.update(c_);navi_web.load=lambda:{'jobs':[]}
+for cand in (place/'conf'/'s.conf',copy/'assets'/'x.accdb'):
+ c.post('/api/apply-path-suggestion',json={'item':'symnavim_conf','candidate':str(cand)})
+ out.append(['suggest',saved['symnavim_conf'],str(navi_paths.resolve_path(saved['symnavim_conf'])),str(cand)])
+print(json.dumps(out,ensure_ascii=False))
+'''
+  with tempfile.TemporaryDirectory() as d:
+   env=dict(os.environ,NAVI_LOCAL_ROOT=str(Path(d)/'local'),NAVI_DATA_ROOT=str(Path(d)/'boot'),NAVI_CONFIG_DIR=str(Path(d)/'cfg'),PYTHONIOENCODING='utf-8')
+   out=subprocess.run([sys.executable,'-c',code,str(ROOT),d],cwd=d,env=env,capture_output=True,text=True,encoding='utf-8',timeout=120)
+   self.assertEqual(out.returncode,0,out.stderr[-2000:])
+   rows=json.loads(out.stdout.strip().splitlines()[-1])
+  for kind,value,got,want in rows:
+   self.assertEqual(Path(got).resolve(),Path(want).resolve(),f'{kind}: {value} が {want} ではなく {got} を指す')
+  stored={r[1] for r in rows if r[0]=='suggest'}
+  self.assertIn('.\\conf\\s.conf',stored,'置き場の中の候補は相対で持つ（ほかのPCへ配っても同じ場所を指す）')
+  self.assertEqual(next(r[1] for r in rows if r[0]=='convert'),'.\\rne\\A.RNE','画面の「相対に直す」は置き場からの道')
+
+ def test_to_relative_refuses_paths_that_would_read_back_elsewhere(self):
+  saved=(navi_paths.DATA_ROOT,navi_paths.LOCAL_ROOT,navi_paths.PROGRAM_ROOT,navi_paths.DATA_SOURCE)
+  self.addCleanup(lambda:navi_paths.setup(*saved) if saved[0] else None)
+  self.addCleanup(navi_paths.set_place,navi_paths.PLACE_ROOT)
+  with tempfile.TemporaryDirectory() as t:
+   root=Path(t).resolve();place=root/'place';data=root/'data'
+   (place/'rne').mkdir(parents=True);(data/'out').mkdir(parents=True)
+   (place/'rne'/'A.RNE').write_text('x')
+   navi_paths.setup(data,root/'local',root/'prog','pc');navi_paths.set_place(place)
+   self.assertEqual(navi_paths.to_relative(place/'rne'/'A.RNE'),'.\\rne\\A.RNE')
+   self.assertEqual(navi_paths.to_relative(root/'other'/'B.RNE'),'..\\other\\B.RNE','基準の外は ..\\ で')
+   self.assertIsNone(navi_paths.to_relative(root/'other'/'B.RNE',inside_only=True))
+   # .\out は置き場に無く、データの基準にある → 置き場の .\out（まだ無い）を相対にすると、読み直すとデータの基準の物を指す
+   self.assertIsNone(navi_paths.to_relative(place/'out'),'読み直して別の物に着くなら相対にしない')
+   self.assertEqual(navi_paths.resolve_in('',place/'rne'),place/'rne','空ならフォルダーそのもの')
+   self.assertEqual(navi_paths.resolve_in(str(root/'x.RNE'),place/'rne'),root/'x.RNE','絶対パスはそのまま')
+
+
 class PortableTest(unittest.TestCase):
  def test_own_profile_becomes_userprofile(self):
   home='C:\\Users\\alice'
