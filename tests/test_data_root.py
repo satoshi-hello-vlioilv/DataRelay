@@ -121,7 +121,7 @@ class ResolveAgainstDataRootTest(unittest.TestCase):
 class RelativeEqualsAbsoluteTest(unittest.TestCase):
  """同じファイルを絶対パスと相対パス（.\\… ／ ./… ／ 名前だけ）で設定したとき、同じ実体に着くか。
  app.py を本当に読み込み、起動と同じ渡し方（navi_paths.setup(app.DATA_ROOT,…)）で、実際に読む関数（RNE・テキスト・結合・
- symnavim.conf）と、画面の「相対に直す」・候補の適用を通す。2.2.1 までは navi_paths.resolve_path だけを試していたため、
+ symnavim.conf）と、画面の「相対に直す」・候補の適用を通す。2.2.2 までは navi_paths.resolve_path だけを試していたため、
  .\\ で始まる RNE・テキスト・結合だけが置き場を見ずにデータの基準で読まれていたのを見逃した。"""
  def test_relative_and_absolute_reach_the_same_file(self):
   code=r'''

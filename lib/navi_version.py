@@ -4,5 +4,5 @@
 navi_changelog.py にある ―― 800行の読みものなので、それを必要としない経路
 （抽出ワーカー）が読み込まずに済むように分けてある。
 """
-APP_VERSION='2.2.2'; APP_VERSION_TITLE='.\\ で始まる相対パスの RNE・テキストが、絶対パスと同じ物を読むようにした'; APP_RELEASED_AT='2026-10-12'
+APP_VERSION='2.2.3'; APP_VERSION_TITLE='.\\ で始まる相対パスの RNE・テキストが、絶対パスと同じ物を読むようにした'; APP_RELEASED_AT='2026-10-12'
 BUILD_VERSION=f'{APP_VERSION}-web'

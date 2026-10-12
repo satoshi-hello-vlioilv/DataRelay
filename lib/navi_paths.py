@@ -212,7 +212,7 @@ def resolve_path(value,base=None):
 
  base の既定は相対パスの基準（rel_bases()。配布の置き場・データの基準・プログラムの場所）。定義時ではなく呼ばれた時点で
  解決する（既定引数に入れると、setup より前の値で固定されてしまう）。base を渡したときは、その基準だけを見る。
- （2.2.1 までは「base が DATA_ROOT と同じ物なら既定と同じ」と物の同一性で見分けていたが、setup が Path() で作り直すので
+ （2.2.2 までは「base が DATA_ROOT と同じ物なら既定と同じ」と物の同一性で見分けていたが、setup が Path() で作り直すので
  app.DATA_ROOT とは別の物になり、.\ で始まる RNE・テキストだけが置き場を見ずにデータの基準で読まれていた）"""
  default=base is None
  if default:base=rel_root()
