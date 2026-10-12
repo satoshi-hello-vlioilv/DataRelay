@@ -464,7 +464,7 @@ def machine_path_view():
    if not raw:note=why
    elif key=='default_output_folder':note=f'いまはありません（{why}）。出力するときに作られます'
    else:note=f'いまはありませんが、{why}'
-  rows.append({'key':key,'label':label,'kind':kind,'configured':raw,'resolved':str(real),
+  rows.append({'key':key,'label':label,'kind':kind,'configured':raw,'resolved':str(real),'where':navi_paths.locate(raw),
                'exists':exists,'writable':writable,'role':role,'why':why,
                'portable':is_pc_path(raw) or not Path(raw).is_absolute() if raw else True,
                'foreign':foreign or '','state':state,'note':note})

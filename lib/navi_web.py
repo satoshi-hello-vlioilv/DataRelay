@@ -1202,13 +1202,16 @@ def path_convert():
  data=request.get_json(silent=True) or {}; value=str(data.get('value') or '').strip(); mode=data.get('mode','absolute')
  # 相対へ直す基準は、相対パスを読む基準（navi_paths.rel_root。配布の置き場）と同じ。直し方は navi_paths.to_relative
  root=navi_paths.rel_root().resolve()
- if not value:return jsonify(value='',resolved=str(root),base=str(root),is_relative=False)
- resolved=resolve_path(value).resolve()
+ # folder を添えると、名前だけの指定（X.RNE）をそのフォルダーの中として読む（RNE の欄。resolve_in と同じ決まり）
+ folder=data.get('folder')
+ if not value:return jsonify(value='',resolved=str(root),base=str(root),is_relative=False,where=navi_paths.locate(''))
+ resolved=(navi_paths.resolve_in(value,folder) if folder else resolve_path(value)).resolve()
  if mode=='relative':
   converted=navi_paths.to_relative(resolved)
   if converted is None:return jsonify(error=f'相対パスの基準（{root}）から辿れない場所（別ドライブ・UNC）か、相対にすると別の場所の同じ名前の物を指すため、相対パスへ変換できません。絶対パスを使用してください。'),400
  else:converted=str(resolved)
- return jsonify(value=converted,resolved=str(resolved),base=str(root),is_relative=not Path(converted).is_absolute())
+ return jsonify(value=converted,resolved=str(resolved),base=str(root),is_relative=navi_paths.path_kind(converted)=='rel',
+                where=navi_paths.locate(value,folder))   # 欄に入っている値の在りか（書き換えたあとは、画面が新しい値で調べ直す）
 
 @app.get('/api/output-capabilities')
 def output_capabilities():

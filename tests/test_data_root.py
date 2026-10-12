@@ -180,6 +180,40 @@ print(json.dumps(out,ensure_ascii=False))
    self.assertEqual(navi_paths.resolve_in(str(root/'x.RNE'),place/'rne'),root/'x.RNE','絶対パスはそのまま')
 
 
+class PathKindAndLocateTest(unittest.TestCase):
+ """2.2.4: 書き方の種類と在りか（画面の札・事前診断・見つからないときの知らせが使う答え）。判定は navi_paths だけが持つ。
+ 2.2.3 までは画面が「ドライブ名か \\\\ で始まらなければ相対」と見ていて、<PC>\\… も %USERPROFILE%\\… も相対と出していた。"""
+ def setUp(self):
+  saved=(navi_paths.DATA_ROOT,navi_paths.LOCAL_ROOT,navi_paths.PROGRAM_ROOT,navi_paths.DATA_SOURCE)
+  self.addCleanup(lambda:navi_paths.setup(*saved) if saved[0] else None)
+  self.addCleanup(navi_paths.set_place,navi_paths.PLACE_ROOT)
+
+ def test_kinds(self):
+  k=navi_paths.path_kind
+  for v,want in (('','empty'),('<PC>\\backup','pc'),('%USERPROFILE%\\Box','env'),('~/x','env'),('$HOME/x','env'),
+                 ('\\\\srv\\share','unc'),('C:\\x','abs'),('c:/x','abs'),('/x','abs'),('\\x','abs'),
+                 ('.\\rne','rel'),('./rne','rel'),('..\\rne','rel'),('rne','rel'),('X.RNE','rel')):
+   self.assertEqual(k(v),want,v)
+
+ def test_locate_names_the_base_and_the_fallback(self):
+  with tempfile.TemporaryDirectory() as t:
+   root=Path(t).resolve();place=root/'place';data=root/'data';prog=root/'prog'
+   for d in (place/'rne',data/'output',prog/'assets'):d.mkdir(parents=True)
+   (place/'rne'/'A.RNE').write_text('x');(prog/'assets'/'e.accdb').write_text('x')
+   navi_paths.setup(data,root/'local',prog,'pc');navi_paths.set_place(place)
+   L=navi_paths.locate
+   d=L('.\\rne\\A.RNE');self.assertEqual((d['kind'],d['base'],d['rest'],d['fell'],d['exists']),('rel','place','\\rne\\A.RNE',False,True))
+   self.assertEqual(d['tried'][0],str(place/'rne'/'A.RNE'),'先に見るのは置き場')
+   d=L('A.RNE','.\\rne');self.assertEqual((d['base'],d['rest'],d['exists']),('place','\\rne\\A.RNE',True),'名前だけはフォルダーの中')
+   d=L('.\\output');self.assertEqual((d['base'],d['fell'],d['primary']),('data',True,'place'),'置き場に無く、データの基準にある')
+   d=L('.\\assets\\e.accdb');self.assertEqual((d['base'],d['fell']),('app',True),'プログラムに付いてくる物')
+   d=L('.\\nope');self.assertEqual((d['base'],d['fell'],d['exists'],len(d['tried'])),('place',False,False,3),'どこにも無ければ置き場（3か所を探した）')
+   d=L('<PC>\\backup');self.assertEqual((d['kind'],d['base'],d['rest']),('pc','local','\\backup'))
+   os.environ['DR_TEST_PLACE']=str(place);self.addCleanup(os.environ.pop,'DR_TEST_PLACE',None)
+   d=L('%DR_TEST_PLACE%\\rne');self.assertEqual((d['kind'],d['exists']),('env',True),'%NAME% と \\ の区切りは、どの OS でも Windows と同じに読む')
+   self.assertEqual(L('')['kind'],'empty')
+
+
 class PortableTest(unittest.TestCase):
  def test_own_profile_becomes_userprofile(self):
   home='C:\\Users\\alice'
