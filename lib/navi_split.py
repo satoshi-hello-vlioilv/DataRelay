@@ -66,6 +66,7 @@ for _n in ('_mark_settings_dirty',
            'resolve_axis_now',
            'resolve_path',
            'resolve_rne_path',
+           'rne_missing_message',
            'rne_signature',
            'row_filter_cost',
            'save_column_cache',
@@ -615,7 +616,7 @@ def split_trial_options(job,cfg,row_parts=2):
       'grid':{'ok':False,'why':''},'baseline':None,'columns':0,'removable':0}
  if not Path(rp).is_file():
   # 理由を空で返すと、画面には「選べない」だけが出て手がかりが無くなる。
-  why=f'RNEが見つかりません: {rp}'
+  why=rne_missing_message(job,cfg)
   out['error']=why
   for k in ('column','row','grid'):out[k]['why']=why
   return out
@@ -739,7 +740,7 @@ def _split_trial_run(data,c,job):
  """
  try:rp=resolve_rne_path(job,c)
  except Exception as e:return dict(ok=False,error=f'RNEパスの解決に失敗しました: {e}')
- if not Path(rp).is_file():return dict(ok=False,error=f'RNEが見つかりません: {rp}')
+ if not Path(rp).is_file():return dict(ok=False,error=rne_missing_message(job,c))
  # 分け方（列/行/行×列）は、どの条件を課すかを決める。列分割だけの条件を行分割へ持ち込むと
  # 成立するはずの分割が止まるので、いちばん先に確定させる。
  # 以前はこの行が下の方にあり、上の判定が mode を先に読んでいたため、列分割が成立しない

@@ -222,25 +222,97 @@ def resolve_path(value,base=None):
  if raw.startswith(PC_TOKEN):
   rest=raw[len(PC_TOKEN):].strip().lstrip('\\/')
   return (LOCAL_ROOT/rest) if rest else LOCAL_ROOT
- raw=os.path.expandvars(os.path.expanduser(raw))
+ raw=expand(raw)
+ if raw.startswith('\\\\'):return Path(raw)              # UNC
+ # 設定は Windows で書く（.\rne\X.RNE・%USERPROFILE%\Box）。Windows 以外（手元の試験・自己診断）でも同じ場所を指すよう区切りを読み替える
+ if os.sep=='/':raw=raw.replace('\\','/')
  p=Path(raw)
  if p.is_absolute() or raw.startswith('\\'):return p
- # 設定は Windows で書く（.\rne\X.RNE）。Windows 以外（手元の試験・自己診断）でも同じ場所を指すよう区切りを読み替える
- if os.sep=='/':p=Path(raw.replace('\\','/'))
  if not default:return (Path(base)/p).resolve()
- # 基準が2つあるとき（データの基準がプログラムの場所と別）、主な基準に無い物は、もう片方にあればそちらを使う。
- # 例: 写しの data にはプログラムに付いてくる物（.\assets\empty.accdb・.\Config\NAVIAP\…）が無い／前の共有にだけ RNE がある。
- # どちらにも無ければ主な基準の道を返す（作る物・まだ無い物は主な基準に作る）
- bases=rel_bases();got=(bases[0]/p).resolve()
- if got.exists():return got
- for other in bases[1:]:
-  alt=(other/p).resolve()
-  if alt.exists():
-   if raw not in _FELL_BACK:
-    _FELL_BACK.add(raw)
-    logging.getLogger('navi').info('RELATIVE_FALLBACK path=%s base=%s used=%s note=相対パスの基準に無いので、ほかの場所の物を使いました',raw,bases[0],alt)
-   return alt
+ got,i,_=_search(p)
+ if i>0 and raw not in _FELL_BACK:
+  _FELL_BACK.add(raw)
+  logging.getLogger('navi').info('RELATIVE_FALLBACK path=%s base=%s used=%s note=相対パスの基準に無いので、ほかの場所の物を使いました',raw,rel_root(),got)
  return got
+
+def _search(p):
+ """相対の道 p を、相対パスの基準の順（rel_bases）に探す。→ (使う道, 見つかった基準の番号, 探した道の一覧)。
+ 基準が2つ以上あるとき（データの基準・プログラムの場所が置き場と別）、主な基準に無い物は、ほかの基準にあればそちらを使う。
+ 例: 写しの data にはプログラムに付いてくる物（.\assets\empty.accdb）が無い／前の共有にだけ RNE がある。
+ どこにも無ければ主な基準の道（番号 0）を返す（作る物・まだ無い物は主な基準に作る）。"""
+ tried=[(b/p).resolve() for b in rel_bases()]
+ for i,x in enumerate(tried):
+  if x.exists():return x,i,tried
+ return tried[0],0,tried
+
+# ==== 書き方の種類と、どこの物を読んでいるか（画面の札・事前診断・見つからないときの知らせが使う） ====
+# 判定はここだけが持つ。画面（app.js）や窓（release.rs）が真似ると食い違う（2.2.3 まで画面は「ドライブ名か \\ で
+# 始まらなければ相対」と見ていて、<PC>\… も %USERPROFILE%\… も相対と出していた）。
+def path_kind(value):
+ r"""書き方の種類。'empty'（未設定）・'pc'（<PC>\…）・'env'（%NAME%・~・$NAME で始まる）・'unc'（\サーバー\…）・
+ 'abs'（C:\… ／ / ／ \…）・'rel'（それ以外＝相対パスの基準から）。"""
+ raw=str(value or '').strip()
+ if not raw:return 'empty'
+ if raw.startswith(PC_TOKEN):return 'pc'
+ if re.match(r'^(%[^%]+%|~|\$)',raw):return 'env'
+ if raw.startswith('\\\\'):return 'unc'
+ if re.match(r'^[A-Za-z]:[\\/]',raw) or raw.startswith(('/','\\')):return 'abs'
+ return 'rel'
+
+BASE_LABEL={'place':'置き場','data':'データの基準','app':'アプリの場所','local':'このPC'}   # 画面・知らせの言葉（ここだけで持つ）
+def base_key(root):
+ """基準の場所の名前（'place' 置き場・'data' データの基準・'app' アプリの場所）。同じ場所なら置き場を先に名乗る。"""
+ for key,x in (('place',PLACE_ROOT),('data',DATA_ROOT),('app',PROGRAM_ROOT)):
+  if x is not None and Path(x).resolve()==Path(root).resolve():return key
+ return 'place'
+
+def _tail(path,root):
+ try:rel=str(Path(path).resolve().relative_to(Path(root).resolve()))
+ except ValueError:return str(path)
+ return '\\' if rel=='.' else '\\'+rel.replace('/','\\')
+
+def locate(value,folder=None):
+ r"""設定値が、どこの物を指すのか。→ {kind, resolved, exists, base, rest, primary, fell, tried}
+ base: 読む物の基準（'place'／'data'／'app'／'local'（<PC>）／''（絶対・UNC・環境変数）。rest: 基準から先の道（
+ne など）。
+ primary: 主な基準（いつもはここを先に見る）。fell: 主な基準に無いので、ほかの基準の物を使っている。tried: 探した道（先に見た順）。
+ folder を渡すと、名前だけの指定（X.RNE）はそのフォルダーの中として読む（resolve_in と同じ決まり）。"""
+ out=_locate(value,folder)
+ out['label']=BASE_LABEL.get(out['base'],'');out['primary_label']=BASE_LABEL.get(out['primary'],'')
+ # 置き場に無く、ほかの基準の物を使っているときの言葉（場所の欄の帯・事前診断の注意で同じ言葉）
+ out['note']=f"{out['primary_label']}に無いので、{out['label']}の物を使っています" if out['fell'] else ''
+ return out
+
+def _locate(value,folder):
+ raw=str(value or '').strip();kind=path_kind(raw)
+ out={'kind':kind,'resolved':'','exists':False,'base':'','rest':'','primary':base_key(rel_root()),'fell':False,'tried':[],'tried_from':[]}
+ if kind=='empty':return out
+ if folder is not None and kind=='rel' and not raw.startswith(EXPLICIT_RELATIVE):
+  inner=locate(folder);root=Path(inner['resolved']);real=resolve_path(raw,root)
+  out.update(resolved=str(real),exists=real.exists(),base=inner['base'],fell=inner['fell'],tried=[str(real)],tried_from=[BASE_LABEL.get(inner['base'],'')],
+             rest=(inner['rest'].rstrip('\\')+'\\'+raw.replace('/','\\')) if inner['base'] else '')
+  return out
+ if kind=='rel':
+  p=Path(expand(raw).replace('\\','/') if os.sep=='/' else expand(raw))
+  got,i,tried=_search(p);bases=rel_bases();key=base_key(bases[i])
+  out.update(resolved=str(got),exists=got.exists(),base=key,rest=_tail(got,bases[i]),fell=i>0,tried=[str(x) for x in tried],
+             tried_from=[BASE_LABEL.get(base_key(b),'') for b in bases])
+  return out
+ real=resolve_path(raw)
+ out.update(resolved=str(real),exists=Path(real).exists(),tried=[str(real)],tried_from=[''])
+ if kind=='pc':out.update(base='local',rest=_tail(real,LOCAL_ROOT),tried_from=[BASE_LABEL['local']])
+ return out
+
+def missing_message(what,value,folder=None):
+ r"""ファイルが見つからないときの知らせ。探した場所を、先に見た順にすべて並べる（2.2.3 までは最初に見た1か所だけで、
+ 置き場・データの基準・アプリの場所のどこを探したか、どこへ置けばよいかが分からなかった）。
+ 例: RNEが見つかりません（設定: .
+ne\X.RNE）。探した順: 置き場 C:\…
+ne\X.RNE → データの基準 C:\…\data
+ne\X.RNE"""
+ d=locate(value,folder);where=[(f'{lb} ' if lb else '')+x for x,lb in zip(d['tried'],d['tried_from'])]
+ if len(where)<=1:return f'{what}が見つかりません: {(where or [str(value or "")])[0]}'
+ return f'{what}が見つかりません（設定: {str(value or "").strip()}）。探した順: '+' → '.join(where)
 
 EXPLICIT_RELATIVE=('.\\','..\\','./','../')
 def resolve_in(value,folder):
@@ -248,7 +320,7 @@ def resolve_in(value,folder):
  空ならフォルダーそのもの。絶対パス・UNC はそのまま。.\ ..\ ./ ../ で始まれば相対パスの基準（resolve_path の既定）から。
  それ以外（名前だけ）は folder（共通設定の読取フォルダー。これも相対なら相対パスの基準から）の中。"""
  root=resolve_path(folder)
- raw=os.path.expandvars(os.path.expanduser(str(value or '').strip()))
+ raw=expand(value)
  if not raw:return root
  if raw.startswith(EXPLICIT_RELATIVE):return resolve_path(raw)
  return resolve_path(raw,root)

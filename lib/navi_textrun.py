@@ -51,6 +51,7 @@ for _n in ('_mark_settings_dirty',
            'join_layouts',
            'join_reader',
            'validate_join_recipe',
+           'text_missing_message',
            'write_join_intermediate'):globals()[_n]=_borrow(_n)
 del _n
 
@@ -157,7 +158,7 @@ def process_local_job(j,cfg,work,backup,trigger,job_index,total_jobs,say=None):
    raise ValueError('読取マスタが選ばれていません。対象の設定で、どの読み方で切るかを選んでください')
   bad=validate_text_layout(layout)
   if bad:raise ValueError(f'読取マスタ「{layout["name"]}」が使えません: '+'／'.join(bad))
-  if not src.is_file():raise FileNotFoundError('テキストファイルがありません: '+str(src))
+  if not src.is_file():raise FileNotFoundError(text_missing_message(j,cfg))
   # 列の型は、読み方の側（読取マスタ）で決まり、書き出す側で使う。中間CSVは文字しか
   # 運べないので、名前で対応づけて対象に持たせて渡す（並び順で渡すと1本ずれる）。
   j['_column_types']=text_layout_column_types(layout)

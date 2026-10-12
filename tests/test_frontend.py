@@ -27,6 +27,17 @@ class IdWiringTest(unittest.TestCase):
   self.assertEqual(sorted({x for x in ids if ids.count(x)>1}),[],'HTML の id は重ならない')
 
 
+class SectionVisibilityTest(unittest.TestCase):
+ """タブのページは section{display:none}／section.on で切り替える。画面が作る <section> は、この規則に巻き込まれないよう
+ 自分で display を持つか、.on で切り替える作りにする（2.2.4: 事前診断の中身 section.diag-group が隠れ、件数だけが出ていた）。"""
+ def test_sections_made_by_the_script_set_their_own_display(self):
+  CSS=(ROOT/'static'/'app.css').read_text(encoding='utf-8')
+  self.assertIn('section{display:none}',CSS)
+  for cls in sorted(set(re.findall(r'<section class="([a-z0-9-]+)',JS))):
+   own=re.search(r'\.'+re.escape(cls)+r'(?:\.on)?\{[^}]*display:',CSS)
+   self.assertIsNotNone(own,f'section.{cls} は自分で display を持つ（無いと section{{display:none}} で隠れる）')
+
+
 class DragDropTest(unittest.TestCase):
  """Windows の窓（Tauri）は、WebView2 の D&D を横取りする。外さないと画面の HTML5 の D&D（集計表・並べ替え・ファイル落とし）が届かない"""
  def test_window_hands_drag_and_drop_to_the_page(self):

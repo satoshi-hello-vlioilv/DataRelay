@@ -2307,6 +2307,12 @@ from navi_paths import PC_TOKEN,pc_path,is_pc_path,foreign_profile_path,resolve_
 def resolve_rne_path(job,cfg):
  """Canonical RNE resolution shared by diagnosis and execution（読み方の決まりは navi_paths.resolve_in）。"""
  return resolve_in(job.get('rne_path') or job.get('rne'),cfg.get('rne_folder') or '.\\rne')
+def rne_missing_message(job,cfg):
+ """RNE が見つからないときの知らせ（探した場所を先に見た順にすべて並べる。読み方は resolve_rne_path と同じ）。"""
+ return navi_paths.missing_message('RNE',job.get('rne_path') or job.get('rne'),cfg.get('rne_folder') or '.\\rne')
+def text_missing_message(job,cfg):
+ """読むテキストファイルが見つからないときの知らせ（読み方は resolve_text_path と同じ）。"""
+ return navi_paths.missing_message('テキストファイル',job.get('text_path'),str(cfg.get('text_folder') or TEXT_FOLDER_DEFAULT))
 
 def attach_rne_layout(job,rp,line=''):
  """RNEの配置（表側・表頭・データ項目）を読み、実行中の対象に添える。
@@ -3928,7 +3934,7 @@ def _process_api_job_once(j,job_index,total_jobs,cfg,user,pw,server,dde_work,bac
   _pending_started=time.perf_counter()
   apply_pending(target,backup,int(cfg['settings']['backup_generations']),backup_enabled=bool(cfg['settings'].get('backup_enabled',True)),retention_days=int(cfg['settings'].get('backup_retention_days',30)),backup_mode=str(cfg['settings'].get('backup_mode','generations')))
   _pending_elapsed=time.perf_counter()-_pending_started;phase_profile_add('pending_apply',_pending_elapsed)
-  if not rp.is_file():raise FileNotFoundError('RNEがありません: '+str(rp))
+  if not rp.is_file():raise FileNotFoundError(rne_missing_message(j,cfg))
   attach_rne_layout(j,rp,line_name);crosstab=job_is_crosstab(j)
   stamp=datetime.now().strftime('%Y%m%d_%H%M%S_%f')+f'_L{job_index}'
   xls=dde_work/f'navi_{job_index}_{stamp}.xls';local_export=dde_work/'export';local_export.mkdir(parents=True,exist_ok=True)

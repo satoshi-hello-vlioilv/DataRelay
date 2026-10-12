@@ -145,6 +145,12 @@ for kind,target,rels in cases:
 c=app.app.test_client()
 r=c.post('/api/path-convert',json={'value':str(place/'rne'/'A.RNE'),'mode':'relative'}).get_json()
 out.append(['convert',r['value'],str(navi_paths.resolve_path(r['value'])),str(place/'rne'/'A.RNE')])
+# 事前診断: 置き場に無く写しの data にある RNE は「注意」（理由が先）、どこにも無い RNE は探した順を出す（2.2.4）
+(data/'rne').mkdir(parents=True,exist_ok=True);(data/'rne'/'B.RNE').write_text('x')
+J=lambda n,v:{'id':n,'name':n,'source':'rne','rne':n+'.RNE','rne_path':v,'output_folder':str(tmp),'output_format':'csv','output_file':n+'.csv','schedules':[]}
+real_load=navi_web.load;navi_web.load=lambda:{**real_load(),'jobs':[J('A','.\\rne\\A.RNE'),J('B','.\\rne\\B.RNE'),J('C','.\\rne\\C.RNE')]}
+checks={x['label']:x for x in c.post('/api/validate').get_json()['checks']}
+out.append(['diag',checks['A RNE']['level'],checks['B RNE']['level'],checks['B RNE']['detail'],checks['C RNE']['level'],checks['C RNE']['detail']])
 saved={};navi_web.save=lambda c_,*a,**k:saved.update(c_);navi_web.load=lambda:{'jobs':[]}
 for cand in (place/'conf'/'s.conf',copy/'assets'/'x.accdb'):
  c.post('/api/apply-path-suggestion',json={'item':'symnavim_conf','candidate':str(cand)})
@@ -156,6 +162,10 @@ print(json.dumps(out,ensure_ascii=False))
    out=subprocess.run([sys.executable,'-c',code,str(ROOT),d],cwd=d,env=env,capture_output=True,text=True,encoding='utf-8',timeout=120)
    self.assertEqual(out.returncode,0,out.stderr[-2000:])
    rows=json.loads(out.stdout.strip().splitlines()[-1])
+  diag=next(r for r in rows if r[0]=='diag');rows=[r for r in rows if r[0]!='diag']
+  self.assertEqual(diag[1:3],['ok','warning'],'置き場にある RNE は OK、写しの data にだけある RNE は注意')
+  self.assertTrue(diag[3].startswith('置き場に無いので、データの基準の物を使っています: '),diag[3])
+  self.assertEqual(diag[4],'error');self.assertIn('探した順: 置き場 ',diag[5])
   for kind,value,got,want in rows:
    self.assertEqual(Path(got).resolve(),Path(want).resolve(),f'{kind}: {value} が {want} ではなく {got} を指す')
   stored={r[1] for r in rows if r[0]=='suggest'}
@@ -178,6 +188,63 @@ print(json.dumps(out,ensure_ascii=False))
    self.assertIsNone(navi_paths.to_relative(place/'out'),'読み直して別の物に着くなら相対にしない')
    self.assertEqual(navi_paths.resolve_in('',place/'rne'),place/'rne','空ならフォルダーそのもの')
    self.assertEqual(navi_paths.resolve_in(str(root/'x.RNE'),place/'rne'),root/'x.RNE','絶対パスはそのまま')
+
+
+class PathKindAndLocateTest(unittest.TestCase):
+ """2.2.4: 書き方の種類と在りか（画面の札・事前診断・見つからないときの知らせが使う答え）。判定は navi_paths だけが持つ。
+ 2.2.3 までは画面が「ドライブ名か \\\\ で始まらなければ相対」と見ていて、<PC>\\… も %USERPROFILE%\\… も相対と出していた。"""
+ def setUp(self):
+  saved=(navi_paths.DATA_ROOT,navi_paths.LOCAL_ROOT,navi_paths.PROGRAM_ROOT,navi_paths.DATA_SOURCE)
+  self.addCleanup(lambda:navi_paths.setup(*saved) if saved[0] else None)
+  self.addCleanup(navi_paths.set_place,navi_paths.PLACE_ROOT)
+
+ def test_kinds(self):
+  k=navi_paths.path_kind
+  for v,want in (('','empty'),('<PC>\\backup','pc'),('%USERPROFILE%\\Box','env'),('~/x','env'),('$HOME/x','env'),
+                 ('\\\\srv\\share','unc'),('C:\\x','abs'),('c:/x','abs'),('/x','abs'),('\\x','abs'),
+                 ('.\\rne','rel'),('./rne','rel'),('..\\rne','rel'),('rne','rel'),('X.RNE','rel')):
+   self.assertEqual(k(v),want,v)
+
+ def test_locate_names_the_base_and_the_fallback(self):
+  with tempfile.TemporaryDirectory() as t:
+   root=Path(t).resolve();place=root/'place';data=root/'data';prog=root/'prog'
+   for d in (place/'rne',data/'output',prog/'assets'):d.mkdir(parents=True)
+   (place/'rne'/'A.RNE').write_text('x');(prog/'assets'/'e.accdb').write_text('x')
+   navi_paths.setup(data,root/'local',prog,'pc');navi_paths.set_place(place)
+   L=navi_paths.locate
+   d=L('.\\rne\\A.RNE');self.assertEqual((d['kind'],d['base'],d['rest'],d['fell'],d['exists']),('rel','place','\\rne\\A.RNE',False,True))
+   self.assertEqual(d['tried'][0],str(place/'rne'/'A.RNE'),'先に見るのは置き場')
+   d=L('A.RNE','.\\rne');self.assertEqual((d['base'],d['rest'],d['exists']),('place','\\rne\\A.RNE',True),'名前だけはフォルダーの中')
+   d=L('.\\output');self.assertEqual((d['base'],d['fell'],d['primary']),('data',True,'place'),'置き場に無く、データの基準にある')
+   d=L('.\\assets\\e.accdb');self.assertEqual((d['base'],d['fell']),('app',True),'プログラムに付いてくる物')
+   d=L('.\\nope');self.assertEqual((d['base'],d['fell'],d['exists'],len(d['tried'])),('place',False,False,3),'どこにも無ければ置き場（3か所を探した）')
+   d=L('<PC>\\backup');self.assertEqual((d['kind'],d['base'],d['rest']),('pc','local','\\backup'))
+   os.environ['DR_TEST_PLACE']=str(place);self.addCleanup(os.environ.pop,'DR_TEST_PLACE',None)
+   d=L('%DR_TEST_PLACE%\\rne');self.assertEqual((d['kind'],d['exists']),('env',True),'%NAME% と \\ の区切りは、どの OS でも Windows と同じに読む')
+   self.assertEqual(L('')['kind'],'empty')
+   self.assertEqual(L('.\\output')['label'],'データの基準','言葉もサーバーが渡す（画面と知らせで同じ言葉）')
+
+ def test_missing_message_lists_every_place_in_order(self):
+  """見つからないときは、探した場所を先に見た順にすべて出す（2.2.3 までは最初の1か所だけ）。"""
+  with tempfile.TemporaryDirectory() as t:
+   root=Path(t).resolve();place=root/'place';data=root/'data';prog=root/'prog'
+   for d in (place,data,prog):d.mkdir()
+   navi_paths.setup(data,root/'local',prog,'pc');navi_paths.set_place(place)
+   m=navi_paths.missing_message('RNE','.\\rne\\X.RNE')
+   self.assertTrue(m.startswith('RNEが見つかりません（設定: .\\rne\\X.RNE）。探した順: 置き場 '),m)
+   order=[m.index(str(x/'rne'/'X.RNE')) for x in (place,data,prog)]
+   self.assertEqual(order,sorted(order),'置き場 → データの基準 → アプリの場所の順')
+   self.assertIn('データの基準 '+str(data/'rne'/'X.RNE'),m)
+   m=navi_paths.missing_message('RNE','X.RNE','.\\rne')
+   self.assertEqual(m,'RNEが見つかりません: 置き場 '+str(place/'rne'/'X.RNE'),'名前だけはフォルダーの中だけを探す（読む決まりと同じ）')
+
+ def test_no_single_place_missing_messages_remain(self):
+  """RNE・テキストが見つからない知らせは、どこからも rne_missing_message・text_missing_message・missing_message を通す。"""
+  import re
+  for f in [ROOT/'app.py',*sorted((ROOT/'lib').glob('*.py'))]:
+   if f.name=='navi_changelog.py':continue
+   text=f.read_text(encoding='utf-8')
+   self.assertIsNone(re.search(r"RNEが見つかりません: \{rp\}|RNEがありません: '|テキストファイルがありません: '",text),f.name)
 
 
 class PortableTest(unittest.TestCase):

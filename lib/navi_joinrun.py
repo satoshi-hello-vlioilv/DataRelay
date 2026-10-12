@@ -11,6 +11,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 import app
+import navi_paths
 from app import log, settings_sync_lock
 
 def _borrow(name):
@@ -108,7 +109,7 @@ def join_reader(cfg):
  """navi_join へ渡す読み手。これまでの出力形式は、データビュワーと同じ経路で読む。"""
  def reader(src,limit=None):
   path=resolve_join_path(src['path'],cfg)
-  if not path.is_file():raise FileNotFoundError(f'{src["alias"]}: ファイルがありません: {path}')
+  if not path.is_file():raise FileNotFoundError(navi_paths.missing_message(f'{src["alias"]}: ファイル',src['path'],str((cfg or {}).get('text_folder') or app.TEXT_FOLDER_DEFAULT)))
   job={'output_format':src['format'],'table':src.get('table') or '','sheet':src.get('sheet') or ''}
   # max_columns=None ―― ここはデータとして読む。表示の都合で切ると列が消えたまま結合される。
   _fmt,headers,rows,_total,_cols=read_preview_data(path,job,limit=int(limit or JOIN_SOURCE_MAX_ROWS),max_columns=None)
