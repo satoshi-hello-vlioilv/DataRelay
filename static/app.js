@@ -76,7 +76,7 @@ function pathWhereHtml(w,value){
  let chip=PATH_WORD[k]?`<span class="pw-chip">${PATH_WORD[k]}</span>`
   :`<span class="pw-crumb is-${w.fell?'fell':k}" title="${E(w.resolved)}"><b>${k==='env'?'利用者ごと':E(w.label)}</b><span>${E(k==='env'?String(value).replace(/^(%[^%]+%|~|\$\w+)/,''):w.rest)}</span></span>`;
  return `<div class="pw-line">${chip}${tog?`<button type="button" class="pw-toggle" data-mode="${tog[0]}">${tog[1]}</button>`:''}</div>`
-  +(w.fell?`<div class="pw-band">⚠ ${E(w.primary_label)}に無いので、${E(w.label)}の物を使っています</div>`:'')}
+  +(w.fell?`<div class="pw-band">⚠ ${E(w.note)}</div>`:'')}
 async function describePath(value,folder){
  let r=await fetch('/api/path-convert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({value,mode:'absolute',folder})});
  return (await r.json()).where}

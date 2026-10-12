@@ -145,6 +145,12 @@ for kind,target,rels in cases:
 c=app.app.test_client()
 r=c.post('/api/path-convert',json={'value':str(place/'rne'/'A.RNE'),'mode':'relative'}).get_json()
 out.append(['convert',r['value'],str(navi_paths.resolve_path(r['value'])),str(place/'rne'/'A.RNE')])
+# 事前診断: 置き場に無く写しの data にある RNE は「注意」（理由が先）、どこにも無い RNE は探した順を出す（2.2.4）
+(data/'rne').mkdir(parents=True,exist_ok=True);(data/'rne'/'B.RNE').write_text('x')
+J=lambda n,v:{'id':n,'name':n,'source':'rne','rne':n+'.RNE','rne_path':v,'output_folder':str(tmp),'output_format':'csv','output_file':n+'.csv','schedules':[]}
+real_load=navi_web.load;navi_web.load=lambda:{**real_load(),'jobs':[J('A','.\\rne\\A.RNE'),J('B','.\\rne\\B.RNE'),J('C','.\\rne\\C.RNE')]}
+checks={x['label']:x for x in c.post('/api/validate').get_json()['checks']}
+out.append(['diag',checks['A RNE']['level'],checks['B RNE']['level'],checks['B RNE']['detail'],checks['C RNE']['level'],checks['C RNE']['detail']])
 saved={};navi_web.save=lambda c_,*a,**k:saved.update(c_);navi_web.load=lambda:{'jobs':[]}
 for cand in (place/'conf'/'s.conf',copy/'assets'/'x.accdb'):
  c.post('/api/apply-path-suggestion',json={'item':'symnavim_conf','candidate':str(cand)})
@@ -156,6 +162,10 @@ print(json.dumps(out,ensure_ascii=False))
    out=subprocess.run([sys.executable,'-c',code,str(ROOT),d],cwd=d,env=env,capture_output=True,text=True,encoding='utf-8',timeout=120)
    self.assertEqual(out.returncode,0,out.stderr[-2000:])
    rows=json.loads(out.stdout.strip().splitlines()[-1])
+  diag=next(r for r in rows if r[0]=='diag');rows=[r for r in rows if r[0]!='diag']
+  self.assertEqual(diag[1:3],['ok','warning'],'置き場にある RNE は OK、写しの data にだけある RNE は注意')
+  self.assertTrue(diag[3].startswith('置き場に無いので、データの基準の物を使っています: '),diag[3])
+  self.assertEqual(diag[4],'error');self.assertIn('探した順: 置き場 ',diag[5])
   for kind,value,got,want in rows:
    self.assertEqual(Path(got).resolve(),Path(want).resolve(),f'{kind}: {value} が {want} ではなく {got} を指す')
   stored={r[1] for r in rows if r[0]=='suggest'}

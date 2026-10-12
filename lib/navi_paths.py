@@ -279,6 +279,8 @@ ne など）。
  folder を渡すと、名前だけの指定（X.RNE）はそのフォルダーの中として読む（resolve_in と同じ決まり）。"""
  out=_locate(value,folder)
  out['label']=BASE_LABEL.get(out['base'],'');out['primary_label']=BASE_LABEL.get(out['primary'],'')
+ # 置き場に無く、ほかの基準の物を使っているときの言葉（場所の欄の帯・事前診断の注意で同じ言葉）
+ out['note']=f"{out['primary_label']}に無いので、{out['label']}の物を使っています" if out['fell'] else ''
  return out
 
 def _locate(value,folder):
@@ -304,7 +306,10 @@ def _locate(value,folder):
 def missing_message(what,value,folder=None):
  r"""ファイルが見つからないときの知らせ。探した場所を、先に見た順にすべて並べる（2.2.3 までは最初に見た1か所だけで、
  置き場・データの基準・アプリの場所のどこを探したか、どこへ置けばよいかが分からなかった）。
- 例: RNEが見つかりません（設定: .ne\X.RNE）。探した順: 置き場 C:\…ne\X.RNE → データの基準 C:\…\datane\X.RNE"""
+ 例: RNEが見つかりません（設定: .
+ne\X.RNE）。探した順: 置き場 C:\…
+ne\X.RNE → データの基準 C:\…\data
+ne\X.RNE"""
  d=locate(value,folder);where=[(f'{lb} ' if lb else '')+x for x,lb in zip(d['tried'],d['tried_from'])]
  if len(where)<=1:return f'{what}が見つかりません: {(where or [str(value or "")])[0]}'
  return f'{what}が見つかりません（設定: {str(value or "").strip()}）。探した順: '+' → '.join(where)

@@ -62,7 +62,7 @@ from app import (
     os, output_extension, pick_anchor_columns, pick_row_axis_by_mode, plan_run_split,
     queue_snapshot, re, read_copy, read_header_names, read_log_lines, read_preview_data,
     recommend_split_parts, render_filename_segments, render_template, request,
-    resolve_output_filename, resolve_path, resolve_rne_path, rne_missing_message, retry_lock, retry_view,
+    resolve_output_filename, resolve_path, resolve_rne_path, rne_missing_message, text_missing_message, TEXT_FOLDER_DEFAULT, retry_lock, retry_view,
     retry_waiting, rne_master_view, rne_run_stats, rotate_log_if_needed, row_axis_choice,
     row_split_breakdown, row_split_candidates, run_inspect_worker, runtime_split_view, save,
     save_axis_survey, save_column_cache, save_column_classification, save_condition_items,
@@ -1896,6 +1896,13 @@ def validate():
   # 永久に「修正が必要な項目があります」になっていた（しかも利用者には直しようがない）。
   if normalize_job_source(j.get('source')) in ('text','join'):continue
   rp=resolve_rne_path(j,c);exists=rp.is_file();job_results.append((j,rp,exists))
+ # 置き場に無く、ほかの基準（データの基準・アプリの場所）の物を使っているときは注意にする（2.2.4）。
+ # 動きはするが、共有と手元に同じ名前の物があると、古いほうを読んでいても気づけない。
+ def where_check(value,folder=None):
+  w=navi_paths.locate(value,folder);return ('warning',f"{w['note']}: {w['resolved']}") if w['fell'] else (None,None)   # 理由を先に（長い道のあとだと埋もれる）
+ def add_folder(group,label,value):
+  op=resolve_path(value);lv,note=where_check(value) if op.is_dir() else (None,None)
+  add(group,label,op.is_dir(),note or op,level=lv,item='')
  all_jobs_ok=all(x[2] for x in job_results) if job_results else True
  root_ok=bool(existing_roots) or all_jobs_ok
  if existing_roots:root_detail='利用可能: '+' / '.join(str(x) for x in existing_roots)
@@ -1905,9 +1912,9 @@ def validate():
  add('RNE配置','RNE参照構成',root_ok,root_detail,level='ok' if root_ok else 'error',configured=c.get('rne_folder',''),item='rne_folder',needs_reselect=not root_ok)
  for j,rp,exists in job_results:
   candidates=find_nearby_file(j.get('rne') or rp.name) if not exists else []
-  add('RNE配置',j.get('name','対象')+' RNE',exists,rp,configured=j.get('rne_path'),item='rne',job_id=j.get('id'),candidates=candidates,needs_reselect=not exists and not candidates)
-  op=resolve_path(j.get('output_folder') or c.get('default_output_folder','.\\output'))
-  add('出力先',j.get('name','対象')+' 出力先',op.is_dir(),op,item='')
+  lv,note=where_check(j.get('rne_path') or j.get('rne'),c.get('rne_folder') or '.\\rne') if exists else (None,None)
+  add('RNE配置',j.get('name','対象')+' RNE',exists,note or (rp if exists else rne_missing_message(j,c)),level=lv,configured=j.get('rne_path'),item='rne',job_id=j.get('id'),candidates=candidates,needs_reselect=not exists and not candidates)
+  add_folder('出力先',j.get('name','対象')+' 出力先',j.get('output_folder') or c.get('default_output_folder','.\\output'))
  # 結合の対象。要るのは「繋ぎ方（結合マスタ）」と、そこに並ぶファイルが在ること。
  for j in c.get('jobs',[]):
   if normalize_job_source(j.get('source'))!='join':continue
@@ -1922,13 +1929,13 @@ def validate():
        (f'{rp["name"]} / {len(rp["sources"])}ファイル / つなぎ目 {len(rp["joins"])}' if ok_all
         else '／'.join(bad+([f'見つからないファイル: '+'、'.join(missing[:3])] if missing else []))),
        job_id=j.get('id'),item='',needs_reselect=bool(missing))
-  op=resolve_path(j.get('output_folder') or c.get('default_output_folder','.\\output'))
-  add('出力先',j.get('name','対象')+' 出力先',op.is_dir(),op,item='')
+  add_folder('出力先',j.get('name','対象')+' 出力先',j.get('output_folder') or c.get('default_output_folder','.\\output'))
  # 固定長テキストの対象。要るのは「読むファイル」と「切り方（読取マスタ）」の2つだけ。
  for j in c.get('jobs',[]):
   if normalize_job_source(j.get('source'))!='text':continue
   tp=resolve_text_path(j,c);ok=tp.is_file()
-  add('テキスト読取',j.get('name','対象')+' 読取ファイル',ok,tp if ok else f'{tp}（見つかりません）',
+  lv,note=where_check(j.get('text_path'),str(c.get('text_folder') or TEXT_FOLDER_DEFAULT)) if ok else (None,None)
+  add('テキスト読取',j.get('name','対象')+' 読取ファイル',ok,note or (tp if ok else text_missing_message(j,c)),level=lv,
       configured=j.get('text_path'),item='text_path',job_id=j.get('id'),needs_reselect=not ok)
   lay=find_text_layout(j.get('layout_id'))
   if not lay:
@@ -1947,8 +1954,7 @@ def validate():
      add('テキスト読取',j.get('name','対象')+f' 列数（{OUTPUT_FORMAT_LABEL.get(f,f)}）',False,
          f'{OUTPUT_FORMAT_LABEL.get(f,f)}は{lim:,}列までですが、読取マスタは{n:,}列あります。列数に上限の無いCSV／TXTで出すか、読取マスタの列を減らしてください',
          job_id=j.get('id'),item='')
-  op=resolve_path(j.get('output_folder') or c.get('default_output_folder','.\\output'))
-  add('出力先',j.get('name','対象')+' 出力先',op.is_dir(),op,item='')
+  add_folder('出力先',j.get('name','対象')+' 出力先',j.get('output_folder') or c.get('default_output_folder','.\\output'))
  # 同時出力を設定している対象は、1回の実行で何ができるのかをそのまま出す。
  for j in c.get('jobs',[]):
   extras=job_extra_formats(j)
@@ -1961,7 +1967,8 @@ def validate():
  accdb_jobs=[j for j in c.get('jobs',[]) if normalize_output_format(j.get('output_format'),j.get('output_file'))=='accdb'
              or 'accdb' in job_extra_formats(j)]
  if accdb_jobs:
-  ap=resolve_path(c.get('accdb_template','.\\assets\\empty.accdb'));add('変換環境','ACCDB空テンプレート',ap.is_file(),ap,configured=c.get('accdb_template',''),item='accdb_template',needs_reselect=not ap.is_file())
+  av=c.get('accdb_template','.\\assets\\empty.accdb');ap=resolve_path(av);lv,note=where_check(av) if ap.is_file() else (None,None)
+  add('変換環境','ACCDB空テンプレート',ap.is_file(),note or ap,level=lv,configured=c.get('accdb_template',''),item='accdb_template',needs_reselect=not ap.is_file())
  counts={'ok':sum(1 for x in checks if x['level']=='ok'),'warning':sum(1 for x in checks if x['level']=='warning'),'error':sum(1 for x in checks if x['level']=='error')}
  return jsonify(ok=counts['error']==0,checks=checks,counts=counts,summary=('実行可能です' if counts['error']==0 else '修正が必要な項目があります'),search_scope='設定値、標準配置 Config\\rne、個別RNEパスを統合して判定')
 
