@@ -98,7 +98,7 @@ APP=r"""
 import json,sys,shutil
 from pathlib import Path
 sys.path[:0]=[sys.argv[1],sys.argv[1]+'/lib']
-import app,navi_web,navi_defaults as D,navi_bundle as B
+import app,navi_web,navi_paths,navi_defaults as D,navi_bundle as B
 share=Path(sys.argv[2]);out={}
 navi_web.release_place=lambda:'installed'
 navi_web.DATA_ROOT_SOURCE='pc'
@@ -154,13 +154,15 @@ out['removed']={'jobs':r['defaults']['parts']['jobs'],'rne':r['defaults']['parts
 out['delete']=t.post('/api/defaults/delete').get_json()['removed']
 out['state']=t.get('/api/defaults').get_json()['defaults']['exists']
 # 7) 共有の設定を使ってきた写し: 手元へ移す支度（今の設定と相対の RNE を写し、印に pending、作業用の写しを退ける）
-copy=Path(sys.argv[3]);navi_web.BASE=copy;navi_web.DATA_ROOT_SOURCE='install'
+# 2.3.0 から移す先は、配布の置き場の中のユーザーのフォルダー（<置き場>\\users\\<ログオン名>）。置き場は share、ログオン名は tester に決める
+copy=Path(sys.argv[3]);navi_web.BASE=copy;navi_web.DATA_ROOT_SOURCE='install';navi_paths.set_place(share);dest=share/'users'/'tester'
 D.write(share,pay,d['settings'],{p.name:str(p) for p in (Path(sys.argv[1])/'samples'/'defaults'/'rne').iterdir()})
 o=t.get('/api/defaults/offer').get_json();out['migrate_offer']=(o['show'],o['kind'])
 r=t.post('/api/defaults/apply',json={'mode':'add'}).get_json()
-m=D.read_mark(copy/'data')
+m=D.read_mark(dest)
 if not r.get('ok'):raise SystemExit('手元へ移す支度が失敗しました: %r'%r)
-out['migrate']={'ok':r['ok'],'restart':r['restart'],'db':(copy/'data'/'Config'/'app_settings.sqlite3').is_file(),
+out['migrate']={'ok':r['ok'],'restart':r['restart'],'db':(dest/'Config'/'app_settings.sqlite3').is_file(),'to_user':Path(r['to'])==dest,
+                'pc_copy_untouched':not (copy/'data'/'data.json').exists(),
                 'rne':sorted(r['copied']),'pending':(m.get('pending') or {}).get('mode'),'origin':m['origin'],
                 'cache_kept':app.SETTINGS_DB.exists()}   # 動いている最中は名前を替えない（開き直したとき app が退ける）
 out['migrate_again']=t.post('/api/defaults/apply',json={'mode':'add'}).get_json()['ok']
@@ -211,7 +213,7 @@ class AppFlowTest(unittest.TestCase):
    except (OSError,NotImplementedError):data=real
    copy=d/'copy';copy.mkdir()
    env=dict(os.environ,NAVI_LOCAL_ROOT=str(d/'local'),NAVI_DATA_ROOT=str(data),NAVI_CONFIG_DIR=str(data/'Config'),
-            NAVI_SECRET_FILE=str(d/'local'/'s.json'),DATARELAY_NO_BOOT='1',PYTHONIOENCODING='utf-8')
+            NAVI_SECRET_FILE=str(d/'local'/'s.json'),DATARELAY_NO_BOOT='1',PYTHONIOENCODING='utf-8',USERNAME='tester')
    r=subprocess.run([sys.executable,'-c',APP,str(ROOT),str(share),str(copy)],env=env,capture_output=True,text=True,encoding='utf-8',timeout=240)
    self.assertEqual(r.returncode,0,r.stderr[-3000:])
    v=json.loads(r.stdout.strip().splitlines()[-1])
@@ -231,9 +233,9 @@ class AppFlowTest(unittest.TestCase):
   self.assertEqual(v['removed'],{'jobs':['SIKAODRNOW'],'rne':['SIKAODRNOW.RNE']},'対象を外すと使われなくなった RNE も外れる')
   self.assertTrue(v['delete']);self.assertFalse(v['state'])
   self.assertEqual(v['migrate_offer'],[True,'migrate'])
-  self.assertEqual(v['migrate'],{'ok':True,'restart':True,'db':True,'rne':['rne/SIKAHIKINOW.RNE','rne/SIKALOTDEF.RNE','rne/SIKALOTNOW.RNE','rne/SIKAODRNOW.RNE'],
+  self.assertEqual(v['migrate'],{'ok':True,'restart':True,'db':True,'to_user':True,'pc_copy_untouched':True,'rne':['rne/SIKAHIKINOW.RNE','rne/SIKALOTDEF.RNE','rne/SIKALOTNOW.RNE','rne/SIKAODRNOW.RNE'],
                                  'pending':'add','origin':'shared','cache_kept':True},
-                   '手元へ移す支度: 今の設定と相対の RNE を写し、差分追加は開き直したあとに当てる')
+                   '移す支度: 今の設定と相対の RNE を共有のユーザーのフォルダーへ写し（2.3.0）、差分追加は開き直したあとに当てる')
   self.assertFalse(v['migrate_again'],'二度は移さない')
 
 
