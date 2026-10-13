@@ -206,10 +206,14 @@ def run_release(exe,wrap,work):
  import navi_paths
  same=lambda a,b:bool(a) and os.path.normcase(os.path.abspath(navi_paths.expand(a)))==os.path.normcase(os.path.abspath(str(b)))
  checks.append(('写しは入れた元を知っていて、共有のデータの基準は渡されない（config/install.json）',same(seed.get('from'),share) and not seed.get('data_root'),seed))
- checks.append(('設定のマスターはこのPCの手元（写しの data）に作られる',(root/'data'/'Config'/'app_settings.sqlite3').is_file(),root/'data'/'Config'))
- checks.append(('置き場（共有）に設定のマスターを作らない',not any((share/d/'app_settings.sqlite3').exists() for d in ('Config','config')),share))
- checks.append(('既定の RNE が手元に入った',sorted(p.name for p in (root/'data'/'rne').glob('*.RNE'))==sorted(p.name for p in (share/'defaults'/'rne').glob('*.RNE')),root/'data'/'rne'))
- checks.append(('手元の印（data/data.json）が既定を見たことを持つ',bool((json.loads((root/'data'/'data.json').read_text(encoding='utf-8')) if (root/'data'/'data.json').exists() else {}).get('ack')),root/'data'/'data.json'))
+ # 2.3.0: データは共有のユーザーのフォルダー（<置き場>\users\<ログオン名>）。ログオン名が分からないときだけ写しの data
+ name=navi_paths.logon_name()
+ mine=share/'users'/name if name else root/'data'
+ checks.append(('設定のマスターは共有のユーザーのフォルダーに作られる（ログオン名が無ければ写しの data）',(mine/'Config'/'app_settings.sqlite3').is_file(),mine/'Config'))
+ checks.append(('置き場（共有）の直下に設定のマスターを作らない',not any((share/d/'app_settings.sqlite3').exists() for d in ('Config','config')),share))
+ checks.append(('既定の RNE がユーザーのフォルダーに入った',sorted(p.name for p in (mine/'rne').glob('*.RNE'))==sorted(p.name for p in (share/'defaults'/'rne').glob('*.RNE')),mine/'rne'))
+ checks.append(('ユーザーのフォルダーの印（data.json）が既定を見たことを持つ',bool((json.loads((mine/'data.json').read_text(encoding='utf-8')) if (mine/'data.json').exists() else {}).get('ack')),mine/'data.json'))
+ if name:checks.append(('写しの data は作らない（新しいPCはユーザーのフォルダーから始める）',not (root/'data'/'data.json').exists(),root/'data'))
 
  R.set_release(v2,share,uid='selftest')
  phase('update',root/'DataRelay.exe',v2,[('配る版へそろえた（exe も変わった）',f'RELEASE_APPLIED from={v1} to={v2} exe_changed=true'),
