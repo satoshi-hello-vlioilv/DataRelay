@@ -4,5 +4,5 @@
 navi_changelog.py にある ―― 800行の読みものなので、それを必要としない経路
 （抽出ワーカー）が読み込まずに済むように分けてある。
 """
-APP_VERSION='2.2.5'; APP_VERSION_TITLE='抽出期間が本当に変わったかを読み戻して確かめる ―― 変わっていなければ止め、戻っていれば当て直す'; APP_RELEASED_AT='2026-10-13'
+APP_VERSION='2.3.0'; APP_VERSION_TITLE='設定をユーザーごとに共有へ置く ―― PC が変わっても、共有からインストールすればそのまま使える'; APP_RELEASED_AT='2026-10-13'
 BUILD_VERSION=f'{APP_VERSION}-web'
