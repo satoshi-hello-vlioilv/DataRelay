@@ -50,12 +50,17 @@
       const st = await (await fetch('/api/release/status')).json();
       ok('配る版と同じ版で動く', st.release && st.local === st.release.version && st.pending === false, `手元 ${st.local} ／ 配る版 ${st.release && st.release.version}`);
       ok('置き場は入れた元（config\\install.json）から知る', st.installed && st.dirSource === 'install' && st.reachable, `${st.dirSource} ${st.dir} ${st.why || ''}`);
-      // 2.0.0: 写したPCは自分の手元（写しの data）にデータを持ち、中身は置き場の既定の設定から入る
+      // 2.3.0: 写したPCは共有のユーザーのフォルダー（<置き場>\\users\\<ログオン名>）にデータを持ち、中身は置き場の既定の設定から入る。
+      // ログオン名が分からないときだけ、これまでどおり手元（写しの data）
       const sep = st.appRoot.includes('\\') ? '\\' : '/';
-      ok('データの基準はこのPCの手元（写しの data）', st.dataRoot === st.appRoot + sep + 'data' && st.dataRootSource === 'pc', `${st.dataRootSource} ${st.dataRoot}`);
+      const ud = await (await fetch('/api/users-root')).json();
+      const wantUser = !!ud.name;
+      ok('データの基準は共有のユーザーのフォルダー（ログオン名が分からなければ写しの data）',
+         wantUser ? (st.dataRootSource === 'user' && st.dataRoot === ud.mine) : (st.dataRootSource === 'pc' && st.dataRoot === st.appRoot + sep + 'data'),
+         `${st.dataRootSource} ${st.dataRoot} ／ ログオン名 ${ud.name || '(なし)'}`);
       r0 = await fetch('/api/path-convert', json({ value: '.\\rne\\SIKAODRNOW.RNE', mode: 'absolute' }));
       const conv = await r0.json();
-      ok('相対パスは手元の data 基準', typeof conv.resolved === 'string' && conv.resolved.toLowerCase().startsWith(st.dataRoot.toLowerCase()), `${conv.resolved}`);
+      ok('相対パスで置き場に無い物はデータの基準から', typeof conv.resolved === 'string' && conv.resolved.toLowerCase().startsWith(st.dataRoot.toLowerCase()), `${conv.resolved}`);
       let got = null;
       for (let i = 0; i < 40; i++) { got = await (await fetch('/api/config')).json(); if ((got.jobs || []).length) break; await sleep(500); }
       ok('置き場の既定の設定から、対象が手元に入った（聞かずに）', (got.jobs || []).length === 6, `${(got.jobs || []).map((j) => j.name).join('・')}`);

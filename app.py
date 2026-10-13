@@ -43,7 +43,10 @@ if WORKER_MODE:
  DOCS=[];CHANGELOG=[]
 else:
  from navi_changelog import DOCS,CHANGELOG
-BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'DataRelay'; import navi_paths as _paths0; MIGRATED_LOCAL=_paths0.migrate_local_root(LOCAL_ROOT,LEGACY_LOCAL_NAMES); LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; DATA_ROOT,DATA_ROOT_SOURCE=_paths0.data_root(BASE); CONFIG_DIR=Path(os.environ['NAVI_CONFIG_DIR']) if os.environ.get('NAVI_CONFIG_DIR') else DATA_ROOT/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=DATA_ROOT/'app_settings.sqlite3'; LEGACY_CFG=DATA_ROOT/'config.json'
+BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'DataRelay'; import navi_paths as _paths0; MIGRATED_LOCAL=_paths0.migrate_local_root(LOCAL_ROOT,LEGACY_LOCAL_NAMES); LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; import navi_release as _rel00; PLACE0=_rel00.place_root(BASE); ADOPTED_USER,ADOPT_ERROR=None,''
+try:ADOPTED_USER=_paths0.adopt_user_data(BASE,PLACE0)   # 2.2.x までの写しの data を、共有のユーザーのフォルダーへ（1回だけ・2.3.0）
+except Exception as _e:ADOPT_ERROR=str(_e)
+DATA_ROOT,DATA_ROOT_SOURCE=_paths0.data_root(BASE,place=PLACE0); CONFIG_DIR=Path(os.environ['NAVI_CONFIG_DIR']) if os.environ.get('NAVI_CONFIG_DIR') else DATA_ROOT/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=DATA_ROOT/'app_settings.sqlite3'; LEGACY_CFG=DATA_ROOT/'config.json'
 def docs_dir():
  # Windowsでは Config と config は同じ場所を指す。Linuxでの検証時だけ綴りが分かれるので両方見る。
  for d in (CONFIG_DIR/'docs',BASE/'config'/'docs'):
@@ -2556,7 +2559,48 @@ def apply_dynamic_period(api_client,handle,job,now=None,line=''):
  info=api_client.apply_period(handle,label,spec['condition'],spec['from_time'],spec['to_time'])
  phase_log('api_change_period',t,job=job.get('name'),line=line,applied_to=info.get('label'),locate=info.get('locate'),summary=spec['summary'])
  log.info('DYNAMIC_PERIOD job=%s line=%s enabled=1 unit=%s condition=%s from=%s to=%s target=%s summary=%s',job.get('name'),line or '-',spec['unit'],spec['condition'],spec['from_time'],spec['to_time'],info.get('label'),spec['summary'])
- return {**spec,'target':info.get('label')}
+ out={**spec,'target':info.get('label'),'h_cp':info.get('handle'),'label':label}
+ _period_readback(out,'before',info.get('before'),job,line)
+ if _period_readback(out,'after',info.get('after'),job,line)=='unchanged':
+  raise RuntimeError(period_not_applied_message(out,info.get('before')))
+ return out
+
+def _period_digits(p,unit):
+ """読み戻した期間を比べられる形にする（数字だけ。月度は YYYYMM、年月日は YYYYMMDD）。読めなければ None。"""
+ if not p:return None
+ n=6 if unit=='month' else 8
+ f=re.sub(r'\D','',str(p.get('from') or ''))[:n];t=re.sub(r'\D','',str(p.get('to') or ''))[:n]
+ return (f,t) if len(f)==n and len(t)==n else None
+
+def _period_readback(spec,stage,got,job,line):
+ """期間を読み戻して記録し、頼んだ期間と比べる（2.2.5）。→ 'match'／'unchanged'（変える前と同じまま）／'differs'／'unknown'（読めない）。
+ rc が OK でも期間が変わっていないことがあった（実機 2026-10-13: 出力が RNE に保存した期間のまま）ので、変えた直後と実行の直前に確かめる。"""
+ want=_period_digits({'from':spec['from_time'],'to':spec['to_time']},spec['unit']);have=_period_digits(got,spec['unit'])
+ if stage=='before':spec['_before']=have;verdict='-'
+ elif have is None:verdict='unknown'
+ elif have==want:verdict='match'
+ elif have==spec.get('_before'):verdict='unchanged'
+ else:verdict='differs'
+ log.log(logging.WARNING if verdict in ('unchanged','differs') else logging.INFO,
+         'PERIOD_READBACK job=%s line=%s stage=%s condition=%s from=%s to=%s want=%s verdict=%s',job.get('name'),line or '-',stage,
+         (got or {}).get('condition','-'),(got or {}).get('from','-'),(got or {}).get('to','-'),'～'.join(want),verdict)
+ return verdict
+
+def period_not_applied_message(spec,got):
+ return (f"抽出期間を {spec['summary']} に変えられませんでした（Navigator は受け付けましたが、読み戻すと RNE に保存した期間 "
+         f"{(got or {}).get('from','?')}～{(got or {}).get('to','?')} のままです）。誤った期間のまま公開しないよう止めました。"
+         f"対象の管理ポイント: {spec.get('target') or '(時間フィールド)'}")
+
+def ensure_period_before_execute(api_client,spec,job,line=''):
+ """実行の直前に、期間がまだ頼んだとおりかを読み戻して確かめる（2.2.5）。値ごとの条件の付け替え（条件欄のキーを外す・表側の
+ カテゴリを読み直す）のあとで期間が元に戻っていたら、もう一度当てて読み直す。それでも違えば止める（誤った期間で公開しない）。"""
+ if not spec or not spec.get('h_cp'):return
+ v=_period_readback(spec,'pre_execute',api_client.get_period(spec['h_cp']),job,line)
+ if v in ('match','unknown'):return
+ api_client.change_period(spec['h_cp'],spec['condition'],spec['from_time'],spec['to_time'])
+ got=api_client.get_period(spec['h_cp'])
+ if _period_readback(spec,'reapplied',got,job,line) not in ('match','unknown'):
+  raise RuntimeError(period_not_applied_message(spec,got))
 
 def unique_headers(values):
  out=[]; used={}
@@ -3243,6 +3287,7 @@ def process_split_part(j,cfg,user,pw,server,out_csv,drop_columns,part_label='',r
     os.chdir(Path(rp).parent);handle,_=api.open_catalog(Path(rp).resolve())
    finally:os.chdir(prev)
   step('RNEを開く')
+  # 分割のパートは、このあと期間軸で期間をパートごとに変えることがあるので、実行直前の確かめ（ensure_period_before_execute）はしない
   if (j.get('period') or {}).get('enabled'):apply_dynamic_period(api,handle,j,datetime.now(),line=part_label)
   if drop_columns:
    step('担当外の列を外す')
@@ -4004,10 +4049,12 @@ def _process_api_job_once(j,job_index,total_jobs,cfg,user,pw,server,dde_work,bac
      log.info('APIカタログ読込条件 line=%s dll=%s cwd=%s catalog_full=%s catalog_name=%s extension=%s size=%s mtime_ns=%s strategy=original_fullpath',line_name,api_client.dll_path,os.getcwd(),api_rne,api_rne.name,api_rne.suffix,rne_stat.st_size,rne_stat.st_mtime_ns)
      t=phase_log('api_open_catalog',job=j['name'],line=line_name);handle,api_elapsed=api_client.open_catalog(api_rne);phase_log('api_open_catalog',t,job=j['name'],line=line_name,handle=handle,api_elapsed=f'{api_elapsed:.2f}s',strategy='original_fullpath')
     finally:os.chdir(previous_cwd)
-   if (j.get('period') or {}).get('enabled'):update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='期間指定',percent=line_percent('session',0.9),detail='相対期間を適用',phase='session');apply_dynamic_period(api_client,handle,j,datetime.now(),line=line_name)
+   period_spec=None
+   if (j.get('period') or {}).get('enabled'):update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='期間指定',percent=line_percent('session',0.9),detail='相対期間を適用',phase='session');period_spec=apply_dynamic_period(api_client,handle,j,datetime.now(),line=line_name)
    if override:
     update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='値を絞る',percent=line_percent('session',0.95),detail=f"{override['item']} を {len(override['values'])}値（{'・'.join(override['values'])}）に絞ります",phase='session')
     variant_note=_variant_conditions(api_client,handle,j,override,line_name)
+   ensure_period_before_execute(api_client,period_spec,j,line_name)
    # 前回の実績。工程ごとの見込みに使う（無ければ見当なしで、秒だけを刻む）。
    _tm=load_rne_timing(rp) or {};_lastrun=(load_job_runs().get(j['id']) or {}).get('metrics') or {}
    _expect_bytes=int(_lastrun.get('transfer_bytes') or 0) or split_expected_bytes(rp,j,cfg)
@@ -5388,6 +5435,8 @@ def boot_app(_spawn_at=0.0):
  except Exception:log.exception('FAULTHANDLER_UNAVAILABLE')
  navi_paths.set_place(navi_release.place_root(BASE,release_shared()))   # 設定を読めたら、共有の設定の置き場で決め直す
  log.info('APP_START_PLACE place=%s data_root=%s source=%s config=%s rel_root=%s',release_place(),DATA_ROOT,DATA_ROOT_SOURCE,CONFIG_DIR,navi_paths.rel_root())
+ if ADOPTED_USER:log.info('USER_DATA_ADOPTED to=%s note=このPCの写しの data を、共有のユーザーのフォルダーへ写しました（写しの data は控えとして残します）',ADOPTED_USER)
+ if ADOPT_ERROR:log.warning('USER_DATA_ADOPT_FAILED error=%s note=写しの data のまま使います',ADOPT_ERROR)
  threading.Thread(target=navi_web.defaults_tick,daemon=True,name='defaults-first').start()   # 新しく写したPCへ既定をすぐ入れる
  threading.Thread(target=release_watch_loop,daemon=True,name='release-watch').start()
  _t=time.perf_counter(); threading.Thread(target=scheduler,daemon=True,name='scheduler').start(); threading.Thread(target=command_dispatcher,daemon=True,name='command-dispatcher').start()

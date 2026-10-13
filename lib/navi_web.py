@@ -1350,6 +1350,57 @@ def release_dir():
  log.info('RELEASE_DIR value=%s note=%s',value or '(既定)',note)
  return jsonify(ok=True,changed=True,settings_revision=rev,**view)
 
+# ==== ユーザーごとのデータ（2.3.0・決まりは navi_paths.users_root／user_dir） ====
+# 設定は共有の <ユーザーの置き場>\<ログオン名> に持つ。ユーザーの置き場は配布の置き場の config\install.json の users_root
+# （全員が同じ値を見る）。変えると、いまある全員のフォルダーを新しい置き場へ写し（あちらに無い分だけ・元は残す）、開き直して効く。
+def _users_view(root=None):
+ place=navi_paths.PLACE_ROOT
+ if place is None:return {'ok':False,'error':'配布の置き場が分かりません'}
+ conf=navi_paths.read_json(Path(place)/'config'/navi_paths.SEED_FILE)
+ root=Path(root) if root else navi_paths.users_root(place)
+ name=navi_paths.logon_name()
+ try:users=sorted(d.name for d in root.iterdir() if d.is_dir() and (d/navi_paths.DATA_MARK).is_file())
+ except OSError:users=[]
+ return {'ok':True,'root':str(root),'defaultRoot':str(Path(place)/navi_paths.USERS_DIR),'configured':str(conf.get(navi_paths.USERS_KEY) or ''),
+         'name':name,'mine':str(root/name) if name else '','inUse':DATA_ROOT_SOURCE=='user','dataRoot':str(DATA_ROOT),
+         'source':DATA_ROOT_SOURCE,'users':users,'installed':release_place()=='installed'}
+
+@app.get('/api/users-root')
+def users_root_state():
+ return jsonify(**_users_view())
+
+@app.post('/api/users-root')
+def users_root_set():
+ r"""ユーザーの置き場を変える。dry なら写さずに見せるだけ。空にすると既定（<置き場>\users）へ戻す。"""
+ data=request.get_json(silent=True) or {};raw=str(data.get('value') or '').strip()
+ place=navi_paths.PLACE_ROOT
+ if place is None:return jsonify(ok=False,error='配布の置き場が分かりません'),400
+ value=navi_paths.portable(raw) if raw else ''
+ new=Path(navi_paths.expand(value)) if value else Path(place)/navi_paths.USERS_DIR
+ old=navi_paths.users_root(place)
+ probe=new
+ while not probe.exists() and probe.parent!=probe:probe=probe.parent   # まだ無いフォルダーは、在る一番近い親で届くかを見る
+ ok,why=navi_release.reachable(probe,wait=1.5)
+ view=dict(value=value,root=str(new),reachable=ok,why=why,same=new.resolve()==old.resolve())
+ if data.get('dry'):return jsonify(ok=True,dry=True,**view)
+ if not ok:return jsonify(ok=False,error=why),400
+ if view['same']:return jsonify(ok=True,changed=False,**view)
+ copied=[]
+ try:
+  new.mkdir(parents=True,exist_ok=True)
+  for d in (old.iterdir() if old.is_dir() else []):
+   if d.is_dir() and (d/navi_paths.DATA_MARK).is_file() and not (new/d.name).exists():
+    shutil.copytree(d,new/d.name);copied.append(d.name)
+  conf_path=Path(place)/'config'/navi_paths.SEED_FILE;conf=navi_paths.read_json(conf_path)
+  if value:conf[navi_paths.USERS_KEY]=value
+  else:conf.pop(navi_paths.USERS_KEY,None)
+  conf_path.parent.mkdir(parents=True,exist_ok=True)
+  tmp=conf_path.with_name(conf_path.name+'.tmp');tmp.write_text(json.dumps(conf,ensure_ascii=False,indent=1),encoding='utf-8');os.replace(tmp,conf_path)
+ except OSError as e:
+  return jsonify(ok=False,error=f'ユーザーの置き場を変えられませんでした: {e}'),500
+ log.info('USERS_ROOT from=%s to=%s copied=%s',old,new,copied)
+ return jsonify(ok=True,changed=True,copied=copied,restart=DATA_ROOT_SOURCE=='user',**view)
+
 # ==== 既定の設定（2.0.0・置き場の defaults\。決まりは navi_defaults、取り込みは持ち込みと同じ道） ====
 # 設定は各PCの手元（写しの data）に持つ。置き場には新しいPCへ渡す最初の設定を1つ置き、各PCは「どの既定まで見たか」を
 # 手元の印（data\data.json）に持つ。既定が新しくなる・共有の設定を使ってきたPCが上がる、と画面が3択を聞く。
@@ -1386,7 +1437,7 @@ def _offer_kind():
  """いま聞くこと。'migrate'＝共有の設定を使ってきた写し、'update'＝手元の写しで既定が新しくなった、''＝聞かない。"""
  if release_place()!='installed':return ''
  if DATA_ROOT_SOURCE=='install':return 'migrate'
- if DATA_ROOT_SOURCE=='pc':return 'update'
+ if DATA_ROOT_SOURCE in navi_paths.HAND_SOURCES:return 'update'
  return ''
 
 def _defaults_offer(d=None):
@@ -1448,8 +1499,9 @@ def _apply_defaults(d,mode,label):
 def _migrate_to_local(d,mode):
  """共有の設定を使ってきた写しを、手元（写しの data）へ移す支度をする。データの基準が変わるので、開き直して効く。
  今のまま／差分追加＝今の設定（共有）を手元へ写す。上書き＝空から始める。既定を当てるのは開き直したあと（印の pending）。"""
- dest=BASE/navi_paths.DATA_DIR
- if (dest/navi_defaults.MARK).is_file():return {'ok':False,'error':'もう手元へ移してあります（開き直すと効きます）'}
+ # 移す先は、共有のユーザーのフォルダー（届かなければ写しの data。2.3.0）
+ dest=navi_paths.user_dir(navi_paths.PLACE_ROOT) or BASE/navi_paths.DATA_DIR
+ if (dest/navi_defaults.MARK).is_file():return {'ok':False,'error':'もう移してあります（開き直すと効きます）'}
  (dest/'Config').mkdir(parents=True,exist_ok=True)
  copied=[]
  if mode in ('keep','add'):
@@ -1504,7 +1556,7 @@ def defaults_state():
  """画面「既定の設定」: 置き場の既定の中身と、このPCの登録（既定へ入れる候補）。"""
  base=_defaults_base();d,why=_defaults_read()
  c=load();local=_local_payloads(c)
- mark=navi_defaults.read_mark(DATA_ROOT) if DATA_ROOT_SOURCE=='pc' else None
+ mark=navi_defaults.read_mark(DATA_ROOT) if DATA_ROOT_SOURCE in navi_paths.HAND_SOURCES else None
  return jsonify(ok=True,dir=str(navi_defaults.folder(base)),reachable=not why,why=why,defaults=navi_defaults.summary(d),
                 writeBlock=_defaults_write_block(),
                 local={p:navi_defaults.names_of(p,local.get(p)) for p in navi_defaults.PARTS},
@@ -1551,7 +1603,7 @@ def defaults_save():
  except OSError as e:return jsonify(ok=False,error=f'置き場へ書けません: {e}'),400
  log.info('DEFAULTS_SAVED id=%s counts=%s notes=%s',man['id'],man['counts'],len(notes))
  # 作ったPCは、この既定をもう聞かない（自分の今の設定そのものなので）
- if DATA_ROOT_SOURCE=='pc':navi_defaults.write_mark(DATA_ROOT,ack=man['id'])
+ if DATA_ROOT_SOURCE in navi_paths.HAND_SOURCES:navi_defaults.write_mark(DATA_ROOT,ack=man['id'])
  return jsonify(ok=True,manifest=man,notes=notes,defaults=navi_defaults.summary(navi_defaults.read(base)))
 
 @app.post('/api/defaults/remove-items')

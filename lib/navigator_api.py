@@ -657,9 +657,12 @@ class NavigatorApi:
         return time.perf_counter()-t
     def apply_period(self,h,label,condition,from_time,to_time):
         # RNEを開いたカタログハンドルhに対し、時間型管理ポイントの期間を差し替える。
+        # 変える前と後の期間を読み戻して返す（2.2.5）。rc が OK でも期間が変わっていないことがあった（実機 2026-10-13:
+        # 「RNE に保存した期間のまま」）。読み戻せない DLL では before/after が None。
         h_cp,locname=self.get_time_control_point(h,label)
+        before=self.get_period(h_cp)
         self.change_period(h_cp,condition,from_time,to_time)
-        return {'handle':h_cp,'locate':locname,'label':label or '(時間フィールド)'}
+        return {'handle':h_cp,'locate':locname,'label':label or '(時間フィールド)','before':before,'after':self.get_period(h_cp)}
     @staticmethod
     def _readable_span(addr,limit=4096):
         """addr から安全に読める最大バイト数を返す。読めないなら0。

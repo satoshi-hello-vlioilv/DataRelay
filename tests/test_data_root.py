@@ -247,6 +247,113 @@ class PathKindAndLocateTest(unittest.TestCase):
    self.assertIsNone(re.search(r"RNEが見つかりません: \{rp\}|RNEがありません: '|テキストファイルがありません: '",text),f.name)
 
 
+class UserDataTest(unittest.TestCase):
+ """2.3.0: 設定を共有の <ユーザーの置き場>\\<Windows のログオン名> に持つ。PC が変わっても、共有からインストールすればそのまま
+ 自分のデータで起動する。2.2.x までの写しの data は、1回だけユーザーのフォルダーへ写す（写しの data は控えとして残す）。"""
+ def setUp(self):
+  self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
+  r=Path(self.tmp.name).resolve();self.place=r/'share'/'DataRelay';self.pc1=r/'pc1'/'DataRelay';self.pc2=r/'pc2'/'DataRelay'
+  for d in (self.place/'config',self.pc1/'config',self.pc2/'config'):d.mkdir(parents=True)
+  for pc in (self.pc1,self.pc2):(pc/'config'/'install.json').write_text(json.dumps({'from':str(self.place)}),encoding='utf-8')
+  self.env={'USERNAME':'Satoshi-Harada'}
+ def mark(self,d,**kw):
+  (d/'Config').mkdir(parents=True,exist_ok=True);(d/'Config'/'app_settings.sqlite3').write_bytes(b'db')
+  (d/'data.json').write_text(json.dumps(kw),encoding='utf-8')
+ def root(self,pc):return navi_paths.data_root(pc,env=self.env,place=self.place)
+
+ def test_existing_pc_moves_its_data_to_the_share_once(self):
+  self.mark(self.pc1/'data',ack='x');(self.pc1/'data'/'rne').mkdir();(self.pc1/'data'/'rne'/'A.RNE').write_text('r')
+  mine=self.place/'users'/'Satoshi-Harada'
+  self.assertEqual(navi_paths.adopt_user_data(self.pc1,self.place,self.env),mine)
+  self.assertTrue((mine/'Config'/'app_settings.sqlite3').is_file());self.assertTrue((mine/'rne'/'A.RNE').is_file(),'RNE も一緒に')
+  self.assertEqual(json.loads((mine/'data.json').read_text(encoding='utf-8'))['movedFrom'],str(self.pc1/'data'))
+  self.assertTrue((self.pc1/'data'/'data.json').is_file(),'写しの data は控えとして残す')
+  self.assertEqual(self.root(self.pc1),(mine,'user'))
+  self.assertIsNone(navi_paths.adopt_user_data(self.pc1,self.place,self.env),'2回目は写さない（共有の新しい中身を古い写しで上書きしない）')
+
+ def test_new_pc_starts_with_the_users_data(self):
+  mine=self.place/'users'/'Satoshi-Harada';self.mark(mine)
+  self.assertIsNone(navi_paths.adopt_user_data(self.pc2,self.place,self.env))
+  self.assertEqual(self.root(self.pc2),(mine,'user'),'新しいPC: 共有からインストールしただけで自分のデータ')
+
+ def test_new_user_starts_in_their_own_folder(self):
+  self.mark(self.place/'users'/'Satoshi-Harada')
+  got=navi_paths.data_root(self.pc2,env={'USERNAME':'Taro'},place=self.place)
+  self.assertEqual(got,(self.place/'users'/'Taro','user'),'別の人は自分のフォルダー（既定の設定から始まる）')
+
+ def test_unreachable_share_keeps_the_pc_copy(self):
+  self.mark(self.pc1/'data')
+  gone=self.place.parent/'nowhere'
+  self.assertIsNone(navi_paths.adopt_user_data(self.pc1,gone,self.env))
+  self.assertEqual(navi_paths.data_root(self.pc1,env=self.env,place=gone),(self.pc1/'data','pc'),'置き場が届かなければ写しの data')
+
+ def test_old_shared_settings_pc_is_left_to_the_migrate_offer(self):
+  (self.pc1/'config'/'install.json').write_text(json.dumps({'from':str(self.place),'data_root':'/old/share'}),encoding='utf-8')
+  self.assertEqual(self.root(self.pc1),(Path('/old/share'),'install'),'2.0.0 より前の写しは、これまでどおり画面が移すかを聞く')
+
+ def test_users_root_can_be_moved(self):
+  other=self.place.parent/'team-users'
+  (self.place/'config'/'install.json').write_text(json.dumps({'users_root':str(other)}),encoding='utf-8')
+  self.assertEqual(navi_paths.users_root(self.place),other)
+  self.assertEqual(self.root(self.pc2),(other/'Satoshi-Harada','user'))
+
+ def test_overrides_still_win(self):
+  self.mark(self.place/'users'/'Satoshi-Harada')
+  (self.pc1/'config'/'local.json').write_text(json.dumps({'data_root':'/mine'}),encoding='utf-8')
+  self.assertEqual(self.root(self.pc1),(Path('/mine'),'local'))
+  self.assertEqual(navi_paths.data_root(self.pc2,env={**self.env,'NAVI_DATA_ROOT':'/env'},place=self.place)[1],'env')
+
+ def test_logon_name_is_safe_for_a_folder(self):
+  self.assertEqual(navi_paths.logon_name({'USERNAME':'DOMAIN\\taro'}),'DOMAIN_taro')
+  self.assertEqual(navi_paths.logon_name({}),'')
+  self.assertIsNone(navi_paths.user_dir(self.place,{}),'ログオン名が分からなければユーザーのフォルダーは使わない')
+
+
+class UsersRootApiTest(unittest.TestCase):
+ """2.3.0: ユーザーの置き場を画面から変える（/api/users-root）。全員のフォルダーを新しい置き場へ写し（あちらに無い分だけ・元は残す）、
+ 配布の置き場の config\\install.json に users_root を書く（ほかの鍵は残す）。app を本当に読み込む。"""
+ def test_move_users_root(self):
+  code=r'''
+import json,sys
+from pathlib import Path
+tmp=Path(sys.argv[2]).resolve();sys.path[:0]=[sys.argv[1],sys.argv[1]+'/lib']
+import app,navi_paths,navi_web
+place=tmp/'share'/'DataRelay';(place/'config').mkdir(parents=True)
+(place/'config'/'install.json').write_text(json.dumps({'from':'x','data_root':''}),encoding='utf-8')
+for nm in ('Satoshi-Harada','Taro'):
+ d=place/'users'/nm;d.mkdir(parents=True);(d/'data.json').write_text('{}');(d/'note.txt').write_text(nm)
+navi_paths.set_place(place);navi_web.DATA_ROOT_SOURCE='user'
+c=app.app.test_client();new=tmp/'team'/'users';out={}
+out['view']=c.get('/api/users-root').get_json()
+out['dry']=c.post('/api/users-root',json={'value':str(new),'dry':True}).get_json()
+out['dry_made']=new.exists()
+out['set']=c.post('/api/users-root',json={'value':str(new)}).get_json()
+out['conf']=json.loads((place/'config'/'install.json').read_text(encoding='utf-8'))
+out['copied']=sorted(p.name for p in new.iterdir());out['kept_old']=(place/'users'/'Taro'/'note.txt').is_file()
+out['root_after']=str(navi_paths.users_root(place))
+out['again']=c.post('/api/users-root',json={'value':str(new)}).get_json()
+out['reset']=c.post('/api/users-root',json={'value':''}).get_json()
+out['conf2']=json.loads((place/'config'/'install.json').read_text(encoding='utf-8'))
+print(json.dumps(out,ensure_ascii=False))
+'''
+  with tempfile.TemporaryDirectory() as d:
+   env=dict(os.environ,NAVI_LOCAL_ROOT=str(Path(d)/'local'),NAVI_DATA_ROOT=str(Path(d)/'boot'),NAVI_CONFIG_DIR=str(Path(d)/'cfg'),
+            USERNAME='Satoshi-Harada',PYTHONIOENCODING='utf-8')
+   r=subprocess.run([sys.executable,'-c',code,str(ROOT),d],cwd=d,env=env,capture_output=True,text=True,encoding='utf-8',timeout=120)
+   self.assertEqual(r.returncode,0,r.stderr[-2000:])
+   v=json.loads(r.stdout.strip().splitlines()[-1])
+  self.assertEqual(v['view']['name'],'Satoshi-Harada');self.assertEqual(v['view']['users'],['Satoshi-Harada','Taro'])
+  self.assertTrue(v['view']['mine'].endswith('users'+os.sep+'Satoshi-Harada'))
+  self.assertTrue(v['dry']['dry']);self.assertFalse(v['dry_made'],'dry では写さない')
+  self.assertTrue(v['set']['changed']);self.assertEqual(sorted(v['set']['copied']),['Satoshi-Harada','Taro'],'全員のフォルダーを写す')
+  self.assertTrue(v['set']['restart'],'いまユーザーのフォルダーで動いているので開き直す')
+  self.assertEqual(v['copied'],['Satoshi-Harada','Taro']);self.assertTrue(v['kept_old'],'元の置き場は残す')
+  self.assertEqual(v['conf']['from'],'x','置き場の install.json のほかの鍵は残す');self.assertIn('users_root',v['conf'])
+  self.assertTrue(v['root_after'].endswith(os.path.join('team','users')))
+  self.assertFalse(v['again']['changed'],'同じ置き場なら何もしない')
+  self.assertNotIn('users_root',v['conf2'],'空にすると既定（<置き場>\\users）へ戻す')
+
+
 class PortableTest(unittest.TestCase):
  def test_own_profile_becomes_userprofile(self):
   home='C:\\Users\\alice'
