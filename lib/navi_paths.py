@@ -122,8 +122,50 @@ def expand(value):
  raw=re.sub(r'%([^%]+)%',lambda m:os.environ.get(m.group(1),m.group(0)),str(value or '').strip())
  return os.path.expanduser(os.path.expandvars(raw))
 
-def data_root(base,env=None):
- """データの基準と出どころ（env／local／install／app）。上の決める順のとおり。"""
+# ==== ユーザーごとのデータ（2.3.0） ======================================
+# 設定（対象・予定・読取マスタ・結合マスタ・共通設定・RNE）を、共有の置き場の <ユーザーの置き場>\<Windows のログオン名> に持つ。
+# PC が変わっても、共有からインストールすればそのまま自分のデータで起動する（引っ越しが要らない）。中の形は 2.0.0 の「写しの data」と
+# 同じ（Config\app_settings.sqlite3・data.json・rne\…）で、置く場所だけが共有へ移る。接続情報（パスワード）は各PCの保護領域のまま。
+# ユーザーの置き場は、配布の置き場の config\install.json の users_root（全員が同じ値を見る。画面で変えられる）。無ければ <置き場>\users。
+USERS_DIR='users'
+USERS_KEY='users_root'
+HAND_SOURCES=('pc','user')   # 手元の形（data.json の印・既定の設定から始める）を使う出どころ
+_BAD_NAME=re.compile(r'[\\/:*?"<>|]+')
+
+def logon_name(env=None):
+ """Windows のログオン名（フォルダー名に使えない字は _ に）。分からなければ空。"""
+ env=os.environ if env is None else env
+ return _BAD_NAME.sub('_',str(env.get('USERNAME') or env.get('USER') or '').strip()).strip('. ')
+
+def users_root(place):
+ r"""ユーザーごとのデータを置くフォルダー（全員の分が並ぶ）。置き場の config\install.json の users_root、無ければ <置き場>\users。"""
+ value=str(read_json(Path(place)/'config'/SEED_FILE).get(USERS_KEY) or '').strip()
+ return Path(expand(value)) if value else Path(place)/USERS_DIR
+
+def user_dir(place,env=None):
+ """このユーザーのデータのフォルダー。置き場が届かない・ログオン名が分からないなら None。"""
+ name=logon_name(env)
+ if not place or not name or not Path(place).is_dir():return None
+ return users_root(place)/name
+
+def adopt_user_data(base,place,env=None):
+ """2.2.x までの写しの data（このPCだけの手元）を、ユーザーのフォルダーへ写す（1回だけ・起動の早い時点で呼ぶ）。
+ 写すのは、ユーザーのフォルダーにまだ印（data.json）が無く、写しの data に印があるときだけ。写しの data は消さない（控え）。
+ → 写した先（写さなければ None）。"""
+ conf=Path(base)/'config'
+ if not (conf/SEED_FILE).is_file() or str(read_json(conf/LOCAL_FILE).get(DATA_KEY) or '').strip():return None
+ env=os.environ if env is None else env
+ if str(env.get('NAVI_DATA_ROOT') or '').strip():return None
+ mine=user_dir(place,env);old=Path(base)/DATA_DIR
+ if mine is None or (mine/DATA_MARK).is_file() or not (old/DATA_MARK).is_file():return None
+ shutil.copytree(old,mine,dirs_exist_ok=True,ignore=shutil.ignore_patterns('backup'))
+ mark=read_json(mine/DATA_MARK);mark.update(movedFrom=str(old),movedAt=datetime.now().isoformat(timespec='seconds'))
+ (mine/DATA_MARK).write_text(json.dumps(mark,ensure_ascii=False,indent=1),encoding='utf-8')
+ return mine
+
+def data_root(base,env=None,place=None):
+ """データの基準と出どころ（env／local／user／pc／install／app）。上の決める順のとおり。
+ place（配布の置き場）を渡すと、写しはユーザーのフォルダー（user_dir）を先に見る（2.3.0）。"""
  env=os.environ if env is None else env
  if str(env.get('NAVI_DATA_ROOT') or '').strip():
   return Path(expand(env['NAVI_DATA_ROOT'])),'env'
@@ -132,6 +174,11 @@ def data_root(base,env=None):
  if value:return Path(expand(value)),'local'
  if (conf/SEED_FILE).is_file():
   mine=Path(base)/DATA_DIR
+  you=user_dir(place,env)
+  # ユーザーのフォルダーに印があればそこ。写しの data にも印が無く、共有の設定も使っていない（新しいPC・新しい人）なら、
+  # ユーザーのフォルダーから始める（置き場の既定の設定を入れる）。写しの data に印があるのに写せていない（adopt が失敗）ときは写しの data
+  if you is not None and ((you/DATA_MARK).is_file() or not ((mine/DATA_MARK).is_file() or str(read_json(conf/SEED_FILE).get(DATA_KEY) or '').strip())):
+   return you,'user'
   if (mine/DATA_MARK).is_file():return mine,'pc'
   value=str(read_json(conf/SEED_FILE).get(DATA_KEY) or '').strip()
   if value:return Path(expand(value)),'install'

@@ -43,7 +43,10 @@ if WORKER_MODE:
  DOCS=[];CHANGELOG=[]
 else:
  from navi_changelog import DOCS,CHANGELOG
-BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'DataRelay'; import navi_paths as _paths0; MIGRATED_LOCAL=_paths0.migrate_local_root(LOCAL_ROOT,LEGACY_LOCAL_NAMES); LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; DATA_ROOT,DATA_ROOT_SOURCE=_paths0.data_root(BASE); CONFIG_DIR=Path(os.environ['NAVI_CONFIG_DIR']) if os.environ.get('NAVI_CONFIG_DIR') else DATA_ROOT/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=DATA_ROOT/'app_settings.sqlite3'; LEGACY_CFG=DATA_ROOT/'config.json'
+BASE=Path(__file__).resolve().parent; LOCAL_ROOT=Path(os.environ['NAVI_LOCAL_ROOT']) if os.environ.get('NAVI_LOCAL_ROOT') else Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or Path.home())/'DataRelay'; import navi_paths as _paths0; MIGRATED_LOCAL=_paths0.migrate_local_root(LOCAL_ROOT,LEGACY_LOCAL_NAMES); LOCAL_RUNTIME=LOCAL_ROOT/'runtime'; LOCAL_LOGS=LOCAL_ROOT/'logs'; LOCAL_BACKUP=LOCAL_ROOT/'backup'; [x.mkdir(parents=True,exist_ok=True) for x in (LOCAL_RUNTIME,LOCAL_LOGS,LOCAL_BACKUP)]; import navi_release as _rel00; PLACE0=_rel00.place_root(BASE); ADOPTED_USER,ADOPT_ERROR=None,''
+try:ADOPTED_USER=_paths0.adopt_user_data(BASE,PLACE0)   # 2.2.x までの写しの data を、共有のユーザーのフォルダーへ（1回だけ・2.3.0）
+except Exception as _e:ADOPT_ERROR=str(_e)
+DATA_ROOT,DATA_ROOT_SOURCE=_paths0.data_root(BASE,place=PLACE0); CONFIG_DIR=Path(os.environ['NAVI_CONFIG_DIR']) if os.environ.get('NAVI_CONFIG_DIR') else DATA_ROOT/'Config'; CONFIG_DIR.mkdir(parents=True,exist_ok=True); MASTER_SETTINGS_DB=CONFIG_DIR/'app_settings.sqlite3'; SETTINGS_LOCAL_DIR=LOCAL_ROOT/'cache'; SETTINGS_LOCAL_DIR.mkdir(parents=True,exist_ok=True); SETTINGS_DB=SETTINGS_LOCAL_DIR/'app_settings.sqlite3'; OLD_SETTINGS_DB=DATA_ROOT/'app_settings.sqlite3'; LEGACY_CFG=DATA_ROOT/'config.json'
 def docs_dir():
  # Windowsでは Config と config は同じ場所を指す。Linuxでの検証時だけ綴りが分かれるので両方見る。
  for d in (CONFIG_DIR/'docs',BASE/'config'/'docs'):
@@ -5432,6 +5435,8 @@ def boot_app(_spawn_at=0.0):
  except Exception:log.exception('FAULTHANDLER_UNAVAILABLE')
  navi_paths.set_place(navi_release.place_root(BASE,release_shared()))   # 設定を読めたら、共有の設定の置き場で決め直す
  log.info('APP_START_PLACE place=%s data_root=%s source=%s config=%s rel_root=%s',release_place(),DATA_ROOT,DATA_ROOT_SOURCE,CONFIG_DIR,navi_paths.rel_root())
+ if ADOPTED_USER:log.info('USER_DATA_ADOPTED to=%s note=このPCの写しの data を、共有のユーザーのフォルダーへ写しました（写しの data は控えとして残します）',ADOPTED_USER)
+ if ADOPT_ERROR:log.warning('USER_DATA_ADOPT_FAILED error=%s note=写しの data のまま使います',ADOPT_ERROR)
  threading.Thread(target=navi_web.defaults_tick,daemon=True,name='defaults-first').start()   # 新しく写したPCへ既定をすぐ入れる
  threading.Thread(target=release_watch_loop,daemon=True,name='release-watch').start()
  _t=time.perf_counter(); threading.Thread(target=scheduler,daemon=True,name='scheduler').start(); threading.Thread(target=command_dispatcher,daemon=True,name='command-dispatcher').start()

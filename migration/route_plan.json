@@ -581,10 +581,25 @@
    "to": "python",
    "note": ""
   },
+  "GET /api/users-root": {
+   "area": "配布と更新",
+   "to": "python",
+   "note": "ユーザーごとのデータの置き場とこのユーザーのフォルダーを見せる（2.3.0）"
+  },
+  "POST /api/users-root": {
+   "area": "配布と更新",
+   "to": "python",
+   "note": "ユーザーの置き場を変える（全員のフォルダーを写し、置き場の config\\install.json に書く。2.3.0）"
+  },
   "POST /api/validate": {
    "area": "設定・対象の登録",
    "to": "python",
    "note": ""
+  },
+  "POST /api/variants/preview": {
+   "area": "設定・対象の登録",
+   "to": "python",
+   "note": "2.1.0 で足した。条件の値ごとに分けて出すときの、RNE の条件欄の項目と値ごとの出し先の見込み"
   },
   "GET /api/version": {
    "area": "ログ・仕様書・版",
@@ -600,11 +615,6 @@
    "area": "画面",
    "to": "python+rust",
    "note": "JS・CSS・アイコン。窓がディスクから直接返す。中身にも Flask の既定の受け口として残る（窓が先に返すので使われない）"
-  },
-  "POST /api/variants/preview": {
-   "area": "設定・対象の登録",
-   "to": "python",
-   "note": "2.1.0 で足した。条件の値ごとに分けて出すときの、RNE の条件欄の項目と値ごとの出し先の見込み"
   }
  }
 }
