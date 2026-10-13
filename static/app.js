@@ -5188,6 +5188,7 @@ function relVerdict(st){
  return ['配る版で動いています','is-ok'];
 }
 async function loadRelease(){
+ loadUsersRoot();
  if(relBusy)return;relBusy=true;
  try{relState=await fetch('/api/release/status',{cache:'no-store'}).then(r=>r.json())}catch{relState=null}
  relBusy=false;renderRelease();
@@ -5385,6 +5386,31 @@ async function relMakeShortcut(where){
   (d.retargeted||[]).length?`${d.retargeted.length}個をここへ向け直しました`:''].filter(Boolean).join('／');
  toast(said||'起動アイコンはもうあります');
  loadShortcuts();loadReleaseBrief();if($('.settings-pane[data-cat="release"]')?.classList.contains('on'))loadRelease();
+}
+/* ユーザーごとのデータ（2.3.0・案 H。tests/ui-proposals/2026-10-user-data）。左に「あなたのデータ」（ログオン名・道・状態）、
+   右に「ユーザーの置き場（全員共通）」。全員に効く変更は畳んで置く（押し間違えにくく）。決まりは navi_paths.users_root／user_dir */
+async function loadUsersRoot(){
+ let box=$('#ud-body');if(!box)return;let x;
+ try{x=await fetch('/api/users-root',{cache:'no-store'}).then(r=>r.json())}catch{x=null}
+ if(!x||!x.ok){box.innerHTML=`<p class="hint">${E((x&&x.error)||'ユーザーごとのデータの状態を読めませんでした')}</p>`;return}
+ let st=x.inUse?'<span class="ud-state">このデータで動いています</span>'
+  :`<span class="ud-state is-warn">${x.source==='install'?'共有の設定を使っています（下の「既定の設定」で移せます）':'置き場が届かないため、このPCの写しの data を使っています'}</span>`;
+ box.innerHTML=`<div class="ud-two">
+  <div class="ud-card"><h4>あなたのデータ</h4><div class="ud-name">${E(x.name||'（ログオン名が分かりません）')}</div><code>${E(x.inUse?x.mine:x.dataRoot)}</code>${st}</div>
+  <div class="ud-card"><h4>ユーザーの置き場（全員共通）</h4><code>${E(x.root)}</code><small>${x.users.length}人分のデータ・PC が変わっても、共有からインストールすればそのまま使えます</small></div></div>
+  <details class="ud-change"><summary>ユーザーの置き場を変える</summary><div class="ud-form">
+   <div class="browse"><input id="ud-root-input" value="${E(x.configured)}" placeholder="空なら既定（${E(x.defaultRoot)}）"><div class="path-actions"><button id="ud-root-pick" type="button" class="browse-btn">参照</button></div></div>
+   <div class="rel-actions"><button id="ud-root-save" type="button">この置き場にする</button><button id="ud-root-reset" type="button" class="secondary">既定に戻す</button><span id="ud-root-note" class="rel-note"></span></div>
+   <p class="rel-note">いまある全員のフォルダーを新しい置き場へ写します（元の置き場は残します）。この PC は開き直すと、ほかの PC は次の起動から新しい置き場を使います。</p></div></details>`;
+ $('#ud-root-pick').onclick=async()=>{let p=await browse('folder',$('#ud-root-input').value||x.root);if(p)$('#ud-root-input').value=p};
+ let save=async v=>{let note=$('#ud-root-note');note.textContent='写しています…';
+  let r=await fetch('/api/users-root',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({value:v})}),d=await r.json().catch(()=>({}));
+  if(!r.ok||!d.ok){note.textContent='';toast(d.error||'変えられませんでした');return}
+  if(!d.changed){note.textContent='いまと同じ置き場です';return}
+  note.innerHTML=`${d.copied.length}人分を写しました。${d.restart?'<button type="button" id="ud-root-restart">開き直して新しい置き場を使う</button>':''}`;
+  $('#ud-root-restart')?.addEventListener('click',relRestart);toast('ユーザーの置き場を変えました')};
+ $('#ud-root-save').onclick=()=>save($('#ud-root-input').value.trim());
+ $('#ud-root-reset').onclick=()=>save('');
 }
 async function relRestart(){
  let r=await fetch('/api/restart-app',{method:'POST'}),d=await r.json().catch(()=>({}));
