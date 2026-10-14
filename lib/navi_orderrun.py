@@ -9,6 +9,7 @@ from pathlib import Path
 import time
 import app
 import navi_order
+import navi_mrun
 from app import log,status,cancel_requested
 
 def _borrow(name):
@@ -53,7 +54,8 @@ def job_dependencies(jobs,cfg=None):
  c=cfg or load()
  return navi_order.dependencies(jobs,c,find_join_recipe,
                                 lambda s:resolve_join_path(s.get('path'),c),
-                                lambda j:job_output_paths(j,c))
+                                lambda j:job_output_paths(j,c),
+                                lambda j:navi_mrun.job_inputs(j))
 
 def order_jobs_by_dependency(jobs,cfg=None):
  """材料を作る側が先に来るように並べ替える。中身は増やさない。"""
@@ -144,7 +146,7 @@ def split_batch(jobs,cfg):
  kind=lambda j:app.normalize_job_source(j.get('source'))
  api=[j for j in ordered if kind(j)=='rne']
  api_ids={j['id'] for j in api}
- local=[j for j in ordered if kind(j) in ('text','join')]
+ local=[j for j in ordered if kind(j) in app.LOCAL_SOURCES]
  first=[j for j in local if not (deps.get(j['id']) or set())&api_ids]
  later=[j for j in local if (deps.get(j['id']) or set())&api_ids]
  if later:

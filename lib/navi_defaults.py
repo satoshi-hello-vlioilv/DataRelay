@@ -7,7 +7,8 @@
   defaults\\jobs.json          … 対象の登録   ┐
   defaults\\schedules.json     … 自動実行の予定 │ 形は「登録内容の持ち出し」（navi_bundle）と同じ。
   defaults\\text-layouts.json  … 読取マスタ   │ ZIP にせず並べて置くので、メモ帳でもそのまま読める
-  defaults\\join-recipes.json  … 結合マスタ   ┘
+  defaults\\join-recipes.json  … 結合マスタ   │
+  defaults\\m-queries.json     … クエリ     ┘ （Power Query の M の式。2.4.0）
   defaults\\settings.json      … 共通設定（出力先・控え・同時実行ライン など。接続の認証情報は入れない）
   defaults\\rne\\              … 対象が使う RNE（対象の rne_path は .\\rne\\<名前> に直して入れる）
 
@@ -38,7 +39,7 @@ SETTINGS = 'settings.json'
 RNE_DIR = 'rne'
 KIND = 'datarelay-defaults'
 SETTINGS_KIND = 'datarelay-settings'
-PARTS = navi_bundle.PARTS                  # jobs・schedules・layouts・recipes
+PARTS = navi_bundle.PARTS                  # jobs・schedules・layouts・recipes・queries
 ALL_PARTS = PARTS + ('settings', 'rne')
 PART_LABEL = dict(navi_bundle.PART_LABEL, settings='共通設定', rne='RNE')
 # 共通設定として渡す項目（パス・控え・並列など）。渡さない物: 置き場（update_dir・各PCが入れた元から知る）、
@@ -283,7 +284,7 @@ def picks(mode, dif):
 
 def has_data(local):
     """手元に何か登録してあるか（無ければ聞かずに既定を当てる）。"""
-    return any(names_of(p, local.get(p)) for p in ('jobs', 'layouts', 'recipes'))
+    return any(names_of(p, local.get(p)) for p in ('jobs', 'layouts', 'recipes', 'queries'))
 
 
 # ==== 手元の印（data\\data.json）と控え ====

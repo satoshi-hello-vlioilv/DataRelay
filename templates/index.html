@@ -8,6 +8,25 @@
 <dialog id="login-dialog"><form class="modal login-modal" id="login-form" autocomplete="off"><div class="modalhead"><div><small>Navigator への接続</small><h2 id="login-title">接続情報を登録</h2></div><button type="button" id="login-x" class="iconbtn" aria-label="閉じる">×</button></div><div class="modalbody login-body"><p id="login-lead" class="login-lead"></p><div id="login-conf" class="login-conf" hidden></div><div class="login-fields"><label>サーバー<input id="login-server" spellcheck="false" autocomplete="off"></label><label>利用者ID<input id="login-user" spellcheck="false" autocomplete="off"></label><label>パスワード<input id="login-password" type="password" autocomplete="new-password"></label></div><p class="login-safe"><b>保存先</b><span id="login-where">このPCの資格情報マネージャー</span></p><p id="login-error" class="login-error" role="alert" hidden></p></div><div class="modalfoot"><button type="button" id="login-decline" class="textbtn login-decline" hidden>Navigator は使わない</button><button type="button" id="login-later" class="secondary">あとで</button><button type="submit" id="login-save">このPCに保存</button></div></form></dialog>
 <dialog id="def-dialog"><div class="modal def-modal" id="def-dialog-body"></div></dialog>
 <dialog id="def-pick-dialog"><div class="modal def-pick-modal" id="def-pick-body"></div></dialog>
+<dialog id="mq-editor" class="mq-editor-dialog" aria-label="Power Query エディター"><div class="mqe" tabindex="-1">
+<div class="mqe-head"><b class="mqe-app">Power Query エディター</b><span id="mqe-title" class="mqe-title"></span><span id="mqe-state" class="mqe-state"></span><span class="mqx-sp"></span>
+<button type="button" id="mqe-adv" class="secondary">詳細エディター</button><button type="button" id="mqe-build" class="secondary">フォルダーから作る</button><button type="button" id="mqe-check" class="secondary">確かめる</button><button type="button" id="mqe-discard" class="mqe-discard">保存せずに閉じる</button><button type="button" id="mqe-close" class="mqe-close">閉じて保存</button></div>
+<div id="mqe-msg" class="mqe-msg" hidden></div>
+<div class="mq-edit" id="mq-edit"></div></div></dialog>
+<dialog id="mq-adv-dialog"><div class="modal mq-adv-modal">
+<div class="modalhead"><div><small>詳細エディター</small><h2 id="mq-adv-title">クエリ</h2></div><button type="button" id="mq-adv-close" class="iconbtn" aria-label="閉じる">×</button></div>
+<div class="modalbody mq-adv-body"><p class="hint">Excel の Power Query の詳細エディターの中身を、そのまま貼り付けます。補助のクエリも一緒に書くときは、<code>// クエリ名</code> の行で区切ります（<code>section Section1;</code> の形も読めます）。</p>
+<textarea id="mq-adv-text" spellcheck="false" wrap="off" aria-label="式（M）"></textarea></div>
+<div class="modalfoot"><small id="mq-adv-pos" class="mq-adv-pos"></small><span class="mqx-sp"></span><button type="button" id="mq-adv-cancel" class="secondary">キャンセル</button><button type="button" id="mq-adv-ok">完了（確かめる）</button></div></div></dialog>
+<dialog id="mq-build-dialog"><div class="modal mq-build-modal">
+<div class="modalhead"><div><small>Power Query</small><h2>フォルダーから作る</h2></div><button type="button" id="mqb-close" class="iconbtn" aria-label="閉じる">×</button></div>
+<div class="modalbody mq-build-body">
+<label>フォルダー<div class="browse"><input id="mqb-folder" placeholder="例: .\日報 ／ \\server\share\日報"><div class="path-actions"><button id="mqb-pick" type="button" class="browse-btn">参照</button></div></div></label>
+<div class="fieldgrid"><label>シート<select id="mqb-sheet"><option value="">各ブックの先頭のシート</option></select></label><label>ファイル名に含む文字<input id="mqb-pattern" placeholder="空ならすべての Excel"></label></div>
+<div class="mq-build-checks"><label><input id="mqb-header" type="checkbox" checked> 1行目を見出しにする</label><label><input id="mqb-filecol" type="checkbox" checked> ファイル名の列（Source.Name）を付ける</label><label><input id="mqb-sub" type="checkbox" checked> 下のフォルダーも読む</label></div>
+<p id="mqb-note" class="hint"></p>
+<p class="hint">Excel の「フォルダーから結合」と同じ道筋の式を書きます。書いた式は数式バー・詳細エディターでそのまま直せます。</p></div>
+<div class="modalfoot"><span class="mqx-sp"></span><button type="button" id="mqb-cancel" class="secondary">キャンセル</button><button type="button" id="mqb-ok">式を作る</button></div></div></dialog>
 <dialog id="col-dialog"><div class="modal col-modal">
 <div class="modalhead"><div><small>一覧の列</small><h2>出す列と、その見せ方</h2></div><button type="button" id="col-close" class="iconbtn" aria-label="閉じる">×</button></div>
 <div class="modalbody col-body">
@@ -35,7 +54,7 @@
 <main><div id="release-banner" class="release-banner" hidden role="status"><i id="rb-icon" class="rb-icon">↻</i><div class="rb-text"><b id="rb-title"></b><span id="rb-detail"></span></div><div class="rb-actions"><button id="rb-primary" type="button"></button><button id="rb-secondary" type="button" class="secondary"></button></div></div>
 <nav><button class="on" data-p="jobs">対象ファイル</button><button data-p="calendar">カレンダー</button><button data-p="viewer">データビュワー</button><button data-p="paths" data-group="masters">共通設定</button><button data-p="logs">ログ・診断</button></nav>
 <div id="drop-veil" class="drop-veil" hidden><div class="drop-card"><i>＋</i><b id="drop-title">ここに落として取り込む</b><span id="drop-note">EXCEL（.xlsx）でも JSON でも受けます</span></div></div>
-<div id="subnav" class="subnav" hidden><button data-p="paths">基本設定</button><button data-p="layouts">読取マスタ</button><button data-p="joins">ファイル結合</button><span class="subnav-note">一度決めて、いくつもの対象から使い回す設定です</span></div>
+<div id="subnav" class="subnav" hidden><button data-p="paths">基本設定</button><button data-p="layouts">読取マスタ</button><button data-p="joins">ファイル結合</button><button data-p="mqueries">Power Query</button><span class="subnav-note">一度決めて、いくつもの対象から使い回す設定です</span></div>
 <section id="jobs" class="on"><div class="commandbar"><div class="searchbox"><span>検索</span><input id="search" placeholder="名称、入力（RNE・テキスト・結合）、出力先、ファイル名"></div><select id="filter-enabled"><option value="all">状態: すべて</option><option value="enabled">有効</option><option value="disabled">無効</option></select><select id="filter-schedule"><option value="all">予定: すべて</option><option value="scheduled">自動実行あり</option><option value="manual">手動のみ</option></select><select id="sort"><option value="order">登録順</option><option value="name">名称順</option><option value="rne">入力名順</option><option value="output">出力先順</option><option value="schedule">予定数順</option></select><button id="add" class="secondary">新規追加</button></div><div id="fresh-board" class="fresh-board" hidden></div>
 <div class="listmeta"><span id="summary"></span><span class="rc-hint"><b>状態</b>のバッジを押すと有効・無効を切り替えます／<b>複製・削除</b>や出力先を開くなどは、行を<b>右クリック</b></span><div><button id="bulk-edit" class="textbtn" hidden>選択した対象をまとめて変更</button><button id="export-selected" class="textbtn" hidden>選択した対象を書き出す</button><button id="col-config" class="textbtn">列の表示</button><button id="select-visible" class="textbtn">表示対象を選択</button><button id="clear-selection" class="textbtn">選択解除</button></div></div><aside id="command-queue" class="command-queue"><div class="queue-head"><div><b>実行キュー</b><span id="cq-summary">待機なし</span></div><div id="cq-overall" class="cq-overall" hidden><div><span id="cq-progress-label">全体 0 / 0</span><b id="cq-progress-percent">0%</b></div><div class="cq-progress-track"><i id="cq-progress-bar"></i><i id="cq-progress-run" class="cq-progress-run"></i></div></div><button id="cq-toggle" class="secondary" type="button">一覧</button></div><div id="cq-list" class="cq-list" hidden></div></aside><div class="tablebox"><table class="jobs-table"><thead id="jobs-head"></thead><tbody id="jobs-body"></tbody></table><div id="empty" class="empty" hidden>条件に一致する対象はありません。</div></div></section>
 <section id="calendar"><div class="cal-shell">
@@ -69,6 +88,12 @@
 <div class="lay-foot"><span id="lay-state" class="hint"></span><button id="lay-delete" type="button" class="danger">削除</button><button id="lay-save" type="button" class="primary">保存</button></div>
 </article>
 <article class="panel lay-empty" id="lay-empty"><div class="panelhead"><h2>読取マスタを選んでください</h2><p>左の一覧から選ぶか、「新規作成」で作ります。作ったマスタは、対象ファイルの登録画面で「固定長テキスト」を選ぶと使えます。</p></div></article>
+</div></section>
+<section id="mqueries"><div class="commandbar"><div class="searchbox"><span>検索</span><input id="mq-search" placeholder="クエリ名、説明、式の中の文字"></div><button id="mq-add" class="secondary">新規作成</button><div class="io-group"><button id="mq-export" class="secondary" data-io="export">書き出し</button><button id="mq-import" class="secondary" data-io="import">取り込み</button></div><input id="mq-file" type="file" accept=".odc,.xlsx,.xlsm,.pq,.m,.txt,.json" hidden></div>
+<div class="jn-wrap mq-wrap">
+<aside class="jn-list-pane mq-list-pane"><div class="panelhead"><h2>Power Query</h2><p>Excel の Power Query の式（M 言語）で、フォルダーの Excel などを読んで形を整えます。詳細エディターの中身をそのまま貼り付けて使えます。作ったクエリは、対象ファイルの登録から選んで使います。</p></div><div id="mq-list" class="jn-list"></div></aside>
+<article class="panel lay-empty mq-guide" id="mq-empty"><div class="panelhead"><h2>クエリを選ぶと、Power Query エディターが開きます</h2><p>エディターは画面いっぱいの別の窓で開き、<b>閉じるときに保存</b>します（Excel の「閉じて読み込む」と同じ）。</p></div>
+<div class="mq-guide-ways"><button type="button" class="secondary" id="mq-guide-new"><b>式を貼り付けて作る</b><small>Excel の詳細エディターの中身をそのまま貼り付けます</small></button><button type="button" class="secondary" id="mq-guide-import"><b>.odc・ブックから取り込む</b><small>補助のクエリ（ファイルの変換 など）ごと入ります</small></button><button type="button" class="secondary" id="mq-guide-build"><b>フォルダーから作る</b><small>フォルダー・シートを選ぶと「フォルダーから結合」と同じ式を書きます</small></button></div></article>
 </div></section>
 <section id="joins"><div class="commandbar"><div class="searchbox"><span>検索</span><input id="jn-search" placeholder="結合マスタ名、説明、ファイル名"></div><button id="jn-add" class="secondary">新規作成</button><div class="io-group"><button id="jn-export" class="secondary" data-io="export">書き出し</button><select id="jn-format" class="io-format" title="どちらの形で出し入れするか"><option value="xlsx">EXCEL</option><option value="json">JSON</option></select><button id="jn-import" class="secondary" data-io="import">取り込み</button></div><input id="jn-file" type="file" accept=".json,.xlsx,.xlsm,application/json" hidden></div>
 <div class="jn-wrap">
@@ -168,7 +193,7 @@
 <div class="sectiontitle sect-input"><i class="sect-badge sb-input">入</i>入力データ</div>
 <div class="src-pick" role="tablist" aria-label="入力の種類">
 <button type="button" class="src-btn on" data-src="rne" role="tab" aria-selected="true"><b>RNE</b><small>Navigatorへ問い合わせて表を受け取る</small></button>
-<button type="button" class="src-btn" data-src="text" role="tab" aria-selected="false"><b>固定長テキスト</b><small>手元のファイルを決めた位置で切る</small></button><button type="button" class="src-btn" data-src="join" role="tab" aria-selected="false"><b>複数ファイルの結合</b><small>キーで突き合わせて1つの表にする</small></button>
+<button type="button" class="src-btn" data-src="text" role="tab" aria-selected="false"><b>固定長テキスト</b><small>手元のファイルを決めた位置で切る</small></button><button type="button" class="src-btn" data-src="join" role="tab" aria-selected="false"><b>複数ファイルの結合</b><small>キーで突き合わせて1つの表にする</small></button><button type="button" class="src-btn" data-src="mquery" role="tab" aria-selected="false"><b>Power Query</b><small>M の式でフォルダーの Excel などを読み整える</small></button>
 </div>
 <div class="src-pane on" data-src="rne">
 <div class="path-help compact-help"><span>相対パスの基準は配布の置き場（入口の DataRelay.exe があるフォルダー）です。例: <code>.\rne\SIKALOTNOW.RNE</code></span></div>
@@ -180,6 +205,11 @@
 <div class="fieldgrid one"><label>テキストファイル<div class="browse"><input id="m-text-path" placeholder="例: JUCHU.txt"><div class="path-actions"><button id="m-text-check" type="button" class="verify-btn">確認</button><button id="m-text-pick" type="button" class="browse-btn">参照</button></div></div></label></div>
 <div class="fieldgrid one"><label>読取マスタ（切り方）<div class="browse"><select id="m-layout"><option value="">選択してください</option></select><button id="m-layout-open" type="button" class="secondary">マスタを開く</button></div></label></div>
 <p id="m-layout-note" class="hint">どの位置で切るかは「読取マスタ」で決めます。同じ形式のファイルが複数あっても、マスタは1つで足ります。</p>
+</div>
+<div class="src-pane" data-src="mquery">
+<div class="path-help compact-help"><span>読む場所（フォルダー・ファイル）と整え方は、クエリ（Power Query の式）の側に持ちます。Navigatorへは接続しません。</span></div>
+<div class="fieldgrid"><label>クエリ<div class="browse"><select id="m-query"><option value="">選択してください</option></select><button id="m-query-open" type="button" class="secondary">クエリを開く</button></div></label><label>出すクエリ<select id="m-query-out"><option value="">クエリの既定</option></select></label></div>
+<p id="m-query-note" class="hint">読む場所と整え方は「Power Query」で決めます。</p>
 </div>
 <div class="src-pane" data-src="join">
 <div class="path-help compact-help"><span>読むファイルの場所は結合マスタ側に持ちます。Navigatorへは接続しません。</span></div>

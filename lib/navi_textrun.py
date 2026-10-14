@@ -4,9 +4,9 @@
 こちらは、それを控えDBへ出し入れし、対象1件を最後まで通す側 ―― 本体の名前を
 借りるので、navi_split と同じく app.py の終わりで取り込む。
 
-扱うのは、Navigatorへ問い合わせない2つの入力 ―― 固定長テキスト（1つのファイルを位置で
-切る）と、複数ファイルの結合（キーで繋ぐ）。どちらもRNEとの違いは「中間CSVをどう作るか」
-だけで、仕上げ（変換・公開・控え・同時出力）は
+扱うのは、Navigatorへ問い合わせない3つの入力 ―― 固定長テキスト（1つのファイルを位置で
+切る）と、複数ファイルの結合（キーで繋ぐ）と、クエリ（Power Query の M の式。2.4.0）。どれもRNEとの違いは
+「中間CSVをどう作るか」だけで、仕上げ（変換・公開・控え・同時出力）は
 finish_one_job をそのまま通す。別に書くと、片方にしか直しが入らない壊れ方を繰り返す
 （v1.65.1・v1.66.0・v1.68.0で実際に起きた）。
 """
@@ -52,7 +52,10 @@ for _n in ('_mark_settings_dirty',
            'join_reader',
            'validate_join_recipe',
            'text_missing_message',
-           'write_join_intermediate'):globals()[_n]=_borrow(_n)
+           'write_join_intermediate',
+           'find_m_query',
+           'validate_m_query',
+           'write_m_intermediate'):globals()[_n]=_borrow(_n)
 del _n
 
 def _uuid4():
@@ -121,7 +124,7 @@ def delete_text_layout(layout_id):
  return bool(n)
 
 def process_local_job(j,cfg,work,backup,trigger,job_index,total_jobs,say=None):
- """固定長テキスト1件を、読み取り → 変換 → 公開まで通す。
+ """手元のファイルから作る対象1件（固定長テキスト・結合・クエリ）を、読み取り → 変換 → 公開まで通す。
 
  RNEと違うのは「中間CSVの作り方」だけ。そこから先は finish_one_job にそのまま渡す。
  別に書くと、形式や公開の直しが片方にしか入らない ―― 過去に何度も起きた壊れ方なので、
@@ -144,8 +147,14 @@ def process_local_job(j,cfg,work,backup,trigger,job_index,total_jobs,say=None):
  j['type']='詳細データ'
  kind=normalize_job_source(j.get('source'))
  # 使えないと分かっている取り決めで走り出さない。ここで断れば、公開先にも控えにも触らない。
- layout=recipe=None;src=None
- if kind=='join':
+ layout=recipe=query=None;src=None
+ if kind=='mquery':
+  query=find_m_query(j.get('query_id'))
+  if not query:
+   raise ValueError('クエリが選ばれていません（または削除されています）。対象の設定で、どのクエリで作るかを選んでください')
+  bad=validate_m_query(query)
+  if bad:raise ValueError(f'クエリ「{query["name"]}」が使えません: '+'／'.join(bad))
+ elif kind=='join':
   recipe=find_join_recipe(j.get('recipe_id'))
   if not recipe:
    raise ValueError('結合マスタが選ばれていません。対象の設定で、どの繋ぎ方で作るかを選んでください')
@@ -170,11 +179,20 @@ def process_local_job(j,cfg,work,backup,trigger,job_index,total_jobs,say=None):
  intermediate=work/f'{kind}_{job_index}_{stamp}.csv'
  extras=job_extra_formats(j)
  zero=bool(cfg['settings']['reject_zero_rows'])
- if kind=='join':
+ if kind=='mquery':
+  log.info('PIPELINE job=%s engine=mquery query=%s output=%s common_intermediate=CSV format=%s target=%s',
+           j['name'],query['name'],j.get('query_out') or query.get('output') or '(既定)',fmt,target)
+  report('read',source=query['name'],layout=j.get('query_out') or query.get('output') or '',kind='mquery')
+  t=phase_log('m_query_read',job=j['name'],query=query['name'])
+  rows,cols,stat=write_m_intermediate(query,cfg,intermediate,job=j,reject_zero=zero)
+  # 列の型は、式の中で決めた型（Table.TransformColumnTypes）と、決めていない列は中身から（navi_mrun.column_type）
+  j['_column_types']=stat['types']
+  phase_log('m_query_read',t,job=j['name'],rows=rows,columns=cols,error_cells=stat['error_cells'])
+ elif kind=='join':
   files=[f'{x["alias"]}:{Path(x["path"]).name}' for x in recipe['sources']]
   log.info('PIPELINE job=%s engine=join recipe=%s ファイル=%s common_intermediate=CSV format=%s target=%s',
            j['name'],recipe['name'],files,fmt,target)
-  report('read',source='・'.join(files),layout=recipe['name'])
+  report('read',source='・'.join(files),layout=recipe['name'],kind='join')
   t=phase_log('join_read',job=j['name'],recipe=recipe['name'],sources=len(recipe['sources']))
   rows,cols,stat=write_join_intermediate(recipe,join_reader(cfg),intermediate,join_layouts(),reject_zero=zero)
   phase_log('join_read',t,job=j['name'],rows=rows,columns=cols)
@@ -204,7 +222,9 @@ def local_progress_say(progress_fn,j):
    import navi_order
    progress_fn('prepare',f'{j["name"]}: 材料がそろうのを待っています',20,current_job_id=j['id'],
                activity_detail='材料の作成待ち',activity_value=navi_order.reason_text(kw.get('reasons') or []))
-  elif stage=='read':progress_fn('save',f'{j["name"]}: テキストを読み取っています',35,current_job_id=j['id'],activity_detail='固定長テキスト',activity_value=str(kw.get('source') or ''))
+  elif stage=='read':
+   what={'mquery':('クエリを評価しています','Power Query'),'join':('ファイルを結合しています','ファイル結合')}.get(kw.get('kind') or '',('テキストを読み取っています','固定長テキスト'))
+   progress_fn('save',f'{j["name"]}: {what[0]}',35,current_job_id=j['id'],activity_detail=what[1],activity_value=str(kw.get('source') or ''))
   elif stage=='unchanged':progress_fn('publish',f'{j["name"]}: 前回と同じ内容のため更新しませんでした',95,activity_detail='変更なし')
   elif stage=='convert':progress_fn('export',f'{j["name"]}: 形式を変換しています',70,activity_detail='形式別変換工程')
   elif stage=='publish':progress_fn('publish',f'{j["name"]}: 検査済みファイルを公開しています',90,activity_detail='公開工程')
@@ -236,11 +256,15 @@ def run_one_local(j,cfg,work,backup,trigger,index,total_all,say=None):
  else:
   detail=(f'{fin["rows"]}件/{fin["cols"]}列 / {total:.1f}秒'
           +('' if fin['published'] else f' / 更新保留: {fin["pending"]}')+extra_format_note(fin['extra_results']))
+  if stat.get('error_cells'):
+   detail+=f' / 誤りのセル {stat["error_cells"]}か所を空で出しました（'+'、'.join(f'{k}: {v}' for k,v in list(stat['error_samples'].items())[:2])+'）'
  metrics=serial_run_metrics(kind,fmt,total,fin['rows'],fin['cols'])
  metrics.update(published=bool(fin['published']),pending=str(fin.get('pending') or ''))
  # 内訳は入力の種類で違う。無いものを0として残すと、後から読むとき嘘になる。
  if 'short_rows' in stat:
   metrics.update(text_rows=stat['rows'],text_short_rows=stat['short_rows'],text_broken_cells=stat['broken_cells'])
+ elif 'error_cells' in stat:
+  metrics.update(m_query=stat['query'],m_output=stat['output'],m_error_cells=stat['error_cells'],m_elapsed=stat['elapsed'])
  elif 'joins' in stat:
   metrics.update(join_sources=len(stat['sources']),
                  join_matched=[x.get('both') for x in stat['joins']])

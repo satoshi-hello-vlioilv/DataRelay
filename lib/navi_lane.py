@@ -21,15 +21,15 @@
 # 流す順の「大まかな順番」。同時に走れるものが複数あるとき、どれから配るか。
 # 数が小さいほど先。RNEを先頭に置くのは、いちばん時間がかかり、しかも結合の材料に
 # なりやすいから ―― 遅れて始めると、その遅れがそのまま後ろ全部に伝わる。
-KIND_TIER={'rne':0,'text':1,'join':2}
+KIND_TIER={'rne':0,'text':1,'mquery':1,'join':2}
 TIER_JOIN_CHAIN=3
-TIER_LABEL={0:'RNE',1:'テキスト',2:'結合',3:'結合（材料も結合）'}
+TIER_LABEL={0:'RNE',1:'テキスト・クエリ',2:'結合',3:'結合（材料も結合）'}
 
 # 手元の処理へ既定で何本ぶん割り当てるか（自動のとき）。青天井にすると共有フォルダー
 # への読み書きが渋滞して、ラインを増やすほど遅くなる。
 LOCAL_LINES_AUTO_MAX=4
 
-LOCAL_KINDS=('text','join')
+LOCAL_KINDS=('text','join','mquery')
 
 
 def build_plan(jobs,deps,kinds):

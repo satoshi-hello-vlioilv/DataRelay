@@ -46,7 +46,7 @@ async function setJobsEnabled(ids,on){
 }
 function setJobEnabled(id,on){return setJobsEnabled([id],on)}
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden'&&saveTimer)saveSettingsNow()});
-window.addEventListener('beforeunload',()=>{if(!saveTimer||!cfg)return;clearTimeout(saveTimer);saveTimer=null;try{fetch('/api/config',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(settingsPayload()),keepalive:true})}catch{}});const MASTER_TABS=['paths','layouts','joins'];
+window.addEventListener('beforeunload',()=>{if(!saveTimer||!cfg)return;clearTimeout(saveTimer);saveTimer=null;try{fetch('/api/config',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(settingsPayload()),keepalive:true})}catch{}});const MASTER_TABS=['paths','layouts','joins','mqueries'];
 function showPane(p){
  $$('nav button,#subnav button,section').forEach(x=>x.classList.remove('on'));
  $('#'+p)?.classList.add('on');
@@ -60,10 +60,11 @@ function showPane(p){
  if(p==='viewer')loadViewerJobs();
  if(p==='layouts')openLayouts();
  if(p==='joins')openJoins();
+ if(p==='mqueries')openMQueries();
 }
 $$('nav button,#subnav button').forEach(b=>b.onclick=()=>showPane(b.dataset.p));
 // 一覧の「入力」欄が読取マスタの名前を出すので、最初に一度だけ読んでおく。
-Promise.all([loadLayouts(),loadJoins()]).then(()=>{if(typeof cfg!=='undefined'&&cfg)render()});
+Promise.all([loadLayouts(),loadJoins(),mqLoad()]).then(()=>{if(typeof cfg!=='undefined'&&cfg)render()});
 const paths={default_output_folder:['既定の出力先','folder'],rne_folder:['RNE の置き場','folder'],backup_folder:['控えの置き場','folder'],text_folder:['固定長テキストの置き場','folder'],accdb_template:['ACCDB の雛形','file',[['Access Database','*.accdb'],['すべて','*.*']]],symnavim_conf:['symnavim.conf（接続情報の取り込み元）','file',[['CONFファイル','*.conf'],['すべて','*.*']]]};
 const PATH_HOME={symnavim_conf:'#pathform-conn'};   // ほかは「場所」の #pathform
 let waitingTimer=null,waitingStarted=0;function waitingEngineLabel(context='common'){return context==='api'||context==='engine'?'NAVIGATOR API':'COMMON OPERATION'}function showWaiting(title='確認中',detail='処理を続行しています...',context='common'){let d=$('#waiting-dialog');$('#waiting-engine').textContent=waitingEngineLabel(context);$('#waiting-title').textContent=title;$('#waiting-detail').textContent=detail;waitingStarted=Date.now();clearInterval(waitingTimer);let tick=()=>{let sec=Math.floor((Date.now()-waitingStarted)/1000);$('#waiting-elapsed').textContent=`経過 ${String(Math.floor(sec/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`};tick();waitingTimer=setInterval(tick,1000);if(!d.open)d.showModal()}function updateWaiting(title,detail,context){if(title)$('#waiting-title').textContent=title;if(detail)$('#waiting-detail').textContent=detail;if(context)$('#waiting-engine').textContent=waitingEngineLabel(context)}function hideWaiting(){clearInterval(waitingTimer);waitingTimer=null;let d=$('#waiting-dialog');if(d?.open)d.close()}// パスの欄の下の行（2.2.4。案の比較は tests/ui-proposals/2026-10-path-kind）。基準の札（置き場 │ \rne）と書き換えのボタン、
@@ -175,6 +176,7 @@ function jobSourceName(j){
  let src=j.source||'rne';
  if(src==='text')return String(j.text_path||'').split(/[\\/]/).pop()||'';
  if(src==='join'){let r=joinCache.find(x=>x.id===j.recipe_id);return r?r.name:''}
+ if(src==='mquery'){let q=mqCache.find(x=>x.id===j.query_id);return q?q.name:''}
  return j.rne||'';
 }
 function jobFormats(j){return [normalizeFormat(j.output_format),...(j.extra_formats||[]).map(normalizeFormat)]}
@@ -377,7 +379,7 @@ const COLUMNS=[
   opts:{meta:true,comment:true},
   optUI:[{name:'meta',label:'表・シート名も出す',toggle:true},
          {name:'comment',label:'用途も出す',toggle:true}]},
- {key:'source',name:'入力データ',w:178,sort:'rne',why:'何から作るか（RNE・テキスト・結合）'},
+ {key:'source',name:'入力データ',w:178,sort:'rne',why:'何から作るか（RNE・テキスト・結合・Power Query）'},
  {key:'file',name:'出力ファイル',w:228,why:'出来上がるファイルの名前と形式',
   opts:{sub:true},optUI:[{name:'sub',label:'形式も出す',toggle:true}]},
  {key:'folder',name:'出力先',w:0,sort:'output',why:'どこへ置くか',
@@ -618,9 +620,9 @@ function showJobContextMenu(e,j,tr){let m=$('#job-context-menu');if(!m)return;co
  let src=j.source||'rne',isRne=src==='rne';
  m.querySelectorAll('[data-action="inspect"],[data-action="inspect-now"]').forEach(b=>b.hidden=!isRne);
  let ob=m.querySelector('[data-action="open-rne"]');
- if(ob){ob.textContent=isRne?'RNEのフォルダー':src==='text'?'テキストのフォルダー':'結合マスタを開く';ob.hidden=false}
+ if(ob){ob.textContent=isRne?'RNEのフォルダー':src==='text'?'テキストのフォルダー':src==='mquery'?'クエリを開く':'結合マスタを開く';ob.hidden=false}
  let cb=m.querySelector('[data-action="copy-rne"]');
- if(cb)cb.textContent=isRne?'RNEパス':src==='text'?'テキストのパス':'結合マスタ名';let x=Math.min(e.clientX,innerWidth-m.offsetWidth-8),y=Math.min(e.clientY,innerHeight-m.offsetHeight-8);m.style.left=Math.max(8,x)+'px';m.style.top=Math.max(8,y)+'px'}
+ if(cb)cb.textContent=isRne?'RNEパス':src==='text'?'テキストのパス':src==='mquery'?'クエリ名':'結合マスタ名';let x=Math.min(e.clientX,innerWidth-m.offsetWidth-8),y=Math.min(e.clientY,innerHeight-m.offsetHeight-8);m.style.left=Math.max(8,x)+'px';m.style.top=Math.max(8,y)+'px'}
 /* 一覧から、選んだ対象の登録内容だけを書き出す。共通設定の「登録内容の持ち出し」は
    全部まとめて出す口で、こちらは「この1件だけ渡したい」ときの口。中身は同じ形なので、
    受け取った側はどちらも同じように取り込める。使う読取マスタ・結合マスタも一緒に入る
@@ -672,6 +674,7 @@ if($('#job-context-menu')){$('#job-context-menu').onclick=e=>{
   // 開く先は入力の種類しだい。結合は複数のファイルを読むので、繋ぎ方の画面へ送る。
   let src=j.source||'rne';
   if(src==='join')document.querySelector('[data-p="joins"]')?.click();
+  else if(src==='mquery'){let it=mqCache.find(x=>x.id===j.query_id);if(it)mqOpen(it);else document.querySelector('[data-p="mqueries"]')?.click()}
   else if(src==='text')openFolderPath(jobFolder(j.text_path)||cfg.text_folder,'テキストのフォルダー');
   else openFolderPath(jobFolder(j.rne_path||j.rne)||cfg.rne_folder,'RNEのフォルダー');
  }
@@ -679,8 +682,8 @@ if($('#job-context-menu')){$('#job-context-menu').onclick=e=>{
  else if(act==='viewer'){document.querySelector('[data-p="viewer"]')?.click();setTimeout(()=>{let sel=$('#viewer-job');if(sel){selectViewerJob(j.id);sel.dispatchEvent(new Event('change'))}},100)}
  else if(act==='copy-rne'){
   let src=j.source||'rne';
-  copyTextValue(src==='text'?(j.text_path||''):src==='join'?jobSourceName(j):(j.rne_path||j.rne),
-                src==='text'?'テキストのパス':src==='join'?'結合マスタ名':'RNEパス');
+  copyTextValue(src==='text'?(j.text_path||''):(src==='join'||src==='mquery')?jobSourceName(j):(j.rne_path||j.rne),
+                src==='text'?'テキストのパス':src==='join'?'結合マスタ名':src==='mquery'?'クエリ名':'RNEパス');
  }
  else if(act==='copy-output')copyTextValue(j.output_folder||cfg.default_output_folder,'出力先');
  else if(act==='copy-file')copyTextValue(j.output_file||'','出力ファイル名');
@@ -734,7 +737,7 @@ function refreshTypeHint(){
   box.hidden=false;
  },250);
 }
-function openEditor(job){editing=structuredClone(job||{id:uid(),name:'新しい対象',enabled:true,rne:'NEW.RNE',rne_path:cfg.rne_folder+'\\NEW.RNE',output_folder:cfg.default_output_folder,output_format:'sqlite3',output_file:'NEW.sqlite3',extra_formats:[],table:'仕掛',sheet:'Page1',type:'詳細データ',naming_mode:'fixed',output_pattern:'',comment:'',split_mode:'auto',split_shape:'auto',source:'rne',text_path:'',layout_id:'',recipe_id:'',period:{enabled:false,control_point:'',unit:'month',from_offset:-1,to_offset:0},schedules:[]});$('#modal-title').textContent=job?'対象を編集':'対象を追加';$('#m-id').value=editing.id;$('#m-name').value=editing.name;$('#m-enabled').checked=editing.enabled;$('#m-rne-path').value=editing.rne_path||'';$('#m-output').value=editing.output_folder||cfg.default_output_folder;refreshPathControls($('#editor'));editing.output_format=normalizeFormat(editing.output_format);editing.extra_formats=(editing.extra_formats||[]).map(normalizeFormat);editing.index_columns=(editing.index_columns||[]).map(String);if($('#m-skip-unchanged'))$('#m-skip-unchanged').checked=!!editing.skip_if_unchanged;if($('#m-index-columns'))$('#m-index-columns').value=(editing.index_columns||[]).join(', ');$('#m-format').value=editing.output_format;$('#m-output-file').value=editing.output_file;$('#m-table').value=editing.table;$('#m-sheet').value=editing.sheet;releaseTypeHint(false);$('#m-type').value=editing.type;if($('#m-comment'))$('#m-comment').value=editing.comment||'';if($('#m-split-mode'))$('#m-split-mode').value=editing.split_mode||'auto';if($('#m-split-shape'))$('#m-split-shape').value=editing.split_shape||'auto';if($('#m-axis-mode'))$('#m-axis-mode').value=editing.row_axis_mode||'first';if($('#m-axis-index'))$('#m-axis-index').value=editing.row_axis_index||1;AXIS_PICK.forEach(g=>{if($(g.n))$(g.n).innerHTML=`<option value="${E(editing.row_axis_name||'')}">${E(editing.row_axis_name||'（先に「RNEを調査」）')}</option>`;if($(g.m))$(g.m).value=editing.row_axis_mode||'first';if($(g.i))$(g.i).value=editing.row_axis_index||1});syncAxisPick();setSource(editing.source||'rne');if($('#m-text-path'))$('#m-text-path').value=editing.text_path||'';fillLayoutPicker(editing.layout_id||'');fillRecipePicker(editing.recipe_id||'');syncOutputExtension();initNaming(editing);setPeriodUI(editing.period);renderRuntimeSplit(null);inspReset();refreshTypeHint();loadMaster(false);splitTrialPoll();rulesRender();updatePeriodBadge();loadJobTrend(editing.id);fillVariants(editing);setEditorTab('basic');$('#editor').showModal()}
+function openEditor(job){editing=structuredClone(job||{id:uid(),name:'新しい対象',enabled:true,rne:'NEW.RNE',rne_path:cfg.rne_folder+'\\NEW.RNE',output_folder:cfg.default_output_folder,output_format:'sqlite3',output_file:'NEW.sqlite3',extra_formats:[],table:'仕掛',sheet:'Page1',type:'詳細データ',naming_mode:'fixed',output_pattern:'',comment:'',split_mode:'auto',split_shape:'auto',source:'rne',text_path:'',layout_id:'',recipe_id:'',query_id:'',query_out:'',period:{enabled:false,control_point:'',unit:'month',from_offset:-1,to_offset:0},schedules:[]});$('#modal-title').textContent=job?'対象を編集':'対象を追加';$('#m-id').value=editing.id;$('#m-name').value=editing.name;$('#m-enabled').checked=editing.enabled;$('#m-rne-path').value=editing.rne_path||'';$('#m-output').value=editing.output_folder||cfg.default_output_folder;refreshPathControls($('#editor'));editing.output_format=normalizeFormat(editing.output_format);editing.extra_formats=(editing.extra_formats||[]).map(normalizeFormat);editing.index_columns=(editing.index_columns||[]).map(String);if($('#m-skip-unchanged'))$('#m-skip-unchanged').checked=!!editing.skip_if_unchanged;if($('#m-index-columns'))$('#m-index-columns').value=(editing.index_columns||[]).join(', ');$('#m-format').value=editing.output_format;$('#m-output-file').value=editing.output_file;$('#m-table').value=editing.table;$('#m-sheet').value=editing.sheet;releaseTypeHint(false);$('#m-type').value=editing.type;if($('#m-comment'))$('#m-comment').value=editing.comment||'';if($('#m-split-mode'))$('#m-split-mode').value=editing.split_mode||'auto';if($('#m-split-shape'))$('#m-split-shape').value=editing.split_shape||'auto';if($('#m-axis-mode'))$('#m-axis-mode').value=editing.row_axis_mode||'first';if($('#m-axis-index'))$('#m-axis-index').value=editing.row_axis_index||1;AXIS_PICK.forEach(g=>{if($(g.n))$(g.n).innerHTML=`<option value="${E(editing.row_axis_name||'')}">${E(editing.row_axis_name||'（先に「RNEを調査」）')}</option>`;if($(g.m))$(g.m).value=editing.row_axis_mode||'first';if($(g.i))$(g.i).value=editing.row_axis_index||1});syncAxisPick();setSource(editing.source||'rne');if($('#m-text-path'))$('#m-text-path').value=editing.text_path||'';fillLayoutPicker(editing.layout_id||'');fillRecipePicker(editing.recipe_id||'');fillQueryPicker(editing.query_id||'',editing.query_out||'');syncOutputExtension();initNaming(editing);setPeriodUI(editing.period);renderRuntimeSplit(null);inspReset();refreshTypeHint();loadMaster(false);splitTrialPoll();rulesRender();updatePeriodBadge();loadJobTrend(editing.id);fillVariants(editing);setEditorTab('basic');$('#editor').showModal()}
 $('#m-format').onchange=()=>{syncOutputExtension();if(currentNamingMode()==='template')refreshNamePreview();if($('#m-layout'))fillLayoutPicker($('#m-layout').value)};$('#m-rne-check').onclick=async()=>{showWaiting('RNEファイル確認中','設定場所と周辺フォルダーを検索しています...');try{let temp={item:'rne',job_id:editing.id,label:editing.rne,configured:$('#m-rne-path').value,resolved:$('#m-rne-path').value,candidates:[],ok:false};let r=await fetch('/api/path-check',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({item:'rne',job_id:editing.id,value:$('#m-rne-path').value,expected_name:$('#m-rne-path').value.split(/[\\/]/).pop()})}),d=await r.json();if(r.ok)showPathResult(d);else toast(d.error)}finally{hideWaiting()}};$('#m-rne-pick').onclick=async()=>{let p=await browse('file',$('#m-rne-path').value,[['RNEファイル','*.RNE'],['すべて','*.*']]);if(p){let i=$('#m-rne-path'),wasRel=wasRelativePath(i);i.value=p;if(wasRel)await convertPath(i,'relative');i._refreshPathControl?.();refreshTypeHint()}};$('#m-output-pick').onclick=async()=>{let p=await browse('folder',$('#m-output').value);if(p){let i=$('#m-output'),wasRel=wasRelativePath(i);i.value=p;if(wasRel)await convertPath(i,'relative');i._refreshPathControl?.()}};enhancePathInput($('#m-rne-path'),'file',()=>cfg.rne_folder||'.\\rne');enhancePathInput($('#m-output'),'folder');$('#m-rne-path').addEventListener('input',()=>{renderInspTarget();refreshTypeHint()});$('#m-name').addEventListener('input',()=>renderInspTarget());
 /* 有効・無効は押した瞬間に効かせる。「設定を反映」を押し忘れて閉じると
    黙って元へ戻る、という切れ目を作らない。まだ保存していない新規の対象だけは
@@ -760,7 +763,7 @@ function collectJob(){
   row_axis_mode:($('#m-axis-mode')?.value||'first'),row_axis_index:Number($('#m-axis-index')?.value||1)||1,
   row_axis_name:($('#m-axis-name')?.value||''),period:currentPeriod(),
   source:currentSource(),text_path:($('#m-text-path')?.value||'').trim(),
-  layout_id:($('#m-layout')?.value||''),recipe_id:($('#m-recipe')?.value||''),variants:currentVariants()};
+  layout_id:($('#m-layout')?.value||''),recipe_id:($('#m-recipe')?.value||''),query_id:($('#m-query')?.value||''),query_out:($('#m-query-out')?.value||''),variants:currentVariants()};
 }
 /* 条件の値ごとに分けて出す（2.1.0。2.1.1 でタブを「3」へ・取り方を入切の下に。案 K: タブ「値ごとに分ける」＝番号順に決めて右にできあがるファイル、上に1文、1ページ目に札）。
    RNE の条件欄の項目といまのキーを先に読み、項目と値を先回りして出す（RNE の中身を思い出させない）。
@@ -4101,7 +4104,7 @@ async function exportPivot(){
    「どのファイルを」「どのマスタで切るか」の2つだけを選ぶ。 */
 function currentSource(){return $('.src-btn.on')?.dataset.src||'rne'}
 function setSource(src){
- src=(src==='text'||src==='join')?src:'rne';
+ src=(src==='text'||src==='join'||src==='mquery')?src:'rne';
  $$('.src-btn').forEach(b=>{let on=b.dataset.src===src;b.classList.toggle('on',on);b.setAttribute('aria-selected',String(on))});
  $$('.src-pane').forEach(x=>x.classList.toggle('on',x.dataset.src===src));
  // RNEを調べる道具は、RNEのときだけ意味がある。出したままにすると、押しても
@@ -4419,7 +4422,7 @@ bindMasterIO('layout',{export:'lay-export',import:'lay-import',file:'lay-file',f
    別のPCへ移すとき、新しく組むとき、控えを取っておくとき。画面を見ながら打ち直すのは
    時間がかかるうえに必ず取りこぼす。どれを入れるかは選べる ―― 1つだけ選べば、それが
    個別の書き出しになる。取り込む側では形式を選ばせない（中身を見れば分かる）。 */
-const BUNDLE_PARTS=['jobs','schedules','layouts','recipes'];
+const BUNDLE_PARTS=['jobs','schedules','layouts','recipes','queries'];
 let bundleInfo=null;
 async function loadBundleInfo(){
  try{bundleInfo=await fetch('/api/bundle/info',{cache:'no-store'}).then(r=>r.json())}catch{bundleInfo=null}
@@ -4501,6 +4504,11 @@ bindBundleIO();
 /* 一覧の「入力」欄。RNEはRNE名、固定長テキストはファイル名と読取マスタを出す。
    ここを1つの書き方で済ませると、テキストの行にだけ空欄が並ぶ。 */
 function sourceCell(j){
+ if((j.source||'rne')==='mquery'){
+  let q=mqCache.find(x=>x.id===j.query_id);
+  return `<div class="primarytext"><i class="src-tag src-tag-pq">PQ</i>${E(q?q.name:'クエリ未選択')}</div>`
+   +`<div class="subtext pathtext">${E(q?('出す: '+(j.query_out||q.output||q.main||'')):'')}</div>`;
+ }
  if((j.source||'rne')==='join'){
   let r=joinCache.find(x=>x.id===j.recipe_id);
   return `<div class="primarytext"><i class="src-tag">結合</i>${E(r?r.name:'結合マスタ未選択')}</div>`
@@ -5420,8 +5428,8 @@ async function relRestart(){
 /* 既定の設定（2.0.0）。置き場の defaults\ に置く「新しいPCが最初に持つ設定」。設定は各PCの手元（写しの data\）にあり、
    新しいPCは初回の起動でこれを手元へ入れる。すでに設定のあるPCには、既定が新しくなった次の起動で合わせ方を3択で聞く。
    画面は2つ: 配布と更新の「新しいPCへ渡す既定の設定」の欄（作る・外す・消す）と、起動時の3択（案 F: カード＋下に何が起きるか）。 */
-const DEF_ORDER=['jobs','schedules','layouts','recipes','rne'];
-const DEF_PART={jobs:'対象の登録',schedules:'自動実行の予定',layouts:'読取マスタ',recipes:'結合マスタ',rne:'RNE',settings:'共通設定'};
+const DEF_ORDER=['jobs','schedules','layouts','recipes','queries','rne'];
+const DEF_PART={jobs:'対象の登録',schedules:'自動実行の予定',layouts:'読取マスタ',recipes:'結合マスタ',queries:'クエリ（Power Query）',rne:'RNE',settings:'共通設定'};
 const DEF_MODES=[['add','差分追加','足りない物だけ足す'],['overwrite','上書き','既定にある物は既定の中身へ'],['keep','今のまま','何も変えない']];
 let defState=null,defOffer=null,defMode='add',defOfferAsked=false;
 const defWhen=s=>String(s||'').replace('T',' ').slice(0,16);
@@ -5481,7 +5489,7 @@ async function defDelete(){
 /* 作る・作り直す: このPCの登録から選んで置く。最初は、既定があればその中身・無ければ全部に印を付けておく（選び直す手間を減らす） */
 async function openDefaultsPicker(){
  await loadDefaults();let x=defState;if(!x||!x.ok)return;
- let d=x.defaults||{},had=!!d.exists,parts=['jobs','layouts','recipes'];
+ let d=x.defaults||{},had=!!d.exists,parts=['jobs','layouts','recipes','queries'];
  let checked=(p,n)=>!had||(d.parts[p]||[]).includes(n);
  let list=p=>{let names=x.local[p]||[];
   if(!names.length)return `<p class="z">このPCに${DEF_PART[p]}はありません</p>`;
@@ -5495,16 +5503,16 @@ async function openDefaultsPicker(){
   +`<div class="modalfoot"><span id="def-pick-sum" class="def-pick-sum"></span><button type="button" class="secondary" id="def-pick-cancel">やめる</button><button type="button" id="def-pick-go">この内容で既定を置く</button></div>`;
  let dlg=$('#def-pick-dialog'),body=$('#def-pick-body');
  let count=()=>{let n={};parts.forEach(p=>{n[p]=body.querySelectorAll(`input[data-part="${p}"]:checked`).length;let el=body.querySelector(`[data-count="${p}"]`);if(el)el.textContent=`${n[p]} / ${(x.local[p]||[]).length}`});
-  $('#def-pick-sum').textContent=`対象 ${n.jobs}件・読取マスタ ${n.layouts}件・結合マスタ ${n.recipes}件`;return n};
+  $('#def-pick-sum').textContent=`対象 ${n.jobs}件・読取マスタ ${n.layouts}件・結合マスタ ${n.recipes}件・クエリ ${n.queries}件`;return n};
  body.querySelectorAll('input[data-part]').forEach(i=>i.onchange=count);
  body.querySelectorAll('[data-all],[data-none]').forEach(b=>b.onclick=()=>{let p=b.dataset.all||b.dataset.none;body.querySelectorAll(`input[data-part="${p}"]`).forEach(i=>i.checked=!!b.dataset.all);count()});
  count();
  let close=()=>dlg.close();$('#def-pick-x').onclick=close;$('#def-pick-cancel').onclick=close;
  $('#def-pick-go').onclick=async()=>{
   let pick=p=>[...body.querySelectorAll(`input[data-part="${p}"]:checked`)].map(i=>i.value),n=count();
-  if(!n.jobs&&!n.layouts&&!n.recipes&&!confirm('何も選んでいません。対象の無い既定（共通設定だけ）を置きますか？'))return;
+  if(!n.jobs&&!n.layouts&&!n.recipes&&!n.queries&&!confirm('何も選んでいません。対象の無い既定（共通設定だけ）を置きますか？'))return;
   let go=$('#def-pick-go');go.disabled=true;go.textContent='置いています…';
-  let r=await relPost('/api/defaults/save',{jobs:pick('jobs'),layouts:pick('layouts'),recipes:pick('recipes'),schedules:$('#def-pick-sch').checked,settings:$('#def-pick-set').checked,note:$('#def-pick-note').value.trim()}),
+  let r=await relPost('/api/defaults/save',{jobs:pick('jobs'),layouts:pick('layouts'),recipes:pick('recipes'),queries:pick('queries'),schedules:$('#def-pick-sch').checked,settings:$('#def-pick-set').checked,note:$('#def-pick-note').value.trim()}),
    res=await r.json().catch(()=>({}));
   go.disabled=false;go.textContent='この内容で既定を置く';
   if(!r.ok){toast(res.error||'既定を置けませんでした');return}
@@ -5532,14 +5540,14 @@ async function defWaitFirst(n){
 }
 /* 選んだ当て方で「何が起きるか」を、項目の名前で見せる（件数だけでは、自分の対象が消えないか分からない） */
 function defEffect(o,mode){
- let dif=o.diff||{},take=(k,parts=['jobs','layouts','recipes','rne'])=>parts.flatMap(p=>((dif[p]||{})[k]||[]).map(n=>parts.length>1&&p!=='jobs'?`${n}（${DEF_PART[p]}）`:n));
+ let dif=o.diff||{},take=(k,parts=['jobs','layouts','recipes','queries','rne'])=>parts.flatMap(p=>((dif[p]||{})[k]||[]).map(n=>parts.length>1&&p!=='jobs'?`${n}（${DEF_PART[p]}）`:n));
  let migrate=o.kind==='migrate',localJobs=(dif.jobs||{}).local||[];
  // suffix は名前の続き（「の予定」）、note は2行目の補足
  let row=(label,tone,list,suffix='',note='')=>list.length?`<div class="def-eff ${tone}"><i>${label}</i>${defNames(list,8,suffix)}${note?`<small>${E(note)}</small>`:''}</div>`:'';
  if(mode==='keep')return migrate?row('写す','add',[`いまの共有の設定（対象 ${o.localCounts?.jobs||0}件・予定 ${o.localCounts?.schedules||0}件）をこのPCの手元へ写して、そのまま使います`])
   :row('変えない','keep',['すべて（この既定はもう聞きません）']);
  if(migrate&&mode==='overwrite'){
-  let all=['jobs','layouts','recipes','rne'].flatMap(p=>(o.defaults?.parts?.[p]||[]).map(n=>p==='jobs'?n:`${n}（${DEF_PART[p]}）`));
+  let all=['jobs','layouts','recipes','queries','rne'].flatMap(p=>(o.defaults?.parts?.[p]||[]).map(n=>p==='jobs'?n:`${n}（${DEF_PART[p]}）`));
   return row('入れる','add',all.length?all:['（既定は空です）'])+row('写さない','keep',localJobs,'','共有には残ります')
    +(o.defaults?.settings?row('共通設定','chg',['既定の値で始めます']):'');
  }
@@ -5638,3 +5646,338 @@ if($('#rel-dir-reset'))$('#rel-dir-reset').onclick=()=>{$('#rel-dir-input').valu
 if($('#rel-dir-pick'))$('#rel-dir-pick').onclick=async()=>{let d=await relPost('/api/pick-folder',{initial:$('#rel-dir-input').value||''}).then(r=>r.json()).catch(()=>({}));if(d.path)$('#rel-dir-input').value=d.path};
 // 中身は起動の 15 秒後に初めて配る版を読む。その少しあとに帯を読み、あとは5分おき
 setTimeout(loadReleaseBrief,20000);setInterval(()=>{if(document.visibilityState==='visible')loadReleaseBrief()},300000);
+
+/* ==== Power Query（クエリ。M の式。2.4.0）=====================================
+   読取マスタ・結合マスタと同じく、名前を付けて別に持ち、対象から選ぶ。式は Excel の詳細エディターの中身をそのまま貼れ、
+   .odc（接続ファイルのエクスポート）・ブック（.xlsx）からは補助のクエリごと取り込める。
+   画面は Power Query エディターと同じ並び（案の比較は tests/ui-proposals/2026-10-mquery。案 I）:
+   左にクエリ（ヘルパー クエリとその他）・真ん中に数式バーと表・右にクエリの設定（名前・出すクエリ・適用したステップ・見本のファイル）・
+   下に状態の帯。エディターは本家と同じく画面いっぱいの別の窓（モーダル）で開き、閉じるときに保存する
+   （利用者の指定: 画面を最大限使い、表示できる情報量を増やす）。 */
+let mqCache=[],mqEditing=null,mqSearch='',mqView=null,mqSel={query:'',step:''},mqSeq=0,mqDirty=false,mqFx=null,mqSamples=null,mqSampleKey='',mqAfterClose=null;
+const MQ_ICON={query:'▦',function:'fx',parameter:'⚙'};
+const MQ_TYPE={text:'ABC',integer:'123',numeric:'1.2',date:'日付',datetime:'日時'};
+async function mqLoad(){
+ try{let d=await fetch('/api/m-queries',{cache:'no-store'}).then(r=>r.json());mqCache=d.items||[]}
+ catch{mqCache=[]}
+ return mqCache;
+}
+async function openMQueries(){await mqLoad();mqRenderList()}
+function mqRenderList(){
+ let box=$('#mq-list');if(!box)return;
+ let q=mqSearch.trim().toLowerCase();
+ let items=mqCache.filter(x=>!q||[x.name,x.description,x.code].join(' ').toLowerCase().includes(q));
+ if(!items.length){box.innerHTML='<p class="lay-empty-note">'+(q?'見つかりませんでした':'まだ登録がありません。「新規作成」で式を貼り付けるか、「取り込み」で Excel の .odc・ブックを読み込めます。')+'</p>';return}
+ box.innerHTML=items.map(x=>`<button type="button" class="lay-item${mqEditing&&mqEditing.id===x.id?' on':''}" data-id="${E(x.id)}">`
+  +`<b>${E(x.name)}</b><small>${x.broken?'式が読めません':`クエリ ${(x.queries||[]).length}本 / 出す: ${E(x.output||x.main||'')}`}</small>`
+  +(x.description?`<small>${E(x.description)}</small>`:'')
+  +(x.used_by&&x.used_by.length?`<em>${x.used_by.length}件の対象が使用中</em>`:'')+'</button>').join('');
+ $$('#mq-list .lay-item').forEach(b=>b.onclick=()=>mqOpen(mqCache.find(x=>x.id===b.dataset.id)));
+}
+/* エディターを開く。閉じるときに保存する（after(保存したクエリ) は閉じたあとに呼ぶ。対象の編集から開いたとき選び直すため） */
+function mqOpen(item,after){
+ if(!item)return;
+ mqEditing={id:item.id||'',name:item.name||'',description:item.description||'',code:item.code||'',output:item.output||''};
+ mqDirty=!item.id;mqView=null;mqSel={query:'',step:''};mqSamples=null;mqSampleKey='';mqAfterClose=after||null;
+ mqRenderList();mqShell();mqSetDirty(mqDirty);mqMsg('');
+ let dl=$('#mq-editor');if(!dl.open)dl.showModal();
+ $('.mqe')?.focus({preventScroll:true});  // 最初のボタンに枠が付かないよう、窓そのものに置く
+ if(mqEditing.code.trim())mqPreview();else{mqRender();mqAdvOpen()}
+}
+function mqMsg(text,actions){let m=$('#mqe-msg');if(!m)return;m.hidden=!text;m.innerHTML=text?`<span>${E(text)}</span>${actions||''}`:''}
+/* 閉じる: 変更があれば保存してから閉じる。保存できなければ窓は閉じずに理由を出す */
+async function mqClose(save=true){
+ if(!mqEditing){$('#mq-editor').close();return}
+ if(!mqEditing.id&&!mqEditing.code.trim())save=false;  // 何も書かずに閉じた新規は、保存するものが無い
+ if(save){
+  let fx=$('#mqx-fx');if(mqFx&&fx&&fx.value!==mqFx.text)mqFxApply(true);
+  if(mqDirty||!mqEditing.id){
+   let ok=await mqSave(true);
+   if(!ok)return;
+  }
+ }
+ let saved=mqEditing.id?{...mqEditing}:null,after=mqAfterClose;
+ mqEditing=null;mqDirty=false;mqAfterClose=null;
+ $('#mq-editor').close();
+ await mqLoad();mqRenderList();
+ if(after)after(saved);
+}
+function mqShell(){
+ $('#mq-edit').innerHTML=`<div class="mqx">
+ <aside class="mqx-tree"><div class="mqx-cap">クエリ <small id="mqx-count"></small></div><div id="mqx-tree" class="mqx-scroll"></div></aside>
+ <section class="mqx-main">
+  <div class="mqx-fx"><span class="mqx-fxl" aria-hidden="true">fx</span><textarea id="mqx-fx" rows="1" spellcheck="false" aria-label="選んだステップの式（Enter で当てる）"></textarea><button id="mqx-fx-ok" type="button" class="mqx-ib" title="この式を当てて確かめる（Enter）" disabled>✓</button><button id="mqx-fx-no" type="button" class="mqx-ib" title="元に戻す（Esc）" disabled>✕</button></div>
+  <div id="mqx-notes" class="mqx-notes" hidden></div>
+  <div id="mqx-body" class="mqx-body"></div>
+  <div id="mqx-status" class="mqx-status"></div>
+ </section>
+ <aside class="mqx-side">
+  <div class="mqx-cap">クエリの設定</div>
+  <label class="mqx-f">名前<input id="mqx-name" maxlength="120"></label>
+  <label class="mqx-f">用途メモ<input id="mqx-desc" maxlength="400" placeholder="例: 各ラインの日報を1つの表に"></label>
+  <label class="mqx-f">出すクエリ<select id="mqx-out"></select></label>
+  <div class="mqx-cap">適用したステップ <small id="mqx-steps-of"></small></div>
+  <div id="mqx-steps" class="mqx-steps mqx-scroll"></div>
+  <div id="mqx-sample" class="mqx-sample" hidden><label class="mqx-f">見本のファイル<select id="mqx-sample-sel"></select></label><small>ファイルごとの処理（ヘルパー クエリ）を、このファイルで確かめます。既定は一番上のファイルです。</small></div>
+  <button id="mqx-del" type="button" class="mqx-del">このクエリを消す</button>
+ </aside></div>`;
+ $('#mqx-name').value=mqEditing.name;$('#mqx-desc').value=mqEditing.description;
+ $('#mqx-name').oninput=e=>{mqEditing.name=e.target.value;mqSetDirty();$('#mqe-title').textContent=mqEditing.name};
+ $('#mqx-desc').oninput=e=>{mqEditing.description=e.target.value;mqSetDirty()};
+ $('#mqx-out').onchange=e=>{mqEditing.output=e.target.value;mqSetDirty();mqRenderTree()};
+ let fx=$('#mqx-fx');
+ fx.oninput=()=>{mqFxGrow();let on=mqFx&&fx.value!==mqFx.text;$('#mqx-fx-ok').disabled=!on;$('#mqx-fx-no').disabled=!on};
+ fx.onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();mqFxApply()}else if(e.key==='Escape'&&mqFx&&fx.value!==mqFx.text){e.preventDefault();mqFxReset()}};  // 直しかけが無ければ、Esc は窓を閉じる（保存）
+ $('#mqx-fx-ok').onclick=mqFxApply;$('#mqx-fx-no').onclick=mqFxReset;
+ $('#mqx-del').onclick=mqDelete;
+ $('#mqe-title').textContent=mqEditing.name;
+ $('#mqx-sample-sel').onchange=mqSampleApply;
+}
+function mqSetDirty(on=true){mqDirty=on;let st=$('#mqe-state');if(st){st.textContent=on?'変更あり（閉じるときに保存します）':'保存済み';st.classList.toggle('hot',on)}}
+async function mqPreview(opt={}){
+ if(!mqEditing)return;
+ let seq=++mqSeq,body=$('#mqx-body');
+ if(body&&!mqView)body.innerHTML='<div class="mqx-wait">式を読んで、結果を作っています…</div>';
+ $('#mqx-status')?.classList.add('is-busy');
+ let d;
+ try{d=await fetch('/api/m-query/preview',{method:'POST',headers:{'Content-Type':'application/json'},
+   body:JSON.stringify({code:mqEditing.code,name:mqEditing.name||'クエリ1',query:mqSel.query||null,step:mqSel.step||null,full:!!opt.full})}).then(r=>r.json())}
+ catch(e){d={ok:false,queries:mqView?.queries||[],error:{message:'下読みに失敗しました: '+e.message}}}
+ if(seq!==mqSeq)return;
+ $('#mqx-status')?.classList.remove('is-busy');
+ mqView=d;
+ if(d.query)mqSel.query=d.query;
+ mqRender();
+ mqLoadSamples();
+}
+const mqErrQuery=d=>d&&!d.ok&&d.error?(d.error.origin_query||d.error.query||d.query):'';
+const mqErrStep=d=>d&&!d.ok&&d.error?(d.error.origin_step||d.error.step||''):'';
+function mqRender(){
+ if(!mqEditing||!$('#mqx-tree'))return;
+ mqRenderTree();mqRenderOut();mqRenderSteps();mqRenderFx();mqRenderBody();mqRenderStatus();mqRenderSample();
+}
+function mqRenderTree(){
+ let d=mqView||{queries:[]},qs=d.queries||[],eq=mqErrQuery(d),sel=eq||mqSel.query||d.query,out=mqEditing.output||d.main;
+ $('#mqx-count').textContent=qs.length?`[${qs.length}]`:'';
+ let item=q=>`<button type="button" class="mqx-q${q.name===sel?' on':''}${q.name===eq?' bad':''}" data-q="${E(q.name)}" title="${E(q.name)}"><i class="mqx-ic k-${E(q.kind)}">${MQ_ICON[q.kind]||'▦'}</i><b>${E(q.name)}</b>${q.name===eq?'<em class="mqx-warn">⚠</em>':q.name===out?'<em class="mqx-outmark">出す</em>':''}</button>`;
+ let h=qs.filter(q=>q.helper),o=qs.filter(q=>!q.helper);
+ $('#mqx-tree').innerHTML=qs.length?((h.length?`<div class="mqx-group">ヘルパー クエリ [${h.length}]</div>${h.map(item).join('')}`:'')+`<div class="mqx-group">その他のクエリ [${o.length}]</div>${o.map(item).join('')}`)
+  :'<p class="mqx-empty">式を貼り付けると、ここにクエリが並びます。</p>';
+ $$('#mqx-tree .mqx-q').forEach(b=>b.onclick=()=>{if(mqFxPending())return;mqSel={query:b.dataset.q,step:''};mqPreview()});
+}
+function mqRenderOut(){
+ let d=mqView||{queries:[]},sel=$('#mqx-out');if(!sel)return;
+ let qs=(d.queries||[]).filter(q=>q.kind!=='function'&&q.kind!=='parameter');
+ sel.innerHTML=`<option value="">自動（${E(d.main||'—')}）</option>`+qs.map(q=>`<option value="${E(q.name)}">${E(q.name)}${q.helper?'（ヘルパー）':''}</option>`).join('');
+ sel.value=qs.some(q=>q.name===mqEditing.output)?mqEditing.output:'';
+}
+function mqCurQuery(){let d=mqView||{},name=(!d.ok&&mqErrQuery(d))||d.query||mqSel.query;return (d.queries||[]).find(q=>q.name===name)||null}
+function mqRenderSteps(){
+ let d=mqView||{},q=mqCurQuery(),box=$('#mqx-steps');
+ $('#mqx-steps-of').textContent=q?`（${q.name}）`:'';
+ if(!q){box.innerHTML='';return}
+ let bad=mqErrQuery(d)===q.name?q.steps.indexOf(mqErrStep(d)):-1,cur=d.ok?q.steps.indexOf(d.step):bad;
+ box.innerHTML=q.steps.map((s,i)=>`<button type="button" class="mqx-st${i===cur&&d.ok?' on':''}${i===bad?' bad':''}${bad>=0&&i>bad?' after':''}" data-s="${E(s)}" title="${E(s)}"><span>${i+1}</span><b>${E(s)}</b><em>${i===bad?'⚠':''}</em></button>`).join('');
+ $$('#mqx-steps .mqx-st').forEach(b=>b.onclick=()=>{if(mqFxPending())return;mqSel={query:q.name,step:b.dataset.s};mqPreview()});
+}
+function mqStepSpan(){
+ let d=mqView||{},q=mqCurQuery();if(!q)return null;
+ let name=d.ok?d.step:(mqErrQuery(d)===q.name?mqErrStep(d):d.step);
+ let i=q.steps.indexOf(name);if(i<0)i=q.steps.length-1;
+ let sp=q.spans&&q.spans[i];return sp?{start:sp[0],end:sp[1],step:q.steps[i]}:null;
+}
+function mqRenderFx(){
+ let fx=$('#mqx-fx'),sp=mqStepSpan();
+ mqFx=sp?{...sp,text:mqEditing.code.slice(sp.start,sp.end)}:null;
+ fx.value=mqFx?mqFx.text:'';fx.disabled=!mqFx;
+ fx.closest('.mqx-fx').classList.toggle('bad',!!(mqView&&!mqView.ok&&mqFx&&mqErrStep(mqView)===mqFx.step));
+ $('#mqx-fx-ok').disabled=true;$('#mqx-fx-no').disabled=true;mqFxGrow();
+}
+function mqFxGrow(){let fx=$('#mqx-fx');if(!fx)return;fx.style.height='auto';fx.style.height=Math.min(fx.scrollHeight,120)+'px'}
+function mqFxPending(){let fx=$('#mqx-fx');if(mqFx&&fx&&fx.value!==mqFx.text){if(confirm('数式バーの変更を当てますか？（キャンセルで元に戻します）')){mqFxApply();return true}mqFxReset()}return false}
+function mqFxApply(quiet){
+ let fx=$('#mqx-fx');if(!mqFx||fx.value===mqFx.text)return;
+ mqEditing.code=mqEditing.code.slice(0,mqFx.start)+fx.value+mqEditing.code.slice(mqFx.end);
+ mqSel.step=mqFx.step;mqSetDirty();mqSampleKey='';if(!quiet)mqPreview();
+}
+function mqFxReset(){let fx=$('#mqx-fx');if(mqFx){fx.value=mqFx.text;mqFxGrow()}$('#mqx-fx-ok').disabled=true;$('#mqx-fx-no').disabled=true}
+function mqCell(v,col){
+ if(v===null||v===undefined)return '<td class="mqx-null">null</td>';
+ if(typeof v==='object')return v.e?`<td class="mqx-err" title="${E(v.e)}">Error</td>`:`<td class="mqx-nest">${E(v.n)}</td>`;
+ if(typeof v==='number'){let pct=/Percentage/.test(col.type||'');return `<td class="mqx-num">${E(pct?(v*100).toFixed(2)+'%':Number.isInteger(v)?v:+v.toPrecision(12))}</td>`}
+ if(typeof v==='boolean')return `<td>${v?'TRUE':'FALSE'}</td>`;
+ return `<td>${E(v)}</td>`;
+}
+function mqRenderBody(){
+ let d=mqView,box=$('#mqx-body');if(!box)return;
+ if(!d){box.innerHTML=mqEditing.code.trim()?'<div class="mqx-wait">式を読んで、結果を作っています…</div>'
+   :'<div class="mqx-start"><b>式を貼り付けて始めます</b><p>「詳細エディター」に Excel の詳細エディターの中身を貼り付けます。補助のクエリ（ファイルの変換 など）も一緒に使うときは、共通設定のこの画面の「取り込み」で Excel の .odc（接続ファイルのエクスポート）かブック（.xlsx）を読み込むと、まとめて入ります。フォルダーの Excel をつなぐだけなら「フォルダーから作る」。</p></div>';return}
+ if(!d.ok){
+  let e=d.error||{},line=mqErrLine(d);
+  let lines=mqEditing.code.split('\n'),from=Math.max(1,line-6),to=Math.min(lines.length,line+12);
+  let near=line?`<pre class="mqx-near">${lines.slice(from-1,to).map((l,k)=>`<span class="${from+k===line?'bad':''}"><i>${from+k}</i>${E(l)||' '}</span>`).join('')}</pre>`:'';
+  box.innerHTML=`<div class="mqx-errbox"><b>${E(e.step?`ステップ「${e.step}」で止まりました`:'式を読めません')}${e.origin_step&&e.origin_step!==e.step?`（もとはステップ「${E(e.origin_step)}」）`:''}</b><p>${E(e.message||'')}</p><small>${E(e.query?`クエリ「${e.origin_query||e.query}」`:'')}${line?` · 式の ${line} 行目`:''}</small><div><button type="button" class="secondary" id="mqx-err-open">詳細エディターで開く${line?`（${line}行目）`:''}</button></div></div>${near}`;
+  $('#mqx-err-open').onclick=()=>mqAdvOpen(line);return;
+ }
+ if(!d.columns||!d.columns.length){
+  let q=mqCurQuery();
+  box.innerHTML=`<div class="mqx-value">${q&&q.kind==='function'?'<b>関数のクエリです</b><p>ほかのクエリから呼ばれて、ファイル1つぶんを処理します（例: each ファイルの変換([Content])）。中身を確かめるときは、ヘルパー クエリの「サンプル ファイルの変換」か、メインのクエリを選びます。</p>'
+   :`<b>${E(d.kind||'値')}</b><p>${E(typeof d.value==='object'&&d.value?(d.value.n||d.value.e||''):String(d.value??'null'))}</p>`}</div>`;return;
+ }
+ box.innerHTML=`<table class="mqx-table"><thead><tr><th class="mqx-rn"></th>${d.columns.map(c=>`<th title="${E(c.name)}（${E(c.type)}）"><i class="mqx-ty t-${E(c.out)}">${E(MQ_TYPE[c.out]||'ABC')}</i>${E(c.name)}</th>`).join('')}</tr></thead><tbody>${(d.rows||[]).map((r,i)=>`<tr><td class="mqx-rn">${i+1}</td>${r.map((v,j)=>mqCell(v,d.columns[j])).join('')}</tr>`).join('')}</tbody></table>`;
+}
+function mqErrLine(d){
+ let e=d.error||{};if(e.line)return e.line;
+ let qn=mqErrQuery(d),q=(d.queries||[]).find(x=>x.name===qn);if(!q)return 0;
+ let i=q.steps.indexOf(mqErrStep(d));let sp=q.spans&&q.spans[i>=0?i:0];if(!sp)return 0;
+ return mqEditing.code.slice(0,sp[0]).split('\n').length;
+}
+function mqRenderStatus(){
+ let d=mqView,box=$('#mqx-status');if(!box)return;
+ if(!d){box.innerHTML='<span>まだ確かめていません</span>';box.className='mqx-status';return}
+ let bits=[];
+ if(d.ok&&d.columns&&d.columns.length){bits.push(`${d.columns.length} 列, ${d.row_count} 行`);if(d.row_count>(d.rows||[]).length)bits.push(`先頭 ${d.rows.length} 行を表示`);if(d.error_cells)bits.push(`誤りのセル ${d.error_cells}（出すときは空）`)}
+ else if(!d.ok)bits.push(`止まりました: クエリ「${mqErrQuery(d)}」${mqErrStep(d)?`のステップ「${mqErrStep(d)}」`:''}`);
+ bits.push('各シート・CSV の先頭 1000 行で下読み（実行ではすべて読みます）');
+ box.className='mqx-status'+(d.ok?(d.error_cells?' warn':''):' bad');
+ box.innerHTML=`<span>${E(bits.join(' · '))}</span><span class="mqx-sp"></span><span>${d.elapsed!=null?d.elapsed+'秒':''}</span>`;
+ let n=$('#mqx-notes'),notes=(d.notes||[]).filter(x=>!/先頭 \d+ 行だけを読んで/.test(x));
+ n.hidden=!notes.length;n.innerHTML=notes.map(x=>`<p>${E(x)}</p>`).join('');
+}
+/* 見本のファイル: サンプル ファイルの最後のステップ（…{番号}[Content]）の番号を書き換える（Power Query で見本を変えるのと同じ） */
+async function mqLoadSamples(){
+ let key=mqEditing.code;if(key===mqSampleKey){mqRenderSample();return}
+ mqSampleKey=key;mqSamples=null;
+ if(!(mqView&&(mqView.queries||[]).some(q=>q.helper))){mqRenderSample();return}
+ try{mqSamples=await fetch('/api/m-query/samples',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:key,name:mqEditing.name})}).then(r=>r.json())}catch{mqSamples=null}
+ mqRenderSample();
+}
+function mqRenderSample(){
+ let box=$('#mqx-sample');if(!box)return;
+ let q=mqCurQuery(),s=mqSamples;
+ let show=!!(s&&s.ok&&q&&q.helper&&q.kind!=='function'&&(s.files||[]).length);
+ box.hidden=!show;if(!show)return;
+ $('#mqx-sample-sel').innerHTML=s.files.map(f=>`<option value="${f.i}" title="${E(f.folder)}">${f.i+1}. ${E(f.name)}</option>`).join('')+(s.total>s.files.length?`<option disabled>ほか ${s.total-s.files.length} 件</option>`:'');
+ $('#mqx-sample-sel').value=String(s.index);
+}
+function mqSampleApply(){
+ let s=mqSamples,v=$('#mqx-sample-sel').value;if(!s||!s.span)return;
+ mqEditing.code=mqEditing.code.slice(0,s.span[0])+v+mqEditing.code.slice(s.span[1]);
+ mqSetDirty();mqSampleKey='';mqPreview();
+}
+/* 詳細エディター（式の全体）。止まっていれば、その行を選んで開く */
+function mqAdvOpen(line){
+ let dl=$('#mq-adv-dialog'),ta=$('#mq-adv-text');if(!dl||!ta)return;
+ ta.value=mqEditing?mqEditing.code:'';
+ $('#mq-adv-title').textContent=mqEditing?.name||'クエリ';
+ dl.showModal();ta.focus();
+ line=line||(mqView&&!mqView.ok?mqErrLine(mqView):0);
+ if(line){let lines=ta.value.split('\n'),a=lines.slice(0,line-1).join('\n').length+(line>1?1:0),b=a+(lines[line-1]||'').length;ta.setSelectionRange(a,b);ta.scrollTop=Math.max(0,(line-4)*18)}
+ mqAdvPos();
+}
+function mqAdvPos(){let ta=$('#mq-adv-text');if(!ta)return;let pre=ta.value.slice(0,ta.selectionStart).split('\n');$('#mq-adv-pos').textContent=`${pre.length}行 ${pre[pre.length-1].length+1}文字目 · 全 ${ta.value.split('\n').length} 行`}
+if($('#mq-adv-text')){let ta=$('#mq-adv-text');['keyup','click','input'].forEach(ev=>ta.addEventListener(ev,mqAdvPos));
+ ta.addEventListener('keydown',e=>{if(e.key==='Tab'&&!e.shiftKey){e.preventDefault();let a=ta.selectionStart,b=ta.selectionEnd;ta.value=ta.value.slice(0,a)+'    '+ta.value.slice(b);ta.setSelectionRange(a+4,a+4)}})}
+if($('#mq-adv-ok'))$('#mq-adv-ok').onclick=()=>{
+ let v=$('#mq-adv-text').value;$('#mq-adv-dialog').close();
+ if(!mqEditing||v===mqEditing.code)return;
+ mqEditing.code=v.replace(/\r\n?/g,'\n');mqSetDirty();mqSel={query:'',step:''};mqView=null;mqSampleKey='';mqPreview();
+};
+if($('#mq-adv-cancel'))$('#mq-adv-cancel').onclick=()=>$('#mq-adv-dialog').close();
+if($('#mq-adv-close'))$('#mq-adv-close').onclick=()=>$('#mq-adv-dialog').close();
+/* フォルダーから作る: フォルダー・シート・ファイル名の絞り込みから、「フォルダーから結合」と同じ道筋の式を書く */
+function mqBuildOpen(){
+ let dl=$('#mq-build-dialog');if(!dl)return;
+ $('#mqb-note').textContent='フォルダーを選ぶと、中の Excel とシートの候補を読みます。';
+ dl.showModal();
+}
+async function mqBuildInspect(){
+ let f=$('#mqb-folder').value.trim();if(!f){toast('フォルダーを選んでください');return}
+ $('#mqb-note').textContent='フォルダーの中を見ています…';
+ let d=await fetch('/api/m-query/folder',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({folder:f})}).then(r=>r.json()).catch(e=>({ok:false,error:e.message}));
+ if(!d.ok){$('#mqb-note').textContent=d.error||'読めませんでした';return}
+ let sel=$('#mqb-sheet'),cur=sel.value;
+ sel.innerHTML='<option value="">各ブックの先頭のシート</option>'+(d.sheets||[]).map(x=>`<option>${E(x)}</option>`).join('');
+ if((d.sheets||[]).includes(cur))sel.value=cur;else if(d.sheets&&d.sheets.length)sel.value=d.sheets[0];
+ $('#mqb-note').textContent=`Excel ${d.total} 件（${(d.files||[]).slice(0,3).join('・')}${d.total>3?' ほか':''}）。シートは先頭の5ブックから集めました。`;
+}
+if($('#mqb-pick'))$('#mqb-pick').onclick=async()=>{let p=await browse('folder',$('#mqb-folder').value);if(p){$('#mqb-folder').value=p;mqBuildInspect()}};
+if($('#mqb-folder'))$('#mqb-folder').onchange=mqBuildInspect;
+if($('#mqb-cancel'))$('#mqb-cancel').onclick=()=>$('#mq-build-dialog').close();
+if($('#mqb-close'))$('#mqb-close').onclick=()=>$('#mq-build-dialog').close();
+if($('#mqb-ok'))$('#mqb-ok').onclick=async()=>{
+ let folder=$('#mqb-folder').value.trim();if(!folder){toast('フォルダーを選んでください');return}
+ let d=await fetch('/api/m-query/build',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({folder,sheet:$('#mqb-sheet').value,pattern:$('#mqb-pattern').value.trim(),
+  header:$('#mqb-header').checked,file_column:$('#mqb-filecol').checked,subfolders:$('#mqb-sub').checked})}).then(r=>r.json()).catch(e=>({ok:false,error:e.message}));
+ if(!d.ok){toast(d.error||'式を作れませんでした');return}
+ if(mqEditing.code.trim()&&!confirm('いまの式を、作った式で置き換えますか？'))return;
+ $('#mq-build-dialog').close();
+ mqEditing.code=d.code;mqSetDirty();mqSel={query:'',step:''};mqView=null;mqSampleKey='';mqPreview();
+};
+async function mqSave(closing){
+ if(!mqEditing)return false;
+ if(!mqEditing.name.trim()){mqMsg('名前を入れてください（右の「クエリの設定」）');$('#mqx-name')?.focus();return false}
+ let r=await fetch('/api/m-queries',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(mqEditing)}),d=await r.json().catch(()=>({}));
+ if(!r.ok||!d.ok){
+  mqMsg('保存できませんでした: '+(d.error||r.status),closing?'<button type="button" class="secondary" id="mqe-msg-discard">保存せずに閉じる</button>':'');
+  let b=$('#mqe-msg-discard');if(b)b.onclick=()=>mqClose(false);
+  return false;
+ }
+ mqEditing.id=d.query.id;mqSetDirty(false);mqMsg('');
+ toast(`「${d.query.name}」を保存しました`+((mqView?.missing||[]).length?'（足りないクエリがあります）':''));
+ return true;
+}
+async function mqDelete(){
+ if(!mqEditing)return;
+ if(mqEditing.id){
+  if(!confirm(`クエリ「${mqEditing.name}」を消しますか？`))return;
+  let r=await fetch('/api/m-queries/'+encodeURIComponent(mqEditing.id),{method:'DELETE'}),d=await r.json().catch(()=>({}));
+  if(!d.ok){mqMsg(d.error||'消せませんでした');return}
+  toast('消しました');
+ }
+ mqEditing.id='';mqAfterClose=null;mqClose(false);
+}
+if($('#mq-search'))$('#mq-search').oninput=e=>{mqSearch=e.target.value;mqRenderList()};
+const mqNew=()=>({id:'',name:'新しいクエリ',description:'',code:'',output:''});
+if($('#mq-add'))$('#mq-add').onclick=()=>mqOpen(mqNew());
+if($('#mq-guide-new'))$('#mq-guide-new').onclick=()=>mqOpen(mqNew());
+if($('#mq-guide-import'))$('#mq-guide-import').onclick=()=>$('#mq-file')?.click();
+if($('#mq-guide-build'))$('#mq-guide-build').onclick=()=>{mqOpen(mqNew());$('#mq-adv-dialog')?.close();mqBuildOpen()};
+if($('#mq-export'))$('#mq-export').onclick=()=>{location.href='/api/m-queries/export'};
+if($('#mqe-close'))$('#mqe-close').onclick=()=>mqClose(true);
+if($('#mqe-discard'))$('#mqe-discard').onclick=()=>{if(!mqDirty||confirm('変更を保存せずに閉じますか？'))mqClose(false)};
+if($('#mqe-adv'))$('#mqe-adv').onclick=()=>mqAdvOpen();
+if($('#mqe-build'))$('#mqe-build').onclick=mqBuildOpen;
+if($('#mqe-check'))$('#mqe-check').onclick=()=>mqPreview();
+/* Esc でも閉じて保存（窓を消すだけにすると、直した式を失う） */
+if($('#mq-editor'))$('#mq-editor').addEventListener('cancel',e=>{e.preventDefault();mqClose(true)});
+if($('#mq-import'))$('#mq-import').onclick=()=>$('#mq-file')?.click();
+if($('#mq-file'))$('#mq-file').onchange=async e=>{
+ let f=e.target.files&&e.target.files[0];e.target.value='';if(!f)return;
+ let r=await fetch('/api/m-queries/import?filename='+encodeURIComponent(f.name),{method:'POST',body:f}),d=await r.json().catch(()=>({}));
+ if(!d.ok){toast(d.error||'取り込めませんでした');return}
+ await mqLoad();mqRenderList();
+ let name=(d.added||[])[0]||(d.replaced||[])[0];
+ toast(`取り込みました（追加 ${(d.added||[]).length}・置き換え ${(d.replaced||[]).length}）`+((d.skipped||[]).length?` / 読めなかったもの ${d.skipped.length}`:''));
+ let it=mqCache.find(x=>x.name===name);if(it)mqOpen(it)
+};
+/* 対象の編集: 入力「Power Query」で、どのクエリの・どれを出すかを選ぶ */
+async function fillQueryPicker(selected,out){
+ let sel=$('#m-query');if(!sel)return;
+ let items=await mqLoad();
+ sel.innerHTML='<option value="">選択してください</option>'+items.map(x=>`<option value="${E(x.id)}">${E(x.name)}（クエリ ${(x.queries||[]).length}本）</option>`).join('');
+ sel.value=selected||'';
+ let cur=items.find(x=>x.id===sel.value),o=$('#m-query-out');
+ if(o){let qs=(cur?.queries||[]);o.innerHTML=`<option value="">クエリの既定（${E(cur?(cur.output||cur.main||''):'—')}）</option>`+qs.map(n=>`<option>${E(n)}</option>`).join('');
+  o.value=out!==undefined?(qs.includes(out)?out:''):(qs.includes(o.dataset.keep||'')?o.dataset.keep:'')}
+ let note=$('#m-query-note'),btn=$('#m-query-open');
+ if(btn)btn.textContent=cur?'クエリを開く':'新しく作る';  // 選んでいないときは、開くのではなく作る
+ if(note)note.textContent=cur?(cur.description||`${cur.name}: クエリ ${(cur.queries||[]).length}本`)
+  :(items.length?'読む場所と整え方は「Power Query」で決めます。上から選ぶか、「新しく作る」で作ってください。':'クエリがまだありません。「新しく作る」で作るか、共通設定の「Power Query」で Excel の .odc・ブックを取り込んでください。');
+}
+if($('#m-query'))$('#m-query').onchange=()=>{fillQueryPicker($('#m-query').value,'');dirty()};
+if($('#m-query-out'))$('#m-query-out').onchange=()=>{$('#m-query-out').dataset.keep=$('#m-query-out').value;dirty()};
+/* 対象の編集を開いたまま、その上にエディターを開く。閉じたら（保存したクエリを）選び直す */
+if($('#m-query-open'))$('#m-query-open').onclick=async()=>{let id=$('#m-query').value;await mqLoad();
+ let it=mqCache.find(x=>x.id===id)||mqNew();
+ mqOpen(it,saved=>{if(saved){fillQueryPicker(saved.id,$('#m-query-out')?.value||'');dirty()}})};
