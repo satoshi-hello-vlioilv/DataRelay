@@ -21,6 +21,7 @@ import contextlib,io,re,shutil
 from flask import send_file
 
 import app
+import urllib.parse
 app=app.app          # 受け口を足す先（Flask本体）。以降 @app.get(...) は分ける前と同じ書き方
 import navi_bundle   # 登録内容の持ち出し・持ち込みの決まり（DBも画面も触らない）
 import navi_join     # キーの見当を付けるところだけ、直接呼ぶ（本体を経由する用が無い）
@@ -33,6 +34,7 @@ import navi_paths
 import navi_shortcut # 起動アイコン（このPCの写しへ向ける）
 import navi_secret   # Navigator への接続情報（このPCの置き場・1.99.0）
 import navi_defaults # 置き場の既定の設定（新しいPCへ渡す最初の設定・2.0.0）
+import navi_mrun     # クエリ（Power Query の M の式）の出し入れ・下読み・式を作る（2.4.0）
 
 from app import (
     variant_jobs,
@@ -87,7 +89,9 @@ from app import (
     OUTPUT_FORMAT_LABEL,
     COLUMN_TYPES, COLUMN_TYPE_LABEL, COLUMN_TYPE_NOTE, format_keeps_types, normalize_column_type,
     STAMP_FORMAT_SAMPLES, DATE_FORMAT_DEFAULT, DATETIME_FORMAT_DEFAULT, MAX_SCALE,
-    text_layout_column_types)
+    text_layout_column_types,
+    LOCAL_SOURCES, load_m_queries, find_m_query, save_m_query, m_query_usage, delete_m_query,
+    m_queries_export, m_queries_import, normalize_m_query)
 
 # 画面のひな形（/ → templates/index.html）と static/ は窓がディスクから直接返す（中身の起動を待たずに画面が出る）。
 
@@ -1473,6 +1477,7 @@ def _apply_defaults(d,mode,label):
   # 順番が要る。対象は読取マスタ・結合マスタを名前で引き、予定は対象を名前で引く（持ち込みと同じ）
   if pick['layouts'] and d.get('layouts'):_import_layouts(only('layouts',d['layouts'],pick['layouts']))
   if pick['recipes'] and d.get('recipes'):_import_recipes(only('recipes',d['recipes'],pick['recipes']))
+  if pick.get('queries') and d.get('queries'):_import_queries(only('queries',d['queries'],pick['queries']))
   c=load()
   if pick['jobs'] and d.get('jobs'):
    items,_bad=navi_bundle.jobs_import(only('jobs',d['jobs'],pick['jobs']))
@@ -1580,7 +1585,7 @@ def defaults_save():
  payloads=_bundle_payloads(list(navi_defaults.PARTS),c,ids or ['-none-'])
  if not ids:payloads['jobs']=navi_bundle.jobs_export([]);payloads['schedules']=navi_bundle.schedules_export([])
  if not data.get('schedules',True):payloads['schedules']=navi_bundle.schedules_export([])
- for part,key in (('layouts','layouts'),('recipes','recipes')):
+ for part,key in (('layouts','layouts'),('recipes','recipes'),('queries','queries')):
   names=chosen(part,navi_defaults.names_of(part,_bundle_payloads([part],c)[part]))
   full=_bundle_payloads([part],c)[part]
   payloads[part]=dict(full,**{key:[x for x in full.get(key) or [] if x.get('name') in set(names)]})
@@ -1946,7 +1951,7 @@ def validate():
   # 結合(join)も手元のファイルから作るので、RNEは持たない。text だけを外していたため、
   # 結合対象が1件でもあると既定の .\rne が「ありません」として error で積まれ、診断は
   # 永久に「修正が必要な項目があります」になっていた（しかも利用者には直しようがない）。
-  if normalize_job_source(j.get('source')) in ('text','join'):continue
+  if normalize_job_source(j.get('source')) in LOCAL_SOURCES:continue
   rp=resolve_rne_path(j,c);exists=rp.is_file();job_results.append((j,rp,exists))
  # 置き場に無く、ほかの基準（データの基準・アプリの場所）の物を使っているときは注意にする（2.2.4）。
  # 動きはするが、共有と手元に同じ名前の物があると、古いほうを読んでいても気づけない。
@@ -1980,6 +1985,24 @@ def validate():
    add('ファイル結合',j.get('name','対象')+' 結合マスタ',ok_all,
        (f'{rp["name"]} / {len(rp["sources"])}ファイル / つなぎ目 {len(rp["joins"])}' if ok_all
         else '／'.join(bad+([f'見つからないファイル: '+'、'.join(missing[:3])] if missing else []))),
+       job_id=j.get('id'),item='',needs_reselect=bool(missing))
+  add_folder('出力先',j.get('name','対象')+' 出力先',j.get('output_folder') or c.get('default_output_folder','.\\output'))
+ # クエリ（Power Query の M の式。2.4.0）の対象。要るのは「読める式」と、式に書いた場所（フォルダー・ファイル）が在ること。
+ for j in c.get('jobs',[]):
+  if normalize_job_source(j.get('source'))!='mquery':continue
+  q=find_m_query(j.get('query_id'))
+  if not q:
+   add('クエリ',j.get('name','対象')+' クエリ',False,'クエリが選ばれていません（または削除されています）',job_id=j.get('id'),item='')
+  else:
+   bad=navi_mrun.validate_query(q)
+   files,folders=navi_mrun.literal_paths(q['code'])
+   missing=[x for x in files if not Path(navi_mrun.resolve_m_path(x)).is_file()]+[x for x in folders if not Path(navi_mrun.resolve_m_path(x)).is_dir()]
+   try:out_name=navi_mrun.output_name(navi_mrun.document(q),q,j) if not bad else ''
+   except Exception as e:bad.append(str(e));out_name=''
+   ok_all=not bad and not missing
+   add('クエリ',j.get('name','対象')+' クエリ',ok_all,
+       (f'{q["name"]} / 出すクエリ {out_name} / 読む場所 {len(files)+len(folders)}か所' if ok_all
+        else '／'.join(bad+([f'見つからない場所: '+'、'.join(missing[:3])] if missing else []))),
        job_id=j.get('id'),item='',needs_reselect=bool(missing))
   add_folder('出力先',j.get('name','対象')+' 出力先',j.get('output_folder') or c.get('default_output_folder','.\\output'))
  # 固定長テキストの対象。要るのは「読むファイル」と「切り方（読取マスタ）」の2つだけ。
@@ -2310,6 +2333,119 @@ def join_recipes_import_file():
  return jsonify(ok=True,added=added,replaced=replaced,skipped=bad)
 
 
+# ==== クエリ（Power Query の M の式。2.4.0）=================================
+# 読取マスタ・結合マスタと同じく、名前を付けて別に持ち、対象から選ぶ。言語は navi_m、出し入れは navi_mrun。
+
+@app.get('/api/m-queries')
+def m_queries_list():
+ items=load_m_queries();c=load()
+ for x in items:
+  x['used_by']=m_query_usage(x['id'],c)
+  try:
+   doc=navi_mrun.document(x);x['queries']=doc.names();x['main']=doc.main_name()
+  except Exception as e:
+   x['queries']=[];x['main']='';x['broken']=str(e)
+ return jsonify(ok=True,items=items)
+
+@app.post('/api/m-queries')
+def m_queries_save():
+ d=request.get_json(force=True) or {}
+ try:saved=save_m_query(d)
+ except ValueError as e:return jsonify(ok=False,error=str(e)),400
+ except Exception as e:
+  log.exception('M_QUERY_SAVE_FAILED');return jsonify(ok=False,error=str(e)),500
+ return jsonify(ok=True,query=saved,used_by=m_query_usage(saved['id']))
+
+@app.delete('/api/m-queries/<query_id>')
+def m_queries_delete(query_id):
+ try:gone=delete_m_query(query_id)
+ except ValueError as e:return jsonify(ok=False,error=str(e)),409
+ return jsonify(ok=bool(gone),error='' if gone else 'そのクエリはありません')
+
+@app.get('/api/m-queries/export')
+def m_queries_export_file():
+ want=[x for x in (request.args.get('ids') or '').split(',') if x.strip()]
+ items=[x for x in load_m_queries() if not want or x['id'] in want]
+ stamp=datetime.now().strftime('%Y%m%d_%H%M%S')
+ if str(request.args.get('format') or 'json').lower()=='m' and len(items)==1:
+  # 1件だけなら、式そのもの（.pq）でも出せる。Excel の詳細エディターへそのまま貼り戻せる
+  name=f'{_safe_file_label(items[0]["name"])}.pq'
+  r=app.make_response(items[0]['code'])
+  r.headers['Content-Type']='text/plain; charset=utf-8'
+ else:
+  name=f'm-queries-{stamp}.json'
+  r=app.make_response(json.dumps(m_queries_export(items),ensure_ascii=False,indent=1))
+  r.headers['Content-Type']='application/json; charset=utf-8'
+ r.headers['Content-Disposition']="attachment; filename*=UTF-8''"+urllib.parse.quote(name)
+ log.info('M_QUERY_EXPORT count=%s file=%s',len(items),name)
+ return r
+
+@app.post('/api/m-queries/import')
+def m_queries_import_file():
+ """Excel が書いた .odc・.xlsx・.xlsm（中のクエリ一式を1つに）、持ち出したJSON（何件でも）、式そのもののテキスト
+ （.pq・.m・.txt。1件）を受ける。同じ名前は置き換える。"""
+ blob,fname=_uploaded()
+ items,bad=navi_mrun.import_file(blob,fname)
+ if not items:return jsonify(ok=False,error='／'.join(bad) or '取り込めるクエリがありません'),400
+ r=_import_queries_items(items)
+ log.info('M_QUERY_IMPORT 追加=%s 置き換え=%s 読めなかったもの=%s',r['added'],r['replaced'],len(bad))
+ return jsonify(ok=True,added=r['added'],replaced=r['replaced'],skipped=bad)
+
+def _import_queries_items(items):
+ have={x['name']:x['id'] for x in load_m_queries()}
+ added=[];replaced=[]
+ for q in items:
+  if q['name'] in have:q['id']=have[q['name']];replaced.append(q['name'])
+  else:q['id']='';added.append(q['name'])
+  save_m_query(q)
+ return {'added':added,'replaced':replaced}
+
+def _import_queries(payload):
+ items,bad=m_queries_import(payload)
+ r=_import_queries_items(items)
+ return dict(r,skipped=bad)
+
+@app.post('/api/m-query/preview')
+def m_query_preview():
+ """画面の下読み。式・どのクエリ・どのステップ → クエリの並び・ステップ・その時点の表（先頭 200 行）。"""
+ d=request.get_json(force=True) or {}
+ try:
+  out=navi_mrun.preview(str(d.get('code') or ''),str(d.get('name') or 'クエリ1'),d.get('query') or None,
+                        d.get('step') or None,full=bool(d.get('full')))
+ except Exception as e:
+  log.exception('M_QUERY_PREVIEW_FAILED')
+  return jsonify(ok=False,error={'message':f'下読みに失敗しました: {e}'}),500
+ if not out.get('ok'):
+  log.info('M_QUERY_PREVIEW_ERROR query=%s step=%s error=%s',out.get('query'),out.get('step'),(out.get('error') or {}).get('message'))
+ return jsonify(out)
+
+@app.post('/api/m-query/samples')
+def m_query_samples():
+ """見本のファイルの候補（サンプル ファイルのクエリの元の表のファイル）と、式の中の書き換える番号の場所。"""
+ d=request.get_json(force=True) or {}
+ try:return jsonify(navi_mrun.sample_choices(str(d.get('code') or ''),str(d.get('name') or 'クエリ1'),d.get('query') or None))
+ except Exception as e:
+  log.exception('M_QUERY_SAMPLES_FAILED');return jsonify(ok=False,error=str(e)),500
+
+@app.post('/api/m-query/folder')
+def m_query_folder():
+ """フォルダーの中の Excel と、シートの候補（「フォルダーから作る」で選ぶため）。"""
+ d=request.get_json(force=True) or {}
+ folder=str(d.get('folder') or '').strip()
+ if not folder:return jsonify(ok=False,error='フォルダーを選んでください'),400
+ return jsonify(navi_mrun.inspect_folder(folder))
+
+@app.post('/api/m-query/build')
+def m_query_build():
+ """フォルダー・シート・絞り込みから、Power Query の「フォルダーから結合」と同じ道筋の式を書く。"""
+ d=request.get_json(force=True) or {}
+ folder=str(d.get('folder') or '').strip()
+ if not folder:return jsonify(ok=False,error='フォルダーを選んでください'),400
+ code=navi_mrun.build_folder_query(folder,sheet=str(d.get('sheet') or '').strip(),pattern=str(d.get('pattern') or '').strip(),
+                                   header=d.get('header',True) is not False,file_column=d.get('file_column',True) is not False,
+                                   subfolders=d.get('subfolders',True) is not False)
+ return jsonify(ok=True,code=code)
+
 # ---- 登録内容の持ち出し・持ち込み（一式／部分） -------------------------------
 # 別のPCへ移すとき、新しく組むとき、控えを取っておくとき。画面を見ながら打ち直すのは
 # 時間がかかるうえに必ず取りこぼす。決まり（どういう形で持ち出すか）は navi_bundle に
@@ -2333,6 +2469,9 @@ def _layout_names():
 def _recipe_names():
  return {x['id']:x['name'] for x in load_join_recipes()}
 
+def _query_names():
+ return {x['id']:x['name'] for x in load_m_queries()}
+
 def _bundle_payloads(parts,c=None,job_ids=None):
  """選ばれた部分ぶんの中身を作る。対象は、選ばれたものだけに絞れる。"""
  c=c if c is not None else load()
@@ -2342,8 +2481,8 @@ def _bundle_payloads(parts,c=None,job_ids=None):
  jobs=[j for j in c['jobs'] if not want or j['id'] in want]
  out={}
  if 'jobs' in parts:
-  ln=_layout_names();rn=_recipe_names()
-  out['jobs']=navi_bundle.jobs_export(jobs,lambda i:ln.get(i,''),lambda i:rn.get(i,''))
+  ln=_layout_names();rn=_recipe_names();qn=_query_names()
+  out['jobs']=navi_bundle.jobs_export(jobs,lambda i:ln.get(i,''),lambda i:rn.get(i,''),lambda i:qn.get(i,''))
  if 'schedules' in parts:out['schedules']=navi_bundle.schedules_export(jobs)
  if 'layouts' in parts:
   lays=load_text_layouts()
@@ -2357,6 +2496,10 @@ def _bundle_payloads(parts,c=None,job_ids=None):
   recs=load_join_recipes()
   if want:recs=[x for x in recs if x['id'] in {j.get('recipe_id') for j in jobs}]
   out['recipes']=join_recipes_export(recs)
+ if 'queries' in parts:
+  qs=load_m_queries()
+  if want:qs=[x for x in qs if x['id'] in {j.get('query_id') for j in jobs}]
+  out['queries']=m_queries_export(qs)
  return out
 
 @app.get('/api/bundle/info')
@@ -2365,7 +2508,7 @@ def bundle_info():
  c=load()
  counts={'jobs':len(c['jobs']),
          'schedules':sum(len(j.get('schedules') or []) for j in c['jobs']),
-         'layouts':len(load_text_layouts()),'recipes':len(load_join_recipes())}
+         'layouts':len(load_text_layouts()),'recipes':len(load_join_recipes()),'queries':len(load_m_queries())}
  return jsonify(ok=True,parts=[{'part':p,'label':navi_bundle.PART_LABEL[p],'file':navi_bundle.PART_FILE[p],
                                 'count':counts.get(p,0)} for p in navi_bundle.PARTS],counts=counts)
 
@@ -2424,6 +2567,7 @@ def _merge_jobs(c,items):
  """
  lay={x['name']:x['id'] for x in load_text_layouts()}
  rec={x['name']:x['id'] for x in load_join_recipes()}
+ qry={x['name']:x['id'] for x in load_m_queries()}
  spare={}
  for i,y in enumerate(c['jobs']):spare.setdefault(str(y.get('name') or ''),[]).append(i)
  dup=sorted({n for n,v in spare.items() if len(v)>1})
@@ -2439,6 +2583,10 @@ def _merge_jobs(c,items):
   if rn:
    j['recipe_id']=rec.get(rn,'')
    if rn not in rec:notes.append(f'「{name}」が使う結合マスタ「{rn}」がこのPCにありません')
+  qn=str(j.pop('mquery_name','') or '')
+  if qn:
+   j['query_id']=qry.get(qn,'')
+   if qn not in qry:notes.append(f'「{name}」が使うクエリ「{qn}」がこのPCにありません')
   seats=spare.get(name) or []
   if seats:
    at=seats.pop(0);old=c['jobs'][at]
@@ -2497,6 +2645,7 @@ def bundle_import():
  with settings_sync_lock:
   if 'layouts' in bodies:result['layouts']=_import_layouts(bodies['layouts'])
   if 'recipes' in bodies:result['recipes']=_import_recipes(bodies['recipes'])
+  if 'queries' in bodies:result['queries']=_import_queries(bodies['queries'])
   if 'jobs' in bodies or 'schedules' in bodies:
    c=load()
    if 'jobs' in bodies:

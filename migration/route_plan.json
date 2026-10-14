@@ -296,6 +296,51 @@
    "to": "python",
    "note": "1.99.0 で足した。symnavim.conf の中身をこのPCの置き場へ取り込む"
   },
+  "GET /api/m-queries": {
+   "area": "クエリ（Power Query）",
+   "to": "python",
+   "note": "2.4.0"
+  },
+  "POST /api/m-queries": {
+   "area": "クエリ（Power Query）",
+   "to": "python",
+   "note": "2.4.0"
+  },
+  "DELETE /api/m-queries/<query_id>": {
+   "area": "クエリ（Power Query）",
+   "to": "python",
+   "note": "2.4.0"
+  },
+  "GET /api/m-queries/export": {
+   "area": "クエリ（Power Query）",
+   "to": "python",
+   "note": "2.4.0"
+  },
+  "POST /api/m-queries/import": {
+   "area": "クエリ（Power Query）",
+   "to": "python",
+   "note": "2.4.0"
+  },
+  "POST /api/m-query/build": {
+   "area": "クエリ（Power Query）",
+   "to": "python",
+   "note": "2.4.0"
+  },
+  "POST /api/m-query/folder": {
+   "area": "クエリ（Power Query）",
+   "to": "python",
+   "note": "2.4.0"
+  },
+  "POST /api/m-query/preview": {
+   "area": "クエリ（Power Query）",
+   "to": "python",
+   "note": "2.4.0"
+  },
+  "POST /api/m-query/samples": {
+   "area": "クエリ（Power Query）",
+   "to": "python",
+   "note": "2.4.0"
+  },
   "GET /api/machine-paths": {
    "area": "設定・対象の登録",
    "to": "python",

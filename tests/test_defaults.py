@@ -43,7 +43,7 @@ class FolderTest(unittest.TestCase):
   d=D.read(self.base)
   self.assertEqual(d['manifest']['id'],man['id'])
   s=D.summary(d)
-  self.assertEqual(s['counts'],{'jobs':2,'schedules':1,'layouts':0,'recipes':0,'rne':2})
+  self.assertEqual(s['counts'],{'jobs':2,'schedules':1,'layouts':0,'recipes':0,'queries':0,'rne':2})
   self.assertEqual((s['parts']['jobs'],s['parts']['rne'],s['settings']),(['A','B'],['A.RNE','B.RNE'],True))
   self.assertEqual(json.loads((self.base/'defaults'/'jobs.json').read_text(encoding='utf-8'))['kind'],B.JOBS_KIND,'持ち出しと同じ形（メモ帳で読める）')
   self.assertEqual(sorted(p.name for p in self.base.iterdir()),['defaults'],'途中のフォルダーを残さない')

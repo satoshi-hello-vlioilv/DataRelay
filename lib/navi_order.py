@@ -75,19 +75,32 @@ def job_inputs(job,cfg,find_recipe,resolve_source):
  if not r:return []
  return recipe_sources(r,resolve_source)
 
-def dependencies(jobs,cfg,find_recipe,resolve_source,resolve_outputs):
+def dependencies(jobs,cfg,find_recipe,resolve_source,resolve_outputs,query_inputs=None):
  """対象id → その材料を作る対象idの集合。
 
  自分で自分の材料を作っている（出力を自分で読む）ときは、依存に数えない ――
  数えると永遠に自分を待つことになる。積み増しの結合はそういう作りになりうる。
+
+ クエリ（2.4.0）は、式に書いた File.Contents のファイルと、Folder.Files のフォルダー（その中に出力を置く
+ 対象すべて）を材料として数える（query_inputs(job) → (ファイル, フォルダー)）。
  """
  owners=output_owners(cfg,resolve_outputs)
  deps={}
  for j in jobs:
   need=set()
-  for p in job_inputs(j,cfg,find_recipe,resolve_source):
+  files=job_inputs(j,cfg,find_recipe,resolve_source)
+  folders=[]
+  if query_inputs and str(j.get('source') or '')=='mquery':
+   try:files,folders=query_inputs(j)
+   except Exception:files,folders=[],[]
+  for p in files:
    for owner in owners.get(_key(p),[]):
     if owner['id']!=j['id']:need.add(owner['id'])
+  for f in folders:
+   head=_key(f).rstrip('/')+'/'
+   for k,v in owners.items():
+    if k.startswith(head):
+     need.update(o['id'] for o in v if o['id']!=j['id'])
   deps[j['id']]=need
  return deps
 

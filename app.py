@@ -341,6 +341,7 @@ def _settings_schema():
   CREATE TABLE IF NOT EXISTS schedules (id TEXT PRIMARY KEY,job_id TEXT NOT NULL,display_order INTEGER NOT NULL DEFAULT 0,enabled INTEGER NOT NULL DEFAULT 1,name TEXT NOT NULL,schedule_type TEXT NOT NULL,time_value TEXT,interval_minutes INTEGER,weekdays_json TEXT,month_days_json TEXT,dates_json TEXT,updated_at TEXT NOT NULL,FOREIGN KEY(job_id) REFERENCES jobs(id) ON DELETE CASCADE);
   CREATE TABLE IF NOT EXISTS scheduler_state (state_key TEXT PRIMARY KEY,state_value TEXT NOT NULL,updated_at TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS join_recipes (id TEXT PRIMARY KEY,display_order INTEGER NOT NULL DEFAULT 0,name TEXT NOT NULL,description TEXT NOT NULL DEFAULT '',sources_json TEXT NOT NULL DEFAULT '[]',joins_json TEXT NOT NULL DEFAULT '[]',columns_json TEXT NOT NULL DEFAULT '[]',updated_at TEXT NOT NULL);
+  CREATE TABLE IF NOT EXISTS m_queries (id TEXT PRIMARY KEY,display_order INTEGER NOT NULL DEFAULT 0,name TEXT NOT NULL,description TEXT NOT NULL DEFAULT '',code TEXT NOT NULL DEFAULT '',output_query TEXT NOT NULL DEFAULT '',updated_at TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS text_layouts (id TEXT PRIMARY KEY,display_order INTEGER NOT NULL DEFAULT 0,name TEXT NOT NULL,description TEXT NOT NULL DEFAULT '',encoding TEXT NOT NULL DEFAULT 'cp932',unit TEXT NOT NULL DEFAULT 'byte',trim TEXT NOT NULL DEFAULT 'both',skip_head INTEGER NOT NULL DEFAULT 0,skip_tail INTEGER NOT NULL DEFAULT 0,skip_blank INTEGER NOT NULL DEFAULT 1,header_row INTEGER NOT NULL DEFAULT 0,columns_json TEXT NOT NULL DEFAULT '[]',sample_path TEXT NOT NULL DEFAULT '',updated_at TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS schema_info (key TEXT PRIMARY KEY,value TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS job_runs (job_id TEXT PRIMARY KEY,job_name TEXT,finished_at TEXT,status TEXT,trigger TEXT,detail TEXT,rows INTEGER,cols INTEGER,output_file TEXT,updated_at TEXT NOT NULL DEFAULT '',metrics TEXT NOT NULL DEFAULT '');
@@ -406,6 +407,9 @@ def ensure_schema_upgrades():
   if 'layout_id' not in cols:c.execute("ALTER TABLE jobs ADD COLUMN layout_id TEXT NOT NULL DEFAULT ''")
   # 複数ファイルの結合。どの繋ぎ方（結合マスタ）で作るか。
   if 'recipe_id' not in cols:c.execute("ALTER TABLE jobs ADD COLUMN recipe_id TEXT NOT NULL DEFAULT ''")
+  # クエリ（Power Query の M の式。2.4.0）。どのクエリを使い、その中のどれを出すか（空ならクエリの既定）。
+  if 'query_id' not in cols:c.execute("ALTER TABLE jobs ADD COLUMN query_id TEXT NOT NULL DEFAULT ''")
+  if 'query_out' not in cols:c.execute("ALTER TABLE jobs ADD COLUMN query_out TEXT NOT NULL DEFAULT ''")
   # 条件の値ごとに分けて出す（2.1.0）。項目・値の並び・ファイル名と置き場の型を JSON で持つ。
   if 'variants_json' not in cols:c.execute("ALTER TABLE jobs ADD COLUMN variants_json TEXT NOT NULL DEFAULT ''")
   # データビュワーの表示の設定（2.2.0）。列の並び・表示・表示名・計算列・条件を JSON で持つ（navi_viewer）。
@@ -2149,9 +2153,11 @@ def last_run_info(run):
 # （画面・実行・診断が別々の既定を持つと、どれが本当なのか追えなくなる）。
 TEXT_FOLDER_DEFAULT='\\\\nlmfanago02d\\QPMS'
 TEXT_TABLE_DEFAULT='DATA'
-JOB_SOURCES=('rne','text','join')
+JOB_SOURCES=('rne','text','join','mquery')
 JOB_SOURCE_LABEL={'rne':'RNE（Navigatorへ問い合わせ）','text':'固定長テキスト（手元のファイル）',
-                  'join':'複数ファイルの結合（クエリで繋ぐ）'}
+                  'join':'複数ファイルの結合（クエリで繋ぐ）','mquery':'Power Query（M の式で Excel などを読む）'}
+# 手元のファイルから作る入力（Navigator へ問い合わせない）。流し方・表の既定・診断で、RNE と分けるのに使う
+LOCAL_SOURCES=('text','join','mquery')
 def normalize_job_source(v):
  v=str(v or '').strip().lower()
  return v if v in JOB_SOURCES else 'rne'
@@ -2165,7 +2171,7 @@ def job_table_name(job):
  """
  name=str((job or {}).get('table') or '').strip()
  if name:return name
- return TEXT_TABLE_DEFAULT if normalize_job_source((job or {}).get('source')) in ('text','join') else '仕掛'
+ return TEXT_TABLE_DEFAULT if normalize_job_source((job or {}).get('source')) in LOCAL_SOURCES else '仕掛'
 
 def resolve_text_path(job,cfg):
  """読むテキストファイルの場所。書き方の決まりはRNEと同じにする。
@@ -2199,8 +2205,8 @@ def load():
     if x['month_days_json']:q['month_days']=json.loads(x['month_days_json'])
     if x['dates_json']:q['dates']=json.loads(x['dates_json'])
     rules.append(q)
-   fmt=normalize_output_format(r['output_format'],r['output_file']); jobs.append({'id':r['id'],'enabled':bool(r['enabled']),'name':r['name'],'rne':r['rne'],'rne_path':r['rne_path'],'output_folder':r['output_folder'],'output_format':fmt,'output_file':canonical_output_file(r['output_file'],fmt),'table':r['table_name'],'sheet':r['sheet_name'],'type':r['read_type'],'naming_mode':(r['naming_mode'] if 'naming_mode' in r.keys() else 'fixed'),'output_pattern':(r['output_pattern'] if 'output_pattern' in r.keys() else ''),'comment':(r['comment'] if 'comment' in r.keys() else ''),'split_mode':normalize_split_mode(r['split_mode'] if 'split_mode' in r.keys() else ''),'split_shape':normalize_split_shape(r['split_shape'] if 'split_shape' in r.keys() else ''),'row_axis_mode':normalize_row_axis_mode(r['row_axis_mode'] if 'row_axis_mode' in r.keys() else ''),'row_axis_index':int((r['row_axis_index'] if 'row_axis_index' in r.keys() else 1) or 1),'row_axis_name':str((r['row_axis_name'] if 'row_axis_name' in r.keys() else '') or ''),'extra_formats':job_extra_formats({'output_format':fmt,'output_file':r['output_file'],'extra_formats':(r['extra_formats'] if 'extra_formats' in r.keys() else '')}),'index_columns':_json_list(r['index_columns'] if 'index_columns' in r.keys() else ''),'skip_if_unchanged':bool(r['skip_if_unchanged'] if 'skip_if_unchanged' in r.keys() else 0),'source':normalize_job_source(r['source'] if 'source' in r.keys() else ''),'text_path':str((r['text_path'] if 'text_path' in r.keys() else '') or ''),'layout_id':str((r['layout_id'] if 'layout_id' in r.keys() else '') or ''),'recipe_id':str((r['recipe_id'] if 'recipe_id' in r.keys() else '') or ''),'period':_decode_period(r['period_json'] if 'period_json' in r.keys() else ''),'variants':navi_variants.normalize(_json_or_empty(r['variants_json'] if 'variants_json' in r.keys() else '')),'viewer':navi_viewer.normalize(_json_or_empty(r['viewer_json'] if 'viewer_json' in r.keys() else '')),'schedules':rules})
-  cfg['jobs']=jobs; cfg['text_layouts']=_load_text_layouts(c); cfg['join_recipes']=_load_join_recipes(c); cfg.setdefault('settings',{});
+   fmt=normalize_output_format(r['output_format'],r['output_file']); jobs.append({'id':r['id'],'enabled':bool(r['enabled']),'name':r['name'],'rne':r['rne'],'rne_path':r['rne_path'],'output_folder':r['output_folder'],'output_format':fmt,'output_file':canonical_output_file(r['output_file'],fmt),'table':r['table_name'],'sheet':r['sheet_name'],'type':r['read_type'],'naming_mode':(r['naming_mode'] if 'naming_mode' in r.keys() else 'fixed'),'output_pattern':(r['output_pattern'] if 'output_pattern' in r.keys() else ''),'comment':(r['comment'] if 'comment' in r.keys() else ''),'split_mode':normalize_split_mode(r['split_mode'] if 'split_mode' in r.keys() else ''),'split_shape':normalize_split_shape(r['split_shape'] if 'split_shape' in r.keys() else ''),'row_axis_mode':normalize_row_axis_mode(r['row_axis_mode'] if 'row_axis_mode' in r.keys() else ''),'row_axis_index':int((r['row_axis_index'] if 'row_axis_index' in r.keys() else 1) or 1),'row_axis_name':str((r['row_axis_name'] if 'row_axis_name' in r.keys() else '') or ''),'extra_formats':job_extra_formats({'output_format':fmt,'output_file':r['output_file'],'extra_formats':(r['extra_formats'] if 'extra_formats' in r.keys() else '')}),'index_columns':_json_list(r['index_columns'] if 'index_columns' in r.keys() else ''),'skip_if_unchanged':bool(r['skip_if_unchanged'] if 'skip_if_unchanged' in r.keys() else 0),'source':normalize_job_source(r['source'] if 'source' in r.keys() else ''),'text_path':str((r['text_path'] if 'text_path' in r.keys() else '') or ''),'layout_id':str((r['layout_id'] if 'layout_id' in r.keys() else '') or ''),'recipe_id':str((r['recipe_id'] if 'recipe_id' in r.keys() else '') or ''),'query_id':str((r['query_id'] if 'query_id' in r.keys() else '') or ''),'query_out':str((r['query_out'] if 'query_out' in r.keys() else '') or ''),'period':_decode_period(r['period_json'] if 'period_json' in r.keys() else ''),'variants':navi_variants.normalize(_json_or_empty(r['variants_json'] if 'variants_json' in r.keys() else '')),'viewer':navi_viewer.normalize(_json_or_empty(r['viewer_json'] if 'viewer_json' in r.keys() else '')),'schedules':rules})
+  cfg['jobs']=jobs; cfg['text_layouts']=_load_text_layouts(c); cfg['join_recipes']=_load_join_recipes(c); cfg['m_queries']=_load_m_queries(c); cfg.setdefault('settings',{});
   # 設定の版。画面はこれをそのまま送り返し、ほかで変わっていたら保存を断れるようにする
   # （画面を2つ開いていると、あとから保存したほうが相手の追加した対象を消していた）。
   _rev=c.execute("SELECT value FROM schema_info WHERE key='settings_revision'").fetchone()
@@ -2241,7 +2247,7 @@ def normalize_interval_minutes(v):
  except (TypeError,ValueError):return 60
 
 def _save_local(v,quiet=False):
- init_settings_db(); now=datetime.now().isoformat(timespec='seconds'); jobs=v.get('jobs',[]); top={k:x for k,x in v.items() if k not in ('jobs','credential_status','text_layouts','join_recipes','settings_revision','setting_defaults')}
+ init_settings_db(); now=datetime.now().isoformat(timespec='seconds'); jobs=v.get('jobs',[]); top={k:x for k,x in v.items() if k not in ('jobs','credential_status','text_layouts','join_recipes','m_queries','settings_revision','setting_defaults')}
  with settings_connection() as c:
   c.execute('BEGIN IMMEDIATE'); c.execute('DELETE FROM app_settings')
   for key,value in top.items():
@@ -2249,7 +2255,7 @@ def _save_local(v,quiet=False):
   keep=[]
   for order,j in enumerate(jobs):
    jid=j.get('id') or str(uuid.uuid4()); keep.append(jid)
-   fmt=normalize_output_format(j.get('output_format'),j.get('output_file')); output_file=canonical_output_file(j.get('output_file'),fmt); (None if quiet else log.info('設定保存 job=%s requested_format=%s saved_format=%s requested_file=%s saved_file=%s',j.get('name'),j.get('output_format'),fmt,j.get('output_file'),output_file)); c.execute('INSERT OR REPLACE INTO jobs (id,display_order,enabled,name,rne,rne_path,output_folder,output_format,output_file,table_name,sheet_name,read_type,naming_mode,output_pattern,comment,split_mode,split_shape,row_axis_mode,row_axis_index,row_axis_name,extra_formats,index_columns,skip_if_unchanged,period_json,source,text_path,layout_id,recipe_id,variants_json,viewer_json,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',(jid,order,int(bool(j.get('enabled',True))),j.get('name',''),j.get('rne',''),j.get('rne_path',''),j.get('output_folder',''),fmt,output_file,job_table_name(j),j.get('sheet','Page1'),j.get('type','詳細データ'),str(j.get('naming_mode') or 'fixed'),str(j.get('output_pattern') or ''),str(j.get('comment') or ''),normalize_split_mode(j.get('split_mode')),normalize_split_shape(j.get('split_shape')),normalize_row_axis_mode(j.get('row_axis_mode')),max(1,min(200,int(j.get('row_axis_index') or 1))),str(j.get('row_axis_name') or ''),json.dumps(job_extra_formats({**j,'output_format':fmt}),ensure_ascii=False),json.dumps([str(x).strip() for x in (j.get('index_columns') or []) if str(x).strip()][:4],ensure_ascii=False),int(bool(j.get('skip_if_unchanged'))),json.dumps(_decode_period(json.dumps(j.get('period') or {},ensure_ascii=False)),ensure_ascii=False),normalize_job_source(j.get('source')),str(j.get('text_path') or ''),str(j.get('layout_id') or ''),str(j.get('recipe_id') or ''),json.dumps(navi_variants.normalize(j.get('variants')),ensure_ascii=False),json.dumps(navi_viewer.normalize(j.get('viewer')),ensure_ascii=False),now))
+   fmt=normalize_output_format(j.get('output_format'),j.get('output_file')); output_file=canonical_output_file(j.get('output_file'),fmt); (None if quiet else log.info('設定保存 job=%s requested_format=%s saved_format=%s requested_file=%s saved_file=%s',j.get('name'),j.get('output_format'),fmt,j.get('output_file'),output_file)); c.execute('INSERT OR REPLACE INTO jobs (id,display_order,enabled,name,rne,rne_path,output_folder,output_format,output_file,table_name,sheet_name,read_type,naming_mode,output_pattern,comment,split_mode,split_shape,row_axis_mode,row_axis_index,row_axis_name,extra_formats,index_columns,skip_if_unchanged,period_json,source,text_path,layout_id,recipe_id,query_id,query_out,variants_json,viewer_json,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',(jid,order,int(bool(j.get('enabled',True))),j.get('name',''),j.get('rne',''),j.get('rne_path',''),j.get('output_folder',''),fmt,output_file,job_table_name(j),j.get('sheet','Page1'),j.get('type','詳細データ'),str(j.get('naming_mode') or 'fixed'),str(j.get('output_pattern') or ''),str(j.get('comment') or ''),normalize_split_mode(j.get('split_mode')),normalize_split_shape(j.get('split_shape')),normalize_row_axis_mode(j.get('row_axis_mode')),max(1,min(200,int(j.get('row_axis_index') or 1))),str(j.get('row_axis_name') or ''),json.dumps(job_extra_formats({**j,'output_format':fmt}),ensure_ascii=False),json.dumps([str(x).strip() for x in (j.get('index_columns') or []) if str(x).strip()][:4],ensure_ascii=False),int(bool(j.get('skip_if_unchanged'))),json.dumps(_decode_period(json.dumps(j.get('period') or {},ensure_ascii=False)),ensure_ascii=False),normalize_job_source(j.get('source')),str(j.get('text_path') or ''),str(j.get('layout_id') or ''),str(j.get('recipe_id') or ''),str(j.get('query_id') or ''),str(j.get('query_out') or ''),json.dumps(navi_variants.normalize(j.get('variants')),ensure_ascii=False),json.dumps(navi_viewer.normalize(j.get('viewer')),ensure_ascii=False),now))
    c.execute('DELETE FROM schedules WHERE job_id=?',(jid,))
    for ro,q in enumerate(j.get('schedules',[])):
     c.execute('INSERT INTO schedules VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',(q.get('id') or str(uuid.uuid4()),jid,ro,int(bool(q.get('enabled',True))),q.get('name','実行ルール'),q.get('type','daily'),q.get('time','06:00'),normalize_interval_minutes(q.get('interval_minutes')),json.dumps(q.get('weekdays'),ensure_ascii=False) if 'weekdays' in q else None,json.dumps(q.get('month_days'),ensure_ascii=False) if 'month_days' in q else None,json.dumps(q.get('dates'),ensure_ascii=False) if 'dates' in q else None,now))
@@ -5373,6 +5379,12 @@ import navi_joinrun
 from navi_joinrun import (_load_join_recipes,load_join_recipes,find_join_recipe,save_join_recipe,
                           join_recipe_usage,delete_join_recipe,resolve_join_path,join_reader,join_layouts,
                           join_candidates,join_sample_reader,sampled_recipe)
+
+# クエリ（Power Query の M の式。2.4.0）の出し入れと、中間CSVを作る係。言語そのものは navi_m・navi_mlib・navi_msource。
+import navi_mrun
+from navi_mrun import (_load_m_queries,load_m_queries,find_m_query,save_m_query,m_query_usage,delete_m_query,
+                       m_queries_export,m_queries_import,write_m_intermediate,normalize_query as normalize_m_query,
+                       validate_query as validate_m_query)
 
 import navi_textrun
 from navi_textrun import (_json_rows,_layout_row,_load_text_layouts,load_text_layouts,

@@ -36,14 +36,18 @@ SCHEDULES_VERSION=1
 # 読取マスタと結合マスタは、これまでの単体の持ち出しと同じ印を使う（互換のため）。
 LAYOUTS_KIND='symfonavi-text-layouts'
 RECIPES_KIND='symfonavi-join-recipes'
+# クエリ（Power Query の M の式。2.4.0）。単体の持ち出し（/api/m-queries/export）と同じ印。
+QUERIES_KIND='datarelay-m-queries'
 
-PARTS=('jobs','schedules','layouts','recipes')
-PART_LABEL={'jobs':'対象の登録','schedules':'自動実行の予定','layouts':'読取マスタ','recipes':'結合マスタ'}
+PARTS=('jobs','schedules','layouts','recipes','queries')
+PART_LABEL={'jobs':'対象の登録','schedules':'自動実行の予定','layouts':'読取マスタ','recipes':'結合マスタ',
+            'queries':'クエリ（Power Query）'}
 PART_FILE={'jobs':'jobs.json','schedules':'schedules.json',
-           'layouts':'text-layouts.json','recipes':'join-recipes.json'}
-PART_KIND={'jobs':JOBS_KIND,'schedules':SCHEDULES_KIND,'layouts':LAYOUTS_KIND,'recipes':RECIPES_KIND}
+           'layouts':'text-layouts.json','recipes':'join-recipes.json','queries':'m-queries.json'}
+PART_KIND={'jobs':JOBS_KIND,'schedules':SCHEDULES_KIND,'layouts':LAYOUTS_KIND,'recipes':RECIPES_KIND,
+           'queries':QUERIES_KIND}
 # 中身の数え方（持ち出したものが何件かを、開かずに知りたい）。
-PART_LIST_KEY={'jobs':'jobs','schedules':'jobs','layouts':'layouts','recipes':'recipes'}
+PART_LIST_KEY={'jobs':'jobs','schedules':'jobs','layouts':'layouts','recipes':'recipes','queries':'queries'}
 MANIFEST='manifest.json'
 README='README.txt'
 
@@ -65,11 +69,13 @@ def _text(v,limit=400):
 
 
 # ---- 対象の登録 -------------------------------------------------------------
-def job_export_one(job,layout_name='',recipe_name=''):
+def job_export_one(job,layout_name='',recipe_name='',query_name=''):
  """1件を持ち出す形へ。id は落とし、結び直しのための名前を足す。"""
  out={k:v for k,v in dict(job or {}).items() if k not in JOB_DROP}
  # 読取マスタ・結合マスタの id は環境ごとに違う。名前で結び直せるようにしておく。
- out.pop('layout_id',None);out.pop('recipe_id',None)
+ out.pop('layout_id',None);out.pop('recipe_id',None);out.pop('query_id',None)
+ # クエリの出す先（query_out）は、使っていない対象では書かない（既定の設定と手元を比べたとき、全部が「違う」にならないように）
+ if not out.get('query_out'):out.pop('query_out',None)
  # 値ごとに分けて出す（2.1.0）を使っていない対象は、その欄を書かない。2.0.0 までに書き出した物と同じ形にそろえる
  # （書くと、既定の設定と手元を比べたとき、使っていない全部の対象が「中身が違う」になる）
  v=out.get('variants')
@@ -78,17 +84,20 @@ def job_export_one(job,layout_name='',recipe_name=''):
  if not out.get('viewer'):out.pop('viewer',None)
  if layout_name:out['layout_name']=_text(layout_name,120)
  if recipe_name:out['recipe_name']=_text(recipe_name,120)
+ if query_name:out['mquery_name']=_text(query_name,120)
  return out
 
 
-def jobs_export(jobs,layout_name_of=None,recipe_name_of=None):
+def jobs_export(jobs,layout_name_of=None,recipe_name_of=None,query_name_of=None):
  """対象の登録を持ち出す。
 
  読取マスタ・結合マスタの名前は、引く手だてを呼ぶ側から渡してもらう（ここはDBを見ない）。
  """
  ln=layout_name_of or (lambda i:'')
  rn=recipe_name_of or (lambda i:'')
- items=[job_export_one(j,ln(j.get('layout_id') or ''),rn(j.get('recipe_id') or '')) for j in (jobs or [])]
+ qn=query_name_of or (lambda i:'')
+ items=[job_export_one(j,ln(j.get('layout_id') or ''),rn(j.get('recipe_id') or ''),qn(j.get('query_id') or ''))
+        for j in (jobs or [])]
  return {'kind':JOBS_KIND,'version':JOBS_VERSION,'exported_at':_now(),
          'count':len(items),'jobs':items}
 
@@ -98,7 +107,7 @@ def validate_job(job):
  bad=[]
  if not str(job.get('name') or '').strip():bad.append('名前がありません')
  src=str(job.get('source') or 'rne')
- if src not in ('rne','text','join'):bad.append(f'入力の種類が分かりません（{src}）')
+ if src not in ('rne','text','join','mquery'):bad.append(f'入力の種類が分かりません（{src}）')
  if src=='rne' and not str(job.get('rne') or job.get('rne_path') or '').strip():
   bad.append('RNEの指定がありません')
  if src=='text' and not str(job.get('text_path') or '').strip():
@@ -237,7 +246,7 @@ def readme_text(parts,counts,app_version=''):
          '  ・素のJSONです。ZIPを開けば、そのまま読めます。',
          '  ・text-layouts.json と join-recipes.json は、これまでの単体の持ち込みへ',
          '    そのまま渡すこともできます。',
-         '  ・対象が使う読取マスタ・結合マスタは、名前で結び直します。',
+         '  ・対象が使う読取マスタ・結合マスタ・クエリは、名前で結び直します。',
          '  ・自動実行の予定は、対象の名前で結び直します。',
          '  ・共通設定（各種フォルダーの場所・接続先・控えの置き場所）は入っていません。',
          '    PCごとに違うものなので、持ち込むと他人のフォルダーを指したまま動き出します。',
