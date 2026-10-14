@@ -12,6 +12,7 @@ yyyy"年"m"月"d"日"・和暦・h"時"mm"分" など）は、openpyxl が知ら
 読めない形（Strict Open XML など）は Unsupported を出し、呼ぶ側が openpyxl で読む。
 """
 import zipfile
+from contextlib import contextmanager
 from xml.etree.ElementTree import ParseError, fromstring, iterparse
 
 MAIN = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'
@@ -92,15 +93,18 @@ def parse_ref(ref):
 
 
 class Book:
-    """1つのブック。部品（共有文字・書式）は使うときに1回だけ読む。"""
+    """1つのブック。部品（共有文字・書式）は使うときに1回だけ読む。
+    ファイルは読むときだけ開き、読み終えたらすぐ閉じる（開いたままだと、Windows では利用者が元の Excel を
+    上書き保存・削除できなくなる）。"""
 
     def __init__(self, src):
         from openpyxl.utils.datetime import CALENDAR_MAC_1904, CALENDAR_WINDOWS_1900
+        self.src = src
         try:
-            self.z = zipfile.ZipFile(src)
-            names = set(self.z.namelist())
-            wb = fromstring(self.z.read('xl/workbook.xml'))
-            rels = fromstring(self.z.read('xl/_rels/workbook.xml.rels'))
+            with self._zip() as z:
+                names = set(z.namelist())
+                wb = fromstring(z.read('xl/workbook.xml'))
+                rels = fromstring(z.read('xl/_rels/workbook.xml.rels'))
         except (KeyError, zipfile.BadZipFile, ParseError, OSError) as e:
             raise Unsupported(str(e))
         if wb.tag != NS + 'workbook':
@@ -123,6 +127,11 @@ class Book:
         self._dates = None
         self._cache = {}
 
+    @contextmanager
+    def _zip(self):
+        with zipfile.ZipFile(self.src) as z:
+            yield z
+
     def has(self, name):
         return name in self._by_name
 
@@ -131,10 +140,11 @@ class Book:
             out = []
             p = self._parts.get('sharedStrings')
             if p:
-                for _, el in iterparse(self.z.open(p)):
-                    if el.tag == _SI:
-                        out.append(_text(el).replace('x005F_', ''))
-                        el.clear()
+                with self._zip() as z, z.open(p) as f:
+                    for _, el in iterparse(f):
+                        if el.tag == _SI:
+                            out.append(_text(el).replace('x005F_', ''))
+                            el.clear()
             self._strings = out
         return self._strings
 
@@ -145,7 +155,8 @@ class Book:
             dates, spans = set(), set()
             p = self._parts.get('styles')
             if p:
-                st = fromstring(self.z.read(p))
+                with self._zip() as z:
+                    st = fromstring(z.read(p))
                 custom = {}
                 nf = st.find(NS + 'numFmts')
                 for x in (nf if nf is not None else []):
@@ -169,11 +180,12 @@ class Book:
 
     def dimension(self, name):
         """シートが書いている使っている範囲（<dimension>）。sheetData より前だけを読む。"""
-        for ev, el in iterparse(self.z.open(self._by_name[name]), events=('start',)):
-            if el.tag == _DIM:
-                return parse_ref(el.get('ref'))
-            if el.tag == _DATA:
-                return None
+        with self._zip() as z, z.open(self._by_name[name]) as f:
+            for ev, el in iterparse(f, events=('start',)):
+                if el.tag == _DIM:
+                    return parse_ref(el.get('ref'))
+                if el.tag == _DATA:
+                    return None
         return None
 
     def rows(self, name, stop=None):
@@ -193,50 +205,51 @@ class Book:
         epoch = self.epoch
         out = []
         r_no = 0
-        for _, el in iterparse(self.z.open(self._by_name[name])):
-            if el.tag != _ROW:
-                continue
-            r = el.get('r')
-            r_no = int(float(r)) if r else r_no + 1
-            if stop is not None and r_no > stop:
-                out.append((r_no, []))   # 止めた印（呼ぶ側が残りの行を空で埋めるため。openpyxl と同じ）
-                break
-            cells = []
-            c_no = 0
-            for c in el:
-                if c.tag != _C:
+        with self._zip() as z, z.open(self._by_name[name]) as f:
+            for _, el in iterparse(f):
+                if el.tag != _ROW:
                     continue
-                ref = c.get('r')
-                c_no = col_index(ref) if ref else c_no + 1
-                t = c.get('t')
-                if t == 'inlineStr':
-                    node = c.find(_IS)
-                    v = _text(node) if node is not None else None
-                else:
-                    v = c.findtext(_V) or None
-                    if v is None:
-                        pass
-                    elif t is None or t == 'n':
-                        v = float(v) if ('.' in v or 'E' in v or 'e' in v) else int(v)
-                        s = c.get('s')
-                        if s and dates and int(s) in dates:
-                            try:
-                                v = from_excel(v, epoch, timedelta=int(s) in spans)
-                            except (OverflowError, ValueError):
-                                v = XError('#VALUE!')
-                    elif t == 's':
-                        if strings is None:
-                            strings = self.strings()
-                        v = strings[int(v)]
-                    elif t == 'b':
-                        v = bool(int(v))
-                    elif t == 'e':
-                        v = XError(v)
-                    elif t == 'd':
-                        v = from_ISO8601(v)
-                cells.append((c_no, v))
-            out.append((r_no, cells))
-            el.clear()
+                r = el.get('r')
+                r_no = int(float(r)) if r else r_no + 1
+                if stop is not None and r_no > stop:
+                    out.append((r_no, []))   # 止めた印（呼ぶ側が残りの行を空で埋めるため。openpyxl と同じ）
+                    break
+                cells = []
+                c_no = 0
+                for c in el:
+                    if c.tag != _C:
+                        continue
+                    ref = c.get('r')
+                    c_no = col_index(ref) if ref else c_no + 1
+                    t = c.get('t')
+                    if t == 'inlineStr':
+                        node = c.find(_IS)
+                        v = _text(node) if node is not None else None
+                    else:
+                        v = c.findtext(_V) or None
+                        if v is None:
+                            pass
+                        elif t is None or t == 'n':
+                            v = float(v) if ('.' in v or 'E' in v or 'e' in v) else int(v)
+                            s = c.get('s')
+                            if s and dates and int(s) in dates:
+                                try:
+                                    v = from_excel(v, epoch, timedelta=int(s) in spans)
+                                except (OverflowError, ValueError):
+                                    v = XError('#VALUE!')
+                        elif t == 's':
+                            if strings is None:
+                                strings = self.strings()
+                            v = strings[int(v)]
+                        elif t == 'b':
+                            v = bool(int(v))
+                        elif t == 'e':
+                            v = XError(v)
+                        elif t == 'd':
+                            v = from_ISO8601(v)
+                    cells.append((c_no, v))
+                out.append((r_no, cells))
+                el.clear()
         self._cache[key] = out
         return out
 

@@ -297,7 +297,9 @@ class _Book:
             openpyxl = _openpyxl()
             src = self.binary.open()
             try:
-                self._wb = openpyxl.load_workbook(src, read_only=True, data_only=True)
+                # 場所を渡すと、読み取り専用の openpyxl はファイルを開いたまま持つ（Windows では元の Excel を保存・削除できなくなる）。
+                # 中身を渡して、ファイルは読み終えたら閉じる
+                self._wb = openpyxl.load_workbook(io.BytesIO(self.binary.data()), read_only=True, data_only=True)
             except zipfile.BadZipFile:
                 if isinstance(src, str) and src.lower().endswith('.xls') or self.binary.data()[:4] == b'\xd0\xcf\x11\xe0':
                     raise _xls_message(self.where)

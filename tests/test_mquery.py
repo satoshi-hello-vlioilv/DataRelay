@@ -834,6 +834,47 @@ class XlsxReaderTest(unittest.TestCase):
                     for k in slow:
                         self.assertEqual(fast[k], slow[k], k)
 
+    def test_file_is_not_kept_open(self):
+        """読み終えたら Excel のファイルを閉じる（開いたままだと Windows では元の Excel を保存・削除できない）。
+        速い読み口・openpyxl のどちらでも、結果を持ったまま元のファイルを消せ、開いたままのファイルに残らない。"""
+        import os
+        import shutil
+        import navi_mxlsx as X
+
+        def held(path):
+            fds = Path('/proc/self/fd')
+            if not fds.is_dir():
+                return []
+            out = []
+            for fd in fds.iterdir():
+                try:
+                    if os.readlink(fd) == str(path):
+                        out.append(fd.name)
+                except OSError:
+                    continue
+            return out
+        real = X.Book
+        for fast in (True, False):
+            with self.subTest(fast=fast):
+                p = Path(self.tmp.name) / f'閉じる_{fast}.xlsx'
+                shutil.copy(self.books[1], p)
+                if not fast:
+                    def refuse(*a, **k):
+                        raise X.Unsupported('試験: openpyxl で読む')
+                    X.Book = refuse
+                try:
+                    src = (f'let wb = Excel.Workbook(File.Contents("{str(p).replace(chr(34), chr(34) * 2)}")) in '
+                           '[s = wb{[Item="範囲あり",Kind="Sheet"]}[Data], n = wb{[Item="名前付き",Kind="DefinedName"]}[Data]]')
+                    v = M.Document.from_text(src).evaluate(host_=M.Host())
+                    rows = len(M.force(v.get('s')).rows) + len(M.force(v.get('n')).rows)
+                finally:
+                    X.Book = real
+                self.assertGreater(rows, 0)
+                self.assertEqual(held(p.resolve()), [], '読み終えたファイルを開いたままにしない')
+                os.remove(p)   # Windows では開いたままだと PermissionError（WinError 32）
+                self.assertFalse(p.exists())
+                del v
+
     def test_east_asian_builtin_date_formats(self):
         """日本語版の組み込みの書式（31: yyyy"年"m"月"d"日"、32: h"時"mm"分"）は日付・時刻（openpyxl は数のまま読む）。"""
         import navi_mxlsx as X
