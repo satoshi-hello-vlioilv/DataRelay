@@ -196,6 +196,7 @@ import app,navigator_api
 work=Path(sys.argv[2]);mode=sys.argv[3]
 ALL=['LS3','LS4','DL2','KEN']
 SERVER=['LS3','LS4','DL2','KEN','PSW','ST2']   # サーバーにある設備。RNE の条件は LS4
+if mode=='all40':SERVER=['LS4']+[f'S{i:02d}' for i in range(39)]   # 値の数が、同時に進める上限（32）より多い
 calls=[]
 class Fake:
  # 実機（2026-10-11）に寄せる: 条件欄を外すと全部の設備が返る。表側のカテゴリを絞るとその設備だけ。外さなければ LS4 だけ
@@ -265,9 +266,9 @@ def fake_racers(job,cfg_,user,pw,server,work_,specs,timeout=1800,stop_when=None,
  return done
 app._spawn_racers=fake_racers
 job['_split_budget']=3
-seen={'export':0,'export_max':0,'sleep':0,'sleep_max':0,'share':0,'share_max':0}
+seen={'export':0,'export_max':0,'sleep':0,'sleep_max':0,'share':0,'share_max':0,'order':[]}
 if mode=='fourextra':job['extra_formats']=['txt']   # 同時出力つき（同時出力も、変換は鍵の中・公開は共有の鍵の中）
-if mode in ('four','all','fourextra'):
+if mode in ('four','all','fourextra','all40'):
  # 値ごとの 変換 → 公開 を同時に進めたときの重なりを数える（変換・猶予の待ち・共有を触る鍵の中）
  import threading as th,time as tm,navi_publish
  lk=th.Lock()
@@ -275,7 +276,7 @@ if mode in ('four','all','fourextra'):
   with lk:seen[k]+=d;seen[k+'_max']=max(seen[k+'_max'],seen[k])
  _exp=app.export_data
  def export_data(*a,**k):
-  count('export',1);tm.sleep(0.05)
+  count('export',1);seen['order'].append(a[2].get('_variant_value'));tm.sleep(0.05)
   try:return _exp(*a,**k)
   finally:count('export',-1)
  app.export_data=export_data
@@ -434,11 +435,13 @@ class FlowTest(unittest.TestCase):
   """受け取りは1回のまま、値ごとの公開を同時に進める（指定した値・出てきた値すべての両方）。
   変換は1本ずつ（ACCDB は Access を COM で動かすので、同時に起動しない）。目印のあとの猶予（3秒）は重ねて待つ。
   共有を触るところ（一覧・写す・差し替える）は、この対象に回せるライン数（_split_budget=3）までに絞る。"""
-  for mode,n in (('four',4),('all',6),('fourextra',4)):
+  for mode,n in (('four',4),('all',6),('fourextra',4),('all40',40)):
    v=self.run_flow(mode)
    self.assertTrue(v['ok'],v['error'])
    self.assertEqual([c[0] for c in v['calls']].count('execute'),1,'問い合わせは1回')
    self.assertEqual(v['seen']['export_max'],1,f'{mode}: 変換は1本ずつ')
+   if mode!='fourextra':self.assertEqual(v['seen']['order'],[x['value'] for x in v['variants']],f'{mode}: 変換は値の並びの順（済む順を予想できる）')
+   self.assertTrue(all(x['ok'] for x in v['variants']),f'{mode}: 値の数が同時の上限より多くても全部出る')
    self.assertGreaterEqual(v['seen']['sleep_max'],2,f'{mode}: 猶予の待ちは重なる')
    self.assertTrue(1<=v['seen']['share_max']<=3,f'{mode}: 共有を触るのはライン数まで（同時出力も） {v["seen"]}')
    self.assertTrue(any(str(x['detail']).startswith(('変換中','変換待ち','公開中')) for x in v['lines']),'一言に、何本が何をしているかの内訳')
@@ -642,6 +645,42 @@ class RacersTest(unittest.TestCase):
   self.assertEqual(v['ok'],[True]*5);self.assertEqual(v['labels'],['v0','v1','v2','v3','v4'],'結果は並べた順')
   self.assertEqual(v['default_payload'],['cfg','job','server','split_part','user'],'payload_of を省けば、これまでどおり分割の1片（パスワードは書かない）')
   self.assertEqual(v['split_part'],'a.csv')
+
+
+
+# 値ごとの変換の鍵（_TurnGate）: 値の並びの順に1本ずつ。変換に入らずに済んだ値が番を返せば、後ろの値は止まらない
+TURN=r"""
+import json,sys,threading,time
+sys.path[:0]=[sys.argv[1],sys.argv[1]+'/lib']
+import app
+g=app._variant_convert_gate();order=[];inside=[0];peak=[0];lk=threading.Lock()
+def work(k,skip=False):
+ if skip:time.sleep(0.05);g.done(k);return   # 前回と同じなどで、変換に入らずに済んだ値
+ t=g.turn(k)
+ for _ in range(2):   # 2回目は同時出力の変換（番は待たず、1本ずつにするだけ）
+  with t:
+   with lk:inside[0]+=1;peak[0]=max(peak[0],inside[0]);order.append(k)
+   time.sleep(0.01)
+   with lk:inside[0]-=1
+ g.done(k)   # one_file は済んだあとにも番を返す（2回返しても害は無い）
+ts=[threading.Thread(target=work,args=(k,k==1)) for k in (4,3,2,1,0)]   # 起こす順は逆、値 1 は変換に入らない
+for t in ts:t.start()
+for t in ts:t.join(10)
+print(json.dumps({'alive':any(t.is_alive() for t in ts),'first':[k for i,k in enumerate(order) if k not in order[:i]],'peak':peak[0]}))
+"""
+
+
+class TurnGateTest(unittest.TestCase):
+ def test_order_and_skip(self):
+  with tempfile.TemporaryDirectory() as d:
+   env=dict(os.environ,NAVI_LOCAL_ROOT=str(Path(d)/'local'),NAVI_DATA_ROOT=str(Path(d)/'data'),NAVI_CONFIG_DIR=str(Path(d)/'data'/'Config'),
+            NAVI_SECRET_FILE=str(Path(d)/'local'/'s.json'),DATARELAY_NO_BOOT='1',PYTHONIOENCODING='utf-8')
+   r=subprocess.run([sys.executable,'-c',TURN,str(ROOT)],env=env,capture_output=True,text=True,encoding='utf-8',timeout=60)
+  self.assertEqual(r.returncode,0,r.stderr[-3000:])
+  v=json.loads(r.stdout.strip().splitlines()[-1])
+  self.assertFalse(v['alive'],'変換に入らない値（1）があっても止まらない')
+  self.assertEqual(v['first'],[0,2,3,4],'はじめの変換は値の並びの順（起こした順によらない）')
+  self.assertEqual(v['peak'],1,'同時に変換するのは1本だけ（同時出力の変換も）')
 
 
 # データビュワー（2.1.2）: 値ごとに分けて出す対象は、値ごとのファイルを選んで開ける

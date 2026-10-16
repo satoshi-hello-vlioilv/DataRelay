@@ -3972,7 +3972,7 @@ def _variant_percent(done,n):
 
 # 受け取ったあと、値ごとの 変換 → 公開 を同時にいくつ進めるかの上限（案の比べ方は tests/ui-proposals/2026-10-variant-publish）。
 # 公開1件のほとんどは待ち（目印のあとの猶予3秒・共有の遅さ）で、待つあいだは何も使わないので、ライン数より多く重ねる。
-# 共有を触る数は _variant_share_gate（ライン数まで）、変換は _variant_convert_gate（1本）で絞るので、ここで絞るのはスレッドの数だけ。
+# 共有を触る数は _variant_share_limit（ライン数まで）、変換は _variant_convert_gate（1本）で絞るので、ここで絞るのはスレッドの数だけ。
 # 32: 猶予3秒のあいだに、変換1本が次々に出せる値の数より十分に多く（計測では40値の小さいCSVで1件0.1秒前後）、スレッドとしては軽い数
 VARIANT_FILE_THREADS=32
 
@@ -3980,10 +3980,34 @@ def _variant_file_lines(n):
  """受け取ったあと、値ごとの 変換 → 公開 を同時にいくつ進めるか（値の数と VARIANT_FILE_THREADS の小さいほう）。"""
  return max(1,min(n,VARIANT_FILE_THREADS))
 
+class _TurnGate:
+ """値の並びの番号の順に、1本ずつ通す鍵（threading.Lock は順を守らない。値が並びの順に済むようにする）。
+ turn(k) が値 k の鍵。はじめて入るときは k の番を待ち、出たら番を次へ回す。2回目から（同時出力の変換）は1本ずつにするだけ。
+ 変換に入らずに済んだ値（前回と同じ・途中の失敗）は done(k) で番を返す（後ろの値を止めない）。"""
+ def __init__(self):self._cv=threading.Condition();self._serving=0;self._done=set();self._one=threading.Lock()
+ def done(self,k):
+  with self._cv:
+   self._done.add(k)
+   while self._serving in self._done:self._serving+=1
+   self._cv.notify_all()
+ def turn(self,k):return _Turn(self,k)
+
+class _Turn:
+ """_TurnGate の値 k の鍵（何度でも使える。はじめの1回だけ番を待つ）。"""
+ def __init__(self,gate,k):self.gate=gate;self.k=k;self.first=True
+ def __enter__(self):
+  g=self.gate
+  if self.first:
+   with g._cv:g._cv.wait_for(lambda:g._serving==self.k)
+  g._one.acquire()
+ def __exit__(self,*a):
+  self.gate._one.release()
+  if self.first:self.first=False;self.gate.done(self.k)
+
 def _variant_convert_gate():
- """値ごとの変換を1本ずつにする鍵。変換は CPU を使う（Python では同時に走らせても速くならない）うえ、
+ """値ごとの変換を1本ずつ、値の並びの順に通す鍵。変換は CPU を使う（Python では同時に走らせても速くならない）うえ、
  ACCDB は Access を COM で動かすので、同時に何本も起こさない。"""
- return threading.Lock()
+ return _TurnGate()
 
 def _variant_share_limit(j):
  """値ごとの公開で、共有を触るところ（保留の一覧・写す・控え・差し替え）を同時にいくつまでにするか。
@@ -4036,24 +4060,27 @@ def _finish_variants(j,cfg,*,intermediate,backup,local_export,stamp,fmt,extras,e
   def breakdown(last):
    """同時に作るときの一言: 何本が変換・公開しているか、残りはいくつか（どの値が動いているかは区切りバーで分かる）。
    変換は1本ずつなので、変換の順番を待っている値（convert_start）は「変換待ち」に数える。"""
-   n_={k2:sum(1 for x in stages if x in v2) for k2,v2 in (('変換中',('convert',)),('変換待ち',('convert_start',)),('公開中',('publish','extras')))}
-   n_['待ち']=sum(1 for x in slots if x is None)
+   n_={k2:sum(1 for x in stages if x in v2) for k2,v2 in (('保留の確認',('scan',)),('変換中',('convert',)),('変換待ち',('convert_start',)),('公開中',('publish','extras')))}
+   n_['待ち']=sum(1 for x,st in zip(slots,stages) if x is None and not st)
    # 共有を触っている数（上限＝ライン数。保留の一覧・写す・差し替え）。公開中のうち残りは、目印のあとの猶予を待っている
    return ' · '.join([f'{k2} {v2}' for k2,v2 in n_.items() if v2]+[f'共有 {share.inside}/{share.limit}']*bool(n_['公開中'] or share.inside)+[last])
   def one_file(k):
    one=parts[k];value=one['_variant_value'];part=sp['parts'][value]
    def rep(stage,**kw):
-    label={'convert_start':'変換待ち' if width>1 else '変換・検証','convert':'変換','unchanged':'前回と同じ','publish':'公開','extras':'同時出力'}.get(stage,stage)
-    frac={'convert_start':0.1,'convert':0.3,'unchanged':0.9,'publish':0.6,'extras':0.8}.get(stage,0.5)
+    label={'scan':'保留の確認','convert_start':'変換待ち' if width>1 else '変換・検証','convert':'変換','unchanged':'前回と同じ','publish':'公開','extras':'同時出力'}.get(stage,stage)
+    frac={'scan':0.05,'convert_start':0.1,'convert':0.3,'unchanged':0.9,'publish':0.6,'extras':0.8}.get(stage,0.5)
     with lock:
-     slots[k]=frac;stages[k]=stage;now=items();pct=_variant_percent(done(),n)
+     # 同時に作るとき、変換の順番を待っている値（保留の確認・変換待ち）は区切りバーでは待ちのまま。変換に入ってから作成中
+     if width<=1 or stage not in ('scan','convert_start'):slots[k]=frac
+     stages[k]=stage;now=items();pct=_variant_percent(done(),n)
      update_parallel_line(line,job=name,job_id=jid,state=_variant_state(now),percent=pct,variants=now,
                           detail=(f'{value} · {label} · {int(part["rows"]):,}件' if width<=1 else breakdown(f'{value} {label}'))[:160],
                           phase='publish' if stage in ('publish','extras') else 'convert')
-   try:r=_variant_file(one,part,cfg,backup=backup,local_export=local_export,stamp=stamp,expected_cols=expected_cols,line=line,report=rep,gate=gate,share=share)
+   try:r=_variant_file(one,part,cfg,backup=backup,local_export=local_export,stamp=stamp,expected_cols=expected_cols,line=line,report=rep,gate=gate.turn(k),share=share)
    except Exception as e:   # 進み具合の更新などで転んでも、この値の失敗として残し、ほかの値の結果は失わない
     log.warning('VARIANT_FILE_FAILED line=%s job=%s value=%s error=%s',line,name,value,e)
     r={'value':value,'ok':False,'rows':int(part['rows']),'target':'','published':False,'pending':'','unchanged':False,'checked':True,'error':str(e)}
+   gate.done(k)   # 変換に入らずに済んだ値も、番を返す
    with lock:
     slots[k]=r;stages[k]='';now=items()
     try:update_parallel_line(line,job=name,job_id=jid,state=_variant_state(now),percent=_variant_percent(done(),n),variants=now,
@@ -4079,7 +4106,7 @@ def _variant_file(one,part,cfg,*,backup,local_export,stamp,expected_cols,line,re
  try:
   fmt1=validate_output_contract(one,'before-extraction')
   out_dir=resolve_path(one.get('output_folder') or cfg['default_output_folder']);target=out_dir/one['output_file']
-  s=cfg['settings']
+  s=cfg['settings'];report('scan')   # 前の回の保留を入れる（共有を一覧する）
   apply_pending(target,backup,int(s['backup_generations']),backup_enabled=bool(s.get('backup_enabled',True)),retention_days=int(s.get('backup_retention_days',30)), backup_mode=str(s.get('backup_mode','generations')),gate=share)
   db=Path(local_export)/f'{Path(one["output_file"]).stem}_{stamp}{Path(one["output_file"]).suffix}'
   fin=finish_one_job(one,cfg,intermediate=Path(part['path']),db=db,target=target,backup=backup,out_dir=out_dir,

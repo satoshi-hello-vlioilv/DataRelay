@@ -16,8 +16,8 @@ def use(app,cfg,st):
   # 共有の鍵: K（share_gate）はライン数まで。ほかの案は絞らない（上限を十分大きく）
   app._variant_share_limit=lambda j:_width(B,10**6,st['share_gate']) if st.get('share_gate') else 10**6
   if st.get('share_ops'):_share_ops(app,st['share_ops'])
-  gate=_th.Lock()
-  app._variant_convert_gate=lambda _g=gate,_s=bool(st.get('serial_convert')):_g if _s else None
+  # 変換の鍵: 1本ずつの案は app の鍵（値の並びの順に1本ずつ）、ほかの案は鍵なし（同じ形で、入っても何もしない）
+  app._variant_convert_gate=(app._variant_convert_gate if st.get('serial_convert') or lines==1 else lambda:_NoGate())
  elif lines!=1:raise SystemExit('この作りには差し替え口がありません（seq・F・G だけ）')
  if st.get('scan_once'):_scan_once(app)
  if st.get('batch_grace'):_batch_grace(app)
@@ -77,3 +77,9 @@ def _share_ops(app,l):
    return replace
  np.shutil=Sh();np.os=Os()
 _BUDGET=[6]
+
+class _NoGate:
+ """変換を絞らない案の鍵（app の _TurnGate と同じ形）。"""
+ def turn(self,k):
+  import contextlib;return contextlib.nullcontext()
+ def done(self,k):pass
