@@ -20,7 +20,7 @@ lines=[]
 class H(logging.Handler):
  def emit(self,r):
   m=r.getMessage()
-  if m.startswith('PERIOD_READBACK'):lines.append(m)
+  if m.startswith(('PERIOD_READBACK','PERIOD_NOT_CONFIRMED')):lines.append(m)
 app.log.addHandler(H())
 SAVED={'condition':0,'from':'20250400','to':'20250600'}   # RNE に保存した期間
 class Fake:
@@ -39,8 +39,9 @@ class Fake:
   if self.mode in ('reset','stuck'):self.now=dict(SAVED)
 job={'name':'設備単位実績','period':{'enabled':True,'unit':'month','from_offset':-3,'to_offset':0,'control_point':'月度'}}
 out={}
-for mode in ('ok','ignored','blind','reset','stuck'):
- api=Fake(mode);lines.clear();err=''
+for mode in ('ok','ignored','blind','reset','stuck','ignored_stop'):
+ app.PERIOD_STOP_ON_MISMATCH=(mode=='ignored_stop')
+ api=Fake(mode.replace('_stop',''));lines.clear();err=''
  try:
   spec=app.apply_dynamic_period(api,1,job,datetime(2026,10,13),line='L1')
   api.variant_conditions()
@@ -68,11 +69,19 @@ class PeriodReadbackTest(unittest.TestCase):
   self.assertEqual([x.split('stage=')[1].split()[0] for x in v['log']],['before','after','pre_execute'],'変える前・変えた直後・実行の直前に読み戻す')
   self.assertIn('verdict=match',v['log'][1]);self.assertIn('from=20250400',v['log'][0],'変える前は RNE に保存した期間')
 
- def test_ignored_change_stops_instead_of_publishing_the_saved_period(self):
+ def test_ignored_change_is_recorded_without_stopping(self):
+  """変えた直後に読み戻して変わっていなければ、注意を記録して続ける（2.5.2。読み戻しを実機で確かめるまでは止めない）。"""
   v=self.v['ignored']
-  self.assertIn('抽出期間を 2026年7月度 ～ 2026年10月度 に変えられませんでした',v['error'])
-  self.assertIn('20250400～20250600 のまま',v['error'],'読み戻した（RNE に保存した）期間を言う')
-  self.assertIn('verdict=unchanged',v['log'][-1])
+  self.assertEqual(v['error'],'','止めない')
+  warn=[x for x in v['log'] if x.startswith('PERIOD_NOT_CONFIRMED')]
+  self.assertTrue(warn,'注意を記録する')
+  self.assertIn('抽出期間を 2026年7月度 ～ 2026年10月度 に変えられませんでした',warn[0])
+  self.assertIn('20250400～20250600 のまま',warn[0],'読み戻した（RNE に保存した）期間を言う')
+  self.assertTrue(any('stage=after' in x and 'verdict=unchanged' in x for x in v['log']))
+
+ def test_stop_switch_still_stops(self):
+  """止める形（PERIOD_STOP_ON_MISMATCH）に戻せば、2.2.5 どおり止める。"""
+  self.assertIn('変えられませんでした',self.v['ignored_stop']['error'])
 
  def test_unreadable_dll_keeps_running(self):
   v=self.v['blind']
@@ -86,9 +95,10 @@ class PeriodReadbackTest(unittest.TestCase):
   stages=[(x.split('stage=')[1].split()[0],x.split('verdict=')[1]) for x in v['log']]
   self.assertEqual(stages[2:],[('pre_execute','unchanged'),('reapplied','match')])
 
- def test_still_wrong_after_reapply_stops(self):
+ def test_still_wrong_after_reapply_is_recorded(self):
   v=self.v['stuck']
-  self.assertIn('変えられませんでした',v['error']);self.assertEqual(v['changes'],2)
+  self.assertEqual(v['error'],'');self.assertEqual(v['changes'],2,'もう一度当ててから')
+  self.assertTrue(any(x.startswith('PERIOD_NOT_CONFIRMED') for x in v['log']))
 
 
 if __name__=='__main__':
