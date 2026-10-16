@@ -12,7 +12,7 @@
 app.py から分けてある。本体の状態は一切見ない。必要な2つの場所だけを setup で
 受け取る。外から見える名前は分ける前と同じ（app からも読める）。
 """
-import datetime as _dt,hashlib,json,os,shutil,time
+import contextlib,datetime as _dt,hashlib,json,os,shutil,time
 from datetime import datetime
 from pathlib import Path
 from navi_log import log
@@ -115,18 +115,20 @@ def _replace_once(src,dst):
 def _pending_pattern(dst):
  return f'{dst.stem}.pending_*{dst.suffix}'
 
-def apply_pending(dst,backup_root,generations,backup_enabled=True,retention_days=30,backup_mode='generations'):
- """Apply the newest deferred output before the next extraction, if the target is no longer locked."""
+def apply_pending(dst,backup_root,generations,backup_enabled=True,retention_days=30,backup_mode='generations',gate=None):
+ """Apply the newest deferred output before the next extraction, if the target is no longer locked.
+ gate は publish と同じ（共有を一覧するところと、保留を入れる公開の中で使う）。"""
  # globは公開先フォルダー（多くはネットワーク共有）を丸ごと列挙する。並列ラインの数だけ
  # 同時に走るため、共有が重い環境では抽出開始前の待ち時間になり得る。実測を必ず残す。
  _scan_started=time.perf_counter()
- pending=sorted(dst.parent.glob(_pending_pattern(dst)),key=lambda p:p.stat().st_mtime,reverse=True)
+ with (gate or contextlib.nullcontext()):
+  pending=sorted(dst.parent.glob(_pending_pattern(dst)),key=lambda p:p.stat().st_mtime,reverse=True)
  scan_elapsed=time.perf_counter()-_scan_started
  log.info('PENDING_SCAN dir=%s pattern=%s matched=%s elapsed=%.2fs',dst.parent,_pending_pattern(dst),len(pending),scan_elapsed)
  if not pending:return None
  newest=pending[0]
  try:
-  publish(newest,dst,backup_root,generations,from_pending=True,backup_enabled=backup_enabled,retention_days=retention_days,backup_mode=backup_mode)
+  publish(newest,dst,backup_root,generations,from_pending=True,backup_enabled=backup_enabled,retention_days=retention_days,backup_mode=backup_mode,gate=gate)
   for old in pending[1:]:
    try:old.unlink()
    except OSError:pass
@@ -144,10 +146,13 @@ def _wait(attempts,dst,err,started):
           dst,attempts,time.time()-started,busy_reason(err),gap)
  time.sleep(gap)
 
-def publish(src,dst,backup_root,generations,from_pending=False,backup_enabled=True,retention_days=30,backup_mode='generations'):
+def publish(src,dst,backup_root,generations,from_pending=False,backup_enabled=True,retention_days=30,backup_mode='generations',gate=None):
  """Copy locally-created output, then atomically replace the public file.
  If another PC has the target open, keep the new correct file as *.pending_* and return immediately.
+ gate（鍵）を渡すと、共有を触るところ（写す・控え・差し替え）だけをその鍵の中で行い、待ち（目印のあとの猶予・
+ 使用中の再試行の間）は鍵の外で待つ。何本も同時に公開するとき、共有へ同時にかかる操作の数だけを絞るため。
  """
+ gate=gate or contextlib.nullcontext()
  dst.parent.mkdir(parents=True,exist_ok=True)
  bdir=backup_root/dst.stem
  # 控え置き場は、実際に控えを取る直前に作る。先に作っていたため、日付入りのファイル名
@@ -173,13 +178,14 @@ def publish(src,dst,backup_root,generations,from_pending=False,backup_enabled=Tr
  incoming=dst.parent/f'.{dst.name}.{os.getpid()}.incoming'
  try:
   marked_at=time.time()
-  if from_pending:
-   # 保留の版も**目印の名前へ移してから**置き換える（約束の W1）。以前は保留のファイルから直接置き換えており、
-   # この1回だけ読み手が「公開の途中」に気づけなかった。同じフォルダーの中の名前替えなので一瞬で済む。
-   os.replace(src,incoming)
-  else:
-   copy_started=time.perf_counter();shutil.copy2(src,incoming);log.info('PUBLISH_INCOMING_COPY src=%s incoming=%s size=%s elapsed=%.2fs',src,incoming,incoming.stat().st_size,time.perf_counter()-copy_started)
-   if incoming.stat().st_size!=src.stat().st_size:raise IOError('公開先へのコピーサイズが一致しません')
+  with gate:
+   if from_pending:
+    # 保留の版も**目印の名前へ移してから**置き換える（約束の W1）。以前は保留のファイルから直接置き換えており、
+    # この1回だけ読み手が「公開の途中」に気づけなかった。同じフォルダーの中の名前替えなので一瞬で済む。
+    os.replace(src,incoming)
+   else:
+    copy_started=time.perf_counter();shutil.copy2(src,incoming);log.info('PUBLISH_INCOMING_COPY src=%s incoming=%s size=%s elapsed=%.2fs',src,incoming,incoming.stat().st_size,time.perf_counter()-copy_started)
+    if incoming.stat().st_size!=src.stat().st_size:raise IOError('公開先へのコピーサイズが一致しません')
   # 照合用サイズはincomingを動かす前に確定させる（os.replace のあとは incoming が無い）。
   expected_size=incoming.stat().st_size
   # 目印を出してから MARK_GRACE_SECONDS は置き換えない（約束の W2）。
@@ -191,28 +197,29 @@ def publish(src,dst,backup_root,generations,from_pending=False,backup_enabled=Tr
   while time.time()<deadline:
    attempts+=1
    try:
-    if dst.exists() and backup_enabled and not backed_up and _ensure_bdir():
-     backup=bdir/f'{dst.stem}_{stamp}{dst.suffix}'
-     try:
-      # 成功したバックアップは取り直さない。公開先ロック時のリトライで同じコピーを繰り返さないため。
-      backup_started=time.perf_counter();shutil.copy2(dst,backup);backed_up=True;log.info('PUBLISH_BACKUP_COPY src=%s backup=%s elapsed=%.2fs',dst,backup,time.perf_counter()-backup_started)
-     except (PermissionError,OSError) as e:log.warning('PUBLISH_BACKUP_SKIP error=%s',e)
-    replace_started=time.perf_counter();os.replace(incoming,dst);log.info('PUBLISH_ATOMIC_REPLACE target=%s elapsed=%.2fs',dst,time.perf_counter()-replace_started)
-    cleanup_started=time.perf_counter();old=sorted(bdir.glob(f'{dst.stem}_*{dst.suffix}'),key=lambda p:p.stat().st_mtime,reverse=True) if (backup_enabled and bdir.is_dir()) else [];removed=0
-    cutoff=time.time()-max(1,int(retention_days))*86400
-    for index,item in enumerate(old):
-     keep_by_generation=index<int(generations)
-     keep_by_days=item.stat().st_mtime>=cutoff
-     mode=str(backup_mode or 'generations')
-     keep=(keep_by_generation if mode=='generations' else keep_by_days if mode=='days' else (keep_by_generation and keep_by_days))
-     if keep:continue
-     try:item.unlink();removed+=1
-     except OSError:pass
-    log.info('PUBLISH_BACKUP_CLEANUP candidates=%s removed=%s elapsed=%.2fs',len(old),removed,time.perf_counter()-cleanup_started)
-    verify_started=time.perf_counter();published_size=dst.stat().st_size
-    if published_size!=expected_size:raise IOError(f'公開後サイズ不一致 source={expected_size} target={published_size}')
-    log.info('PUBLISH_FINAL_VERIFY target=%s size=%s elapsed=%.2fs',dst,published_size,time.perf_counter()-verify_started)
-    return {'published':True,'path':str(dst)}
+    with gate:
+     if dst.exists() and backup_enabled and not backed_up and _ensure_bdir():
+      backup=bdir/f'{dst.stem}_{stamp}{dst.suffix}'
+      try:
+       # 成功したバックアップは取り直さない。公開先ロック時のリトライで同じコピーを繰り返さないため。
+       backup_started=time.perf_counter();shutil.copy2(dst,backup);backed_up=True;log.info('PUBLISH_BACKUP_COPY src=%s backup=%s elapsed=%.2fs',dst,backup,time.perf_counter()-backup_started)
+      except (PermissionError,OSError) as e:log.warning('PUBLISH_BACKUP_SKIP error=%s',e)
+     replace_started=time.perf_counter();os.replace(incoming,dst);log.info('PUBLISH_ATOMIC_REPLACE target=%s elapsed=%.2fs',dst,time.perf_counter()-replace_started)
+     cleanup_started=time.perf_counter();old=sorted(bdir.glob(f'{dst.stem}_*{dst.suffix}'),key=lambda p:p.stat().st_mtime,reverse=True) if (backup_enabled and bdir.is_dir()) else [];removed=0
+     cutoff=time.time()-max(1,int(retention_days))*86400
+     for index,item in enumerate(old):
+      keep_by_generation=index<int(generations)
+      keep_by_days=item.stat().st_mtime>=cutoff
+      mode=str(backup_mode or 'generations')
+      keep=(keep_by_generation if mode=='generations' else keep_by_days if mode=='days' else (keep_by_generation and keep_by_days))
+      if keep:continue
+      try:item.unlink();removed+=1
+      except OSError:pass
+     log.info('PUBLISH_BACKUP_CLEANUP candidates=%s removed=%s elapsed=%.2fs',len(old),removed,time.perf_counter()-cleanup_started)
+     verify_started=time.perf_counter();published_size=dst.stat().st_size
+     if published_size!=expected_size:raise IOError(f'公開後サイズ不一致 source={expected_size} target={published_size}')
+     log.info('PUBLISH_FINAL_VERIFY target=%s size=%s elapsed=%.2fs',dst,published_size,time.perf_counter()-verify_started)
+     return {'published':True,'path':str(dst)}
    except PermissionError as e:last=e;_wait(attempts,dst,e,started_wait)
    except OSError as e:
     if getattr(e,'winerror',None) in BUSY_WINERRORS:last=e;_wait(attempts,dst,e,started_wait)
@@ -221,21 +228,23 @@ def publish(src,dst,backup_root,generations,from_pending=False,backup_enabled=Tr
   log.warning('PUBLISH_BUSY_GIVEUP target=%s 粘った時間=%.1f秒 試した回数=%s 理由=%s',
               dst,waited,attempts,busy_reason(last))
   for tip in busy_advice(dst,last):log.warning('PUBLISH_BUSY_ADVICE %s',tip)
-  if from_pending:
-   os.replace(incoming,src)   # 保留の名前へ戻す（次の実行でまた入れる）
-   raise PermissionError(f'公開先が使用中のため差し替えられませんでした（{busy_reason(last)}／'
-                         f'{waited:.0f}秒 {attempts}回 試しました）: {dst}') from last
-  # 保留ファイルは「次に公開できるようになるまでの1枚」であればよい。公開先が
-  # ずっと使用中のままだと、実行のたびに新しい保留ファイルが増えていき、古いものは
-  # このあと一度も読まれずに残り続けていた（apply_pendingは常に最新の1件しか見ない）。
-  # 新しい保留を作る前に、同じ公開先に対する古い保留を消してから作る。
-  old_pending=sorted(dst.parent.glob(_pending_pattern(dst)),key=lambda p:p.stat().st_mtime)
-  removed_old=0
-  for item in old_pending:
-   try:item.unlink();removed_old+=1
-   except OSError:pass
-  pending=dst.parent/f'{dst.stem}.pending_{stamp}{dst.suffix}'
-  os.replace(incoming,pending)
+  # ここからも共有を触る（保留の名前へ戻す・古い保留の整理・新しい保留を置く）ので、鍵の中で行う
+  with gate:
+   if from_pending:
+    os.replace(incoming,src)   # 保留の名前へ戻す（次の実行でまた入れる）
+    raise PermissionError(f'公開先が使用中のため差し替えられませんでした（{busy_reason(last)}／'
+                          f'{waited:.0f}秒 {attempts}回 試しました）: {dst}') from last
+   # 保留ファイルは「次に公開できるようになるまでの1枚」であればよい。公開先が
+   # ずっと使用中のままだと、実行のたびに新しい保留ファイルが増えていき、古いものは
+   # このあと一度も読まれずに残り続けていた（apply_pendingは常に最新の1件しか見ない）。
+   # 新しい保留を作る前に、同じ公開先に対する古い保留を消してから作る。
+   old_pending=sorted(dst.parent.glob(_pending_pattern(dst)),key=lambda p:p.stat().st_mtime)
+   removed_old=0
+   for item in old_pending:
+    try:item.unlink();removed_old+=1
+    except OSError:pass
+   pending=dst.parent/f'{dst.stem}.pending_{stamp}{dst.suffix}'
+   os.replace(incoming,pending)
   log.warning('公開先使用中。新しいファイルを更新保留として保存 %s%s',pending,
               f'（古い保留 {removed_old}件を整理）' if removed_old else '')
   return {'published':False,'path':str(dst),'pending':str(pending),
