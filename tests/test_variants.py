@@ -265,13 +265,38 @@ def fake_racers(job,cfg_,user,pw,server,work_,specs,timeout=1800,stop_when=None,
  return done
 app._spawn_racers=fake_racers
 job['_split_budget']=3
+seen={'export':0,'export_max':0,'sleep':0,'sleep_max':0,'share':0,'share_max':0}
+if mode=='fourextra':job['extra_formats']=['txt']   # 同時出力つき（同時出力も、変換は鍵の中・公開は共有の鍵の中）
+if mode in ('four','all','fourextra'):
+ # 値ごとの 変換 → 公開 を同時に進めたときの重なりを数える（変換・猶予の待ち・共有を触る鍵の中）
+ import threading as th,time as tm,navi_publish
+ lk=th.Lock()
+ def count(k,d):
+  with lk:seen[k]+=d;seen[k+'_max']=max(seen[k+'_max'],seen[k])
+ _exp=app.export_data
+ def export_data(*a,**k):
+  count('export',1);tm.sleep(0.05)
+  try:return _exp(*a,**k)
+  finally:count('export',-1)
+ app.export_data=export_data
+ class T:
+  def __getattr__(self,n):return getattr(tm,n)
+  def sleep(self,x):
+   count('sleep',1)
+   try:tm.sleep(x)
+   finally:count('sleep',-1)
+ navi_publish.time=T()
+ class SG(app._ShareGate):
+  def __enter__(self):super().__enter__();count('share',1)
+  def __exit__(self,*a):count('share',-1);return super().__exit__(*a)
+ app._ShareGate=SG
 res=app.process_api_parallel_job(job,1,1,cfg,'u','p','srv',work/'dde',work/'backup')
 files={}
 for p in sorted(out.rglob('*.csv')):
  rows=list(__import__('csv').reader(open(p,encoding='utf-8-sig')))   # 公開する CSV は UTF-8（BOM 付き）
  files[str(p.relative_to(out)).replace('\\','/')]=sorted({r[1] for r in rows[1:]})
 print(json.dumps({'ok':res.get('ok'),'error':res.get('error',''),'result':res.get('result',''),'files':files,'calls':calls,
-                  'saved':job.get('variants'),'lines':lines,'racers':racers,
+                  'saved':job.get('variants'),'lines':lines,'racers':racers,'seen':seen,'txt':sorted(p.name for p in out.rglob('*.txt')),
                   'variants':[{k:x[k] for k in ('value','ok','rows')} for x in res.get('variant_results') or []]},ensure_ascii=False))
 """
 
@@ -387,21 +412,38 @@ class FlowTest(unittest.TestCase):
 
  def test_progress_does_not_finish_early(self):
   """進捗: 途中の値で「完了」「失敗」を出さない（一覧の行がそこで終わったことになる）。「ファイル k/N 済」で進み、最後に1回だけ完了。
-  値ごとの様子（variants）を一緒に渡す: 作成済みは ok、作っている値は run、残りは wait（一覧の行と進捗の窓の区切りバーが読む）。"""
+  値ごとの様子（variants）を一緒に渡す: 作成済みは ok、作っている値は run、残りは wait（一覧の行と進捗の窓の区切りバーが読む）。
+  値ごとのファイルは同時に作るので、作っている値（run）は1つとは限らない。済んだ数は「ファイル k/N 済」の k と同じ。"""
   v=self.run_flow('four')
   states=[x['state'] for x in v['lines']]
   done=[i for i,s2 in enumerate(states) if s2 in ('完了','一部失敗','失敗')]
   self.assertEqual(done,[len(states)-1],'完了は最後の1回だけ')
   made=[x for x in v['lines'] if str(x['state']).startswith('ファイル ')]
-  self.assertEqual(sorted({x['state'] for x in made}),[f'ファイル {k}/4 済' for k in range(0,4)])
-  for x in made:
-   k=int(x['state'].split()[1].split('/')[0]);got=[y['state'] for y in x['variants']]
-   self.assertEqual(got,['ok']*k+['run']+['wait']*(3-k),x)
+  ks=[int(x['state'].split()[1].split('/')[0]) for x in made]
+  self.assertEqual(ks,sorted(ks),'済んだ数は戻らない');self.assertEqual((ks[0],ks[-1]),(0,4))
+  for k,x in zip(ks,made):
+   got=[y['state'] for y in x['variants']]
+   self.assertEqual(got.count('ok'),k,x);self.assertTrue(set(got)<={'ok','run','wait'},x)
   self.assertEqual([(y['value'],y['state'],y['rows']) for y in v['lines'][-1]['variants']],[(n,'ok',2) for n in ('LS3','LS4','DL2','KEN')],'最後は全部 ok と件数')
   self.assertFalse(any(x['variants'] for x in v['lines'] if x['state'] in ('開始','API接続','問い合わせ実行','受信・保存')),
                    'まとめて1回では、問い合わせ中は値ごとの進みが無いので区切りを出さない（ふつうのバー）')
   pct=[x['percent'] for x in v['lines'] if x['percent'] is not None]
   self.assertEqual(pct,sorted(pct),'進み具合は戻らない')
+
+ def test_files_are_published_together(self):
+  """受け取りは1回のまま、値ごとの公開を同時に進める（指定した値・出てきた値すべての両方）。
+  変換は1本ずつ（ACCDB は Access を COM で動かすので、同時に起動しない）。目印のあとの猶予（3秒）は重ねて待つ。
+  共有を触るところ（一覧・写す・差し替える）は、この対象に回せるライン数（_split_budget=3）までに絞る。"""
+  for mode,n in (('four',4),('all',6),('fourextra',4)):
+   v=self.run_flow(mode)
+   self.assertTrue(v['ok'],v['error'])
+   self.assertEqual([c[0] for c in v['calls']].count('execute'),1,'問い合わせは1回')
+   self.assertEqual(v['seen']['export_max'],1,f'{mode}: 変換は1本ずつ')
+   self.assertGreaterEqual(v['seen']['sleep_max'],2,f'{mode}: 猶予の待ちは重なる')
+   self.assertTrue(1<=v['seen']['share_max']<=3,f'{mode}: 共有を触るのはライン数まで（同時出力も） {v["seen"]}')
+   self.assertTrue(any(str(x['detail']).startswith(('変換中','変換待ち','公開中')) for x in v['lines']),'一言に、何本が何をしているかの内訳')
+   self.assertEqual(len(v['files']),n,v['files'])
+   self.assertEqual(len(v['txt']),4 if mode=='fourextra' else 0,'同時出力も値ごとに出る')
 
  def test_parallel_one_value_per_worker(self):
   """値ごとに並列: 値ごとに1本のワーカー。各ワーカーは表側をその値1つに絞って問い合わせ、まとめて1回と同じ道で出す。
