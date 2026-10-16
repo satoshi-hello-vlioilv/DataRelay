@@ -693,7 +693,7 @@ def pub():
  with sh:got.append(time.perf_counter()-t0)
 p=threading.Thread(target=pub);p.start();p.join(5)
 for t in ts:t.join(10)
-out.update(scan_limit=sh.scan.limit,scan_peak=peak2[0],publish_wait=got[0])
+out.update(scan_limit=sh.scan_limit,scan_peak=peak2[0],publish_wait=got[0])
 print(json.dumps(out))
 """
 

@@ -4019,27 +4019,28 @@ def _variant_share_limit(j):
  return max(1,int(j.get('_split_budget') or 1))
 
 class _ShareGate:
- """共有を触るところの鍵（limit 本まで）。いま何本が中にいるかを数える（進み具合の一言に「共有 n/上限」で出す）。
- scan は前の回の保留の確認に使う鍵で、共有の枠の半分までしか使わない（後ろの値の確認が枠を占めて、変換を終えた値の公開を待たせない）。"""
+ """共有を触るところの鍵（limit 本まで）と、いま何本が中にいるかの数（進み具合の一言に「共有 n/上限」で出す）。
+ with gate: は公開（写す・控え・差し替え）。with gate.scan: は前の回の保留の確認で、共有の枠の半分（scan_limit）までしか使わない
+ （後ろの値の確認が枠を占めて、変換を終えた値の公開を待たせない）。"""
  def __init__(self,limit):
-  self.limit=limit;self.inside=0;self._sem=threading.BoundedSemaphore(limit);self._count=threading.Lock()
-  self.scan=_ScanGate(self,max(1,limit//2))
- def __enter__(self):
-  self._sem.acquire()
-  with self._count:self.inside+=1
- def __exit__(self,*a):
-  with self._count:self.inside-=1
-  self._sem.release()
+  self.limit=limit;self.scan_limit=max(1,limit//2);self.inside=0;self.scanning=0;self._count=threading.Lock()
+  self._all=threading.BoundedSemaphore(limit);self._scan=threading.BoundedSemaphore(self.scan_limit);self.scan=_ShareScan(self)
+ def _enter(self,scan):
+  if scan:self._scan.acquire()
+  self._all.acquire()
+  with self._count:self.inside+=1;self.scanning+=scan
+ def _exit(self,scan):
+  with self._count:self.inside-=1;self.scanning-=scan
+  self._all.release()
+  if scan:self._scan.release()
+ def __enter__(self):self._enter(False)
+ def __exit__(self,*a):self._exit(False)
 
-class _ScanGate:
- """_ShareGate の保留の確認ぶん（limit 本まで）。中で共有の鍵も取る。いま確認している数を数える。"""
- def __init__(self,share,limit):self.share=share;self.limit=limit;self.inside=0;self._sem=threading.BoundedSemaphore(limit)
- def __enter__(self):
-  self._sem.acquire();self.share.__enter__()
-  with self.share._count:self.inside+=1
- def __exit__(self,*a):
-  with self.share._count:self.inside-=1
-  self.share.__exit__();self._sem.release()
+class _ShareScan:
+ """_ShareGate の保留の確認ぶんの入口（with gate.scan:）。"""
+ def __init__(self,gate):self.gate=gate
+ def __enter__(self):self.gate._enter(True)
+ def __exit__(self,*a):self.gate._exit(True)
 
 def _finish_variants(j,cfg,*,intermediate,backup,local_export,stamp,fmt,extras,expected_cols,job_started,line,note,rp,run_metrics):
  """まとめて受け取った中間CSVを値ごとに分け、値ごとに 変換 → 公開 する。1つの値が失敗しても残りは出す。
@@ -4077,13 +4078,11 @@ def _finish_variants(j,cfg,*,intermediate,backup,local_export,stamp,fmt,extras,e
   def breakdown(last):
    """同時に作るときの一言: 何本が変換・公開しているか、残りはいくつか（どの値が動いているかは区切りバーで分かる）。
    変換は1本ずつなので、変換の順番を待っている値（convert_start）は「変換待ち」に数える。"""
-   n_={k2:sum(1 for x in stages if x in v2) for k2,v2 in (('保留の確認',('scan',)),('変換中',('convert',)),('変換待ち',('convert_start',)),('公開中',('publish','extras')))}
-   n_['待ち']=sum(1 for x,st in zip(slots,stages) if x is None and not st)
-   parts_=[f'{k2} {v2}' for k2,v2 in n_.items() if v2]
-   if n_['保留の確認']>share.scan.inside:   # 確認している数と、共有の空きを待っている数を分ける
-    parts_[0]=f'保留の確認 {share.scan.inside}（共有待ち {n_["保留の確認"]-share.scan.inside}）'
+   # 保留の確認は、共有で確認している数だけ（共有の空きを待っている値は、まだ何も始めていない値と同じく「待ち」）
+   n_={'保留の確認':share.scanning,**{k2:sum(1 for x in stages if x in v2) for k2,v2 in (('変換中',('convert',)),('変換待ち',('convert_start',)),('公開中',('publish','extras')))}}
+   n_['待ち']=sum(1 for x,st in zip(slots,stages) if x is None and st in ('','scan'))-share.scanning
    # 共有を触っている数（上限＝ライン数。保留の確認・写す・差し替え）。公開中のうち残りは、目印のあとの猶予を待っている
-   return ' · '.join(parts_+[f'共有 {share.inside}/{share.limit}']*bool(n_['公開中'] or share.inside)+[last])
+   return ' · '.join([f'{k2} {v2}' for k2,v2 in n_.items() if v2>0]+[f'共有 {share.inside}/{share.limit}']*bool(n_['公開中'] or share.inside)+[last])
   def one_file(k):
    one=parts[k];value=one['_variant_value'];part=sp['parts'][value]
    def rep(stage,**kw):
