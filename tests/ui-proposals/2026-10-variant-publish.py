@@ -143,7 +143,7 @@ t0=time.perf_counter()
 res=app.process_api_parallel_job(job,1,1,cfg,'u','p','srv',work/'dde',work/'backup')
 t1=time.perf_counter()
 files={}
-for p in sorted(share.glob('*.'+sc['fmt'])):
+for p in sorted(x for x in share.glob('*.'+sc['fmt']) if '.pending_' not in x.name):   # 保留は名前に作った時刻が入るので比べない（pending_left で見る）
  if sc['fmt']=='csv':rows=list(csv.reader(open(p,encoding='utf-8-sig')))
  else:
   import openpyxl;wb=openpyxl.load_workbook(p,read_only=True);rows=[[('' if c is None else str(c)) for c in r] for r in wb.active.iter_rows(values_only=True)];wb.close()
