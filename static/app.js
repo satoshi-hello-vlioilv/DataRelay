@@ -823,7 +823,7 @@ function varPreview(now){
   varLast=d;paintVariants();
  },now?0:250);
 }
-/* 出てくる値を数える（2.5.0）: いまの条件で1回問い合わせ、値ごとの行数を数える（ファイルは作らない）。
+/* 出てきた値を数える（2.5.0）: いまの条件で1回問い合わせ、値ごとの行数を数える（ファイルは作らない）。
    調べものの仕組みで裏で走るので、編集を閉じても続き、開き直すと追いかける。数えた結果はサーバーが対象ごとに控え、見込みが読む */
 async function varCount(){
  if(varCounting&&!varCounting.error)return;
@@ -855,7 +855,7 @@ function varEstHtml(v,d){
  else if(all){num=n;t=fresh?`いまの条件で ${Number(k.rows).toLocaleString()}件 · ${varWhen(k.taken_at)} に数えた`:`${varWhen(k.taken_at)} に数えたときの数です`;
   sub=fresh?'下の表が、値ごとにできあがるファイルです':'RNE か抽出期間が変わりました。数え直すと、いまの条件の数になります';cls=fresh?'':'is-stale'}
  else{num=v.values.length;t=fresh?`いまの条件で ${Number(v.values.reduce((a,x)=>a+Number((k.values.find(y=>y.value===x)||{}).rows||0),0)).toLocaleString()}件 · ${varWhen(k.taken_at)} に数えた`:'指定した値の数だけファイルを作ります';
-  sub=fresh?'下の表に、値ごとの行数が並びます':'数えると、値ごとの行数と、ほかに出てくる値が分かります'}
+  sub=fresh?'下の表に、値ごとの行数が並びます':'数えると、値ごとの行数と、ほかに出てきた値が分かります'}
  let x=[];
  if(varCounting?.error)x.push(`<p class="var-est-x is-ng">数えられませんでした: ${E(varCounting.error)}</p>`);
  if(k&&all&&n>Number(d.max_found||300))x.push(`<p class="var-est-x is-ng">出てきた値が ${n} あり、上限（${d.max_found}）を超えるため、実行は止まります。分ける項目を確かめてください。</p>`);
@@ -863,8 +863,8 @@ function varEstHtml(v,d){
  if(k&&k.relax_unsure)x.push(`<p class="var-est-x">RNE の条件のキーの値しか出てきませんでした。条件を外せていないかもしれません。</p>`);
  if(k&&k.blank)x.push(`<p class="var-est-x">値が空の行 ${Number(k.blank).toLocaleString()}件は、どのファイルにも入りません。</p>`);
  let more=k&&!all?k.values.filter(y=>!v.values.includes(y.value)):[];
- if(more.length)x.push(`<div class="var-est-more">ほかに出てくる値（押すと足す）: ${more.slice(0,30).map(y=>`<button type="button" class="var-pick var-add-found" data-v="${E(y.value)}">${E(y.value)}<small>${Number(y.rows).toLocaleString()}件</small></button>`).join('')}</div>`);
- return {cls,html:`<span class="var-est-n">${num}<small>ファイル</small></span><span class="var-est-t">${E(t)}</span>${btn(varCounting&&!varCounting.error?'数えています':k||varCounting?.error?'数え直す':'出てくる値を数える',all&&(!k||!fresh))}<span class="var-est-s">${E(sub)}</span>${x.join('')}`};
+ if(more.length)x.push(`<div class="var-est-more">ほかに出てきた値（押すと足す）: ${more.slice(0,30).map(y=>`<button type="button" class="var-pick var-add-found" data-v="${E(y.value)}">${E(y.value)}<small>${Number(y.rows).toLocaleString()}件</small></button>`).join('')}</div>`);
+ return {cls,html:`<span class="var-est-n">${num}<small>ファイル</small></span><span class="var-est-t">${E(t)}</span>${btn(varCounting&&!varCounting.error?'数えています':k||varCounting?.error?'数え直す':'出てきた値を数える',all&&(!k||!fresh))}<span class="var-est-s">${E(sub)}</span>${x.join('')}`};
 }
 /* できあがるファイルの表: 置き場が全部同じなら名前だけを並べて置き場を1回だけ書く（違いは名前の末尾だけなので、見比べやすく） */
 function varFilesHtml(files,v,d,cur){
@@ -876,7 +876,7 @@ function varFilesHtml(files,v,d,cur){
 }
 /* 数える前の見本（出てきた値すべて）: RNE のいまの値を例に、どんな名前でできるかを先に見せる */
 function varSampleHtml(sample){
- return `<table class="rel-table var-table var-sample"><thead><tr><th>値（例）</th><th>できあがるファイルの形</th></tr></thead><tbody>${sample.map(f=>`<tr><td><b>${E(f.value)}</b><i class="rel-tag is-here">RNE の今の値</i></td><td><code title="${E(f.path)}">${E(f.file)}</code></td></tr>`).join('')}`
+ return `<table class="rel-table var-table var-sample"><caption>名前の見本（数えると、実際にできるファイルが並びます）</caption><thead><tr><th>値（例）</th><th>できあがるファイルの名前の形</th></tr></thead><tbody>${sample.map(f=>`<tr><td><b>${E(f.value)}</b><i class="rel-tag is-here">RNE の今の値</i></td><td><code title="${E(f.path)}">${E(f.file)}</code></td></tr>`).join('')}`
   +`<tr class="var-more"><td>…</td><td>ほかに出てきた値ごとに、同じ形の名前で作ります</td></tr></tbody></table><small class="var-where">置き場: <code>${E(sample[0].folder)}</code></small>`;
 }
 function paintVariants(){
@@ -903,7 +903,7 @@ function paintVariants(){
  let box=$('#m-var-est');box.className='var-est '+est.cls;box.innerHTML=est.html;
  box.querySelector('.var-count-go')?.addEventListener('click',varCount);
  box.querySelectorAll('.var-add-found').forEach(b=>b.onclick=()=>addVarValues(b.dataset.v));
- $('#m-var-count').textContent=files.length?`（${files.length}）`:'';
+ $('#m-var-count').textContent=files.length&&!est.html?`（${files.length}）`:'';
  $('#m-var-files').innerHTML=d.error?`<p class="var-error">${E(d.error)}</p>`
   :!v.item?'<p class="var-empty">分ける項目を決めると、ここに値ごとのファイルの名前と置き場が並びます。</p>'
   :!all&&!v.values.length?'<p class="var-empty">値を足すと、ここに値ごとのファイルの名前と置き場が並びます。</p>'

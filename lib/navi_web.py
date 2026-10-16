@@ -365,7 +365,7 @@ def variants_preview():
 
 @app.post('/api/variants/count')
 def variants_count():
- """出てくる値を数える（2.5.0）。いまの条件（期間指定を含む）で、条件欄の絞り込みを外して1回問い合わせ、分ける項目の値ごとの行数を返す。
+ """出てきた値を数える（2.5.0）。いまの条件（期間指定を含む）で、条件欄の絞り込みを外して1回問い合わせ、分ける項目の値ごとの行数を返す。
  ファイルは作らない。DLL を触るのでワーカープロセスで動かす（落ちても本体は残る）。数えた結果は対象ごとに控え、見込みに使う。
  ふつうは調べものの仕組み（/api/inspect-task/variants）から裏で呼ばれる（画面を閉じても続く）。"""
  data=request.get_json(silent=True) or {};c=load();job=_variant_job(data)

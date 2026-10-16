@@ -218,7 +218,7 @@ def split_csv(path, item, values, out_dir, encodings=('cp932', 'utf-8-sig', 'utf
 
 
 def count_csv(path, item, encodings=('cp932', 'utf-8-sig', 'utf-8')):
-    """中間CSVの item 列に、どの値が何行あるか（ファイルは作らない。「出てくる値を数える」で使う）。
+    """中間CSVの item 列に、どの値が何行あるか（ファイルは作らない。「出てきた値を数える」で使う）。
     → {'missing_column', 'header', 'values': [{'value', 'rows'}]（出てきた順）, 'rows', 'blank', 'encoding'}。"""
     counts = {}
 

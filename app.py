@@ -3903,7 +3903,7 @@ def _variant_conditions(api,handle,j,ov,line):
  return note
 
 def count_variant_values(api,handle,j,cfg):
- """出てくる値を数える（2.5.0）。本番の「出てきた値すべて」と同じ条件（期間指定・条件欄の絞り込みを外す）で1回だけ問い合わせ、
+ """出てきた値を数える（2.5.0）。本番の「出てきた値すべて」と同じ条件（期間指定・条件欄の絞り込みを外す）で1回だけ問い合わせ、
  分ける項目の値ごとの行数を返す。ファイルは作らない（受け取った中間CSVは数えたら消す）。ワーカーの中で呼ばれる（DLL を触るため）。
  → navi_variants.count_csv の形に relax（外した形）・relax_unsure（外せていないかもしれない）・rne_keys を足したもの。"""
  v=navi_variants.normalize(j.get('variants'));rp=resolve_rne_path(j,cfg);line='数える'
@@ -5141,8 +5141,8 @@ INSPECT_TASK_SPECS={
            '列定義を用意して、分割できる列を判定しています',8.0),
  'row':   ('row_split_plan','/api/row-split-plan','行の分け方を探す',
            'RNEから、行を絞れる軸（管理ポイント）を読んでいます',24.0),
- # 値ごとに分けて出す（2.5.0）: 出てくる値を数える。本番と同じ問い合わせを1回するので、見込みは実行と同じくらい
- 'variants':('variants_count','/api/variants/count','出てくる値を数える',
+ # 値ごとに分けて出す（2.5.0）: 出てきた値を数える。本番と同じ問い合わせを1回するので、見込みは実行と同じくらい
+ 'variants':('variants_count','/api/variants/count','出てきた値を数える',
              '条件の絞り込みを外して1回問い合わせ、値ごとの行数を数えています',60.0),
 }
 # 「RNEを調査」は上の3つを続けて走らせる。読むものは同じで、分けて押す理由が無い。
