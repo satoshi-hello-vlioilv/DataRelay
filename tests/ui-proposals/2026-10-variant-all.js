@@ -1,7 +1,7 @@
 // 2.5.0「出てきた値すべて」と「出てくる値を数える」の案（CLAUDE.md §3）。対象の編集（#editor）の「値ごとに分ける」タブの中身（.var-box）を、
 // 案ごとの DOM と CSS に差し替えて再現する。データはどの案も同じ実データ（/api/variants/preview: 条件欄の項目といまのキー・数えた値と行数・出し先）。
 // 撮り方: 撮影用の仕掛けで window.VV.show('A1') など。末尾 1 = 出てきた値すべてを選び、まだ数えていない / 2 = 数えたあと。
-// 1回目 A〜G（5案＋方向の違う2案 F・G）。2回目は組合せ案 H〜K と1回目の上位3案 E・D・F。
+// 1回目 A〜G（5案＋方向の違う2案 F・G）。2回目は組合せ案 H〜K と1回目の上位3案 E・D・F。3回目は組合せ案 L〜O と2回目の上位3案 E・H・I。
 (() => {
  const E = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
  const N = n => Number(n || 0).toLocaleString();
@@ -67,6 +67,8 @@
   .vv-est b{font-size:12.5px;color:#203d4a}.vv-est .vv-tip{grid-column:2}.vv-est button{grid-row:1/3;grid-column:3}
   .vv-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
   .vv-band{display:flex;align-items:center;gap:12px}.vv-band .vv-sp{flex:1}
+  .vv-big2{font-size:22px;font-weight:800;color:#0b6f80;line-height:1;font-variant-numeric:tabular-nums;white-space:nowrap}.vv-big2 small{font-size:11.5px;margin-left:2px;color:#425661}
+  .vv-big2.is-none{color:#9ab0b8}.vv-est.vv-slim{padding:7px 12px}.vv-est.vv-slim .vv-big{font-size:22px}
  `;
  const two = (left, right) => `<div class="var-two"><div class="var-col">${left}</div><div class="var-col">${right}</div></div>`;
  const valuesF = (inner, note = '値の数だけファイルができます') => `<div class="var-f"><span class="var-l"><i>2</i>値<small>${note}</small></span>${inner}</div>`;
@@ -116,9 +118,23 @@
     `<div class="var-say vv-band"><span class="vv-sp"><b>${E(cond().name)}</b> の<b>出てきた値すべて</b>でファイルを作ります（取り方は<b>まとめて1回</b>）。${c ? `いまの条件では <b>${C().values.length}ファイル</b>（${N(C().rows)}件 · ${when()} に数えた）。` : 'いくつになるかは、まだ数えていません（数えなくても実行できます）。'}</span>${countBtn(c)}</div>` + two(
     item() + valuesF(seg2(true).replace('vv-seg', 'vv-seg vv-seg2'), '指定するか、出てきた値すべてか') + name() + place(),
     `<h4 class="var-h">できあがるファイル${c ? `<span>（${C().values.length}）</span>` : ''}</h4>` + (c ? fileTable() : pending('出てきた値の数だけファイルができます。'))) },
+  L: { name: 'L 組合せ（I の位置＝2択の真下に、H の大きな数の札。E の帯は数えたら数を入れる）', html: (c) => head() + method(true) + sayN(c) + two(
+    item() + valuesF(seg2(true).replace('vv-seg', 'vv-seg vv-seg2') + est(c, true), '指定するか、出てきた値すべてか') + name() + place(),
+    `<h4 class="var-h">できあがるファイル${c ? `<span>（${C().values.length}）</span>` : ''}</h4>` + (c ? fileTable() : pending('数えると、ここに値ごとのファイルの名前と行数が並びます。'))) },
+  M: { name: 'M 組合せ（E の帯の左に H の大きな数、右に数える。2択に ✓）', html: (c) => head() + method(true) +
+    `<div class="var-say vv-band"><span class="vv-big2 ${c ? '' : 'is-none'}">${c ? C().values.length : '?'}<small>ファイル</small></span><span class="vv-sp"><b>${E(cond().name)}</b> の<b>出てきた値すべて</b>で作ります。${c ? `いまの条件で ${N(C().rows)}件 · ${when()} に数えた。` : 'まだ数えていません（数えなくても実行できます）。'}</span>${countBtn(c)}</div>` + two(
+    item() + valuesF(seg2(true).replace('vv-seg', 'vv-seg vv-seg2'), '指定するか、出てきた値すべてか') + name() + place(),
+    `<h4 class="var-h">できあがるファイル${c ? `<span>（${C().values.length}）</span>` : ''}</h4>` + (c ? fileTable() : pending('出てきた値の数だけファイルができます。'))) },
+  N: { name: 'N 組合せ（右列の見出しの行を H の札にし、表とひとまとまり。E の帯は数を入れる）', html: (c) => head() + method(true) + sayN(c) + two(
+    item() + valuesF(seg2(true).replace('vv-seg', 'vv-seg vv-seg2'), '指定するか、出てきた値すべてか') + name() + place(),
+    `<div class="vv-hd"><h4>できあがるファイル</h4></div>` + est(c) + (c ? fileTable() : '')) },
+  O: { name: 'O 組合せ（I の1行に H の大きな数を入れ、E の帯にも数を入れる）', html: (c) => head() + method(true) + sayN(c) + two(
+    item() + valuesF(seg2(true).replace('vv-seg', 'vv-seg vv-seg2') + `<span class="vv-row"><span class="vv-big2 ${c ? '' : 'is-none'}">${c ? C().values.length : '?'}<small>ファイル</small></span>${c ? `<span class="vv-stamp">${N(C().rows)}件 · ${when()} に数えた</span>` : '<span class="vv-tip">まだ数えていません · 数えなくても実行できます</span>'}${countBtn(c)}</span>`, '指定するか、出てきた値すべてか') + name() + place(),
+    `<h4 class="var-h">できあがるファイル${c ? `<span>（${C().values.length}）</span>` : ''}</h4>` + (c ? fileTable() : pending('数えると、ここに値ごとのファイルの名前と行数が並びます。'))) },
  };
+ const sayN = (c) => `<p class="var-say"><b>${E(cond().name)}</b> の絞り込みを外して<b>まとめて1回</b>で問い合わせ、<b>出てきた値すべて</b>で値ごとのファイルを作ります${c ? `（いまの条件では <b>${C().values.length}ファイル</b>）` : '（数えなくても実行できます）'}。</p>`;
  // 見込みの札（H）: 大きな数（数える前は ?）・何の数か・いつ数えたか・数えるボタン
- const est = (c) => `<div class="vv-est ${c ? '' : 'is-none'}"><span class="vv-big">${c ? C().values.length : '?'}<small>ファイル</small></span><b>${c ? `いまの条件で ${N(C().rows)}件 · ${when()} に数えた` : 'まだ数えていません（数えなくても実行できます）'}</b>${countBtn(c)}<small class="vv-tip">${c ? '下の表が、値ごとにできあがるファイルです' : 'いまの条件で1回問い合わせて数えます（ファイルは作りません）'}</small></div>`;
+ const est = (c, slim) => `<div class="vv-est ${c ? '' : 'is-none'} ${slim ? 'vv-slim' : ''}"><span class="vv-big">${c ? C().values.length : '?'}<small>ファイル</small></span><b>${c ? `いまの条件で ${N(C().rows)}件 · ${when()} に数えた` : 'まだ数えていません（数えなくても実行できます）'}</b>${countBtn(c)}<small class="vv-tip">${c ? '下の表が、値ごとにできあがるファイルです' : 'いまの条件で1回問い合わせて数えます（ファイルは作りません）'}</small></div>`;
  async function show(k) {
   if (!P) await load();
   if (!document.getElementById('vv-css')) { const st = document.createElement('style'); st.id = 'vv-css'; st.textContent = CSS; document.head.appendChild(st); }
