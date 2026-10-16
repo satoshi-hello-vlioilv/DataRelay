@@ -3986,6 +3986,7 @@ class _TurnGate:
  変換に入らずに済んだ値（前回と同じ・途中の失敗）は done(k) で番を返す（後ろの値を止めない）。"""
  def __init__(self):self._cv=threading.Condition();self._serving=0;self._done=set();self._one=threading.Lock()
  def done(self,k):
+  # 2回呼んでも害は無い（集合に入れるだけ）。_Turn が出るとき・番を手放すときと、値が済んだとき（one_file）の両方で呼ぶ
   with self._cv:
    self._done.add(k)
    while self._serving in self._done:self._serving+=1
@@ -3995,6 +3996,9 @@ class _TurnGate:
 class _Turn:
  """_TurnGate の値 k の鍵（何度でも使える。はじめの1回だけ番を待つ）。"""
  def __init__(self,gate,k):self.gate=gate;self.k=k;self.first=True
+ def step_aside(self):
+  """番を先に手放す（このあと長くかかる値が、後ろの値の変換を止めないように）。この値の変換は、番を待たず1本ずつにするだけ。"""
+  if self.first:self.first=False;self.gate.done(self.k)
  def __enter__(self):
   g=self.gate
   if self.first:
@@ -4015,14 +4019,27 @@ def _variant_share_limit(j):
  return max(1,int(j.get('_split_budget') or 1))
 
 class _ShareGate:
- """共有を触るところの鍵（limit 本まで）。いま何本が中にいるかを数える（進み具合の一言に「共有 n/上限」で出す）。"""
- def __init__(self,limit):self.limit=limit;self.inside=0;self._sem=threading.BoundedSemaphore(limit);self._count=threading.Lock()
+ """共有を触るところの鍵（limit 本まで）。いま何本が中にいるかを数える（進み具合の一言に「共有 n/上限」で出す）。
+ scan は前の回の保留の確認に使う鍵で、共有の枠の半分までしか使わない（後ろの値の確認が枠を占めて、変換を終えた値の公開を待たせない）。"""
+ def __init__(self,limit):
+  self.limit=limit;self.inside=0;self._sem=threading.BoundedSemaphore(limit);self._count=threading.Lock()
+  self.scan=_ScanGate(self,max(1,limit//2))
  def __enter__(self):
   self._sem.acquire()
   with self._count:self.inside+=1
  def __exit__(self,*a):
   with self._count:self.inside-=1
   self._sem.release()
+
+class _ScanGate:
+ """_ShareGate の保留の確認ぶん（limit 本まで）。中で共有の鍵も取る。いま確認している数を数える。"""
+ def __init__(self,share,limit):self.share=share;self.limit=limit;self.inside=0;self._sem=threading.BoundedSemaphore(limit)
+ def __enter__(self):
+  self._sem.acquire();self.share.__enter__()
+  with self.share._count:self.inside+=1
+ def __exit__(self,*a):
+  with self.share._count:self.inside-=1
+  self.share.__exit__();self._sem.release()
 
 def _finish_variants(j,cfg,*,intermediate,backup,local_export,stamp,fmt,extras,expected_cols,job_started,line,note,rp,run_metrics):
  """まとめて受け取った中間CSVを値ごとに分け、値ごとに 変換 → 公開 する。1つの値が失敗しても残りは出す。
@@ -4062,8 +4079,11 @@ def _finish_variants(j,cfg,*,intermediate,backup,local_export,stamp,fmt,extras,e
    変換は1本ずつなので、変換の順番を待っている値（convert_start）は「変換待ち」に数える。"""
    n_={k2:sum(1 for x in stages if x in v2) for k2,v2 in (('保留の確認',('scan',)),('変換中',('convert',)),('変換待ち',('convert_start',)),('公開中',('publish','extras')))}
    n_['待ち']=sum(1 for x,st in zip(slots,stages) if x is None and not st)
-   # 共有を触っている数（上限＝ライン数。保留の一覧・写す・差し替え）。公開中のうち残りは、目印のあとの猶予を待っている
-   return ' · '.join([f'{k2} {v2}' for k2,v2 in n_.items() if v2]+[f'共有 {share.inside}/{share.limit}']*bool(n_['公開中'] or share.inside)+[last])
+   parts_=[f'{k2} {v2}' for k2,v2 in n_.items() if v2]
+   if n_['保留の確認']>share.scan.inside:   # 確認している数と、共有の空きを待っている数を分ける
+    parts_[0]=f'保留の確認 {share.scan.inside}（共有待ち {n_["保留の確認"]-share.scan.inside}）'
+   # 共有を触っている数（上限＝ライン数。保留の確認・写す・差し替え）。公開中のうち残りは、目印のあとの猶予を待っている
+   return ' · '.join(parts_+[f'共有 {share.inside}/{share.limit}']*bool(n_['公開中'] or share.inside)+[last])
   def one_file(k):
    one=parts[k];value=one['_variant_value'];part=sp['parts'][value]
    def rep(stage,**kw):
@@ -4107,7 +4127,9 @@ def _variant_file(one,part,cfg,*,backup,local_export,stamp,expected_cols,line,re
   fmt1=validate_output_contract(one,'before-extraction')
   out_dir=resolve_path(one.get('output_folder') or cfg['default_output_folder']);target=out_dir/one['output_file']
   s=cfg['settings'];report('scan')   # 前の回の保留を入れる（共有を一覧する）
-  apply_pending(target,backup,int(s['backup_generations']),backup_enabled=bool(s.get('backup_enabled',True)),retention_days=int(s.get('backup_retention_days',30)), backup_mode=str(s.get('backup_mode','generations')),gate=share)
+  # 保留が見つかったら、入れる公開は使用中なら粘る（最大 REPLACE_DEADLINE_SECONDS）。そのあいだ後ろの値の変換を止めないよう、番を先に手放す
+  apply_pending(target,backup,int(s['backup_generations']),backup_enabled=bool(s.get('backup_enabled',True)),retention_days=int(s.get('backup_retention_days',30)), backup_mode=str(s.get('backup_mode','generations')),
+                gate=share.scan if share else None,on_found=getattr(gate,'step_aside',None))
   db=Path(local_export)/f'{Path(one["output_file"]).stem}_{stamp}{Path(one["output_file"]).suffix}'
   fin=finish_one_job(one,cfg,intermediate=Path(part['path']),db=db,target=target,backup=backup,out_dir=out_dir,
                      local_export=local_export,stamp=stamp,expected_rows=part['rows'],expected_cols=expected_cols,

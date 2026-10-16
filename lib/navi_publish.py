@@ -115,9 +115,10 @@ def _replace_once(src,dst):
 def _pending_pattern(dst):
  return f'{dst.stem}.pending_*{dst.suffix}'
 
-def apply_pending(dst,backup_root,generations,backup_enabled=True,retention_days=30,backup_mode='generations',gate=None):
+def apply_pending(dst,backup_root,generations,backup_enabled=True,retention_days=30,backup_mode='generations',gate=None,on_found=None):
  """Apply the newest deferred output before the next extraction, if the target is no longer locked.
- gate は publish と同じ（共有を一覧するところと、保留を入れる公開の中で使う）。"""
+ gate は publish と同じ（共有を一覧するところと、保留を入れる公開の中で使う）。
+ on_found() は保留が見つかって入れ始める前に呼ぶ（入れる公開は、使用中なら粘るので長くかかりうる）。"""
  # globは公開先フォルダー（多くはネットワーク共有）を丸ごと列挙する。並列ラインの数だけ
  # 同時に走るため、共有が重い環境では抽出開始前の待ち時間になり得る。実測を必ず残す。
  _scan_started=time.perf_counter()
@@ -127,6 +128,7 @@ def apply_pending(dst,backup_root,generations,backup_enabled=True,retention_days
  log.info('PENDING_SCAN dir=%s pattern=%s matched=%s elapsed=%.2fs',dst.parent,_pending_pattern(dst),len(pending),scan_elapsed)
  if not pending:return None
  newest=pending[0]
+ if on_found:on_found()
  try:
   publish(newest,dst,backup_root,generations,from_pending=True,backup_enabled=backup_enabled,retention_days=retention_days,backup_mode=backup_mode,gate=gate)
   for old in pending[1:]:

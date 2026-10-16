@@ -666,7 +666,35 @@ def work(k,skip=False):
 ts=[threading.Thread(target=work,args=(k,k==1)) for k in (4,3,2,1,0)]   # 起こす順は逆、値 1 は変換に入らない
 for t in ts:t.start()
 for t in ts:t.join(10)
-print(json.dumps({'alive':any(t.is_alive() for t in ts),'first':[k for i,k in enumerate(order) if k not in order[:i]],'peak':peak[0]}))
+out={'alive':any(t.is_alive() for t in ts),'first':[k for i,k in enumerate(order) if k not in order[:i]],'peak':peak[0]}
+# 保留を入れ直して粘る値（1）は番を先に手放す。粘っているあいだに、後ろの値（2・3）が先に変換できる
+g=app._variant_convert_gate();order=[]
+def slow(k):
+ t=g.turn(k)
+ if k==1:t.step_aside();time.sleep(0.3)   # 保留の公開先が使用中で粘っている
+ with t:order.append(k)
+ g.done(k)
+ts=[threading.Thread(target=slow,args=(k,)) for k in range(4)]
+for t in ts:t.start()
+for t in ts:t.join(10)
+out['aside']=order
+# 保留の確認は共有の枠の半分まで。確認で埋まっていても、公開は共有の鍵に入れる
+sh=app._ShareGate(6);inside=[0];peak2=[0];got=[]
+def scan():
+ with sh.scan:
+  with lk:inside[0]+=1;peak2[0]=max(peak2[0],inside[0])
+  time.sleep(0.2)
+  with lk:inside[0]-=1
+ts=[threading.Thread(target=scan) for _ in range(8)]
+for t in ts:t.start()
+time.sleep(0.05)
+def pub():
+ t0=time.perf_counter()
+ with sh:got.append(time.perf_counter()-t0)
+p=threading.Thread(target=pub);p.start();p.join(5)
+for t in ts:t.join(10)
+out.update(scan_limit=sh.scan.limit,scan_peak=peak2[0],publish_wait=got[0])
+print(json.dumps(out))
 """
 
 
@@ -681,6 +709,9 @@ class TurnGateTest(unittest.TestCase):
   self.assertFalse(v['alive'],'変換に入らない値（1）があっても止まらない')
   self.assertEqual(v['first'],[0,2,3,4],'はじめの変換は値の並びの順（起こした順によらない）')
   self.assertEqual(v['peak'],1,'同時に変換するのは1本だけ（同時出力の変換も）')
+  self.assertEqual(v['aside'],[0,2,3,1],'番を手放した値（1）が粘っても、後ろの値は止まらない')
+  self.assertEqual((v['scan_limit'],v['scan_peak']),(3,3),'保留の確認は共有の枠（6）の半分まで')
+  self.assertLess(v['publish_wait'],0.1,'確認が順番待ちでも、公開は共有の空き枠ですぐ入れる')
 
 
 # データビュワー（2.1.2）: 値ごとに分けて出す対象は、値ごとのファイルを選んで開ける

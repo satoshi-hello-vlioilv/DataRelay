@@ -45,6 +45,7 @@ SCENES={
  'small':{'name':'40値 × 300行 × 20列 CSV','values':40,'rows':300,'cols':20,'fmt':'csv'},
  'fail':{'name':'8値 × 3000行 × 20列 CSV・V03 だけ変換で失敗','values':8,'rows':3000,'cols':20,'fmt':'csv','fail':'V03'},
  'extra':{'name':'20値 × 3000行 × 20列 CSV ＋ 同時出力 TXT','values':20,'rows':3000,'cols':20,'fmt':'csv','extras':['txt']},
+ 'busy':{'name':'8値 × 3000行 × 20列 CSV・V01 の公開先が使用中で前の回の保留も残る（粘る型は5秒）','values':8,'rows':3000,'cols':20,'fmt':'csv','busy':'V01'},
 }
 
 CHILD=r"""
@@ -72,6 +73,8 @@ def copy2(src,dst,*a,**k):
    with link:time.sleep(Path(src).stat().st_size/BW)
  return _copy2(src,dst,*a,**k)
 def replace(src,dst,*a,**k):
+ if sc.get('busy') and Path(dst).name==f'LOTACH_{sc["busy"]}.csv':   # 他の PC が開いている（差し替えられない）
+  time.sleep(LAT);e=PermissionError(13,'使用中');e.winerror=32;raise e
  if on_share(src,dst):
   with on_op():ops['replace']+=1;time.sleep(LAT)
  return _replace(src,dst,*a,**k)
@@ -116,6 +119,10 @@ cfg=app.load()
 # 案を当てる（app の差し替え口。prototype の案はここで組む）
 exec(open(arg['proto'],encoding='utf-8').read())   # 試作の案（F・G）と、案の当て方
 _BUDGET[0]=int(arg['budget']);use(app,cfg,st)
+if sc.get('busy'):
+ navi_publish.REPLACE_DEADLINE_SECONDS=5.0
+ (share/f'LOTACH_{sc["busy"]}.csv').write_text('old',encoding='utf-8')
+ (share/f'LOTACH_{sc["busy"]}.pending_20261001_000000.csv').write_text('pending',encoding='utf-8')
 if sc.get('fail'):
  _exp=app.export_data
  def export_data(src,dst,job,*a,**k):
@@ -124,7 +131,7 @@ if sc.get('fail'):
  app.export_data=export_data
 lines=[];_upd=app.update_parallel_line;mark={}
 def spy(line,**kw):
- lines.append({k:kw.get(k) for k in ('state','percent','variants','detail')})
+ lines.append({**{k:kw.get(k) for k in ('state','percent','variants','detail')},'t':time.perf_counter()})
  if kw.get('phase')=='convert' and 'post' not in mark:mark['post']=time.perf_counter()
  return _upd(line,**kw)
 app.update_parallel_line=spy
@@ -145,10 +152,15 @@ pct=[x['percent'] for x in lines if x['percent'] is not None]
 fin=[i for i,x in enumerate(lines) if x['state'] in ('完了','一部失敗','失敗')]
 left=[p.name for p in share.iterdir() if p.name.startswith('.') or '.pending_' in p.name]
 import resource
-print(json.dumps({'details':[d for w in ('変換中','変換待ち','公開中') for d in list(dict.fromkeys(x['detail'] for x in lines if w in str(x.get('detail') or '')))[:2]],'mem_mb':round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss/1024,1),'per_value':[[x['value'],x['ok']] for x in res.get('variant_results') or []],'ok':bool(res.get('ok')),'error':res.get('error',''),'post':round(t1-mark.get('post',t1),2),'total':round(t1-t0,2),
+def others_done():
+ for x in lines:
+  vs=x.get('variants') or []
+  if vs and all(y['state'] in ('ok','ng') for y in vs if y['value']!=sc.get('busy')) and len(vs)==K:return round(x['t']-mark.get('post',x['t']),2)
+print(json.dumps({'others_done':others_done(),'details':[d for w in ('変換中','変換待ち','公開中') for d in list(dict.fromkeys(x['detail'] for x in lines if w in str(x.get('detail') or '')))[:2]],'mem_mb':round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss/1024,1),'per_value':[[x['value'],x['ok']] for x in res.get('variant_results') or []],'ok':bool(res.get('ok')),'error':res.get('error',''),'post':round(t1-mark.get('post',t1),2),'total':round(t1-t0,2),
  'files':files,'extra_files':len(list(share.glob('*.txt'))),'ops':ops,'left':left,
  'progress':{'monotonic':pct==sorted(pct),'finish_once':fin==[len(lines)-1],
              'last_all_ok':bool(lines) and [y['state'] for y in lines[-1]['variants'] or []]==[('ng' if f'V{k:02d}'==sc.get('fail') else 'ok') for k in range(K)],
+             'pending_left':[p.name for p in share.glob('*.pending_*')],
              'max_running':max([sum(1 for y in (x['variants'] or []) if y['state']=='run') for x in lines] or [0])}},ensure_ascii=False))
 """
 

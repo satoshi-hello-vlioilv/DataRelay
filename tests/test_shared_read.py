@@ -186,6 +186,16 @@ class Writer(Base):
   self.assertFalse(t.is_alive(),'鍵を重ねて取って止まらない')
   self.assertEqual(out.get('r'),pending)
 
+ def test_on_found_only_when_pending_exists(self):
+  """on_found は保留が見つかったときだけ、入れ始める前に呼ぶ（値ごとの公開は、ここで変換の番を手放す）。"""
+  calls=[]
+  self.assertIsNone(PB.apply_pending(self.dst,self.tmp/'backup',3,backup_enabled=False,on_found=lambda:calls.append('none')))
+  self.assertEqual(calls,[],'保留が無ければ呼ばない')
+  pending=self.dst.parent/f'{self.dst.stem}.pending_20261011_120000{self.dst.suffix}';make_db(pending,3)
+  def found():calls.append('found' if pending.exists() else 'late')
+  with mock.patch.object(PB,'MARK_GRACE_SECONDS',0.0):PB.apply_pending(self.dst,self.tmp/'backup',3,backup_enabled=False,on_found=found)
+  self.assertEqual(calls,['found'],'入れ始める前に1回')
+
 
 if __name__=='__main__':
  unittest.main()
