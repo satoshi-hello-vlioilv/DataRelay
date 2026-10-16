@@ -82,8 +82,12 @@ ERROR_HINTS={
  0x11:'管理ポイントの取得・削除に失敗しました',
 }
 
+# DLL とやり取りする文字の文字コード（Windows の ANSI コードページ。日本語の Windows では cp932）。
+# 試験はこれを cp932 にして、日本語の Windows と同じ形で確かめる（CI の英語版 Windows は cp1252 で、日本語の名前を扱えない）。
+ANSI='mbcs'
+
 def _ansi(value):
-    return str(value).encode('mbcs',errors='strict')
+    return str(value).encode(ANSI,errors='strict')
 
 def pe_bits(path):
     try:
@@ -342,6 +346,18 @@ class NavigatorApiError(RuntimeError):
         self.operation=operation;self.rc=int(rc);self.name=ERROR_NAMES.get(int(rc),'NAVI_ERROR_UNKNOWN')
         super().__init__(f'{operation}失敗 rc=0x{int(rc):X} name={self.name} {detail}'.strip())
 
+def pick_time_point(points,unit=None):
+    """時間型の管理ポイント（list_time_control_points の is_time の物）から、期間を当てる1つを選ぶ。無ければ None。
+    条件欄を先に（期間で絞る RNE は条件欄に置く）、同じ置き場なら名前が単位に合う物（月度の指定は「月」があって「日」が無い名前、
+    年月日の指定は「日」のある名前）、それも同じなら並びの先の物。"""
+    if not points:return None
+    def fits(name):
+        if unit==0:return '月' in name and '日' not in name
+        if unit==1:return '日' in name
+        return False
+    order={'条件':0,'表側':1,'表頭':2}
+    return min(points,key=lambda p:(order.get(p.get('location'),3),0 if fits(str(p.get('name') or '')) else 1,int(p.get('index') or 0)))
+
 class NavigatorApi:
     def __init__(self,logger=None,dll_path=None,base_dir=None,search_roots=None):
         if os.name!='nt':raise RuntimeError('Navigator APIはWindowsでのみ利用できます')
@@ -506,7 +522,7 @@ class NavigatorApi:
         try:
             self.dll.NaviGetErrorMessage(ctypes.byref(rc),ctypes.byref(message_ptr))
             raw=message_ptr.value or b''
-            message=raw.decode('mbcs',errors='replace').strip() if raw else ''
+            message=raw.decode(ANSI,errors='replace').strip() if raw else ''
             return int(rc.value),message
         except Exception as e:
             return -1,f'NaviGetErrorMessage取得失敗: {e}'
@@ -626,9 +642,10 @@ class NavigatorApi:
     def supports_period_change(self):
         # 相対期間（動的日付）変更に最低限必要なAPIが公開されているか。
         return hasattr(self.dll,'NaviChangePeriod') and (hasattr(self.dll,'NaviGetControlPoint') or hasattr(self.dll,'NaviGetControlPointForTimeSpan'))
-    def get_time_control_point(self,h,label='',order=0):
+    def get_time_control_point(self,h,label='',order=0,unit=None):
         # RNEに定義済みの時間型管理ポイントのハンドルを取得する。
-        # label指定時は 条件→表側→表頭 の順に探索。未指定時は時間フィールドの時間型管理ポイントを使う。
+        # label指定時は 条件→表側→表頭 の順に探索。未指定時は時間フィールドの時間型管理ポイント、それも無ければ RNE の時間型から選ぶ
+        # （unit: 0=月度・1=年月日。時間型が何本もあるときに選ぶ手がかり）。
         label=str(label or '').strip()
         if label:
             if not hasattr(self.dll,'NaviGetControlPoint'):
@@ -646,8 +663,18 @@ class NavigatorApi:
             hcp=int(self.dll.NaviGetControlPointForTimeSpan(h,ctypes.byref(rc)))
             if int(rc.value)==NAVI_OK and hcp:
                 return hcp,'時間フィールド'
-            self._check('NaviGetControlPointForTimeSpan',rc,'時間フィールドの時間型管理ポイントを取得できません。管理ポイント名を指定してください')
-        raise RuntimeError('時間型管理ポイントを特定できません。管理ポイント名を指定してください')
+        # 時間フィールドが決まっていない RNE（期間を条件欄の「月度」などに置いた RNE）では、RNE の時間型の管理ポイントから選ぶ。
+        # 以前はここで止めていたため、管理ポイント名を空にした対象だけが失敗していた（実機 2026-10-16: 同じ RNE・同じ版で、
+        # 名前「月度」を入れた PC は成功し、空の PC は NAVI_ERROR_CONTROLPOINT で失敗）。
+        try:points=[p for p in self.list_time_control_points(h) if p['is_time']]
+        except Exception as e:raise RuntimeError(f'時間型管理ポイントを特定できません（{e}）。管理ポイント名を指定してください') from e
+        pick=pick_time_point(points,unit)
+        if not pick:raise RuntimeError('この RNE には時間型の管理ポイントがありません（条件・表側・表頭を探しました）。'
+                                       '抽出期間を使うには、RNE に期間の管理ポイント（例: 月度）を置くか、管理ポイント名を指定してください')
+        hcp=self.control_point_by_place(h,pick)
+        if self.log:self.log.info('PERIOD_POINT_AUTO picked=%s location=%s candidates=%s',pick['name'],pick['location'],
+                                  ' | '.join(f"{p['location']}:{p['name']}" for p in points))
+        return hcp,pick['location']
     def change_period(self,h_cp,condition,from_time,to_time,beginning=''):
         if not hasattr(self.dll,'NaviChangePeriod'):
             raise RuntimeError('このDLLはNaviChangePeriodを公開していません。相対期間の変更は使用できません')
@@ -659,10 +686,11 @@ class NavigatorApi:
         # RNEを開いたカタログハンドルhに対し、時間型管理ポイントの期間を差し替える。
         # 変える前と後の期間を読み戻して返す（2.2.5）。rc が OK でも期間が変わっていないことがあった（実機 2026-10-13:
         # 「RNE に保存した期間のまま」）。読み戻せない DLL では before/after が None。
-        h_cp,locname=self.get_time_control_point(h,label)
+        h_cp,locname=self.get_time_control_point(h,label,unit=condition)
         before=self.get_period(h_cp)
         self.change_period(h_cp,condition,from_time,to_time)
-        return {'handle':h_cp,'locate':locname,'label':label or '(時間フィールド)','before':before,'after':self.get_period(h_cp)}
+        name=label or ('(時間フィールド)' if locname=='時間フィールド' else self.get_name_cp(h_cp) or '(自動で選んだ時間型)')
+        return {'handle':h_cp,'locate':locname,'label':name,'before':before,'after':self.get_period(h_cp)}
     @staticmethod
     def _readable_span(addr,limit=4096):
         """addr から安全に読める最大バイト数を返す。読めないなら0。
@@ -713,7 +741,12 @@ class NavigatorApi:
         buf=ctypes.create_string_buffer(size);rc=ctypes.c_long(-1)
         invoke(buf,rc)
         if int(rc.value)!=NAVI_OK:return '',f'rc={int(rc.value)}'
-        raw=bytes(buf.raw)
+        return self._decode_out(bytes(buf.raw))
+
+    def _decode_out(self,raw):
+        """ByRef String に渡した入れ物の中身を読む（_out_string の後半。1回の呼び出しで文字列を何本も受け取る関数でも使う）。
+        → (文字列, 読み方 ptr／buf／unwritten／unreadable)"""
+        psize=ctypes.sizeof(ctypes.c_void_p)
         if not any(raw[:psize+32]):return '','unwritten'
         head,tail=raw[:psize],raw[psize:psize+32]
         # ポインタらしき形なら、まず参照してみる。読めて名前として通ればそれが答え。
@@ -738,7 +771,7 @@ class NavigatorApi:
         ポインタ値を項目名として表示してしまう事故を防ぐ。
         """
         if not body:return ''
-        try:text=body.decode('mbcs')
+        try:text=body.decode(ANSI)
         except (UnicodeDecodeError,LookupError):return ''
         text=text.strip()
         if not text:return ''
@@ -780,6 +813,12 @@ class NavigatorApi:
                 is_time=ctype in (NAVI_CONTROLPOINT_TIME,NAVI_CONTROLPOINT_TEMPLATE)
                 out.append({'location':locname,'index':idx,'name':name or f'管理ポイント#{idx+1}','type':ctype,'type_name':CONTROLPOINT_TYPE_NAMES.get(ctype,'不明'),'is_time':is_time})
         return out
+    def control_point_by_place(self,h,point):
+        """list_time_control_points が返した1件（置き場と並び順）から、管理ポイントのハンドルをつかみ直す。"""
+        locate={'条件':NAVI_COND,'表側':NAVI_SIDE,'表頭':NAVI_HEAD}[point['location']]
+        rc=ctypes.c_long();hcp=int(self.dll.NaviGetControlPoint2(h,ctypes.byref(rc),locate,int(point['index'])))
+        self._check('NaviGetControlPoint2',rc,f"{point['location']} {int(point['index'])+1}番目（{point.get('name')}）")
+        return hcp
     # ---- 行分割の軸を、RNEだけから決めるための読み取り ------------------------
     # 出力される列（データ欄）に条件を付けても1行も絞れないことが実測で分かっている。
     # 絞れるのは管理ポイント（表側・表頭・条件に置かれている軸）で、明細データの問い合わせなら
@@ -933,7 +972,9 @@ class NavigatorApi:
         return {'key':key,'ok':n is not None,'count':n,'error':err,'form':form}
 
     def get_period(self,h_cp):
-        """時間型管理ポイントに、いま設定されている期間を読む。等分割の材料にする。"""
+        """時間型管理ポイントに、いま設定されている期間を読む。等分割の材料と、期間を変えられたかの読み戻しに使う。
+        期間は ByRef String で、この DLL は文字列のありか（アドレス）を書く。ほかの文字列と同じく _decode_out で読む
+        （以前はアドレスの数値を文字として読み、実機のログで from=(N)ﾖ のように化けていた: 2026-10-16）。"""
         if not hasattr(self.dll,'NaviGetPeriod'):return None
         rc=ctypes.c_long();cond=ctypes.c_long()
         f=ctypes.create_string_buffer(64);t=ctypes.create_string_buffer(64);r=ctypes.create_string_buffer(64)
@@ -942,10 +983,7 @@ class NavigatorApi:
         except Exception:
             return None
         if int(rc.value)!=NAVI_OK:return None
-        def txt(b):
-            try:return b.raw.split(b'\x00',1)[0].decode('mbcs',errors='replace')
-            except Exception:return ''
-        return {'condition':int(cond.value),'from':txt(f),'to':txt(t)}
+        return {'condition':int(cond.value),'from':self._decode_out(bytes(f.raw))[0],'to':self._decode_out(bytes(t.raw))[0]}
 
     def control_point_handle(self,h_catalog,spec):
         """パートを実行するプロセス側で、軸の管理ポイントをもう一度つかむ。
@@ -1113,7 +1151,7 @@ class NavigatorApi:
         if not hasattr(self.dll,'NaviGetDataItem'):
             raise RuntimeError('このDLLは NaviGetDataItem を公開していません')
         rc=ctypes.c_long(-1)
-        h=int(self.dll.NaviGetDataItem(h_catalog,ctypes.byref(rc),locate,label.encode('mbcs'),order,0))
+        h=int(self.dll.NaviGetDataItem(h_catalog,ctypes.byref(rc),locate,label.encode(ANSI),order,0))
         self._check('NaviGetDataItem',rc)
         return h
 

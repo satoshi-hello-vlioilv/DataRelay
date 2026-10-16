@@ -2554,9 +2554,20 @@ def compute_period(period,now=None):
   summary=f'{fd:%Y-%m-%d} ～ {td:%Y-%m-%d}'
  return {'condition':condition,'from_time':from_time,'to_time':to_time,'summary':summary,'unit':unit,'from_offset':fo,'to_offset':to}
 
+# 読み戻した期間が頼んだ期間と合わないとき、止めるか（2.2.5 は止めていた）。読み戻しは 2.5.1 まで必ず化けていて（get_period が
+# 文字列のありかを文字として読んでいた）、止める判定は実機で一度も働いていない。NaviGetPeriod が変えたあとの期間を返すのか
+# RNE に保存した期間を返すのかを実機で確かめるまでは、記録（PERIOD_NOT_CONFIRMED）だけにして止めない（2.5.2・利用者の判断）。
+PERIOD_STOP_ON_MISMATCH=False
+
+def _period_not_confirmed(spec,got,job,line):
+ """読み戻した期間が頼んだ期間と合わない。PERIOD_STOP_ON_MISMATCH なら止め、そうでなければ注意を記録して続ける。"""
+ msg=period_not_applied_message(spec,got)
+ if PERIOD_STOP_ON_MISMATCH:raise RuntimeError(msg)
+ log.warning('PERIOD_NOT_CONFIRMED job=%s line=%s %s（止めずに続けます。出力の期間を確かめてください）',job.get('name'),line or '-',msg)
+
 def apply_dynamic_period(api_client,handle,job,now=None,line=''):
  # ジョブに相対期間が設定されていれば、開いたカタログの時間型管理ポイントを差し替える。
- # 期間が有効なのに適用に失敗した場合は、誤った期間での公開を避けるため例外を送出して失敗させる。
+ # 期間が有効なのに適用に失敗した場合（管理ポイントが無い・変更が断られた）は、誤った期間での公開を避けるため例外を送出して失敗させる。
  period=job.get('period') or {}
  if not period.get('enabled'):return None
  spec=compute_period(period,now or datetime.now())
@@ -2569,7 +2580,7 @@ def apply_dynamic_period(api_client,handle,job,now=None,line=''):
  out={**spec,'target':info.get('label'),'h_cp':info.get('handle'),'label':label}
  _period_readback(out,'before',info.get('before'),job,line)
  if _period_readback(out,'after',info.get('after'),job,line)=='unchanged':
-  raise RuntimeError(period_not_applied_message(out,info.get('before')))
+  _period_not_confirmed(out,info.get('before'),job,line)
  return out
 
 def _period_digits(p,unit):
@@ -2600,14 +2611,14 @@ def period_not_applied_message(spec,got):
 
 def ensure_period_before_execute(api_client,spec,job,line=''):
  """実行の直前に、期間がまだ頼んだとおりかを読み戻して確かめる（2.2.5）。値ごとの条件の付け替え（条件欄のキーを外す・表側の
- カテゴリを読み直す）のあとで期間が元に戻っていたら、もう一度当てて読み直す。それでも違えば止める（誤った期間で公開しない）。"""
+ カテゴリを読み直す）のあとで期間が元に戻っていたら、もう一度当てて読み直す。それでも違えば _period_not_confirmed。"""
  if not spec or not spec.get('h_cp'):return
  v=_period_readback(spec,'pre_execute',api_client.get_period(spec['h_cp']),job,line)
  if v in ('match','unknown'):return
  api_client.change_period(spec['h_cp'],spec['condition'],spec['from_time'],spec['to_time'])
  got=api_client.get_period(spec['h_cp'])
  if _period_readback(spec,'reapplied',got,job,line) not in ('match','unknown'):
-  raise RuntimeError(period_not_applied_message(spec,got))
+  _period_not_confirmed(spec,got,job,line)
 
 def unique_headers(values):
  out=[]; used={}
