@@ -157,6 +157,45 @@ class Writer(Base):
   self.assertTrue(pending.exists(),'保留の版は残る')
   self.assertEqual(LC.writer_marks(self.dst),[],'目印は残さない')
 
+ def test_gate_is_held_only_while_touching_the_share(self):
+  """値ごとに同時に公開するとき: 鍵（gate）は共有を触る間（写す・差し替える）だけ持ち、目印のあとの猶予は鍵の外で待つ。
+  鍵の中で待つと、待っている間に他の値が共有を触れず、同時に公開しても速くならない。"""
+  built=self.tmp/'built.sqlite3';make_db(built,2)
+  held=[];log=[]
+  class Gate:
+   def __enter__(self):held.append(1)
+   def __exit__(self,*a):held.pop()
+  real_replace,real_sleep=os.replace,time.sleep
+  def replace(a,b):log.append(('replace',Path(b).name,bool(held)));return real_replace(a,b)
+  def sleep(s):log.append(('sleep',round(s,1),bool(held)));return real_sleep(min(s,0.01))
+  with mock.patch.object(PB.os,'replace',replace),mock.patch.object(PB.time,'sleep',sleep):
+   r=self.publish(built,gate=Gate())
+  self.assertTrue(r['published'])
+  self.assertIn(('replace',self.dst.name,True),log,'差し替えは鍵の中')
+  self.assertTrue([x for x in log if x[0]=='sleep'],'猶予を待つ')
+  self.assertFalse([x for x in log if x[0]=='sleep' and x[2]],'猶予は鍵の外で待つ')
+  self.assertEqual(held,[],'鍵は返す')
+
+ def test_pending_with_gate_does_not_deadlock(self):
+  """apply_pending に鍵を渡すと、一覧と、保留を入れる公開の両方で使う。重ねて取らない（ふつうの Lock でも止まらない）。"""
+  pending=self.dst.parent/f'{self.dst.stem}.pending_20261011_120000{self.dst.suffix}';make_db(pending,3)
+  out={}
+  def run():
+   with mock.patch.object(PB,'MARK_GRACE_SECONDS',0.0):out['r']=PB.apply_pending(self.dst,self.tmp/'backup',3,backup_enabled=False,gate=threading.Lock())
+  t=threading.Thread(target=run,daemon=True);t.start();t.join(10)
+  self.assertFalse(t.is_alive(),'鍵を重ねて取って止まらない')
+  self.assertEqual(out.get('r'),pending)
+
+ def test_on_found_only_when_pending_exists(self):
+  """on_found は保留が見つかったときだけ、入れ始める前に呼ぶ（値ごとの公開は、ここで変換の番を手放す）。"""
+  calls=[]
+  self.assertIsNone(PB.apply_pending(self.dst,self.tmp/'backup',3,backup_enabled=False,on_found=lambda:calls.append('none')))
+  self.assertEqual(calls,[],'保留が無ければ呼ばない')
+  pending=self.dst.parent/f'{self.dst.stem}.pending_20261011_120000{self.dst.suffix}';make_db(pending,3)
+  def found():calls.append('found' if pending.exists() else 'late')
+  with mock.patch.object(PB,'MARK_GRACE_SECONDS',0.0):PB.apply_pending(self.dst,self.tmp/'backup',3,backup_enabled=False,on_found=found)
+  self.assertEqual(calls,['found'],'入れ始める前に1回')
+
 
 if __name__=='__main__':
  unittest.main()
