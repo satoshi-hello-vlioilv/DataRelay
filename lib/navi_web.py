@@ -345,13 +345,22 @@ def variants_preview():
     files.append({'value':one['_variant_value'],'file':one['output_file'],'folder':folder,'path':str(Path(folder)/one['output_file']),
                   'rows':rows.get(one['_variant_value'])})
   except Exception as e:error=str(e)
+ # 出てきた値すべてで、まだ数えていなければ、RNE のいまの値を例にした見本の名前（どんな名前でできるかを先に見せる）
+ sample=[]
+ if v['scope']=='all' and not values and not error and v['item']:
+  keys=next((c['keys'] for c in conditions or [] if c['name']==v['item']),[])[:1]
+  try:
+   for one in variant_jobs({**job,'variants':{**v,'enabled':True}},c,values=keys):
+    folder=str(resolve_path(one.get('output_folder') or c['default_output_folder']))
+    sample.append({'value':one['_variant_value'],'file':one['output_file'],'folder':folder,'path':str(Path(folder)/one['output_file'])})
+  except Exception:sample=[]
  # 取り方: 実際に動く方（対象の選択か共通の既定）と、並列のときに同時に動かす数の見込み（1つだけ動かすとき。
  # 同時に動かす対象が多いと、並列ライン数を対象で分けるぶん減る）
  how=navi_variants.method(job,st)
  lines=max(1,min(len(v['values']) or 1,int(st.get('api_parallel_lines',6) or 1)))
  return jsonify(ok=not error,error=error,conditions=conditions,files=files,tokens=list(navi_variants.TOKENS),
                 method=how,method_name=navi_variants.METHOD_NAMES[how],default_method=navi_variants.default_method(st),
-                parallel_lines=lines,side_has_item=bool(v['item'] and v['item'] in side),counted=counted,
+                parallel_lines=lines,side_has_item=bool(v['item'] and v['item'] in side),counted=counted,sample=sample,
                 max_found=navi_variants.MAX_FOUND)
 
 @app.post('/api/variants/count')

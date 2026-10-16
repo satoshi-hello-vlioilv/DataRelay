@@ -2615,7 +2615,7 @@ body>main{width:var(--app-shell);max-width:var(--app-shell);
 /* 条件の値ごとに分けて出す（2.1.0。案 K）: タブ「値ごとに分ける」・1ページ目の札・一覧の印・実行結果の値ごとの行 */
 .eb-variant{background:#e7f1f9;color:#1d5f8a}
 .etab-count-variant{background:#1d6f8f}
-.var-box{display:grid;gap:12px;border:1px solid #cfe0e6;border-radius:10px;background:#f7fbfc;padding:14px 16px}
+.var-box{display:grid;gap:10px;border:1px solid #cfe0e6;border-radius:10px;background:#f7fbfc;padding:14px 16px}
 .var-toggle{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
 .var-toggle label{display:flex;align-items:center;gap:8px;font-size:14px;color:#203d4a;cursor:pointer}
 .var-toggle input{width:18px;height:18px}.var-toggle span{font-size:12px;color:#647581;flex:1;min-width:280px}
@@ -2624,7 +2624,7 @@ body>main{width:var(--app-shell);max-width:var(--app-shell);
 .var-warn{margin:0;padding:8px 11px;border-left:4px solid #d39a37;background:#fdf7ec;border-radius:6px;color:#7a4c06;font-size:12px}
 .var-warn[hidden]{display:none}
 .var-two{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);gap:18px;align-items:start}
-.var-col{display:grid;gap:12px;min-width:0}
+.var-col{display:grid;gap:10px;min-width:0;align-content:start}
 .var-f{display:grid;gap:5px;font-size:12px;color:#425661}
 .var-l{display:flex;align-items:baseline;gap:7px;flex-wrap:wrap;font-weight:700}
 .var-l i{font-style:normal;display:inline-grid;place-items:center;width:20px;height:20px;border-radius:50%;background:#0b7e8f;color:#fff;font-size:11px;font-weight:800;align-self:center}
@@ -2674,11 +2674,11 @@ body>main{width:var(--app-shell);max-width:var(--app-shell);
 /* 編集画面のタブの区切り（2.1.1 I 案: 取り出す条件｜出す形｜動かす）。道具の前の区切りより少し濃く、短く */
 .editor-tabsep.is-group{background:#b3c5cc;margin:9px 0}
 /* 値ごとに分けて出す取り方（入切のすぐ下・共通設定）。選んでいるものは下線と淡い青緑 */
-.var-method{display:flex;align-items:center;gap:10px;margin:2px 0 8px}
+.var-method{display:flex;align-items:center;gap:10px;margin:0}
 .var-method-l{flex:none;font-size:11.5px;font-weight:800;color:#3e5964}
 .var-method-seg{flex:1;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));border:1px solid #c9d8de;border-radius:9px;overflow:hidden;background:#fff}
 .var-method-seg.is-two{grid-template-columns:repeat(2,minmax(0,1fr))}
-.var-method-seg label{display:grid;gap:1px;padding:6px 11px;border-left:1px solid #dbe5e9;cursor:pointer;min-width:0}
+.var-method-seg label{display:flex;flex-wrap:wrap;align-items:baseline;gap:0 8px;padding:7px 11px;border-left:1px solid #dbe5e9;cursor:pointer;min-width:0}
 .var-method-seg label:first-child{border-left:0}
 .var-method-seg label:hover{background:#f4f9fa}
 .var-method-seg label.on{background:#e3f3f5;box-shadow:inset 0 -2px 0 #149aa5}
@@ -2687,6 +2687,26 @@ body>main{width:var(--app-shell);max-width:var(--app-shell);
 .var-method-seg b{font-size:12px;color:#1d3440}
 .var-method-seg small{font-size:10.5px;color:#60757c;line-height:1.45}
 .var-method-wide{margin:6px 0 4px}
+/* 値の決め方（2.5.0 案 N）: 取り方と同じ2択。選んでいる方に ✓。並列は値を指定したときだけ */
+.var-scope label.on b::before{content:"✓ ";color:#0b7e8f}
+.var-method-seg label.is-off{opacity:.45;cursor:not-allowed}.var-method-seg label.is-off:hover{background:transparent}
+.var-chips[hidden]{display:none}
+/* 見込みの札: 大きな数（数える前は ?）・何の数か・数える。下の表とひとまとまり */
+.var-est{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:2px 14px;align-items:center;padding:10px 14px;margin:0 0 8px;border:1px solid #bfe0e6;border-radius:10px;background:#fff}
+.var-est:empty{display:none}
+.var-est.is-none{border-style:dashed;background:#fbfdfd}.var-est.is-stale{border-color:#ecd3a3;background:#fffaf0}
+.var-est-n{grid-row:1/3;font-size:26px;font-weight:800;color:#0b6f80;line-height:1;font-variant-numeric:tabular-nums;white-space:nowrap}
+.var-est-n small{font-size:12px;margin-left:2px;color:#425661;font-weight:700}
+.var-est.is-none .var-est-n,.var-est.is-stale .var-est-n{color:#6f97a1}
+.var-sample td{color:#5d7380}.var-sample tr.var-more td{color:#8a9aa2;font-style:italic}
+.var-est-t{font-size:12.5px;font-weight:700;color:#203d4a;min-width:0}
+.var-est-s{grid-column:2;font-size:11px;color:#647581;min-width:0}
+.var-est>button{grid-row:1/3;grid-column:3;white-space:nowrap}
+.var-est-x{grid-column:1/4;margin:6px 0 0;font-size:11.5px;color:#7a4c06}
+.var-est-x.is-ng{color:#8f352c}
+.var-est-more{grid-column:1/4;display:flex;flex-wrap:wrap;gap:5px;align-items:center;margin-top:6px;font-size:11.5px;color:#425661}
+.var-table .var-r{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+.var-where{display:block;margin-top:5px;font-size:11px;color:#647581}.var-where code{font:11px Consolas,monospace;overflow-wrap:anywhere}
 /* データビュワーの値の札（2.1.2 H 案）: 開いている値は塗り、未出力は灰色の点線で押せない */
 .viewer-v118.has-values{grid-template-rows:auto auto minmax(0,1fr)}
 .viewer-values{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:7px 10px;background:#f6fafb;border:1px solid #dbe6ea;border-radius:10px}

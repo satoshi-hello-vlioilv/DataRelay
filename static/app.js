@@ -768,20 +768,23 @@ function collectJob(){
 /* 条件の値ごとに分けて出す（2.1.0。2.1.1 でタブを「3」へ・取り方を入切の下に。案 K: タブ「値ごとに分ける」＝番号順に決めて右にできあがるファイル、上に1文、1ページ目に札）。
    RNE の条件欄の項目といまのキーを先に読み、項目と値を先回りして出す（RNE の中身を思い出させない）。
    出し先の決まり（名前・置き場・同じ名前の断り）はバックエンドの navi_variants が持ち、画面は見込みを受け取って並べるだけ。 */
-let varValues=[],varPreviewTimer=0,varPreviewSeq=0,varLast=null;
-const varOn=j=>!!(j&&j.variants&&j.variants.enabled&&j.variants.item&&(j.variants.values||[]).length);
+let varValues=[],varPreviewTimer=0,varPreviewSeq=0,varLast=null,varCounting=null,varCountTimer=0;
+/* 値の決め方（2.5.0）: listed＝指定した値だけ / all＝出てきた値すべて（値は問い合わせるまで分からないので、取り方はまとめて1回） */
+const varAll=v=>(v&&v.scope)==='all';
+const varOn=j=>!!(j&&j.variants&&j.variants.enabled&&j.variants.item&&(varAll(j.variants)||(j.variants.values||[]).length));
 function variantBadge(j){
  if(!varOn(j))return '';
- let v=j.variants;
- return ` <span class="var-badge" title="${E(v.item)} = ${E(v.values.join('・'))}">値ごと ×${v.values.length}</span>`;
+ let v=j.variants,all=varAll(v);
+ return ` <span class="var-badge" title="${E(v.item)} = ${E(all?'出てきた値すべて':v.values.join('・'))}">値ごと ×${all?'すべて':v.values.length}</span>`;
 }
 /* 取り方（2.1.1）: 対象で選ぶか、共通設定の既定に従う。名前は画面のどこでも同じ言葉を使う */
 const VAR_METHOD_NAME={combined:'まとめて1回',parallel:'値ごとに並列'};
 const varDefaultMethod=()=>VAR_METHOD_NAME[cfg?.settings?.variant_method]?cfg.settings.variant_method:'combined';
 const varMethodPicked=()=>document.querySelector('input[name="m-var-method"]:checked')?.value||'default';
-const varMethodOf=m=>VAR_METHOD_NAME[m]?m:varDefaultMethod();
+const varMethodOf=(m,all)=>all?'combined':VAR_METHOD_NAME[m]?m:varDefaultMethod();
+const varScopePicked=()=>document.querySelector('input[name="m-var-scope"]:checked')?.value==='all'?'all':'listed';
 function currentVariants(){
- return {enabled:!!$('#m-var-enabled')?.checked,item:($('#m-var-item')?.value||'').trim(),values:varValues.slice(),
+ return {enabled:!!$('#m-var-enabled')?.checked,item:($('#m-var-item')?.value||'').trim(),scope:varScopePicked(),values:varValues.slice(),
   pattern:($('#m-var-pattern')?.value||'').trim(),folder:($('#m-var-folder')?.value||'').trim(),method:varMethodPicked()};
 }
 function fillVariants(job){
@@ -790,7 +793,8 @@ function fillVariants(job){
  $('#m-var-pattern').value=v.pattern||'';$('#m-var-folder').value=v.folder||'';
  let m=VAR_METHOD_NAME[v.method]?v.method:'default';
  $$('input[name="m-var-method"]').forEach(r=>r.checked=r.value===m);
- varValues=(v.values||[]).map(String);varLast=null;renderVarChips();varPreview(true);
+ $$('input[name="m-var-scope"]').forEach(r=>r.checked=r.value===(varAll(v)?'all':'listed'));
+ varValues=(v.values||[]).map(String);varLast=null;varCountStop();renderVarChips();varPreview(true);varCountResume();
 }
 function renderVarChips(){
  let box=$('#m-var-values'),add=$('#m-var-add');if(!box)return;
@@ -805,19 +809,78 @@ function addVarValues(text){
  return added;
 }
 /* 見込みを取り直す。編集中の値をそのまま渡す（保存前に見せる）。入力の連打は 250ms まとめる */
+function varBody(){
+ let j=collectJob();
+ return {id:j.id,job_id:j.id,job_name:j.name,rne:j.rne,rne_path:j.rne_path,name:j.name,table:j.table,output_format:j.output_format,output_file:j.output_file,
+  naming_mode:j.naming_mode,output_pattern:j.output_pattern,output_folder:j.output_folder,period:j.period,variants:j.variants};
+}
 function varPreview(now){
  clearTimeout(varPreviewTimer);
  varPreviewTimer=setTimeout(async()=>{
-  let seq=++varPreviewSeq,j=collectJob();
-  let body={rne:j.rne,rne_path:j.rne_path,name:j.name,table:j.table,output_format:j.output_format,output_file:j.output_file,
-   naming_mode:j.naming_mode,output_pattern:j.output_pattern,output_folder:j.output_folder,variants:j.variants};
-  let d;try{d=await postJson('/api/variants/preview',body).then(r=>r.json())}catch{d=null}
+  let seq=++varPreviewSeq;
+  let d;try{d=await postJson('/api/variants/preview',varBody()).then(r=>r.json())}catch{d=null}
   if(seq!==varPreviewSeq)return;   // あとから頼んだ見込みが先に返っていれば、古いほうは捨てる
   varLast=d;paintVariants();
  },now?0:250);
 }
+/* 出てくる値を数える（2.5.0）: いまの条件で1回問い合わせ、値ごとの行数を数える（ファイルは作らない）。
+   調べものの仕組みで裏で走るので、編集を閉じても続き、開き直すと追いかける。数えた結果はサーバーが対象ごとに控え、見込みが読む */
+async function varCount(){
+ if(varCounting&&!varCounting.error)return;
+ let d;try{d=await postJson('/api/inspect-task/variants',varBody()).then(r=>r.json())}catch(x){d={ok:false,error:String(x)}}
+ if(!d.ok){varCounting={error:d.error||'数え始められませんでした'};paintVariants();return}
+ varCounting={elapsed:0};paintVariants();varCountWatch();
+}
+function varCountStop(){clearInterval(varCountTimer);varCountTimer=0;varCounting=null}
+function varCountWatch(){clearInterval(varCountTimer);varCountTimer=setInterval(varCountPoll,1000)}
+async function varCountPoll(){
+ let st;try{st=await fetch('/api/inspect-task/variants',{cache:'no-store'}).then(r=>r.json())}catch{return}
+ if(st.job_id&&String(st.job_id)!==String(editing?.id||'')){varCountStop();paintVariants();return}   // 別の対象を数えている
+ if(st.running){varCounting={elapsed:st.elapsed||0};paintVariants();return}
+ clearInterval(varCountTimer);varCountTimer=0;
+ varCounting=st.result&&!st.result.ok?{error:st.result.error||st.error||'数えられませんでした'}:null;
+ varPreview(true);
+}
+async function varCountResume(){
+ try{let st=await fetch('/api/inspect-task/variants',{cache:'no-store'}).then(r=>r.json());
+  if(st.running&&String(st.job_id||'')===String(editing?.id||'')){varCounting={elapsed:st.elapsed||0};varCountWatch();paintVariants()}}catch{}
+}
+const varWhen=t=>{let d=new Date(t);return isNaN(d)?'':`${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`};
+/* 見込みの札（案 N）: 大きな数（数える前は ?）・何の数か・いつ数えたか・数えるボタン。下の表とひとまとまり */
+function varEstHtml(v,d){
+ let all=varAll(v),k=d.counted,fresh=k&&k.state==='fresh',n=k?k.values.length:0,btn=(label,main)=>`<button type="button" class="${main?'':'secondary'} var-count-go"${varCounting&&!varCounting.error?' disabled':''}>${label}</button>`;
+ let num,t,sub,cls='';
+ if(varCounting&&!varCounting.error){num='…';t=`数えています（経過 ${fmtSeconds(varCounting.elapsed)||'0.0秒'}）`;sub='ファイルは作りません。閉じても続きます';cls='is-none'}
+ else if(all&&!k){num='?';t='まだ数えていません（数えなくても実行できます）';sub='いまの条件で1回問い合わせて数えます（ファイルは作りません）';cls='is-none'}
+ else if(all){num=n;t=fresh?`いまの条件で ${Number(k.rows).toLocaleString()}件 · ${varWhen(k.taken_at)} に数えた`:`${varWhen(k.taken_at)} に数えたときの数です`;
+  sub=fresh?'下の表が、値ごとにできあがるファイルです':'RNE か抽出期間が変わりました。数え直すと、いまの条件の数になります';cls=fresh?'':'is-stale'}
+ else{num=v.values.length;t=fresh?`いまの条件で ${Number(v.values.reduce((a,x)=>a+Number((k.values.find(y=>y.value===x)||{}).rows||0),0)).toLocaleString()}件 · ${varWhen(k.taken_at)} に数えた`:'指定した値の数だけファイルを作ります';
+  sub=fresh?'下の表に、値ごとの行数が並びます':'数えると、値ごとの行数と、ほかに出てくる値が分かります'}
+ let x=[];
+ if(varCounting?.error)x.push(`<p class="var-est-x is-ng">数えられませんでした: ${E(varCounting.error)}</p>`);
+ if(k&&all&&n>Number(d.max_found||300))x.push(`<p class="var-est-x is-ng">出てきた値が ${n} あり、上限（${d.max_found}）を超えるため、実行は止まります。分ける項目を確かめてください。</p>`);
+ if(k&&all&&!n)x.push(`<p class="var-est-x is-ng">値が1つも出てきませんでした。実行してもファイルはできません。</p>`);
+ if(k&&k.relax_unsure)x.push(`<p class="var-est-x">RNE の条件のキーの値しか出てきませんでした。条件を外せていないかもしれません。</p>`);
+ if(k&&k.blank)x.push(`<p class="var-est-x">値が空の行 ${Number(k.blank).toLocaleString()}件は、どのファイルにも入りません。</p>`);
+ let more=k&&!all?k.values.filter(y=>!v.values.includes(y.value)):[];
+ if(more.length)x.push(`<div class="var-est-more">ほかに出てくる値（押すと足す）: ${more.slice(0,30).map(y=>`<button type="button" class="var-pick var-add-found" data-v="${E(y.value)}">${E(y.value)}<small>${Number(y.rows).toLocaleString()}件</small></button>`).join('')}</div>`);
+ return {cls,html:`<span class="var-est-n">${num}<small>ファイル</small></span><span class="var-est-t">${E(t)}</span>${btn(varCounting&&!varCounting.error?'数えています':k||varCounting?.error?'数え直す':'出てくる値を数える',all&&(!k||!fresh))}<span class="var-est-s">${E(sub)}</span>${x.join('')}`};
+}
+/* できあがるファイルの表: 置き場が全部同じなら名前だけを並べて置き場を1回だけ書く（違いは名前の末尾だけなので、見比べやすく） */
+function varFilesHtml(files,v,d,cur){
+ let k=d.counted,fresh=k&&k.state==='fresh',rows=!!k,one=files.every(f=>f.folder===files[0].folder);
+ return `<table class="rel-table var-table"><thead><tr><th>値</th><th>できあがるファイル</th>${rows?'<th class="var-r">行数</th>':''}</tr></thead><tbody>${files.map(f=>{
+   let r=f.rows==null?(fresh&&!varAll(v)?'<i class="rel-tag is-warn">出てきません</i>':'—'):Number(f.rows).toLocaleString();
+   return `<tr><td><b>${E(f.value)}</b>${cur.includes(f.value)?'<i class="rel-tag is-here">RNE の今の値</i>':''}</td><td><code title="${E(f.path)}">${E(one?f.file:f.path)}</code></td>${rows?`<td class="var-r">${r}</td>`:''}</tr>`}).join('')}</tbody></table>`
+  +(one?`<small class="var-where">置き場: <code>${E(files[0].folder)}</code></small>`:'');
+}
+/* 数える前の見本（出てきた値すべて）: RNE のいまの値を例に、どんな名前でできるかを先に見せる */
+function varSampleHtml(sample){
+ return `<table class="rel-table var-table var-sample"><thead><tr><th>値（例）</th><th>できあがるファイルの形</th></tr></thead><tbody>${sample.map(f=>`<tr><td><b>${E(f.value)}</b><i class="rel-tag is-here">RNE の今の値</i></td><td><code title="${E(f.path)}">${E(f.file)}</code></td></tr>`).join('')}`
+  +`<tr class="var-more"><td>…</td><td>ほかに出てきた値ごとに、同じ形の名前で作ります</td></tr></tbody></table><small class="var-where">置き場: <code>${E(sample[0].folder)}</code></small>`;
+}
 function paintVariants(){
- let d=varLast||{},v=currentVariants(),conds=(d.conditions||[]),on=v.enabled&&v.item&&v.values.length;
+ let d=varLast||{},v=currentVariants(),conds=(d.conditions||[]),all=varAll(v),on=v.enabled&&v.item&&(all||v.values.length);
  let src=currentSource();
  // 1 分ける項目: RNE の条件欄の項目を候補にし、いまのキーを添えて押せば入るようにする
  $('#suggest-var-item').innerHTML=conds.map(c=>`<option value="${E(c.name)}">${E(c.keys.length?'いま '+c.keys.join('・'):'条件なし')}</option>`).join('');
@@ -825,40 +888,57 @@ function paintVariants(){
  $('#m-var-detect').innerHTML=src!=='rne'?'':d.conditions==null?'RNE を読めないため、条件欄の項目を出せません。項目名を入れてください。'
   :!conds.length?'この RNE の条件欄にはデータ項目がありません。値ごとに分けるには、RNE の条件に項目を置いてください。'
   :'RNE の条件欄: '+conds.map(c=>`<button type="button" class="var-pick" data-name="${E(c.name)}">${E(c.name)}${c.keys.length?`<small>いま ${E(c.keys.join('・'))}</small>`:''}</button>`).join('');
- $$('#m-var-detect .var-pick').forEach(b=>b.onclick=()=>{$('#m-var-item').value=b.dataset.name;let c=conds.find(x=>x.name===b.dataset.name);if(c&&!varValues.length)addVarValues(c.keys.join(','));varPreview()});
+ $$('#m-var-detect .var-pick').forEach(b=>b.onclick=()=>{$('#m-var-item').value=b.dataset.name;let c=conds.find(x=>x.name===b.dataset.name);if(c&&!all&&!varValues.length)addVarValues(c.keys.join(','));varPreview()});
+ // 2 値: 指定した値だけのときだけ、値を足す欄を出す
+ $('#m-var-values').hidden=all;
+ $('#m-var-values-tip').textContent=all?'値は指定しません。実行のたびに、出てきた値ごとにファイルを作ります':'指定した値の数だけファイル。Enter・読点で足し、× で外します';
  // 3 ファイル名の拡張子と、空のときの型
  let fmt=normalizeFormat($('#m-format').value);$('#m-var-ext').textContent=expectedExt(fmt);
  let base=($('#m-output-file').value||'').replace(/\.[^.]+$/,'')||'出力';
  $('#m-var-pattern').placeholder=`${base}_{値}（空のときの名前）`;
  $('#m-var-folder').placeholder=`${$('#m-output').value||cfg.default_output_folder||''}（出力フォルダー）`;
- // 右: できあがるファイル
+ // 右: 見込みの札と、できあがるファイル
  let files=d.files||[],cur=(conds.find(c=>c.name===v.item)||{}).keys||[];
+ let est=on||(v.enabled&&v.item)?varEstHtml(v,d):{cls:'',html:''};
+ let box=$('#m-var-est');box.className='var-est '+est.cls;box.innerHTML=est.html;
+ box.querySelector('.var-count-go')?.addEventListener('click',varCount);
+ box.querySelectorAll('.var-add-found').forEach(b=>b.onclick=()=>addVarValues(b.dataset.v));
  $('#m-var-count').textContent=files.length?`（${files.length}）`:'';
  $('#m-var-files').innerHTML=d.error?`<p class="var-error">${E(d.error)}</p>`
-  :!v.values.length?'<p class="var-empty">値を足すと、ここに値ごとのファイルの名前と置き場が並びます。</p>'
-  :`<table class="rel-table var-table"><thead><tr><th>値</th><th>できあがるファイル</th></tr></thead><tbody>${files.map(f=>`<tr><td><b>${E(f.value)}</b>${cur.includes(f.value)?'<i class="rel-tag is-here">RNE の今の値</i>':''}</td><td><code title="${E(f.path)}">${E(f.path)}</code></td></tr>`).join('')}</tbody></table>`;
+  :!v.item?'<p class="var-empty">分ける項目を決めると、ここに値ごとのファイルの名前と置き場が並びます。</p>'
+  :!all&&!v.values.length?'<p class="var-empty">値を足すと、ここに値ごとのファイルの名前と置き場が並びます。</p>'
+  :files.length?varFilesHtml(files,v,d,cur)
+  :all&&(d.sample||[]).length?varSampleHtml(d.sample):'';
  // 上の1文: いまの設定を読める形で（入っていないときは、入れると何が起きるか）
- let how=varMethodOf(v.method),lines=Math.max(1,Math.min(v.values.length||1,Number(d.parallel_lines||cfg.settings?.api_parallel_lines||6)));
- $('#m-var-method-default').textContent=`いまは ${VAR_METHOD_NAME[varDefaultMethod()]}`;
- $('#m-var-method-parallel').textContent=`値ごとに同時に問い合わせ · 最大${lines}本`;
- $$('.var-method-seg label').forEach(l=>l.classList.toggle('on',!!l.querySelector('input')?.checked));
- $('#m-var-say').innerHTML=on?(how==='parallel'
+ let how=varMethodOf(v.method,all),lines=Math.max(1,Math.min(v.values.length||1,Number(d.parallel_lines||cfg.settings?.api_parallel_lines||6)));
+ let k=d.counted,kn=k&&k.state==='fresh'?k.values.length:null;
+ $('#m-var-method-default').textContent=`いまは ${VAR_METHOD_NAME[all?'combined':varDefaultMethod()]}`;
+ $('#m-var-method-parallel').textContent=all?'値を指定したときだけ':`値ごとに同時に問い合わせ · 最大${lines}本`;
+ // 出てきた値すべてでは値が先に分からないので、並列にできない（選んでいても、まとめて1回で動く。戻せば元の選択が効く）
+ $$('input[name="m-var-method"]').forEach(r=>r.disabled=all&&r.value==='parallel');
+ $$('.var-method-seg label').forEach(l=>{let r=l.querySelector('input');if(!r)return;
+  let m=r.name==='m-var-method',off=all&&m&&r.value==='parallel',picked=varMethodPicked();
+  l.classList.toggle('on',all&&m&&picked==='parallel'?r.value==='combined':!!r.checked);l.classList.toggle('is-off',off)});
+ $('#m-var-say').innerHTML=on?(all
+   ?`<b>${E(v.item)}</b> の絞り込みを外して<b>まとめて1回</b>で問い合わせ、<b>出てきた値すべて</b>で値ごとのファイルを作ります${kn!=null?`（いまの条件では <b>${kn}ファイル</b>）`:''}。`
+   :how==='parallel'
    ?`<b>${E(v.item)}</b> の <b>${v.values.map(E).join('・')}</b> を<b>値ごとに並列</b>で問い合わせ（${v.values.length}回・同時に最大${lines}本）、<b>${v.values.length}ファイル</b>を作ります。`
    :`<b>${E(v.item)}</b> の <b>${v.values.map(E).join('・')}</b> を<b>まとめて1回</b>で問い合わせ、受け取ってから値ごとに分けて <b>${v.values.length}ファイル</b>を作ります。`)
   :v.enabled?'項目と値を決めると、値ごとのファイルができます。':`切っています。入れると、${E(v.item||'条件の項目')}の値ごとに別のファイルを作ります（いまは1ファイル）。`;
  $('#m-var-say').classList.toggle('is-off',!on);
  let warn=src!=='rne'?'値ごとに分けて出せるのは RNE の対象だけです。'
-  :(on&&d.conditions&&d.side_has_item===false?`RNE の表側に「${v.item}」が無いため、サーバー側では指定の値に絞れません。全部の値を受け取ってから分けるので、ファイルは正しくできますが遅くなります（表側に「${v.item}」を置くと速くなります）。`:'');
+  :(on&&!all&&d.conditions&&d.side_has_item===false?`RNE の表側に「${v.item}」が無いため、サーバー側では指定の値に絞れません。全部の値を受け取ってから分けるので、ファイルは正しくできますが遅くなります（表側に「${v.item}」を置くと速くなります）。`:'');
  $('#m-var-warn').hidden=!warn;$('#m-var-warn').textContent=warn;
- let cnt=$('#etab-variant-count');cnt.hidden=!on;cnt.textContent=v.values.length;
+ let cnt=$('#etab-variant-count');cnt.hidden=!on;cnt.textContent=all?(kn!=null?kn:'全'):v.values.length;
  // 1ページ目の札: 入なら何ファイルできるか、切ってあっても RNE が条件で絞っていれば先回りして知らせる
  let card=$('#m-var-card'),hint=keyed[0];
  card.hidden=src!=='rne'||!(on||hint);
- card.innerHTML=on?`<span class="var-card-t"><span class="var-card-k">値ごとに分けて出す</span><b>入 · ${v.values.length}ファイル · ${VAR_METHOD_NAME[how]}</b></span><span class="var-card-v">${E(v.item)} = ${v.values.map(E).join('・')}</span><button type="button" class="textbtn var-open">設定を開く ›</button>`
+ card.innerHTML=on?`<span class="var-card-t"><span class="var-card-k">値ごとに分けて出す</span><b>入 · ${all?(kn!=null?`出てきた値すべて（いまの条件で ${kn}ファイル）`:'出てきた値すべて'):`${v.values.length}ファイル`} · ${VAR_METHOD_NAME[how]}</b></span><span class="var-card-v">${E(v.item)} = ${all?'出てきた値すべて':v.values.map(E).join('・')}</span><button type="button" class="textbtn var-open">設定を開く ›</button>`
   :hint?`<span class="var-card-t"><span class="var-card-k">値ごとに分けて出せます</span><b>この RNE は「${E(hint.name)} = ${E(hint.keys.join('・'))}」で絞っています</b></span><span class="var-card-v">ほかの値の分も、値ごとに別のファイルで作れます</span><button type="button" class="textbtn var-open">設定を開く ›</button>`:'';
  card.classList.toggle('is-on',!!on);
  card.querySelector('.var-open')?.addEventListener('click',()=>setEditorTab('variant'));
 }
+$$('input[name="m-var-scope"]').forEach(r=>r.addEventListener('change',()=>varPreview(true)));
 $$('input[name="m-var-method"]').forEach(r=>r.addEventListener('change',()=>varPreview(true)));
 
 if($('#m-var-add')){
@@ -873,7 +953,7 @@ if($('#m-var-add')){
  // 入にしたとき項目も値も空なら、RNE がいま絞っている条件（例: BOX実績_設備名 = LS4）から始める（探させない）
  $('#m-var-enabled').addEventListener('change',()=>{
   let c=((varLast||{}).conditions||[]).find(x=>x.keys.length);
-  if($('#m-var-enabled').checked&&c&&!$('#m-var-item').value.trim()&&!varValues.length){$('#m-var-item').value=c.name;addVarValues(c.keys.join(','));$('#m-var-add').focus()}
+  if($('#m-var-enabled').checked&&c&&!$('#m-var-item').value.trim()&&!varValues.length&&varScopePicked()==='listed'){$('#m-var-item').value=c.name;addVarValues(c.keys.join(','));$('#m-var-add').focus()}
  });
  ['#m-var-enabled','#m-var-item','#m-var-pattern','#m-var-folder'].forEach(s=>{$(s).addEventListener('input',()=>varPreview());$(s).addEventListener('change',()=>varPreview())});
  // 名前・形式・出力先・RNE を変えたら、値ごとの見込みも変わる

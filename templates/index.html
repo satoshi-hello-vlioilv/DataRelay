@@ -320,18 +320,18 @@
 <div class="sectiontitle schedule-title"><div><span>自動実行ルール</span><small>複数条件を組み合わせて登録できます。実行時刻・曜日・間隔などを個別に設定できます。</small></div><button id="add-rule" type="button" class="secondary">ルール追加</button></div><div id="m-rules" class="rules"></div></div>
 <div class="editor-pane" data-etab="variant">
 <div class="var-box">
-<div class="var-toggle"><label><input id="m-var-enabled" type="checkbox"><b>条件の値ごとに分けて出す</b></label><span>RNE の条件の絞り込みを外し、指定した値だけを問い合わせて、値ごとに別のファイルを作ります（API 方式。RNE ファイルは書き換えません）</span></div>
+<div class="var-toggle"><label><input id="m-var-enabled" type="checkbox"><b>条件の値ごとに分けて出す</b></label><span>RNE の条件の絞り込みを外し、値ごとに別のファイルを作ります（API 方式。RNE ファイルは書き換えません）</span></div>
 <div class="var-method" role="radiogroup" aria-label="取り方"><span class="var-method-l">取り方</span><div class="var-method-seg"><label><input type="radio" name="m-var-method" value="default"><b>既定に従う</b><small id="m-var-method-default">いまは まとめて1回</small></label><label><input type="radio" name="m-var-method" value="combined"><b>まとめて1回</b><small>問い合わせ1回 · 受け取ってから分ける</small></label><label><input type="radio" name="m-var-method" value="parallel"><b>値ごとに並列</b><small id="m-var-method-parallel">値ごとに同時に問い合わせ</small></label></div></div>
 <p id="m-var-say" class="var-say"></p>
 <p id="m-var-warn" class="var-warn" hidden></p>
 <div class="var-two">
 <div class="var-col">
 <label class="var-f"><span class="var-l"><i>1</i>分ける項目<small>RNE の条件欄にある項目</small></span><input id="m-var-item" list="suggest-var-item" placeholder="例: BOX実績_設備名" spellcheck="false"><datalist id="suggest-var-item"></datalist><span id="m-var-detect" class="var-detect"></span></label>
-<div class="var-f"><span class="var-l"><i>2</i>値<small>値の数だけファイルができます。Enter・読点で足し、× で外します</small></span><div id="m-var-values" class="var-chips"><input id="m-var-add" placeholder="値を足す（Enter）" spellcheck="false" aria-label="値を足す"></div></div>
+<div class="var-f"><span class="var-l"><i>2</i>値<small id="m-var-values-tip">指定するか、出てきた値すべてか</small></span><div class="var-method-seg is-two var-scope" role="radiogroup" aria-label="値の決め方"><label><input type="radio" name="m-var-scope" value="listed"><b>指定した値だけ</b><small>値の数だけファイル</small></label><label><input type="radio" name="m-var-scope" value="all"><b>出てきた値すべて</b><small>出てきた数だけファイル</small></label></div><div id="m-var-values" class="var-chips"><input id="m-var-add" placeholder="値を足す（Enter・読点。× で外す）" spellcheck="false" aria-label="値を足す"></div></div>
 <label class="var-f"><span class="var-l"><i>3</i>ファイル名<small><code>{値}</code> が値に置き換わります。空なら「ファイル名」タブの名前_値</small></span><span class="var-name"><input id="m-var-pattern" spellcheck="false"><em id="m-var-ext">.xlsx</em></span></label>
 <label class="var-f"><span class="var-l"><i>4</i>置き場<small>空なら出力フォルダー。<code>{値}</code> を入れると値ごとのフォルダー</small></span><span class="browse"><input id="m-var-folder" spellcheck="false"><button id="m-var-folder-pick" type="button" class="secondary">参照</button></span></label>
 </div>
-<div class="var-col"><h4 class="var-h">できあがるファイル<span id="m-var-count"></span></h4><div id="m-var-files" class="var-files"></div></div>
+<div class="var-col"><h4 class="var-h">できあがるファイル<span id="m-var-count"></span></h4><div id="m-var-est" class="var-est"></div><div id="m-var-files" class="var-files"></div></div>
 </div>
 </div>
 </div>

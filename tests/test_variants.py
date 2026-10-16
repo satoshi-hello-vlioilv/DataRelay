@@ -542,6 +542,8 @@ class FlowTest(unittest.TestCase):
   self.assertFalse(v['same']['ok']);self.assertIn('同じファイル名',v['same']['error'])
   # 数える（2.5.0）
   self.assertEqual((v['all_before']['files'],v['all_before']['counted']),([],None),'数える前は見込みが無い')
+  self.assertEqual([(x['value'],x['file']) for x in v['all_before']['sample']],[('LS4','LOTACH_LS4.xlsx')],'数える前は、RNE のいまの値を例にした名前の見本')
+  self.assertEqual(v['all_after']['sample'],[],'数えたら見本は出さない')
   self.assertTrue(v['count']['ok'],v['count'])
   self.assertEqual(v['seen'],[{'want':['variant_count'],'item':'BOX実績_設備名','id':'j9'}],'ワーカーで数える')
   self.assertEqual([(x['value'],x['rows']) for x in v['count']['counted']['values']],[('LS4',5),('PSW',2)])
