@@ -17,7 +17,7 @@ import navi_variants as V
 class RulesTest(unittest.TestCase):
  def test_normalize(self):
   v=V.normalize({'enabled':1,'item':' BOX実績_設備名 ','values':['LS3',' LS4','LS3','',None,'DL2'],'pattern':' {値}_実績 '})
-  self.assertEqual(v,{'enabled':True,'item':'BOX実績_設備名','values':['LS3','LS4','DL2'],'pattern':'{値}_実績','folder':'','method':'default'},
+  self.assertEqual(v,{'enabled':True,'item':'BOX実績_設備名','scope':'listed','values':['LS3','LS4','DL2'],'pattern':'{値}_実績','folder':'','method':'default'},
                    '前後の空白を落とし、重ねず、空は捨てる')
   self.assertEqual(V.normalize(None)['values'],[])
   self.assertEqual(len(V.normalize({'values':[str(i) for i in range(200)]})['values']),V.MAX_VALUES)
@@ -71,6 +71,64 @@ class RulesTest(unittest.TestCase):
    q=Path(d)/'b.csv';q.write_bytes('仕掛区分,BOX実績_設備名,ﾛｯﾄ番号\r\r\nA,LS4,1\r\r\n\r\n,,\r\nB,LS3,3\r\n\r\n'.encode('cp932'))
    sq=V.split_csv(q,'BOX実績_設備名',['LS3','LS4'],Path(d)/'p3')
    self.assertEqual((sq['rows'],{k:v['rows'] for k,v in sq['parts'].items()}),(2,{'LS3':1,'LS4':1}))
+
+ def test_split_csv_all_found(self):
+  """出てきた値すべて（2.5.0）: 値を渡さず、出てきた順にファイルを作る。値が空の行は blank に数え、どこにも入れない。上限を超えたら断る。"""
+  with tempfile.TemporaryDirectory() as d:
+   p=Path(d)/'a.csv'
+   p.write_bytes('仕掛区分,BOX実績_設備名,ﾛｯﾄ番号\r\nZ,,0\r\nA,LS4,1\r\nA,,2\r\nB,LS3,3\r\nB,PSW,4\r\nC,LS3,5\r\n'.encode('cp932'))
+   sp=V.split_csv(p,'BOX実績_設備名',None,Path(d)/'parts')
+   self.assertEqual(list(sp['parts']),['LS4','LS3','PSW'],'出てきた順')
+   self.assertEqual({k:v['rows'] for k,v in sp['parts'].items()},{'LS4':2,'LS3':2,'PSW':1})
+   self.assertEqual((sp['rows'],sp['blank']),(6,1),'先頭の値が空の行は、どの値にも入れず blank に数える')
+   with open(sp['parts']['PSW']['path'],encoding='cp932',newline='') as f:rows=list(csv.reader(f))
+   self.assertEqual(rows,[['仕掛区分','BOX実績_設備名','ﾛｯﾄ番号'],['B','PSW','4']])
+   with self.assertRaisesRegex(ValueError,'2 を超えました'):V.split_csv(p,'BOX実績_設備名',None,Path(d)/'p2',limit=2)
+   # UTF-8 の中間CSV（cp932 で読めない）も、書きかけを残さず読み直す
+   u=Path(d)/'u.csv';u.write_bytes('区分,設備\r\n甲,ＬＳ３\r\n乙,🙂\r\n'.encode('utf-8'))
+   su=V.split_csv(u,'設備',None,Path(d)/'p3')
+   self.assertEqual((su['encoding'],list(su['parts'])),('utf-8-sig',['ＬＳ３','🙂']))
+
+ def test_count_csv(self):
+  with tempfile.TemporaryDirectory() as d:
+   p=Path(d)/'a.csv'
+   p.write_bytes('仕掛区分,BOX実績_設備名\r\nA,LS4\r\nA,\r\nB,LS3\r\n\r\n'.encode('cp932'))
+   c=V.count_csv(p,'BOX実績_設備名')
+   self.assertEqual((c['values'],c['rows'],c['blank'],c['missing_column']),([{'value':'LS4','rows':2},{'value':'LS3','rows':1}],3,0,False))
+   self.assertEqual(list(Path(d).iterdir()),[p],'ファイルは作らない')
+   self.assertTrue(V.count_csv(p,'無い列')['missing_column'])
+
+ def test_scope(self):
+  """出てきた値すべて: 値が無くても入る。取り方はいつもまとめて1回。名前に {値} が無ければ先に断る。"""
+  allj=lambda **k:{'variants':{'enabled':True,'item':'x','scope':'all',**k}}
+  self.assertEqual(V.normalize({'scope':'?'})['scope'],'listed','知らない値・古い設定は指定した値だけ')
+  self.assertTrue(V.active(allj()))
+  self.assertFalse(V.active(allj(item='')),'項目は要る')
+  self.assertTrue(V.everything(allj()));self.assertTrue(V.everything(allj()['variants']))
+  self.assertEqual(V.method(allj(method='parallel'),{'variant_method':'parallel'}),'combined','値が先に分からないので並列にできない')
+  self.assertEqual(V.normalize(allj(values=['a'])['variants'])['values'],['a'],'切り替えて戻ったときのために値は残す')
+  render=lambda t,v:t.replace('{値}',v)
+  self.assertEqual([x['stem'] for x in V.plan(allj(),render,'LOTACH','out',values=['P','Q'])],['LOTACH_P','LOTACH_Q'],'出てきた値を渡して名前を決める')
+  self.assertIn('{値} がありません',V.name_error(allj(pattern='実績')))
+  self.assertEqual(V.name_error(allj(pattern='実績',folder='o\\{値}')),'','置き場に {値} があればよい')
+  self.assertEqual(V.name_error(allj()),'','型が空なら「ふだんの名前_値」なので重ならない')
+  self.assertEqual(V.name_error({'variants':{'item':'x','values':['a'],'pattern':'実績'}}),'','指定した値だけは plan が確かめる')
+
+ def test_relax_rules(self):
+  self.assertTrue(V.need_relax([],['LS4'],True),'出てきた値すべて: RNE がキーで絞っていれば外す')
+  self.assertFalse(V.need_relax([],[],True),'絞っていなければ外さない')
+  self.assertFalse(V.need_relax(['LS4'],['LS4']));self.assertTrue(V.need_relax(['LS3'],['LS4']))
+  self.assertEqual((V.relax_hint(['LS3'],['LS4']),V.relax_hint([],['LS4']),V.relax_hint([],[])),('LS3','LS4',''))
+  self.assertFalse(V.relaxed(['LS4'],['LS4'],[],True),'キーの値しか返らなければ、外せていないかもしれない')
+  self.assertTrue(V.relaxed(['LS4','LS3'],['LS4'],[],True))
+
+ def test_count_state(self):
+  rec=V.count_record({'values':[{'value':'a','rows':1}],'rows':1},'x',(123,9),{'enabled':True,'unit':'month'},'2026-10-16T10:00:00')
+  self.assertEqual(V.count_state(rec,'x',(123,9),{'enabled':True,'unit':'month'}),'fresh')
+  self.assertEqual(V.count_state(rec,'x',(124,9),{'enabled':True,'unit':'month'}),'stale','RNE が変わった')
+  self.assertEqual(V.count_state(rec,'x',(123,9),{'enabled':True,'unit':'day'}),'stale','期間指定が変わった')
+  self.assertEqual(V.count_state(rec,'y',(123,9),{}),'none','項目が違えば使わない')
+  self.assertEqual(V.count_state(None,'x',(123,9),{}),'none')
 
  def test_relaxed(self):
   self.assertTrue(V.relaxed(['LS4','LS3'],['LS4'],['LS3','LS4']),'RNE のキー以外の値が返っていれば外せている')
@@ -148,7 +206,7 @@ class Fake:
  def open_catalog(self,p):calls.append(('open',Path(p).name));return 1,0.01
  def apply_period(self,*a):return {}
  def relax_condition(self,h,item,hint=''):
-  calls.append(('relax',item));self.relaxed=(mode!='norelax');return {'form':'NULL以外（キーの絞り込みを外す）','tried':[]}
+  calls.append(('relax',item,hint));self.relaxed=(mode not in ('norelax','allnorelax'));return {'form':'NULL以外（キーの絞り込みを外す）','tried':[]}
  def apply_row_categories(self,h,spec):
   calls.append(('categories',spec['column'],spec['index'],tuple(spec['values']),spec['part'],spec['parts']))
   if mode=='norestrict':raise navigator_api.NavigatorApiError('行分割:カテゴリ',1,'試験: 絞れない')
@@ -183,6 +241,8 @@ if mode in ('parallel','parallelfail'):v['method']='parallel'
 if mode=='defaultparallel':cfg['settings']['variant_method']='parallel'
 if mode=='jobcombined':cfg['settings']['variant_method']='parallel';v['method']='combined'
 if mode=='parallelfail':v['values']=['LS3','ZERO','KEN']
+if mode.startswith('all'):v={'enabled':True,'item':'BOX実績_設備名','scope':'all','values':[],'method':'parallel'}
+if mode=='allsame':v['pattern']='実績'
 job={'id':'j1','name':'LOT実績','enabled':True,'source':'rne','rne':'LOTACH.RNE','rne_path':str(rne),'output_folder':str(out),
      'output_format':'csv','output_file':'LOTACH.csv','naming_mode':'fixed','type':'詳細データ','sheet':'Page1','table':'t',
      'schedules':[],'variants':v if mode!='plain' else {}}
@@ -226,8 +286,79 @@ out={}
 out['empty']=t.post('/api/variants/preview',json=base).get_json()
 out['four']=t.post('/api/variants/preview',json={**base,'variants':{'item':'BOX実績_設備名','values':['LS3','LS4'],'pattern':'{値}_{date:YYYYMM}'}}).get_json()
 out['same']=t.post('/api/variants/preview',json={**base,'variants':{'item':'x','values':['a','b'],'pattern':'固定'}}).get_json()
+# 出てきた値すべて: 数える前はファイルの見込みが空。数える（ワーカーは偽物）と控え、見込みに数えた値と行数が並ぶ
+allv={'item':'BOX実績_設備名','scope':'all'}
+base2={**base,'id':'j9','period':{'enabled':False}}
+out['all_before']=t.post('/api/variants/preview',json={**base2,'variants':allv}).get_json()
+seen=[]
+def fake_worker(job,cfg,user,pw,server,want,timeout=180):
+ seen.append({'want':want,'item':job['variants']['item'],'id':job.get('id')})
+ return {'ok':True,'elapsed':1.0,'variant_count':{'values':[{'value':'LS4','rows':5},{'value':'PSW','rows':2}],'rows':7,'blank':0,
+         'missing_column':False,'header':[],'encoding':'cp932','relax':'NULL以外','relax_unsure':False,'rne_keys':['LS4']}}
+import navi_web;navi_web.run_inspect_worker=fake_worker
+app.navi_login=navi_web.navi_login=lambda c:('u','p','s',None)
+out['count']=t.post('/api/variants/count',json={**base2,'variants':allv}).get_json()
+out['seen']=seen
+out['all_after']=t.post('/api/variants/preview',json={**base2,'variants':allv}).get_json()
+out['other_item']=t.post('/api/variants/preview',json={**base2,'variants':{**allv,'item':'別の項目'}}).get_json()
+out['period_changed']=t.post('/api/variants/preview',json={**base2,'period':{'enabled':True,'unit':'day'},'variants':allv}).get_json()
+out['listed_rows']=t.post('/api/variants/preview',json={**base2,'variants':{'item':'BOX実績_設備名','values':['PSW','KEN']}}).get_json()
+out['all_noname']=t.post('/api/variants/preview',json={**base2,'variants':{**allv,'pattern':'実績'}}).get_json()
+out['no_item']=t.post('/api/variants/count',json={**base2,'variants':{'scope':'all'}}).get_json()
 print(json.dumps(out,ensure_ascii=False))
 """
+
+
+# ワーカーの中で数える（process_catalog_inspect の variant_count）。API は偽物: 条件を外すと6設備、外さなければ LS4 だけ
+COUNT=r"""
+import json,shutil,sys
+from pathlib import Path
+sys.path[:0]=[sys.argv[1],sys.argv[1]+'/lib']
+import app
+work=Path(sys.argv[2]);mode=sys.argv[3];calls=[]
+class Fake:
+ relaxed=False
+ def relax_condition(self,h,item,hint=''):calls.append(['relax',item,hint]);self.relaxed=mode!='norelax';return {'form':'NULL以外（キーの絞り込みを外す）'}
+ def apply_row_categories(self,h,spec):calls.append(['categories'])
+ def execute(self,h):calls.append(['execute']);return 0,0.01
+ def save_csv(self,h,path,repeat_labels=False):
+  calls.append(['save',repeat_labels]);keys=['LS3','LS4','DL2','KEN','PSW','ST2'] if self.relaxed else ['LS4']
+  Path(path).write_bytes(('仕掛区分,BOX実績_設備名\r\n'+''.join(f'A,{k}\r\n'*(i+1) for i,k in enumerate(keys))).encode('cp932'));return 0.01
+ def supports_column_split(self):return True
+ def close_catalog(self):pass
+ def close(self):pass
+app.open_api_catalog=lambda c,rp:(Fake(),1)
+rne=work/'LOTACH.RNE';shutil.copy(Path(sys.argv[1])/'samples'/'rne'/'LOTACH.RNE',rne)
+job={'id':'c1','name':'LOT実績','rne':'LOTACH.RNE','rne_path':str(rne),'source':'rne','variants':{'item':'BOX実績_設備名','scope':'all'}}
+out=app.process_catalog_inspect(job,app.load(),'u','p','s',['variant_count'])
+left=sorted(x.name for x in app.LOCAL_RUNTIME.glob('variant_count_*.csv'))
+print(json.dumps({'out':out,'calls':calls,'left':left},ensure_ascii=False))
+"""
+
+
+class CountTest(unittest.TestCase):
+ def run_count(self,mode):
+  with tempfile.TemporaryDirectory() as d:
+   d=Path(d)
+   env=dict(os.environ,NAVI_LOCAL_ROOT=str(d/'local'),NAVI_DATA_ROOT=str(d/'data'),NAVI_CONFIG_DIR=str(d/'data'/'Config'),
+            NAVI_SECRET_FILE=str(d/'local'/'s.json'),DATARELAY_NO_BOOT='1',PYTHONIOENCODING='utf-8')
+   r=subprocess.run([sys.executable,'-c',COUNT,str(ROOT),str(d),mode],env=env,capture_output=True,text=True,encoding='utf-8',timeout=120)
+   self.assertEqual(r.returncode,0,r.stderr[-3000:])
+   return json.loads(r.stdout.strip().splitlines()[-1])
+
+ def test_counts_found_values(self):
+  """本番の「出てきた値すべて」と同じ条件（RNE の LS4 を外し、表側は絞らない）で1回問い合わせ、値ごとの行数を数える。中間CSVは残さない。"""
+  v=self.run_count('relax')
+  self.assertTrue(v['out']['ok'],v['out'])
+  c=v['out']['variant_count']
+  self.assertEqual([(x['value'],x['rows']) for x in c['values']],[('LS3',1),('LS4',2),('DL2',3),('KEN',4),('PSW',5),('ST2',6)])
+  self.assertEqual((c['rows'],c['relax_unsure'],c['rne_keys']),(21,False,['LS4']))
+  self.assertEqual(v['calls'],[['relax','BOX実績_設備名','LS4'],['execute'],['save',True]])
+  self.assertEqual(v['left'],[],'数えたら中間CSVは消す')
+
+ def test_relax_unsure(self):
+  c=self.run_count('norelax')['out']['variant_count']
+  self.assertEqual(([x['value'] for x in c['values']],c['relax_unsure']),(['LS4'],True),'キーの値しか出なければ、外せていないかもしれないと返す')
 
 
 class FlowTest(unittest.TestCase):
@@ -342,6 +473,34 @@ class FlowTest(unittest.TestCase):
   self.assertFalse(v['ok']);self.assertEqual(v['files'],{})
   self.assertIn('列が無いため',v['error'])
 
+ def test_all_found_values(self):
+  """出てきた値すべて（2.5.0）: RNE の条件（LS4）を外し、表側は絞らず1回だけ問い合わせ、出てきた6設備を6ファイルにする。
+  値は先に分からないので、並列を選んでいてもまとめて1回で動く。"""
+  v=self.run_flow('all')
+  self.assertTrue(v['ok'],v['error'])
+  self.assertEqual(v['files'],{f'LOTACH_{k}.csv':[k] for k in ('LS3','LS4','DL2','KEN','PSW','ST2')},'出てきた値ごとに1ファイル、中身はその値の行だけ')
+  self.assertEqual([c[0] for c in v['calls']],['open','relax','execute','save'],'表側のカテゴリは絞らない（全部の値が欲しい）')
+  self.assertEqual(v['calls'][1],['relax','BOX実績_設備名','LS4'],'2つ目の形に渡すキーは RNE のいまのキー')
+  self.assertEqual(v['racers'],[],'値ごとに並列にはしない')
+  self.assertIn('6/6ファイル',v['result'])
+  self.assertEqual(v['saved']['scope'],'all','設定に保存して読み戻せる')
+  last=v['lines'][-1]
+  self.assertEqual((last['state'],[y['value'] for y in last['variants']]),('完了',['LS3','LS4','DL2','KEN','PSW','ST2']))
+  self.assertTrue(any('出てきた値すべて' in str(x['detail']) for x in v['lines']),'問い合わせ中の一言')
+
+ def test_all_found_relax_unsure(self):
+  """条件を外せず LS4 しか返らなかったら、LS4 の1ファイルを出し、外せていないかもしれないと知らせる（0件のファイルは作らない）。"""
+  v=self.run_flow('allnorelax')
+  self.assertTrue(v['ok'],v['error'])
+  self.assertEqual(v['files'],{'LOTACH_LS4.csv':['LS4']})
+  self.assertIn('条件を外せていないかもしれません',v['result'])
+
+ def test_all_found_same_name_is_refused_before_query(self):
+  v=self.run_flow('allsame')
+  self.assertFalse(v['ok']);self.assertEqual(v['files'],{})
+  self.assertIn('{値} がありません',v['error'])
+  self.assertEqual(v['calls'],[],'問い合わせる前に断る')
+
  def test_only_rne_key_needs_no_relax(self):
   v=self.run_flow('onlykey')
   self.assertTrue(v['ok'],v['error'])
@@ -381,6 +540,22 @@ class FlowTest(unittest.TestCase):
   self.assertEqual([x['file'] for x in v['four']['files']],[f'LS3_{ym}.xlsx',f'LS4_{ym}.xlsx'],'値と日付の変数を展開し、形式の拡張子を付ける')
   self.assertTrue(v['four']['files'][0]['path'].endswith(f'LS3_{ym}.xlsx'))
   self.assertFalse(v['same']['ok']);self.assertIn('同じファイル名',v['same']['error'])
+  # 数える（2.5.0）
+  self.assertEqual((v['all_before']['files'],v['all_before']['counted']),([],None),'数える前は見込みが無い')
+  self.assertEqual([(x['value'],x['file']) for x in v['all_before']['sample']],[('LS4','LOTACH_LS4.xlsx')],'数える前は、RNE のいまの値を例にした名前の見本')
+  self.assertEqual(v['all_after']['sample'],[],'数えたら見本は出さない')
+  self.assertTrue(v['count']['ok'],v['count'])
+  self.assertEqual(v['seen'],[{'want':['variant_count'],'item':'BOX実績_設備名','id':'j9'}],'ワーカーで数える')
+  self.assertEqual([(x['value'],x['rows']) for x in v['count']['counted']['values']],[('LS4',5),('PSW',2)])
+  a=v['all_after']
+  self.assertEqual(a['counted']['state'],'fresh')
+  self.assertEqual([(x['value'],x['file'],x['rows']) for x in a['files']],[('LS4','LOTACH_LS4.xlsx',5),('PSW','LOTACH_PSW.xlsx',2)],
+                   '出てきた値すべては、数えた値でファイルの見込みを並べる')
+  self.assertIsNone(v['other_item']['counted'],'項目を変えたら、前の数は使わない')
+  self.assertEqual(v['period_changed']['counted']['state'],'stale','期間指定を変えたら、数え直しを促す')
+  self.assertEqual([(x['value'],x['rows']) for x in v['listed_rows']['files']],[('PSW',2),('KEN',None)],'指定した値だけでも、数えた行数を添える')
+  self.assertFalse(v['all_noname']['ok']);self.assertIn('{値} がありません',v['all_noname']['error'])
+  self.assertFalse(v['no_item']['ok'])
 
 
 
@@ -450,6 +625,15 @@ res={'jobs':t.get('/api/data-viewer/jobs').get_json()['items'],
      'ls4':t.get('/api/data-viewer/v1?value=LS4').get_json(),'ls3':t.get('/api/data-viewer/v1?value=LS3').get_json(),
      'dl2':t.get('/api/data-viewer/v1?value=DL2').get_json(),'first':t.get('/api/data-viewer/v1').get_json(),
      'bad':t.get('/api/data-viewer/v1?value=XXX').status_code}
+# 出てきた値すべて: 前回の実行で作った値を並べる。まだ実行していなければ空で、開くと断る
+job2={**job,'id':'v2','variants':{'enabled':True,'item':'BOX実績_設備名','scope':'all','values':[]}}
+job3={**job,'id':'v3','variants':{'enabled':True,'item':'BOX実績_設備名','scope':'all','values':[]}}
+cfg=app.load();cfg['jobs']=[job,job2,job3];app.save(cfg,quiet=True)
+app.record_job_run('v2','設備単位実績','success','manual',metrics={'variant_results':[{'value':'LS4','ok':True,'target':str(out/'実績_LS4.sqlite3')},
+                                                                                 {'value':'PSW','ok':True,'target':str(out/'実績_PSW.sqlite3')}]})
+items={x['id']:x for x in t.get('/api/data-viewer/jobs').get_json()['items']}
+res['all']=items['v2'];res['all_none']=items['v3']
+r3=t.get('/api/data-viewer/v3');res['all_open']=[r3.status_code,r3.get_json()]
 print(json.dumps(res,ensure_ascii=False,default=str))
 """
 
@@ -471,6 +655,9 @@ class ViewerTest(unittest.TestCase):
   self.assertEqual((v['ls3']['value'],v['ls3']['total_rows']),('LS3',1))
   self.assertFalse(v['dl2']['ok']);self.assertIn('見つかりません',v['dl2']['error'])
   self.assertEqual(v['first']['value'],'LS4','値を省けば、ある最初の値')
+  self.assertEqual([(x['value'],x['exists']) for x in v['all']['files']],[('LS4',True),('PSW',False)],'出てきた値すべては、前回作った値を並べる')
+  self.assertEqual(v['all_none']['files'],[],'まだ実行していなければ空')
+  self.assertEqual(v['all_open'][0],404);self.assertIn('まだ値ごとのファイルを作っていません',v['all_open'][1]['error'])
   self.assertEqual(v['bad'],404,'対象に無い値は断る')
 
 if __name__=='__main__':
