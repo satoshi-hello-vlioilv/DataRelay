@@ -37,7 +37,7 @@ import navi_defaults # 置き場の既定の設定（新しいPCへ渡す最初�
 import navi_mrun     # クエリ（Power Query の M の式）の出し入れ・下読み・式を作る（2.4.0）
 
 from app import (
-    variant_jobs,
+    variant_jobs, load_variant_count, save_variant_count,
     APP_ID, APP_NAME, APP_RELEASED_AT, APP_VERSION, APP_VERSION_TITLE, BASE, BUILD_VERSION, CHANGELOG, CONFIG_DIR, DATA_ROOT,
     DATA_ROOT_SOURCE, LOCAL_ROOT, RELEASE_WATCH, release_check, release_place, release_shared, restart_block_reason,
     DEFAULT_DLL_SEARCH_ROOTS, DOCS, INSPECT_ALL_ORDER, INSPECT_ALL_SPEC,
@@ -314,34 +314,66 @@ def delete_run_history():
  log.info('RUN_HISTORY_DELETE ids=%s date=%s job_id=%s removed=%s',ids,date or '-',job_id or '-',removed)
  return jsonify(ok=True,removed=removed)
 
+VARIANT_JOB_KEYS=('id','rne','rne_path','name','table','output_format','output_file','naming_mode','output_pattern','output_folder','period','variants')
+
+def _variant_job(data):
+ """画面から来た編集中の対象（保存前のものも）を、値ごとの決まりに渡す形にする。"""
+ job={k:data.get(k) for k in VARIANT_JOB_KEYS};job['source']='rne';return job
+
 @app.post('/api/variants/preview')
 def variants_preview():
  """値ごとに分けて出す（2.1.0）の見込み: RNE の条件欄の項目といまのキー（画面が項目と値を先回りして出す材料）と、
- 値ごとに実際に作るファイルの道。編集中の対象をそのまま受け取る（保存前に見せる）。"""
+ 値ごとに実際に作るファイルの道。編集中の対象をそのまま受け取る（保存前に見せる）。
+ 数えた結果（2.5.0）があれば counted に添える。出てきた値すべてのときは、数えた値でファイルの道を並べる（数えていなければ空）。"""
  data=request.get_json(silent=True) or {}
- c=load();job={k:data.get(k) for k in ('rne','rne_path','name','table','output_format','output_file','naming_mode','output_pattern','output_folder','variants')}
- job['source']='rne'
+ c=load();job=_variant_job(data)
  conditions=None;side=[]
  try:
   rp=resolve_rne_path(job,c)
   if rp and Path(rp).is_file():
    conditions=navi_crosstab.read_conditions(rp);side=list((navi_crosstab.read_rne_layout(rp) or {}).get('side') or [])
  except Exception:conditions=None
- files=[];error=''
- if navi_variants.normalize(job.get('variants'))['values']:
-  try:
-   for one in variant_jobs({**job,'variants':{**navi_variants.normalize(job.get('variants')),'enabled':True}},c):
-    folder=str(resolve_path(one.get('output_folder') or c['default_output_folder']))
-    files.append({'value':one['_variant_value'],'file':one['output_file'],'folder':folder,'path':str(Path(folder)/one['output_file'])})
-  except Exception as e:error=str(e)
  v=navi_variants.normalize(job.get('variants'));st=c.get('settings') or {}
+ counted=load_variant_count(job,c) if v['item'] else None
+ rows={x['value']:x['rows'] for x in (counted or {}).get('values') or []}
+ values=[x['value'] for x in (counted or {}).get('values') or []] if v['scope']=='all' else v['values']
+ files=[];error=navi_variants.name_error(v)
+ if values and not error:
+  try:
+   for one in variant_jobs({**job,'variants':{**v,'enabled':True}},c,values=values):
+    folder=str(resolve_path(one.get('output_folder') or c['default_output_folder']))
+    files.append({'value':one['_variant_value'],'file':one['output_file'],'folder':folder,'path':str(Path(folder)/one['output_file']),
+                  'rows':rows.get(one['_variant_value'])})
+  except Exception as e:error=str(e)
  # 取り方: 実際に動く方（対象の選択か共通の既定）と、並列のときに同時に動かす数の見込み（1つだけ動かすとき。
  # 同時に動かす対象が多いと、並列ライン数を対象で分けるぶん減る）
  how=navi_variants.method(job,st)
  lines=max(1,min(len(v['values']) or 1,int(st.get('api_parallel_lines',6) or 1)))
  return jsonify(ok=not error,error=error,conditions=conditions,files=files,tokens=list(navi_variants.TOKENS),
                 method=how,method_name=navi_variants.METHOD_NAMES[how],default_method=navi_variants.default_method(st),
-                parallel_lines=lines,side_has_item=bool(v['item'] and v['item'] in side))
+                parallel_lines=lines,side_has_item=bool(v['item'] and v['item'] in side),counted=counted,
+                max_found=navi_variants.MAX_FOUND)
+
+@app.post('/api/variants/count')
+def variants_count():
+ """出てくる値を数える（2.5.0）。いまの条件（期間指定を含む）で、条件欄の絞り込みを外して1回問い合わせ、分ける項目の値ごとの行数を返す。
+ ファイルは作らない。DLL を触るのでワーカープロセスで動かす（落ちても本体は残る）。数えた結果は対象ごとに控え、見込みに使う。
+ ふつうは調べものの仕組み（/api/inspect-task/variants）から裏で呼ばれる（画面を閉じても続く）。"""
+ data=request.get_json(silent=True) or {};c=load();job=_variant_job(data)
+ v=navi_variants.normalize(job.get('variants'))
+ if not v['item']:return jsonify(ok=False,error='分ける項目を決めてください'),200
+ try:rp=resolve_rne_path(job,c)
+ except Exception as e:return jsonify(ok=False,error=f'RNEパスの解決に失敗しました: {e}'),200
+ if not Path(rp).is_file():return jsonify(ok=False,error=rne_missing_message(job,c)),200
+ try:
+  user,pw,server,_=navi_login(c)
+  ins=run_inspect_worker(dict(job,_read_names=True),c,user,pw,server,['variant_count'],
+                         timeout=int(c['settings'].get('api_worker_timeout_minutes',120) or 120)*60)
+ except Exception as e:
+  log.exception('VARIANT_COUNT_FAILED job=%s',job.get('name'));return jsonify(ok=False,error=str(e)),200
+ if not ins.get('ok'):return jsonify(ok=False,error=ins.get('error') or '数えられませんでした'),200
+ rec=save_variant_count(job,c,ins['variant_count'])
+ return jsonify(ok=True,counted={**rec,'state':'fresh'},elapsed=ins.get('elapsed'),max_found=navi_variants.MAX_FOUND)
 
 @app.post('/api/preview-filename')
 def preview_filename():
@@ -1888,6 +1920,7 @@ def data_viewer(job_id):
  files=viewer_files(job,c);want=request.args.get('value')
  one=next((x for x in files if x['value']==want),None) if want is not None else None
  if want is not None and one is None:return jsonify(ok=False,error=f'「{want}」は、この対象の値にありません'),404
+ if not files:return jsonify(ok=False,error='まだ値ごとのファイルを作っていません。実行すると、出てきた値ごとのファイルを開けます'),404
  one=one or next((x for x in files if Path(x['path']).is_file()),files[0])
  path=Path(one['path'])
  if not path.is_file():return jsonify(ok=False,error=f'出力ファイルが見つかりません: {path}'),404

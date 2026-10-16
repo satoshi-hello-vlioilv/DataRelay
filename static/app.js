@@ -1531,7 +1531,7 @@ function buildLogRuns(entries){
    if(/^(PARALLEL_JOB_RESULT|JOB_RESULT) /.test(e.msg)){j.state='ok';j.rows=Number(logKV(e.msg,'rows'));j.elapsed=parseFloat(logKV(e.msg,'elapsed'))}
    else if(/^(PARALLEL_JOB_ERROR|LOCAL_JOB_FAILED) /.test(e.msg)){j.state='ng';j.elapsed=parseFloat(logKV(e.msg,'elapsed'))||null;
     let m=e.msg.match(/error=([^\n]*)/);j.error=m?m[1]:e.msg.split('\n')[0]}
-   else if(/^VARIANTS_START /.test(e.msg))cur.variants=(logKV(e.msg,'values')||'').split(',').filter(Boolean).length;
+   else if(/^VARIANTS_START /.test(e.msg)){let vs=logKV(e.msg,'values')||'';cur.variants=vs==='all'?'すべて':vs.split(',').filter(Boolean).length+'値'}   // all = 出てきた値すべて（2.5.0）
   }
   if(/^正常終了/.test(e.msg)){cur.state='ok';close()}
   else if(/^異常終了/.test(e.msg)){cur.state=/中断/.test(e.msg)?'cancelled':'ng';cur.reason=e.msg.replace(/^異常終了:\s*/,'').split('\n')[0];close()}
@@ -1553,7 +1553,7 @@ function logSeconds(a,b){let t=s=>s?Date.parse(s.replace(' ','T')):NaN,d=(t(b)-t
 function logRunTitle(r){
  if(r.kind==='other')return r.settings?`起動・設定の保存など（設定の保存 ${r.settings}回）`:'起動・設定の保存など';
  let names=r.jobs.map(j=>j.name);
- if(names.length===1)return names[0]+(r.variants?`（値ごと ${r.variants}値）`:'');
+ if(names.length===1)return names[0]+(r.variants?`（値ごと ${r.variants}）`:'');
  if(!names.length)return `${r.jobCount||'?'}件`;
  return `${names.length}件（${names.slice(0,2).join('・')}${names.length>2?' ほか':''}）`;
 }

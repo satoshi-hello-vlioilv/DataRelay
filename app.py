@@ -3041,6 +3041,8 @@ def process_catalog_inspect(j,cfg,user,pw,server,want=None):
             av.get('name'),av.get('how'),av.get('count'),len(av.get('values') or []),av.get('complete'),
             av.get('load_form'),(' error='+av['error']) if av.get('error') else '')
    for t in (av.get('load_tried') or []):log.info('AXIS_VALUES_TRIED %s',t)
+  if 'variant_count' in want:
+   out['variant_count']=count_variant_values(api,handle,j,cfg)
   if 'timing' in want:
    # 転送せずに問い合わせだけを実行し、サーバー側で結果を作るのにかかる時間を測る。
    # 通常の実行(DOWNLOADNOW)との差が、そのまま転送に費やされている時間になる。
@@ -3761,9 +3763,10 @@ def finish_one_job(j,cfg,*,intermediate,db,target,backup,out_dir,local_export,st
          'hold_attempts':pub.get('attempts'),'hold_advice':list(pub.get('advice') or []),
          'extra_results':extra_results,'total':time.perf_counter()-job_started,'digest':digest}
 
-def variant_jobs(j,cfg,now=None):
+def variant_jobs(j,cfg,now=None,values=None):
  """値ごとに分けて出す対象を、値ごとの「1回ぶんの対象」に展開する（条件・名前・置き場を決め打ちした写し）。
- 名前と置き場の決まりは navi_variants.plan。日付の変数は全部の値で同じ時刻にそろえる（同じ回の4ファイルが別の日付にならない）。"""
+ 名前と置き場の決まりは navi_variants.plan。日付の変数は全部の値で同じ時刻にそろえる（同じ回の4ファイルが別の日付にならない）。
+ values: 値の並び（出てきた値すべてのときに、出てきた値・数えた値を渡す）。省けば設定の値。"""
  now=now or datetime.now()
  v=navi_variants.normalize(j.get('variants'))
  try:rp=resolve_rne_path(j,cfg)
@@ -3773,7 +3776,7 @@ def variant_jobs(j,cfg,now=None):
  base=Path(resolve_output_filename({**j,'_variant_value':''},cfg,now=now)).stem
  fmt=normalize_output_format(j.get('output_format'),j.get('output_file'))
  out=[]
- for x in navi_variants.plan(j,render,base,j.get('output_folder') or '',render_folder):
+ for x in navi_variants.plan(j,render,base,j.get('output_folder') or '',render_folder,values):
   one={**j,'naming_mode':'fixed','output_pattern':'','output_file':canonical_output_file(x['stem'],fmt),
        'output_folder':x['folder'],'variants':{},'_variant_value':x['value']}
   out.append(one)
@@ -3788,7 +3791,10 @@ def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,
  started=time.perf_counter();line_name=os.environ.get('NAVI_WORKER_LINE') or threading.current_thread().name
  v=navi_variants.normalize(j.get('variants'))
  try:
-  parts=variant_jobs(j,cfg)
+  every=navi_variants.everything(j)
+  # 出てきた値すべてのときは、値は受け取ってから決まる（出し先は _finish_variants で作る）。名前の衝突だけは先に分かる
+  if every and navi_variants.name_error(j):raise ValueError(navi_variants.name_error(j))
+  parts=[] if every else variant_jobs(j,cfg)
   rp=resolve_rne_path(j,cfg)
   conds=navi_crosstab.read_conditions(rp) or []
   lay=navi_crosstab.read_rne_layout(rp) or {}
@@ -3796,12 +3802,12 @@ def process_api_parallel_job(j,job_index,total_jobs,cfg,user,pw,server,dde_work,
   update_parallel_line(line_name,job=j.get('name',''),job_id=j.get('id',''),state='失敗',percent=100,detail=str(e))
   return {'ok':False,'job':j.get('name',''),'elapsed':time.perf_counter()-started,'error':f'値ごとの出し先を決められません: {e}'}
  side=list(lay.get('side') or [])
- ov={'item':v['item'],'values':[x['_variant_value'] for x in parts],
+ ov={'item':v['item'],'values':[x['_variant_value'] for x in parts],'all':every,
      'rne_keys':next((c['keys'] for c in conds if c['name']==v['item']),[]),
      # 表側に同じ名前の管理ポイントがあれば、そのカテゴリを指定の値だけにして、サーバー側で絞る
      'side_index':side.index(v['item']) if v['item'] in side else None}
  how=navi_variants.method(j,cfg.get('settings'))
- log.info('VARIANTS_START line=%s job=%s method=%s item=%s values=%s rne_keys=%s side_index=%s',line_name,j.get('name'),how,ov['item'],ov['values'],ov['rne_keys'],ov['side_index'])
+ log.info('VARIANTS_START line=%s job=%s method=%s item=%s values=%s rne_keys=%s side_index=%s',line_name,j.get('name'),how,ov['item'],'all' if every else ov['values'],ov['rne_keys'],ov['side_index'])
  if how=='parallel':
   return _variants_in_parallel(j,parts,ov,job_index,total_jobs,cfg,user,server,dde_work,backup,line_name,rp)
  return _process_api_job_once({**j,'_cond_override':ov,'_variant_parts':parts},job_index,total_jobs,cfg,user,pw,server,dde_work,backup)
@@ -3876,12 +3882,14 @@ def _variant_conditions(api,handle,j,ov,line):
  """値ごとに分けて出す回の問い合わせ条件。指定の値だけが返るようにする（実行前に呼ぶ）。
  1. RNE の条件欄のキー（例: LS4）に無い値を頼んでいれば、条件欄の絞り込みを外す（外さないと LS4 以外が0件になる）
  2. 表側の同じ名前の管理ポイントのカテゴリを、指定の値だけにする（行分割で実績のある NaviChangeCategory）
- 2 が通らなければ、外したまま全部の値を取る（遅いが、手元で値ごとに振り分けるのでファイルは正しい）。→ 何をしたか。"""
+ 2 が通らなければ、外したまま全部の値を取る（遅いが、手元で値ごとに振り分けるのでファイルは正しい）。→ 何をしたか。
+ 出てきた値すべて（ov['all']）のときは 1 だけ（RNE がキーで絞っていれば外す）。全部の値が欲しいので、表側は絞らない。"""
  from navigator_api import NAVI_SIDE
  note={'relax':'','restrict':'','restrict_error':''}
- if any(x not in set(ov['rne_keys']) for x in ov['values']):
-  got=api.relax_condition(handle,ov['item'],hint=ov['values'][0]);note['relax']=got['form']
- if ov.get('side_index') is None:
+ if navi_variants.need_relax(ov['values'],ov['rne_keys'],ov.get('all')):
+  got=api.relax_condition(handle,ov['item'],hint=navi_variants.relax_hint(ov['values'],ov['rne_keys']));note['relax']=got['form']
+ if ov.get('all'):pass
+ elif ov.get('side_index') is None:
   note['restrict_error']=f'表側に「{ov["item"]}」の管理ポイントが無いため、サーバー側では絞れません'
  else:
   try:
@@ -3894,6 +3902,61 @@ def _variant_conditions(api,handle,j,ov,line):
           note['relax'] or '-',note['restrict'] or '-',note['restrict_error'] or '-')
  return note
 
+def count_variant_values(api,handle,j,cfg):
+ """出てくる値を数える（2.5.0）。本番の「出てきた値すべて」と同じ条件（期間指定・条件欄の絞り込みを外す）で1回だけ問い合わせ、
+ 分ける項目の値ごとの行数を返す。ファイルは作らない（受け取った中間CSVは数えたら消す）。ワーカーの中で呼ばれる（DLL を触るため）。
+ → navi_variants.count_csv の形に relax（外した形）・relax_unsure（外せていないかもしれない）・rne_keys を足したもの。"""
+ v=navi_variants.normalize(j.get('variants'));rp=resolve_rne_path(j,cfg);line='数える'
+ if not v['item']:raise ValueError('分ける項目を決めてください')
+ attach_rne_layout(j,rp,line)
+ if job_is_crosstab(j):raise ValueError('集計表（表頭のある RNE）は、値ごとに分けて出せません')
+ conds=navi_crosstab.read_conditions(rp) or []
+ ov={'item':v['item'],'values':[],'all':True,'rne_keys':next((c['keys'] for c in conds if c['name']==v['item']),[]),'side_index':None}
+ period_spec=apply_dynamic_period(api,handle,j,datetime.now(),line=line) if (j.get('period') or {}).get('enabled') else None
+ note=_variant_conditions(api,handle,j,ov,line)
+ ensure_period_before_execute(api,period_spec,j,line)
+ api.execute(handle)
+ tmp=LOCAL_RUNTIME/f'variant_count_{uuid.uuid4().hex[:8]}.csv'
+ try:
+  api.save_csv(handle,tmp,repeat_labels=True)
+  got=navi_variants.count_csv(tmp,v['item'])
+ finally:
+  try:tmp.unlink()
+  except OSError:pass
+ if got['missing_column']:
+  raise ValueError(f'出力に「{v["item"]}」の列が無いため、値ごとに分けられません。RNE の表側かデータに「{v["item"]}」を置いてください')
+ found=[x['value'] for x in got['values']]
+ log.info('VARIANT_COUNT job=%s item=%s values=%s rows=%s blank=%s relax=%s',j.get('name'),v['item'],len(found),got['rows'],got['blank'],note['relax'] or '-')
+ return {**got,'rne_keys':ov['rne_keys'],'relax':note['relax'],
+         'relax_unsure':not navi_variants.relaxed(found,ov['rne_keys'],[],True)}
+
+def variant_count_file(job):
+ """数えた結果の控えの置き場（対象ごと。手元だけに置く。数えたときの条件での値なので、共有しない）。"""
+ import hashlib
+ key=hashlib.sha1(str(job.get('id') or job.get('rne_path') or '').encode('utf-8',errors='replace')).hexdigest()[:16]
+ return LOCAL_RUNTIME/'variant_count'/f'{key}.json'
+
+def load_variant_count(job,cfg):
+ """控えた数と、いまの設定でも使えるか（navi_variants.count_state）。→ 控え（state を添える）か None。"""
+ f=variant_count_file(job)
+ try:rec=json.loads(f.read_text(encoding='utf-8')) if f.is_file() else None
+ except Exception:rec=None
+ if not rec:return None
+ try:sig=rne_signature(resolve_rne_path(job,cfg))
+ except Exception:sig=('',0)
+ state=navi_variants.count_state(rec,navi_variants.normalize(job.get('variants'))['item'],sig,job.get('period'))
+ return None if state=='none' else {**rec,'state':state}
+
+def save_variant_count(job,cfg,counted):
+ try:sig=rne_signature(resolve_rne_path(job,cfg))
+ except Exception:sig=('',0)
+ rec=navi_variants.count_record(counted,navi_variants.normalize(job.get('variants'))['item'],sig,job.get('period'),
+                                datetime.now().isoformat(timespec='seconds'))
+ rec['relax_unsure']=bool(counted.get('relax_unsure'))
+ f=variant_count_file(job);f.parent.mkdir(parents=True,exist_ok=True)
+ f.write_text(json.dumps(rec,ensure_ascii=False),encoding='utf-8')
+ return rec
+
 def _variant_percent(k,n,frac=0.0):
  """値ごとのファイルを作る段の進み具合。変換と公開の帯（80〜100%）を値の数で等分する。"""
  lo=LINE_PHASES['convert'][0];hi=LINE_PHASES['publish'][1]
@@ -3901,20 +3964,30 @@ def _variant_percent(k,n,frac=0.0):
 
 def _finish_variants(j,cfg,*,intermediate,backup,local_export,stamp,fmt,extras,expected_cols,job_started,line,note,rp,run_metrics):
  """まとめて受け取った中間CSVを値ごとに分け、値ごとに 変換 → 公開 する。1つの値が失敗しても残りは出す。
- 進み具合は「値ごとに作成 k/N」で出す（途中の値で「完了」「失敗」を出すと、一覧の行がそこで終わったことになる）。"""
- ov=j['_cond_override'];parts=j['_variant_parts'];n=len(parts);name=j.get('name','');jid=j.get('id','')
+ 進み具合は「値ごとに作成 k/N」で出す（途中の値で「完了」「失敗」を出すと、一覧の行がそこで終わったことになる）。
+ 出てきた値すべて（ov['all']）のときは、分けたあとで出てきた値から出し先を決める（それまで値の数は分からない）。"""
+ ov=j['_cond_override'];parts=j['_variant_parts'];every=bool(ov.get('all'));name=j.get('name','');jid=j.get('id','')
  def items(k=-1,frac=0.0):
   return [_variant_item(r['value'],'ok' if r['ok'] else 'ng',100,r['rows'],r['error']) for r in results]+\
          [_variant_item(one['_variant_value'],'run' if i==k else 'wait',frac*100 if i==k else 0) for i,one in enumerate(parts[len(results):],len(results))]
  results=[]
- update_parallel_line(line,job=name,job_id=jid,state='値ごとに分ける',percent=_variant_percent(0,n),detail=f'{ov["item"]} で {n}ファイルに分けています',phase='convert',variants=items())
+ update_parallel_line(line,job=name,job_id=jid,state='値ごとに分ける',percent=_variant_percent(0,len(parts)),phase='convert',variants=items(),
+                      detail=f'{ov["item"]} の出てきた値ごとに分けています' if every else f'{ov["item"]} で {len(parts)}ファイルに分けています')
  split_dir=Path(local_export)/f'split_{stamp}'
- sp=navi_variants.split_csv(intermediate,ov['item'],ov['values'],split_dir)
  try:
+  sp=navi_variants.split_csv(intermediate,ov['item'],None if every else ov['values'],split_dir)
   if sp['missing_column']:
    raise ValueError(f'出力に「{ov["item"]}」の列が無いため、値ごとに分けられません。RNE の表側かデータに「{ov["item"]}」を置いてください')
-  if not navi_variants.relaxed(sp['found'],ov['rne_keys'],ov['values']):
-   raise ValueError(f'RNE の条件（{ov["item"]} = {"・".join(ov["rne_keys"])}）を外せず、ほかの値の行を受け取れませんでした（試した形: {note.get("relax") or "-"}）。0件のファイルは出していません')
+  if not navi_variants.relaxed(sp['found'],ov['rne_keys'],ov['values'],every):
+   if not every:
+    raise ValueError(f'RNE の条件（{ov["item"]} = {"・".join(ov["rne_keys"])}）を外せず、ほかの値の行を受け取れませんでした（試した形: {note.get("relax") or "-"}）。0件のファイルは出していません')
+   # 出てきた値すべてでは、本当にキーの値しか無いのかもしれない。0件のファイルは作らないので止めず、知らせる
+   note['relax_unsure']=f'RNE の条件のキー（{"・".join(ov["rne_keys"])}）の値しか出てきませんでした。条件を外せていないかもしれません'
+  if sp.get('blank'):note['blank']=int(sp['blank'])
+  if every:
+   if not sp['found']:raise ValueError(f'「{ov["item"]}」の値が1つも出てきませんでした（{int(sp["rows"]):,}行）。ファイルは作っていません')
+   parts=variant_jobs(j,cfg,values=sp['found']);ov={**ov,'values':list(sp['found'])}
+  n=len(parts)
   extra=[x for x in sp['found'] if x not in set(ov['values'])]
   log.info('VARIANT_SPLIT line=%s job=%s rows=%s found=%s per_value=%s outside=%s',line,name,sp['rows'],sp['found'][:20],
            {k2:v2['rows'] for k2,v2 in sp['parts'].items()},extra[:10])
@@ -3954,6 +4027,8 @@ def _variants_result(j,results,note,rp,fmt,cols,total,line,run_metrics):
  """値ごとの結果をまとめ、最後の状態（完了・一部失敗）を1回だけ出す。2つの取り方で共通。"""
  name=j.get('name','');text=navi_variants.summary(results);ok=bool(results) and all(x['ok'] for x in results)
  if note.get('restrict_error'):text+=f' / サーバー側では絞れず全部の値を取りました（{note["restrict_error"][:80]}）'
+ if note.get('relax_unsure'):text+=f' / {note["relax_unsure"]}'
+ if note.get('blank'):text+=f' / 値が空の行 {int(note["blank"]):,}件はどのファイルにも入れていません'
  update_parallel_line(line,job=name,job_id=j.get('id',''),state='完了' if ok else '一部失敗',percent=100,detail=text[:160],elapsed=round(total,1),
                       variants=[_variant_item(r['value'],'ok' if r['ok'] else 'ng',100,r['rows'],r['error']) for r in results])
  first=next((x['target'] for x in results if x['ok']),'')
@@ -4058,14 +4133,14 @@ def _process_api_job_once(j,job_index,total_jobs,cfg,user,pw,server,dde_work,bac
    period_spec=None
    if (j.get('period') or {}).get('enabled'):update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='期間指定',percent=line_percent('session',0.9),detail='相対期間を適用',phase='session');period_spec=apply_dynamic_period(api_client,handle,j,datetime.now(),line=line_name)
    if override:
-    update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='値を絞る',percent=line_percent('session',0.95),detail=f"{override['item']} を {len(override['values'])}値（{'・'.join(override['values'])}）に絞ります",phase='session')
+    update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='値を絞る',percent=line_percent('session',0.95),detail=navi_variants.query_text(override),phase='session')
     variant_note=_variant_conditions(api_client,handle,j,override,line_name)
    ensure_period_before_execute(api_client,period_spec,j,line_name)
    # 前回の実績。工程ごとの見込みに使う（無ければ見当なしで、秒だけを刻む）。
    _tm=load_rne_timing(rp) or {};_lastrun=(load_job_runs().get(j['id']) or {}).get('metrics') or {}
    _expect_bytes=int(_lastrun.get('transfer_bytes') or 0) or split_expected_bytes(rp,j,cfg)
    _expect_rows=_tm.get('rows') or 0
-   update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='問い合わせ実行',percent=line_percent('execute',0),detail=(f"{len(override['values'])}値をまとめて問い合わせ中（1回）" if override else 'サーバー側で問い合わせを実行中'),phase='execute')
+   update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='問い合わせ実行',percent=line_percent('execute',0),detail=(('出てきた値すべてを問い合わせ中（1回）' if override.get('all') else f"{len(override['values'])}値をまとめて問い合わせ中（1回）") if override else 'サーバー側で問い合わせを実行中'),phase='execute')
    t=phase_log('api_execute_catalog',job=j['name'],line=line_name)
    with line_ticker(line_name,j,'execute',elapsed_tick(_tm.get('execute'),'問い合わせ実行',f'前回 {int(_expect_rows):,}件' if _expect_rows else '')):
     api_number,api_elapsed=api_client.execute(handle)
@@ -5066,6 +5141,9 @@ INSPECT_TASK_SPECS={
            '列定義を用意して、分割できる列を判定しています',8.0),
  'row':   ('row_split_plan','/api/row-split-plan','行の分け方を探す',
            'RNEから、行を絞れる軸（管理ポイント）を読んでいます',24.0),
+ # 値ごとに分けて出す（2.5.0）: 出てくる値を数える。本番と同じ問い合わせを1回するので、見込みは実行と同じくらい
+ 'variants':('variants_count','/api/variants/count','出てくる値を数える',
+             '条件の絞り込みを外して1回問い合わせ、値ごとの行数を数えています',60.0),
 }
 # 「RNEを調査」は上の3つを続けて走らせる。読むものは同じで、分けて押す理由が無い。
 # 別々に押させると、どれをどの順で押したかを利用者が覚えることになる。
@@ -5204,16 +5282,17 @@ def read_log_lines(limit=1200,q='',preset=''):
 def viewer_files(job,cfg):
  """データビュワーで開けるファイルの一覧。ふつうの対象は1つ、値ごとに分けて出す対象は値の数だけ（2.1.2）。
  → [{'value'（ふつうは ''）, 'path', 'rows'（前回の件数。分からなければ None）}]。値ごとの道は、前回の実行で実際に作ったファイル（実行記録の variant_results）を先に見て、
- 無ければ今の設定から決まる道（ファイル名に日付などの変数があれば、前回の名前とずれることがあるため）。"""
+ 無ければ今の設定から決まる道（ファイル名に日付などの変数があれば、前回の名前とずれることがあるため）。
+ 出てきた値すべて（2.5.0）の対象は、値が設定に無いので、前回の実行で作った値を並べる（まだ実行していなければ空）。"""
  if not navi_variants.active(job):return [{'value':'','path':_viewer_output_path(job,cfg),'rows':None}]
  made={};rows={}
  for r in ((load_job_runs().get(job.get('id')) or {}).get('metrics') or {}).get('variant_results') or []:
   if r.get('value') is not None and r.get('target'):made[str(r['value'])]=Path(str(r['target']))
   if r.get('value') is not None and r.get('ok'):rows[str(r['value'])]=r.get('rows')
- out=[]
- try:planned={x['_variant_value']:resolve_path(x.get('output_folder') or cfg.get('default_output_folder'))/x['output_file'] for x in variant_jobs(job,cfg)}
+ out=[];values=list(made) if navi_variants.everything(job) else navi_variants.normalize(job.get('variants'))['values']
+ try:planned={x['_variant_value']:resolve_path(x.get('output_folder') or cfg.get('default_output_folder'))/x['output_file'] for x in variant_jobs(job,cfg,values=values)}
  except Exception:planned={}
- for value in navi_variants.normalize(job.get('variants'))['values']:
+ for value in values:
   got=made.get(value)
   out.append({'value':value,'path':got if got and got.is_file() else planned.get(value) or got or Path(''),'rows':rows.get(value)})
  return out
