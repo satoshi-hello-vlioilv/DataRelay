@@ -630,5 +630,186 @@
     ],
     "verdict": "1位 K 92点。2回目の基準（90点以上）に届いたので K に決めた（2位 D 80点と12点差で、僅差の決め方は使っていない）"
   },
-  "after": {}
+  "after": {
+    "measured": {
+      "many": {
+        "seq": {
+          "post": 62.45,
+          "others_done": 62.44,
+          "peak": 1,
+          "mem_mb": 53.5,
+          "same_as_seq": true,
+          "progress_ok": true
+        },
+        "built": {
+          "post": 4.31,
+          "others_done": 4.31,
+          "peak": 6,
+          "mem_mb": 55.3,
+          "same_as_seq": true,
+          "progress_ok": true
+        }
+      },
+      "xlsx": {
+        "seq": {
+          "post": 65.69,
+          "others_done": 65.67,
+          "peak": 1,
+          "mem_mb": 61.3,
+          "same_as_seq": true,
+          "progress_ok": true
+        },
+        "built": {
+          "post": 8.0,
+          "others_done": 7.99,
+          "peak": 3,
+          "mem_mb": 68.4,
+          "same_as_seq": true,
+          "progress_ok": true
+        }
+      },
+      "small": {
+        "seq": {
+          "post": 122.86,
+          "others_done": 122.86,
+          "peak": 1,
+          "mem_mb": 42.3,
+          "same_as_seq": true,
+          "progress_ok": true
+        },
+        "built": {
+          "post": 6.36,
+          "others_done": 6.36,
+          "peak": 6,
+          "mem_mb": 44.4,
+          "same_as_seq": true,
+          "progress_ok": true
+        }
+      },
+      "fail": {
+        "seq": {
+          "post": 21.89,
+          "others_done": 21.88,
+          "peak": 1,
+          "mem_mb": 52.6,
+          "same_as_seq": true,
+          "progress_ok": true
+        },
+        "built": {
+          "post": 3.68,
+          "others_done": 3.68,
+          "peak": 3,
+          "mem_mb": 53.1,
+          "same_as_seq": true,
+          "progress_ok": true
+        }
+      },
+      "extra": {
+        "seq": {
+          "post": 124.39,
+          "others_done": 124.38,
+          "peak": 1,
+          "mem_mb": 53.4,
+          "same_as_seq": true,
+          "progress_ok": true
+        },
+        "built": {
+          "post": 7.8,
+          "others_done": 7.79,
+          "peak": 5,
+          "mem_mb": 55.2,
+          "same_as_seq": true,
+          "progress_ok": true
+        }
+      },
+      "busy": {
+        "seq": {
+          "post": 38.96,
+          "others_done": 38.95,
+          "peak": 1,
+          "mem_mb": 52.4,
+          "same_as_seq": true,
+          "progress_ok": true
+        },
+        "built": {
+          "post": 17.4,
+          "others_done": 3.71,
+          "peak": 4,
+          "mem_mb": 53.0,
+          "same_as_seq": true,
+          "progress_ok": true
+        }
+      }
+    },
+    "scenes_added": {
+      "extra": "20値CSV＋同時出力TXT（同時出力の経路も鍵の中か）",
+      "busy": "V01 の公開先が使用中で前の回の保留も残る（粘る型は5秒）。others_done＝V01 以外が済むまで"
+    },
+    "rounds": [
+      {
+        "score": 71,
+        "evaluator": "作ったあと1人目",
+        "fixed": [
+          "同時出力（publish_extra_formats）が変換の鍵・共有の鍵の外で、ACCDB の Access を最大32本起こしうる → 両方の鍵を渡した",
+          "公開をあきらめて保留を置く所が共有の鍵の外 → 鍵の中へ",
+          "値1つぶんの外で例外が出るとほかの値の結果を失う → 値の失敗として残す",
+          "一言の言葉のぶれ・共有の絞りが見えない → 内訳と「共有 n/上限」",
+          "使わない引数・32 の根拠 → 外した・書いた",
+          "（自分で見つけた）同時出力つきで解析済みの中間データを公開の待ちのあいだ持ち、メモリが 53→127MB → 持たない形にして 55.7MB"
+        ]
+      },
+      {
+        "score": 83,
+        "evaluator": "作ったあと2人目（以降同じ評価者）",
+        "fixed": [
+          "保留の確認中の値が「待ち」に数えられ共有の数と食い違う → 段「保留の確認」",
+          "変換の鍵が順を守らず済む順がばらつく → 値の並びの順に通す鍵（_TurnGate）",
+          "変換の順番待ちが区切りバーで作成中に見える → 変換に入るまで待ち",
+          "コメントの関数名の誤り",
+          "40値（上限32超え）の試験"
+        ]
+      },
+      {
+        "score": 85,
+        "fixed": [
+          "順を守る鍵にした結果、前の値が使用中の公開先で粘る（最大20秒）あいだ後ろの値が止まる → 保留が見つかったら番を先に手放す（on_found・step_aside）",
+          "保留の確認が共有の枠を占める → 枠の半分まで",
+          "一言の確認中と共有待ちが混ざる",
+          "done を2か所で呼ぶ理由"
+        ]
+      },
+      {
+        "score": 90,
+        "fixed": [
+          "鍵の数え方が2か所 → _ShareGate 1つにまとめた",
+          "一言が長い → 共有の空き待ちは「待ち」に数え括弧をなくした"
+        ]
+      },
+      {
+        "score": 93,
+        "items": {
+          "わかりやすさ": {
+            "順序": 8,
+            "チャンク": 7,
+            "階層化": 7,
+            "視覚化": 8
+          },
+          "使いやすさ": {
+            "ステップ数": 9,
+            "考えさせない": 10,
+            "直感的": 9
+          },
+          "美しさ": 17,
+          "統一感": 18
+        },
+        "deductions": [],
+        "seq_score": 57,
+        "remaining": [
+          "猶予を待つ値も区切りバーで作成中に見える（画面に状態を足す変更なので、画面の改良として別に比べる）",
+          "EXCEL は変換が1本ずつなので約8秒が下限"
+        ]
+      }
+    ],
+    "verdict": "作ったあと 93点（選んだ K の 92点以上）。作る前（seq）57点"
+  }
 }
