@@ -82,8 +82,12 @@ ERROR_HINTS={
  0x11:'管理ポイントの取得・削除に失敗しました',
 }
 
+# DLL とやり取りする文字の文字コード（Windows の ANSI コードページ。日本語の Windows では cp932）。
+# 試験はこれを cp932 にして、日本語の Windows と同じ形で確かめる（CI の英語版 Windows は cp1252 で、日本語の名前を扱えない）。
+ANSI='mbcs'
+
 def _ansi(value):
-    return str(value).encode('mbcs',errors='strict')
+    return str(value).encode(ANSI,errors='strict')
 
 def pe_bits(path):
     try:
@@ -518,7 +522,7 @@ class NavigatorApi:
         try:
             self.dll.NaviGetErrorMessage(ctypes.byref(rc),ctypes.byref(message_ptr))
             raw=message_ptr.value or b''
-            message=raw.decode('mbcs',errors='replace').strip() if raw else ''
+            message=raw.decode(ANSI,errors='replace').strip() if raw else ''
             return int(rc.value),message
         except Exception as e:
             return -1,f'NaviGetErrorMessage取得失敗: {e}'
@@ -767,7 +771,7 @@ class NavigatorApi:
         ポインタ値を項目名として表示してしまう事故を防ぐ。
         """
         if not body:return ''
-        try:text=body.decode('mbcs')
+        try:text=body.decode(ANSI)
         except (UnicodeDecodeError,LookupError):return ''
         text=text.strip()
         if not text:return ''
@@ -1147,7 +1151,7 @@ class NavigatorApi:
         if not hasattr(self.dll,'NaviGetDataItem'):
             raise RuntimeError('このDLLは NaviGetDataItem を公開していません')
         rc=ctypes.c_long(-1)
-        h=int(self.dll.NaviGetDataItem(h_catalog,ctypes.byref(rc),locate,label.encode('mbcs'),order,0))
+        h=int(self.dll.NaviGetDataItem(h_catalog,ctypes.byref(rc),locate,label.encode(ANSI),order,0))
         self._check('NaviGetDataItem',rc)
         return h
 

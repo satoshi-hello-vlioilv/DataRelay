@@ -8,16 +8,18 @@ NAVI_ERROR_CONTROLPOINT で止まっていた。名前が空でも、RNE の時�
 化けていた（from=(N)ﾖ）。ほかの文字列の受け取り（_out_string）と同じ読み方にする。DLL は偽物。
 実行: python -m unittest tests.test_period_point -v
 """
-import codecs,ctypes,sys,unittest
+import ctypes,sys,unittest
 from pathlib import Path
 
 ROOT=Path(__file__).resolve().parent.parent
 sys.path.insert(0,str(ROOT/'lib'))
 import navigator_api as N
 
-# mbcs（Windows の ANSI コードページ）は Linux に無い。日本語の Windows と同じ cp932 で読み替える
-try:codecs.lookup('mbcs')
-except LookupError:codecs.register(lambda name:codecs.lookup('cp932') if name=='mbcs' else None)
+class JapaneseWindows(unittest.TestCase):
+ """日本語の Windows と同じ cp932 で確かめる（mbcs は Linux に無く、CI の英語版 Windows では cp1252 で日本語の名前を扱えない）。
+ 試験の間だけ替え、ほかの試験には持ち越さない。"""
+ def setUp(self):self._ansi=N.ANSI;N.ANSI='cp932'
+ def tearDown(self):N.ANSI=self._ansi
 
 KEEP=[]   # DLL が持っている文字列（ありかを書くので、試験の間は消さない）
 
@@ -37,7 +39,7 @@ class Dll:
  def NaviGetControlPointForTimeSpan(self,h,rc):
   self._rc(rc,N.NAVI_OK if self.timespan else 0x11);return 77 if self.timespan else 0
  def NaviGetControlPoint(self,h,rc,label,locate,order):
-  name=label.decode('mbcs') if isinstance(label,bytes) else str(label)
+  name=label.decode(N.ANSI) if isinstance(label,bytes) else str(label)
   for i,(loc,n,_t) in enumerate(self.points):
    if loc==locate and n==name:self._rc(rc,N.NAVI_OK);return 100+i
   self._rc(rc,0x11);return 0
@@ -51,7 +53,7 @@ class Dll:
  def NaviGetNameCP(self,hcp,rc,kind,buf):
   self._rc(rc,N.NAVI_OK);put(buf,'',False) if hcp==77 else None
   if hcp!=77:
-   n=self.points[hcp-100][1].encode('mbcs');ctypes.memmove(buf,n+b'\0',len(n)+1)
+   n=self.points[hcp-100][1].encode(N.ANSI);ctypes.memmove(buf,n+b'\0',len(n)+1)
  def NaviGetPeriod(self,hcp,rc,disp,cond,f,t,r):
   self._rc(rc,N.NAVI_OK);ctypes.cast(cond,ctypes.POINTER(ctypes.c_long)).contents.value=0
   put(f,self.period[0],self.pointer);put(t,self.period[1],self.pointer);put(r,'',False)
@@ -69,7 +71,7 @@ LOTACH=[(N.NAVI_COND,'BOX実績_設備名',CAT),(N.NAVI_COND,'月度',TIME),(N.N
 
 
 @unittest.skipUnless(sys.platform.startswith('linux') or sys.platform=='win32','ctypes の番地を読む')
-class ControlPointTest(unittest.TestCase):
+class ControlPointTest(JapaneseWindows):
  def test_blank_name_uses_the_time_point_in_the_rne(self):
   """失敗した PC と同じ: 名前が空・時間フィールドなし・条件に時間型「月度」→ 月度を使う（以前は NAVI_ERROR_CONTROLPOINT で止まった）。"""
   a=api(Dll(LOTACH))
@@ -99,7 +101,7 @@ class ControlPointTest(unittest.TestCase):
   self.assertIn('時間型の管理ポイントがありません',str(e.exception))
 
 
-class ReadbackTest(unittest.TestCase):
+class ReadbackTest(JapaneseWindows):
  def test_period_written_as_address_is_read(self):
   """DLL が期間の文字列のありかを書いても、期間として読める（以前は from=(N)ﾖ のように化けた）。"""
   self.assertEqual(api(Dll(LOTACH,pointer=True)).get_period(101),{'condition':0,'from':'20250400','to':'20250600'})
