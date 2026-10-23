@@ -1,6 +1,6 @@
 from __future__ import annotations
-import ctypes, os, re, shutil, struct, time
-from pathlib import Path
+import ctypes, ntpath, os, re, shutil, struct, time
+from pathlib import Path,PureWindowsPath
 
 NAVI_OK=0
 NAVI_ERROR=0x1
@@ -199,6 +199,33 @@ def dll_requirement(base_dir=None,search_roots=None):
             bits,DLL_FILE_NAME,'のもの' if bits==64 else 'でないもの'),
     }
 
+def _drive_is_remote(drive):
+    """ドライブ文字（例 'Z:'）がネットワークの割り当てか（Windows の GetDriveTypeW が DRIVE_REMOTE=4）。Windows 以外は False。"""
+    if os.name!='nt' or not drive:return False
+    try:return int(ctypes.windll.kernel32.GetDriveTypeW(str(drive).rstrip('\\/')+'\\'))==4
+    except Exception:return False
+
+def is_network_path(path):
+    """共有（UNC の \\\\サーバー\\…、ネットワークに割り当てたドライブ）上の道か。"""
+    s=str(path).replace('/','\\')
+    if s.startswith('\\\\?\\UNC\\'):return True
+    if s.startswith('\\\\?\\'):s=s[4:]            # \\?\C:\… は手元の長い道
+    elif s.startswith('\\\\'):return True          # \\サーバー\共有・\\.\デバイス
+    return _drive_is_remote(ntpath.splitdrive(s)[0])   # 道は Windows の決まりで切り出す（試験の Linux でも同じに）
+
+def dll_refusal(path):
+    """この道の DLL を読み込まない理由（読んでよければ空）。読み込んだ DLL はこのアプリと同じ権限で動き、Navigator と
+    データベースのパスワードを受け取る。だから他人が置き換えられる場所の物は読まない（2.5.3）。
+    ・名前だけの指定: Windows は作業フォルダー（RNE を開く間は RNE のある共有フォルダー）や PATH からも探す
+    ・共有（ネットワーク）上: 書ける人が誰でも置き換えられる"""
+    s=str(path)
+    if is_network_path(s):
+        return ('共有（ネットワーク）上の DLL は読み込みません（書ける人が置き換えられる場所のため）。'
+                'この PC の C:\\NAVIAP など、手元のフォルダーに置いてください')
+    if not (PureWindowsPath(s).is_absolute() or Path(s).is_absolute()):
+        return '名前だけの指定は読み込みません（作業フォルダーや PATH の、別の DLL を読みうるため）'
+    return ''
+
 def default_search_roots(base_dir=None):
     """DLLを探す既定の範囲。製品側の配置を先に見て、無ければアプリ同梱側を見る。"""
     roots=[Path(NAVIAP_LOCAL_ROOT)]
@@ -320,7 +347,6 @@ def candidate_dlls(configured_path=None,extra_roots=None,local_only=False,local_
         try:
             if root.is_dir():fallback.extend(x/'SymNaviA.dll' for x in root.iterdir() if x.is_dir() and rx.match(x.name))
         except OSError:pass
-    fallback.append(Path('SymNaviA.dll'))
     return local+unique(fallback)
 
 VC_RUNTIME_DLLS=('vcruntime140.dll','msvcp140.dll','vcruntime140_1.dll')
@@ -369,6 +395,9 @@ class NavigatorApi:
         self.attempts=[]
         pybits=struct.calcsize('P')*8
         for candidate in candidate_dlls(dll_path,extra_roots,search_roots=self.search_roots):
+            refusal=dll_refusal(candidate)
+            if refusal:
+                errors.append(f'{candidate}: {refusal}');self.attempts.append({'path':str(candidate),'exists':None,'dll_bits':None,'python_bits':pybits,'result':'refused','error':refusal});continue
             bits=pe_bits(candidate) if Path(candidate).is_file() else None
             if bits and bits!=pybits:
                 msg=f'{candidate}: DLL={bits}bit / Python={pybits}bit のため対象外';errors.append(msg);self.attempts.append({'path':str(candidate),'exists':True,'dll_bits':bits,'python_bits':pybits,'result':'bit_mismatch'});continue

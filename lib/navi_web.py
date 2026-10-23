@@ -1170,6 +1170,9 @@ def navigator_api_select():
  resolved=resolve_path(path)
  if resolved.is_dir():resolved=resolved/'SymNaviA.dll'
  if not resolved.is_file():return jsonify(ok=False,error=f'指定されたファイルがありません: {resolved}'),200
+ from navigator_api import dll_refusal
+ refusal=dll_refusal(resolved)
+ if refusal:return jsonify(ok=False,error=f'{refusal}: {resolved}'),200
  try:
   from navigator_api import pe_bits
   bits=pe_bits(resolved)
