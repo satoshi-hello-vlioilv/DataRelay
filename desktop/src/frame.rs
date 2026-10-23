@@ -4,7 +4,7 @@
 //! Defect-Pitch-Analyzer の desktop/src/frame.rs（版 2.0.0）と同じもの。Python 側の read_frame / Writer.send と対になる。
 
 use serde_json::Value;
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead, Read, Write};
 
 pub struct Frame {
     pub head: Value,
@@ -24,15 +24,27 @@ pub fn write_frame<W: Write>(w: &mut W, head: &Value, body: &[u8]) -> io::Result
     w.flush()
 }
 
-/// 枠を1つ読む。入力が閉じたら None。途中で切れた枠は誤り。
+/// 枠のヘッダーの行の上限（sidecar.py の MAX_HEAD と同じ）。
+pub const MAX_HEAD: u64 = 1 << 20;
+/// 本文の上限（2 GiB。壊れた長さでメモリを食い尽くして窓ごと落ちない）。
+pub const MAX_BODY: u64 = 2 << 30;
+
+/// 枠を1つ読む。入力が閉じたら None。途中で切れた枠・長さのおかしい枠は誤り。
 pub fn read_frame<R: BufRead>(r: &mut R) -> io::Result<Option<Frame>> {
     let mut line = Vec::new();
-    if r.read_until(b'\n', &mut line)? == 0 {
+    if r.by_ref().take(MAX_HEAD + 1).read_until(b'\n', &mut line)? == 0 {
         return Ok(None);
+    }
+    if line.len() as u64 > MAX_HEAD {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "枠のヘッダーが長すぎます"));
     }
     let head: Value =
         serde_json::from_slice(&line).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("枠のヘッダーが読めません: {e}")))?;
-    let n = head.get("len").and_then(Value::as_u64).unwrap_or(0) as usize;
+    let n = head.get("len").and_then(Value::as_u64).unwrap_or(0);
+    if n > MAX_BODY {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, format!("枠の本文の長さがおかしいです（{n}）")));
+    }
+    let n = n as usize;
     let mut body = vec![0; n];
     r.read_exact(&mut body)?;
     Ok(Some(Frame { head, body }))
@@ -58,6 +70,14 @@ mod tests {
         let b = read_frame(&mut r).unwrap().unwrap();
         assert_eq!((b.head["id"].as_u64(), b.body.len()), (Some(4), 0));
         assert!(read_frame(&mut r).unwrap().is_none(), "閉じたら None");
+    }
+
+    #[test]
+    fn oversized_frames_are_errors() {
+        let kind = |bytes: Vec<u8>| read_frame(&mut Cursor::new(bytes)).err().map(|e| e.kind());
+        let huge = format!("{{\"len\":{}}}\n", MAX_BODY + 1);
+        assert_eq!(kind(huge.into_bytes()), Some(io::ErrorKind::InvalidData), "壊れた長さで巨大な領域を取らない");
+        assert_eq!(kind(vec![b'x'; MAX_HEAD as usize + 10]), Some(io::ErrorKind::InvalidData), "改行の無い長いヘッダー");
     }
 
     #[test]

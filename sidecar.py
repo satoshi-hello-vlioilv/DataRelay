@@ -35,13 +35,23 @@ WORKERS = 16                                        # 長い問い合わせ（RN
 EXIT_FLUSH_LIMIT = 3.0                              # 入力が閉じたあと、設定の書き出しを待つ上限（秒）
 
 
+MAX_HEAD = 1 << 20                                  # 枠のヘッダーの行の上限（窓の frame.rs と同じ）
+MAX_BODY = 2 << 30                                  # 本文の上限（2 GiB。壊れた長さでメモリを食い尽くさない）
+
+
 def read_frame(stream):
-    """→ (ヘッダー dict, 本文 bytes)。入力が閉じたら None。"""
-    line = stream.readline()
+    """→ (ヘッダー dict, 本文 bytes)。入力が閉じたら None。長さ・形がおかしい枠は ValueError。"""
+    line = stream.readline(MAX_HEAD + 1)
     if not line:
         return None
+    if len(line) > MAX_HEAD:
+        raise ValueError(f'枠のヘッダーが長すぎます（{MAX_HEAD} バイトまで）')
     head = json.loads(line.decode('utf-8'))
+    if not isinstance(head, dict):
+        raise ValueError('枠のヘッダーが JSON のオブジェクトではありません')
     n = int(head.get('len') or 0)
+    if n < 0 or n > MAX_BODY:
+        raise ValueError(f'枠の本文の長さがおかしいです（{n}）')
     body = stream.read(n) if n else b''
     if len(body) != n:
         return None
@@ -93,7 +103,7 @@ def serve(app, rin, writer: Writer, workers: int = WORKERS) -> None:
         while True:
             try:
                 frame = read_frame(rin)
-            except (ValueError, UnicodeDecodeError) as e:   # 壊れた枠。答える先（id）が分からないので知らせて続ける
+            except (ValueError, TypeError, UnicodeDecodeError) as e:   # 壊れた枠。答える先（id）が分からないので知らせて続ける
                 writer.send({'id': 0, 'event': 'bad-frame', 'error': str(e)})
                 continue
             if frame is None:

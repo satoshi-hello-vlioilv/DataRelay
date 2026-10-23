@@ -114,11 +114,24 @@ impl<B: Backend> Router<B> {
     }
 }
 
+/// 画面（HTML）に付ける Content-Security-Policy。画面の JS が何かの拍子に乗っ取られても（XSS）、外へ送る・外のスクリプトを
+/// 読む・埋め込む・よそへフォームを送ることができないようにする。画面はインラインのスクリプトもイベント属性（onclick= など）も
+/// 使っていない。インラインの style="…" は使っているので、style だけ 'unsafe-inline' を許す。
+pub const CSP: &str = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; \
+                       font-src 'self' data:; connect-src 'self'; object-src 'none'; frame-src 'none'; frame-ancestors 'none'; \
+                       base-uri 'none'; form-action 'self'";
+
 fn to_response(r: Reply, by: &str) -> Response<Vec<u8>> {
     let mut b = Response::builder().status(r.status);
     for (k, v) in &r.headers {
         b = b.header(k.as_str(), v.as_str());
     }
+    // 画面（HTML）なら、答えたのが窓でも中身でも CSP を付ける（中身が付けていればそれを使う）
+    let html = r.headers.iter().any(|(k, v)| k.eq_ignore_ascii_case("content-type") && v.to_ascii_lowercase().starts_with("text/html"));
+    if html && !r.headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("content-security-policy")) {
+        b = b.header("Content-Security-Policy", CSP);
+    }
+    b = b.header("X-Content-Type-Options", "nosniff");
     // どちらが答えたか（自己診断・不具合の切り分けに使う）
     b = b.header("X-DR-By", by);
     b.body(r.body).unwrap_or_else(|_| Response::builder().status(500).body(Vec::new()).unwrap())
@@ -303,6 +316,32 @@ mod tests {
                 body: vec![1, 2, 3],
             }
         }
+    }
+
+    #[test]
+    fn html_gets_csp() {
+        let dir = std::env::temp_dir().join(format!("dr-router-csp-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("index.html"), "<html></html>").unwrap();
+        let page = to_response(index_page(&dir.join("index.html")), "shell");
+        assert_eq!(page.headers()["content-security-policy"], CSP, "窓が返す画面に CSP");
+        assert!(CSP.contains("script-src 'self';") && CSP.contains("connect-src 'self'") && CSP.contains("object-src 'none'"));
+        let py = to_response(
+            Reply { status: 200, headers: vec![("Content-Type".into(), "text/html; charset=utf-8".into())], body: vec![] },
+            "python",
+        );
+        assert_eq!(py.headers()["content-security-policy"], CSP, "中身が返す HTML にも CSP");
+        let own = Reply {
+            status: 200,
+            headers: vec![("Content-Type".into(), "text/html".into()), ("Content-Security-Policy".into(), "default-src 'none'".into())],
+            body: vec![],
+        };
+        assert_eq!(to_response(own, "python").headers()["content-security-policy"], "default-src 'none'", "中身が付けた物はそのまま");
+        let js =
+            to_response(Reply { status: 200, headers: vec![("Content-Type".into(), "text/javascript".into())], body: vec![] }, "shell");
+        assert!(js.headers().get("content-security-policy").is_none(), "画面以外には付けない");
+        assert_eq!(js.headers()["x-content-type-options"], "nosniff");
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
