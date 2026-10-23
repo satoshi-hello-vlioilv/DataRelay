@@ -45,6 +45,17 @@ def from_section(text):
     return [(q.name, q.text) for q in M.read_queries(text)]
 
 
+# 取り込む包み（ZIP・xlsx）の中の1つのファイルの上限（展開したあと）。zip 爆弾でメモリを使い切らないように（2.5.3）
+ZIP_PART_MAX = 64 * 1024 * 1024
+
+
+def _read_part(z, name):
+    size = z.getinfo(name).file_size
+    if size > ZIP_PART_MAX:
+        raise ValueError(f'{name} が大きすぎます（展開すると {size:,} バイト。{ZIP_PART_MAX:,} バイトまで）')
+    return z.read(name)
+
+
 def from_package(raw):
     """式の包み（MS-QDEFF）か ZIP そのものから、Section1.m の式を読む。"""
     body = raw
@@ -55,7 +66,7 @@ def from_package(raw):
         name = next((n for n in z.namelist() if n.lower().endswith('formulas/section1.m')), None)
         if not name:
             raise ValueError('Power Query の式（Formulas/Section1.m）が入っていません')
-        return from_section(z.read(name).decode('utf-8-sig'))
+        return from_section(_read_part(z, name).decode('utf-8-sig'))
 
 
 def _decode_odc(blob):
@@ -111,13 +122,13 @@ def _loaded(z):
         return []
     try:
         conns = {c.get('id'): _location((c.find(SHEET_NS + 'dbPr').get('connection') if c.find(SHEET_NS + 'dbPr') is not None else ''))
-                 for c in ElementTree.fromstring(z.read('xl/connections.xml')).iter(SHEET_NS + 'connection')}
+                 for c in ElementTree.fromstring(_read_part(z, 'xl/connections.xml')).iter(SHEET_NS + 'connection')}
     except ElementTree.ParseError:
         return []
     out = []
     for n in sorted(x for x in names if x.lower().startswith('xl/querytables/') and x.lower().endswith('.xml')):
         try:
-            cid = ElementTree.fromstring(z.read(n)).get('connectionId')
+            cid = ElementTree.fromstring(_read_part(z, n)).get('connectionId')
         except ElementTree.ParseError:
             continue
         if conns.get(cid) and conns[cid] not in out:
@@ -133,7 +144,7 @@ def from_workbook(blob):
             if not (low.startswith('customxml/item') and low.endswith('.xml')):
                 continue
             try:
-                root = ElementTree.fromstring(z.read(n))
+                root = ElementTree.fromstring(_read_part(z, n))
             except ElementTree.ParseError:
                 continue
             if root.tag == NS + 'DataMashup' and (root.text or '').strip():

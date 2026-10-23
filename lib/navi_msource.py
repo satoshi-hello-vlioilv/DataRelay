@@ -125,6 +125,11 @@ def _missing_folder(p):
     raise MError(f'フォルダーが見つかりませんでした: {p}', 'DataSource.NotFound', str(p))
 
 
+# Folder.Files で並べるファイルの上限（2.5.3）。ドライブ全体（Folder.Files("C:\\")）のような指定で、際限なく歩いて
+# 画面ごと止まらないようにする。業務のフォルダーはこれより十分少ない。
+FOLDER_FILES_MAX = 200_000
+
+
 @m('Folder.Files')
 def folder_files(path, options=None):
     """フォルダーの中のファイル（下のフォルダーも含む）。並びは場所と名前の順（毎回同じ順にする）。"""
@@ -134,6 +139,9 @@ def folder_files(path, options=None):
     rows = []
     for d, subdirs, files in os.walk(root):
         subdirs.sort(key=str.casefold)
+        if len(rows) + len(files) > FOLDER_FILES_MAX:
+            raise MError(f'フォルダーの中のファイルが {FOLDER_FILES_MAX:,} 件を超えました。もっと狭いフォルダーを指定してください: {root}',
+                         'Expression.Error', str(root))
         for name in sorted(files, key=str.casefold):
             p = Path(d) / name
             try:

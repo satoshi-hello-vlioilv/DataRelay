@@ -132,9 +132,11 @@
  const fyOf=(t,start)=>{const st=Math.max(1,Math.min(12,start||4));return t.m>=st?t.y:t.y-1};
 
  /* ---------- 文字列の抽出・変換（WaveLog §9.464） ---------- */
- const RE_MAX=200,reCache=new Map();
+ const RE_MAX=200,reCache=new Map(),RE_NESTED=/\((?:\\.|[^()\\])*[*+}](?:\\.|[^()\\])*\)\s*(?:[*+]|\{\d*,)/;
  function reOf(src,flags){const k=flags+'\u0000'+src;if(reCache.has(k))return reCache.get(k);
-  if(src.length>RE_MAX)throw Error(`正規表現は${RE_MAX}文字までです`);const re=new RegExp(src,flags);if(reCache.size>200)reCache.clear();reCache.set(k,re);return re}
+  if(src.length>RE_MAX)throw Error(`正規表現は${RE_MAX}文字までです`);
+  // 繰り返しの中の繰り返し（(a+)+・(\w*)* など）は、合わない文字列で処理が爆発的に遅くなり、画面が固まる（ReDoS）。作る前に断る
+  if(RE_NESTED.test(src))throw Error('繰り返しの中に繰り返しがある正規表現（例: (a+)+）は使えません');const re=new RegExp(src,flags);if(reCache.size>200)reCache.clear();reCache.set(k,re);return re}
  const posOf=v=>{const n=numOf(v);return n===null?1:Math.max(1,Math.floor(n))};
  function cmp(a,b){
   const x=looseNum(a),y=looseNum(b);

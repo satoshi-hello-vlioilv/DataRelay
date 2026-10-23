@@ -148,6 +148,62 @@ def user_dir(place,env=None):
  if not place or not name or not Path(place).is_dir():return None
  return users_root(place)/name
 
+# ==== 本人だけが読み書きできるフォルダー（2.5.3） ======================
+# 利用者ごとのフォルダー（共有の users\<名前>）と、手元の作業フォルダーが C:\ の直下へ落ちたときは、作ったときに
+# 本人・SYSTEM・Administrators だけが触れるアクセス権にする（共有・C:\ の既定のアクセス権を引き継ぐと、ほかの人が設定を
+# 書き換えて DLL や出力先を差し替えたり、抽出したデータを読んだりできる）。すでにあるフォルダーは変えず、持ち主が本人で
+# なければ注意を残す（管理者が先に作った場合もあるので止めない）。Windows 以外では何もしない。
+PRIVATE_NOTES=[]          # (道, 何が起きたか)。app がログ・事前診断に出す
+SYSTEM_SID='S-1-5-18';ADMINS_SID='S-1-5-32-544'
+
+def _run(args):
+ import subprocess
+ return subprocess.run(args,capture_output=True,text=True,timeout=30,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+
+def my_sid():
+ """このプロセスの利用者の SID（例 S-1-5-21-…）。分からなければ空。"""
+ try:
+  import win32api,win32security
+  tok=win32security.OpenProcessToken(win32api.GetCurrentProcess(),win32security.TOKEN_QUERY)
+  return win32security.ConvertSidToStringSid(win32security.GetTokenInformation(tok,win32security.TokenUser)[0])
+ except Exception:
+  try:
+   out=_run(['whoami','/user','/fo','csv','/nh']).stdout.strip()
+   return out.rsplit(',',1)[-1].strip().strip('"') if out else ''
+  except Exception:return ''
+
+def owner_sid(path):
+ """フォルダーの持ち主の SID。分からなければ空。"""
+ try:
+  import win32security
+  sd=win32security.GetFileSecurity(str(path),win32security.OWNER_SECURITY_INFORMATION)
+  return win32security.ConvertSidToStringSid(sd.GetSecurityDescriptorOwner())
+ except Exception:return ''
+
+def restrict_to_me(path,sid=None):
+ """本人・SYSTEM・Administrators だけのアクセス権にする（親からの引き継ぎを切る）。→ (できたか, 詳細)"""
+ sid=sid or my_sid()
+ if not sid:return False,'利用者の SID が分かりません'
+ try:
+  r=_run(['icacls',str(path),'/inheritance:r','/grant:r',f'*{sid}:(OI)(CI)F',f'*{SYSTEM_SID}:(OI)(CI)F',f'*{ADMINS_SID}:(OI)(CI)F'])
+  return r.returncode==0,(r.stdout or r.stderr or '').strip()[:200]
+ except Exception as e:return False,str(e)
+
+def ensure_private_dir(path,windows=None):
+ """フォルダーを用意し、新しく作ったなら本人だけのアクセス権にする。すでにあれば持ち主を確かめる。→ path"""
+ p=Path(path);windows=(os.name=='nt') if windows is None else windows
+ existed=p.exists()
+ p.mkdir(parents=True,exist_ok=True)
+ if not windows:return p
+ if not existed:
+  ok,detail=restrict_to_me(p)
+  PRIVATE_NOTES.append((str(p),'本人だけのアクセス権にしました' if ok else f'本人だけのアクセス権にできませんでした（{detail}）'))
+ else:
+  me,owner=my_sid(),owner_sid(p)
+  if me and owner and me!=owner:
+   PRIVATE_NOTES.append((str(p),f'持ち主が本人ではありません（持ち主 {owner}）。ほかの人が先に作ったフォルダーなら、中の設定を確かめてください'))
+ return p
+
 def adopt_user_data(base,place,env=None):
  """2.2.x までの写しの data（このPCだけの手元）を、ユーザーのフォルダーへ写す（1回だけ・起動の早い時点で呼ぶ）。
  写すのは、ユーザーのフォルダーにまだ印（data.json）が無く、写しの data に印があるときだけ。写しの data は消さない（控え）。
@@ -158,6 +214,7 @@ def adopt_user_data(base,place,env=None):
  if str(env.get('NAVI_DATA_ROOT') or '').strip():return None
  mine=user_dir(place,env);old=Path(base)/DATA_DIR
  if mine is None or (mine/DATA_MARK).is_file() or not (old/DATA_MARK).is_file():return None
+ ensure_private_dir(mine)
  shutil.copytree(old,mine,dirs_exist_ok=True,ignore=shutil.ignore_patterns('backup'))
  mark=read_json(mine/DATA_MARK);mark.update(movedFrom=str(old),movedAt=datetime.now().isoformat(timespec='seconds'))
  (mine/DATA_MARK).write_text(json.dumps(mark,ensure_ascii=False,indent=1),encoding='utf-8')
