@@ -55,6 +55,17 @@ fn is_splash(u: &Url) -> bool {
     u.scheme() == "tauri" || u.host_str() == Some("tauri.localhost")
 }
 
+/// 窓の中で開いてよい所（アプリの画面・起動画面・その場で作った中身）。
+fn is_inside(u: &Url) -> bool {
+    is_app_url(u) || is_splash(u) || matches!(u.scheme(), "about" | "blob" | "data")
+}
+
+/// 窓の外（既定のブラウザー・メール）へ渡してよい所。file: は渡さない（ShellExecute に渡ると、共有に置かれた
+/// .exe・.bat・.lnk を開く＝実行することになる。画面の JS が乗っ取られたときの入口になる）。フォルダーを開くのは /api/open-path の道だけ。
+fn may_open_outside(u: &Url) -> bool {
+    matches!(u.scheme(), "http" | "https" | "mailto")
+}
+
 /// 窓の側の出来事を残す（%LOCALAPPDATA%\DataRelay\logs\desktop.log）。中身の記録（app.log）とは別。
 fn rlog(msg: &str) {
     let dir = locate::local_root().join("logs");
@@ -484,6 +495,7 @@ fn saver(app: AppHandle, shell: Arc<Shell>) -> Saver {
 
 fn window(app: &AppHandle, shell: Arc<Shell>) -> tauri::Result<WebviewWindow> {
     let nav = app.clone();
+    let popup = app.clone();
     WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
         .title(TITLE)
         .inner_size(1600.0, 1000.0)
@@ -495,12 +507,20 @@ fn window(app: &AppHandle, shell: Arc<Shell>) -> tauri::Result<WebviewWindow> {
         // 窓の側では D&D の知らせを使っていないので、横取りを外して画面へ渡す。
         .disable_drag_drop_handler()
         .on_navigation(move |u| {
-            let inside = is_app_url(u) || is_splash(u) || matches!(u.scheme(), "about" | "blob" | "data");
-            if !inside && matches!(u.scheme(), "http" | "https" | "mailto" | "file") {
+            let inside = is_inside(u);
+            if !inside && may_open_outside(u) {
                 use tauri_plugin_opener::OpenerExt;
                 let _ = nav.opener().open_url(u.as_str(), None::<&str>);
             }
             inside
+        })
+        // window.open・target=_blank の新しい窓は作らない（作ると、上の遷移の決まりが効かない素の窓になる）。外へ渡せる所だけブラウザーで開く
+        .on_new_window(move |u, _| {
+            if may_open_outside(&u) {
+                use tauri_plugin_opener::OpenerExt;
+                let _ = popup.opener().open_url(u.as_str(), None::<&str>);
+            }
+            tauri::webview::NewWindowResponse::Deny
         })
         .on_page_load(move |w, p| {
             if p.event() != PageLoadEvent::Finished {
@@ -947,8 +967,22 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::fresh_alerts;
+    use super::{fresh_alerts, is_inside, may_open_outside};
     use serde_json::json;
+    use tauri::Url;
+
+    #[test]
+    fn only_web_and_mail_go_outside() {
+        let u = |s: &str| Url::parse(s).unwrap();
+        for ok in ["https://example.com/x", "http://intra/a", "mailto:a@b.c"] {
+            assert!(may_open_outside(&u(ok)), "{ok}");
+        }
+        for ng in ["file:///C:/Windows/System32/calc.exe", "file://server/share/x.exe", "ms-settings:", "javascript:alert(1)"] {
+            assert!(!may_open_outside(&u(ng)), "{ng} は外へ渡さない（実行につながる）");
+        }
+        assert!(is_inside(&u("datarelay://localhost/")) && is_inside(&u("http://datarelay.localhost/api/x")));
+        assert!(!is_inside(&u("file:///C:/x.html")), "file: を窓の中で開かない");
+    }
 
     #[test]
     fn alerts_are_notified_once_and_info_is_not() {

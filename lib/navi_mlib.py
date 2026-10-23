@@ -777,19 +777,40 @@ def text_combine(texts, sep=None):
 @m('Text.PadStart')
 def text_pad_start(t, count, ch=None):
     t = _txt(t, 'Text.PadStart')
-    return None if t is None else t.rjust(int(force(count)), force(ch) or ' ')
+    if t is None:
+        return None
+    n = _guard_size(int(force(count)), M_MAX_CHARS, 'Text.PadStart', '文字')
+    return t.rjust(n, force(ch) or ' ')
 
 
 @m('Text.PadEnd')
 def text_pad_end(t, count, ch=None):
     t = _txt(t, 'Text.PadEnd')
-    return None if t is None else t.ljust(int(force(count)), force(ch) or ' ')
+    if t is None:
+        return None
+    n = _guard_size(int(force(count)), M_MAX_CHARS, 'Text.PadEnd', '文字')
+    return t.ljust(n, force(ch) or ' ')
+
+
+# 1回の関数で作る値の大きさの上限（2.5.3）。Text.Repeat("x", 1e10) のような式で、メモリを使い切って画面ごと止まらないようにする
+M_MAX_ITEMS = 10_000_000
+M_MAX_CHARS = 100_000_000
+
+
+def _guard_size(n, limit, fname, unit):
+    if n > limit:
+        raise MError(f'{fname} で作る値が大きすぎます（{n:,}{unit}。{limit:,}{unit}まで）。')
+    return n
 
 
 @m('Text.Repeat')
 def text_repeat(t, count):
     t = _txt(t)
-    return None if t is None else t * int(force(count))
+    if t is None:
+        return None
+    n = max(0, int(force(count)))
+    _guard_size(len(t) * n, M_MAX_CHARS, 'Text.Repeat', '文字')
+    return t * n
 
 
 @m('Text.Reverse')
@@ -1939,6 +1960,7 @@ def list_zip(lists):
 @m('List.Numbers')
 def list_numbers(start, count, increment=None):
     s, c = force(start), int(force(count))
+    _guard_size(c, M_MAX_ITEMS, 'List.Numbers', '件')
     inc = 1 if force(increment) is None else force(increment)
     return [num(s + i * inc) for i in range(c)]
 
@@ -2036,7 +2058,10 @@ def list_replace_matching(lst, replacements, comparer=None):
 
 @m('List.Repeat')
 def list_repeat(lst, count):
-    return list(_lst(lst)) * int(force(count))
+    items = list(_lst(lst))
+    n = max(0, int(force(count)))
+    _guard_size(len(items) * n, M_MAX_ITEMS, 'List.Repeat', '件')
+    return items * n
 
 
 @m('List.Single')

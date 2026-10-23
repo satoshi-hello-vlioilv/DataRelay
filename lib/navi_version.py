@@ -4,5 +4,5 @@
 navi_changelog.py にある ―― 800行の読みものなので、それを必要としない経路
 （抽出ワーカー）が読み込まずに済むように分けてある。
 """
-APP_VERSION='2.5.2'; APP_VERSION_TITLE='抽出期間の管理ポイント名が空でも、RNE の時間型（例: 月度）を選んで期間を当てる ―― PC によって失敗していたのを直した'; APP_RELEASED_AT='2026-10-16'
+APP_VERSION='2.5.3'; APP_VERSION_TITLE='脆弱性の確認で見つけた所を直した ―― 共有の DLL を読まない・利用者ごとのフォルダーを本人だけに・画面の守りを固めた'; APP_RELEASED_AT='2026-10-16'
 BUILD_VERSION=f'{APP_VERSION}-web'

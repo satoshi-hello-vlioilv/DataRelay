@@ -550,7 +550,7 @@ if($('#col-reset'))$('#col-reset').onclick=()=>{
 function render(){let a=filtered(),body=$('#jobs-body');let canReorder=(!$('#search').value.trim()&&$('#filter-enabled').value==='all'&&$('#filter-schedule').value==='all');
  let cols=colVisible(),ctx={canReorder,commonOut:commonOutputFolder(a)};
  renderJobsHead(cols);
- body.innerHTML=a.map(j=>`<tr data-id="${j.id}" draggable="${canReorder}" class="${canReorder?'reorderable':''}">`
+ body.innerHTML=a.map(j=>`<tr data-id="${E(j.id)}" draggable="${canReorder}" class="${canReorder?'reorderable':''}">`
   +cols.map(k=>`<td class="col-${k} ${colDef(k).cls||''}">${cellHtml(k,j,ctx)}</td>`).join('')
   +`</tr>`).join('');
  paintRowProgress();applyScheduleCells();updateSelCount();$('#empty').hidden=a.length>0;$('#summary').innerHTML=`<span class="lm-counts">表示 ${a.length}件 / 登録 ${cfg.jobs.length}件 / 有効 ${cfg.jobs.filter(j=>j.enabled).length}件 / 自動実行ルール ${cfg.jobs.flatMap(j=>j.schedules||[]).filter(r=>r.enabled).length}件</span>`
@@ -610,7 +610,7 @@ async function deleteJob(j){
  try{let r=await putConfig(payload);if(r.ok){saveState('管理単位を削除しました','is-ok');await init();toast(`「${j.name}」を削除しました`)}else{dirty();toast('削除を保存できませんでした。自動で再試行します')}}catch{dirty();toast('削除を保存できませんでした。自動で再試行します')}
 }
 function fillSuggestions(){let sets={names:cfg.jobs.map(j=>j.name),rne:cfg.jobs.map(j=>j.rne_path),output:[cfg.default_output_folder,...cfg.jobs.map(j=>j.output_folder)],'output-file':cfg.jobs.map(j=>j.output_file),table:cfg.jobs.map(j=>j.table),sheet:cfg.jobs.map(j=>j.sheet)};Object.entries(sets).forEach(([k,v])=>$('#suggest-'+k).innerHTML=[...new Set(v.filter(Boolean))].map(x=>`<option value="${E(x)}">`).join(''))}
-function rulesRender(){let box=$('#m-rules');box.innerHTML=editing.schedules.length?editing.schedules.map(r=>`<div class="rule-row" data-id="${r.id}"><input class="rule-toggle" type="checkbox" ${r.enabled?'checked':''}><b>${E(r.name)}</b><span class="rule-type">${typeName(r.type)}</span><span class="rule-summary">${E(scheduleSummary(r))}</span><button class="rule-edit secondary" type="button">編集</button><button class="rule-delete danger" type="button">削除</button></div>`).join(''):'<div class="empty">自動実行ルールはありません。手動実行のみです。</div>';box.querySelectorAll('.rule-row').forEach(el=>{let r=editing.schedules.find(x=>x.id===el.dataset.id);el.querySelector('.rule-toggle').onchange=e=>{r.enabled=e.target.checked;dirty()};el.querySelector('.rule-edit').onclick=()=>openRule(r);el.querySelector('.rule-delete').onclick=()=>{editing.schedules=editing.schedules.filter(x=>x.id!==r.id);rulesRender()}});updateRuleCount()}
+function rulesRender(){let box=$('#m-rules');box.innerHTML=editing.schedules.length?editing.schedules.map(r=>`<div class="rule-row" data-id="${E(r.id)}"><input class="rule-toggle" type="checkbox" ${r.enabled?'checked':''}><b>${E(r.name)}</b><span class="rule-type">${E(typeName(r.type))}</span><span class="rule-summary">${E(scheduleSummary(r))}</span><button class="rule-edit secondary" type="button">編集</button><button class="rule-delete danger" type="button">削除</button></div>`).join(''):'<div class="empty">自動実行ルールはありません。手動実行のみです。</div>';box.querySelectorAll('.rule-row').forEach(el=>{let r=editing.schedules.find(x=>x.id===el.dataset.id);el.querySelector('.rule-toggle').onchange=e=>{r.enabled=e.target.checked;dirty()};el.querySelector('.rule-edit').onclick=()=>openRule(r);el.querySelector('.rule-delete').onclick=()=>{editing.schedules=editing.schedules.filter(x=>x.id!==r.id);rulesRender()}});updateRuleCount()}
 let contextJob=null,contextRow=null;
 function hideJobContextMenu(){let m=$('#job-context-menu');if(m)m.hidden=true;contextJob=null;contextRow=null}
 function showJobContextMenu(e,j,tr){let m=$('#job-context-menu');if(!m)return;contextJob=j;contextRow=tr;m.hidden=false;let ids=contextTargets(),many=ids.length>1;if($('#jcm-name'))$('#jcm-name').textContent=many?`選択した ${ids.length}件`:(j.name||'');if($('#jcm-rne'))$('#jcm-rne').textContent=many?'まとめて実行できます':(jobSourceName(j)||'');let rb=m.querySelector('[data-action="run"]');if(rb)rb.textContent=many?`選択した ${ids.length}件を実行`:'実行';let tb=m.querySelector('[data-action="toggle"]');if(tb)tb.textContent=(many?`選択した ${ids.length}件を`:'')+(j.enabled?'無効にする':'有効にする');
@@ -1041,7 +1041,7 @@ function detailRender(){let t=$('#r-type').value,d=$('#r-detail');
  if(t==='interval'){let mins=editingRule.interval_minutes||60;d.innerHTML=`<span class="rule-section-label">実行間隔</span><div class="interval-field"><input id="r-interval" type="number" min="1" value="${mins}"><em>分ごと</em></div><div class="chip-quick">${[15,30,60,120,240].map(v=>`<button type="button" class="mini-btn" data-min="${v}">${v>=60?(v/60)+'時間':v+'分'}</button>`).join('')}</div><p class="hint">アプリ起動中、指定間隔ごとに実行します（時刻指定なし）。</p>`;$$('#r-detail .chip-quick .mini-btn').forEach(b=>b.onclick=()=>{$('#r-interval').value=b.dataset.min})}
  if(t==='specific_dates'){let sel=(editingRule.dates||[]).slice();d.innerHTML=`<span class="rule-section-label">実行する特定日</span><div class="mini-cal"><div class="mini-cal-head"><button type="button" class="iconnav mc-prev" aria-label="前の月">‹</button><b class="mc-title"></b><button type="button" class="iconnav mc-next" aria-label="次の月">›</button></div><div class="mini-cal-week"><span class="wk-sun">日</span><span>月</span><span>火</span><span>水</span><span>木</span><span>金</span><span class="wk-sat">土</span></div><div class="mini-cal-grid"></div></div><div class="picked-dates" id="r-picked"></div><input id="r-dates" type="hidden" value="${E(sel.join(','))}"><p class="hint">カレンダーの日付をクリックして複数選択できます。選択済みはタグの×からも解除できます。</p>`;let base=sel.length?new Date(sel[0]+'T00:00:00'):new Date();if(isNaN(base))base=new Date();ruleCalYM={y:base.getFullYear(),m:base.getMonth()+1};renderMiniCal()}}
 function renderMiniCal(){let hid=$('#r-dates');if(!hid||!ruleCalYM)return;let sel=hid.value.split(',').map(x=>x.trim()).filter(Boolean),{y,m}=ruleCalYM;let start=new Date(y,m-1,1).getDay(),days=new Date(y,m,0).getDate();let title=$('#r-detail .mc-title');if(title)title.textContent=`${y}年${m}月`;let grid=$('#r-detail .mini-cal-grid');if(!grid)return;let cells='';for(let i=0;i<start;i++)cells+='<span class="mc-empty"></span>';for(let dn=1;dn<=days;dn++){let iso=`${y}-${String(m).padStart(2,'0')}-${String(dn).padStart(2,'0')}`,dow=new Date(y,m-1,dn).getDay();cells+=`<button type="button" class="mc-day ${sel.includes(iso)?'on':''} ${dow===0?'sun':''} ${dow===6?'sat':''}" data-iso="${iso}">${dn}</button>`}grid.innerHTML=cells;$$('#r-detail .mc-day').forEach(b=>b.onclick=()=>{let iso=b.dataset.iso,cur=hid.value.split(',').map(x=>x.trim()).filter(Boolean),i=cur.indexOf(iso);if(i<0)cur.push(iso);else cur.splice(i,1);cur.sort();hid.value=cur.join(',');renderMiniCal()});let pv=$('#r-detail .mc-prev'),nx=$('#r-detail .mc-next');if(pv)pv.onclick=()=>{ruleCalYM.m--;if(ruleCalYM.m<1){ruleCalYM.m=12;ruleCalYM.y--}renderMiniCal()};if(nx)nx.onclick=()=>{ruleCalYM.m++;if(ruleCalYM.m>12){ruleCalYM.m=1;ruleCalYM.y++}renderMiniCal()};renderPickedDates()}
-function renderPickedDates(){let hid=$('#r-dates'),box=$('#r-picked');if(!hid||!box)return;let sel=hid.value.split(',').map(x=>x.trim()).filter(Boolean);box.innerHTML=sel.length?sel.map(x=>`<span class="date-tag" data-iso="${x}">${x}<i>×</i></span>`).join(''):'<span class="picked-empty">未選択</span>';$$('#r-picked .date-tag i').forEach(ic=>ic.onclick=()=>{let iso=ic.parentElement.dataset.iso,cur=hid.value.split(',').map(x=>x.trim()).filter(Boolean).filter(x=>x!==iso);hid.value=cur.join(',');renderMiniCal()})}
+function renderPickedDates(){let hid=$('#r-dates'),box=$('#r-picked');if(!hid||!box)return;let sel=hid.value.split(',').map(x=>x.trim()).filter(Boolean);box.innerHTML=sel.length?sel.map(x=>`<span class="date-tag" data-iso="${E(x)}">${E(x)}<i>×</i></span>`).join(''):'<span class="picked-empty">未選択</span>';$$('#r-picked .date-tag i').forEach(ic=>ic.onclick=()=>{let iso=ic.parentElement.dataset.iso,cur=hid.value.split(',').map(x=>x.trim()).filter(Boolean).filter(x=>x!==iso);hid.value=cur.join(',');renderMiniCal()})}
 function currentRuleFromForm(){let r={type:$('#r-type')?.value||'daily',time:$('#r-time')?.value||'06:00'};if(r.type==='weekdays')r.weekdays=$$('#r-detail input:checked').map(x=>Number(x.value));if(r.type==='monthly')r.month_days=($('#r-monthdays')?.value||'').split(',').map(Number).filter(Number.isFinite);if(r.type==='interval')r.interval_minutes=Math.max(1,Number($('#r-interval')?.value)||60);if(r.type==='specific_dates')r.dates=($('#r-dates')?.value||'').split(',').map(x=>x.trim()).filter(Boolean);return r}
 function updateRuleLiveSummary(){let el=$('#r-live-summary');if(!el)return;let s=scheduleSummary(currentRuleFromForm());el.textContent=s||'条件を選択してください'}
 /* v1.4.0: 自動実行スケジュールのおすすめプリセット(サジェスト)。
@@ -1315,7 +1315,7 @@ $('#validate').onclick=async()=>{showWaiting('実行前診断中','実際の設�
   `<span class="cq-badge cq-manual">即実行 ${manualJobs}件</span>`;}
  list.innerHTML=d.items.length?d.items.map(x=>{
   let stateInfo=x.state==='running'?(running?`処理中 ${jobRun} / 完了 ${jobDone}${jobFail?' / 失敗 '+jobFail:''} / 待機 ${batchWait}`:'処理中'):`${x.position}番目に実行予定`;
-  return `<div class="cq-row ${x.state}"><span class="cq-pos">${x.state==='running'?'実行中':x.position+'番'}</span><div class="cq-main"><b>${E((x.job_names||[]).join(' / '))}</b><small>${x.state==='running'?E(stateInfo):('登録 '+E(x.enqueued_at||'')+' / '+(x.count||0)+'対象')}</small></div><span class="cq-mode">${x.parallel_lines>1?x.parallel_lines+'ライン':'1ライン'}</span><div class="cq-actions">${x.state==='waiting'?`<button class="secondary cq-up" data-id="${x.id}">上へ</button><button class="secondary cq-down" data-id="${x.id}">下へ</button><button class="danger cq-delete" data-id="${x.id}">解除</button>`:'<span>処理中は変更不可</span>'}</div></div>`}).join(''):'<div class="cq-empty">実行待ちのキューはありません</div>';list.hidden=!commandQueueOpen;$$('.cq-up,.cq-down').forEach(b=>b.onclick=async()=>{await fetch(`/api/execution-queue/${b.dataset.id}/move`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({direction:b.classList.contains('cq-up')?'up':'down'})});loadCommandQueue()});$$('.cq-delete').forEach(b=>b.onclick=async()=>{let r=await fetch(`/api/execution-queue/${b.dataset.id}`,{method:'DELETE'});if(r.ok)toast('実行キューから解除しました');loadCommandQueue()})}catch{}}{const cqToggle=$('#cq-toggle');if(cqToggle)cqToggle.onclick=()=>{commandQueueOpen=!commandQueueOpen;cqToggle.textContent=commandQueueOpen?'閉じる':'一覧';loadCommandQueue()};}
+  return `<div class="cq-row ${x.state}"><span class="cq-pos">${x.state==='running'?'実行中':x.position+'番'}</span><div class="cq-main"><b>${E((x.job_names||[]).join(' / '))}</b><small>${x.state==='running'?E(stateInfo):('登録 '+E(x.enqueued_at||'')+' / '+(x.count||0)+'対象')}</small></div><span class="cq-mode">${x.parallel_lines>1?x.parallel_lines+'ライン':'1ライン'}</span><div class="cq-actions">${x.state==='waiting'?`<button class="secondary cq-up" data-id="${E(x.id)}">上へ</button><button class="secondary cq-down" data-id="${E(x.id)}">下へ</button><button class="danger cq-delete" data-id="${E(x.id)}">解除</button>`:'<span>処理中は変更不可</span>'}</div></div>`}).join(''):'<div class="cq-empty">実行待ちのキューはありません</div>';list.hidden=!commandQueueOpen;$$('.cq-up,.cq-down').forEach(b=>b.onclick=async()=>{await fetch(`/api/execution-queue/${b.dataset.id}/move`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({direction:b.classList.contains('cq-up')?'up':'down'})});loadCommandQueue()});$$('.cq-delete').forEach(b=>b.onclick=async()=>{let r=await fetch(`/api/execution-queue/${b.dataset.id}`,{method:'DELETE'});if(r.ok)toast('実行キューから解除しました');loadCommandQueue()})}catch{}}{const cqToggle=$('#cq-toggle');if(cqToggle)cqToggle.onclick=()=>{commandQueueOpen=!commandQueueOpen;cqToggle.textContent=commandQueueOpen?'閉じる':'一覧';loadCommandQueue()};}
 /* ログの大きさと、いま読んでいる範囲を出す。全文を読まなくなったので、
    「これで全部なのか」が分からないままにしない。 */
 function renderLogSize(d){
@@ -1866,7 +1866,7 @@ async function openDoc(id){
   let m=mdRender(d.text);
   head.innerHTML=`<h3>${E(d.title)}</h3><p class="doc-source">${E(d.source)}</p><p class="doc-path">${E(d.path)}</p>`;
   body.innerHTML=m.html;
-  toc.innerHTML=m.toc.map(t=>`<a href="#${t.id}" class="doc-tocitem lv${t.level}" data-to="${t.id}">${E(t.text)}</a>`).join('');
+  toc.innerHTML=m.toc.map(t=>`<a href="#${t.id}" class="doc-tocitem lv${t.level}" data-to="${E(t.id)}">${E(t.text)}</a>`).join('');
   $('.doc-toc-label').hidden=!m.toc.length;
   toc.querySelectorAll('.doc-tocitem').forEach(a=>a.onclick=e=>{e.preventDefault();
    document.getElementById(a.dataset.to)?.scrollIntoView({block:'start',behavior:'smooth'})});
@@ -2025,7 +2025,7 @@ function scheduleRowHtml(j,info){
 }
 function rowProgressCell(j){
  let info=scheduleInfo[j.id];
- return `<div class="rowprogress" data-jobid="${j.id}"><div class="rp-schedule"><div class="rp-plan">${scheduleRowHtml(j,info)}</div>${lastMetricsRow(info,j.id,j)}</div><div class="rp-live"><div class="rp-live-top"><span class="rp-state"></span><span class="rp-dots"></span><time class="rp-elapsed"></time></div><div class="rp-track"><i class="rp-bar"></i></div><div class="rp-vseg" hidden></div><div class="rp-detail"></div></div></div>`;
+ return `<div class="rowprogress" data-jobid="${E(j.id)}"><div class="rp-schedule"><div class="rp-plan">${scheduleRowHtml(j,info)}</div>${lastMetricsRow(info,j.id,j)}</div><div class="rp-live"><div class="rp-live-top"><span class="rp-state"></span><span class="rp-dots"></span><time class="rp-elapsed"></time></div><div class="rp-track"><i class="rp-bar"></i></div><div class="rp-vseg" hidden></div><div class="rp-detail"></div></div></div>`;
 }
 async function loadSchedulePreview(){if(appExiting)return;try{let d=await fetch('/api/schedule-preview').then(r=>r.json());scheduleInfo=Object.fromEntries((d.items||[]).map(x=>[x.id,x]));applyScheduleCells()}catch{}}
 function applyScheduleCells(){$$('.rowprogress').forEach(el=>{if(el.classList.contains('is-running')||el.classList.contains('is-wait')||el.classList.contains('is-done')||el.classList.contains('is-error'))return;let j=cfg?.jobs?.find(x=>x.id===el.dataset.jobid);if(!j)return;let info=scheduleInfo[j.id];
@@ -2220,7 +2220,7 @@ function openCalendar(){
   if($('#cal-job-filter'))$('#cal-job-filter').onchange=e=>{calJobFilter=e.target.value;renderCalendar()};
   if($('#cal-day-close'))$('#cal-day-close').onclick=()=>$('#cal-day-dialog').close();
  }
- if($('#cal-job-filter')&&cfg?.jobs){let cur=calJobFilter;$('#cal-job-filter').innerHTML='<option value="all">対象: すべて</option>'+cfg.jobs.map(j=>`<option value="${j.id}">${E(j.name)}</option>`).join('');$('#cal-job-filter').value=cfg.jobs.some(j=>j.id===cur)?cur:'all';calJobFilter=$('#cal-job-filter').value}
+ if($('#cal-job-filter')&&cfg?.jobs){let cur=calJobFilter;$('#cal-job-filter').innerHTML='<option value="all">対象: すべて</option>'+cfg.jobs.map(j=>`<option value="${E(j.id)}">${E(j.name)}</option>`).join('');$('#cal-job-filter').value=cfg.jobs.some(j=>j.id===cur)?cur:'all';calJobFilter=$('#cal-job-filter').value}
  loadCalendar();
 }
 async function loadCalendar(){
@@ -2245,12 +2245,12 @@ function renderCalendar(){
  for(let dn=1;dn<=days;dn++){
   let iso=`${y}-${String(m).padStart(2,'0')}-${String(dn).padStart(2,'0')}`,dow=new Date(y,m-1,dn).getDay(),ev='';
   if(calView!=='executed'){
-   (byS[iso]||[]).slice(0,4).forEach(x=>{ev+=`<button type="button" class="cal-ev ev-sched" data-jobid="${x.job_id}" title="${E(x.job_name)} ${x.time}（${E(x.rule_name)}）">${x.time} ${E(x.job_name)}</button>`});
+   (byS[iso]||[]).slice(0,4).forEach(x=>{ev+=`<button type="button" class="cal-ev ev-sched" data-jobid="${E(x.job_id)}" title="${E(x.job_name)} ${E(x.time)}（${E(x.rule_name)}）">${x.time} ${E(x.job_name)}</button>`});
    if(byI[iso])ev+=`<span class="cal-ev ev-interval" title="一定間隔の定期実行">定期 ${byI[iso].length}件</span>`;
    let ms=(byS[iso]||[]).length-4;if(ms>0)ev+=`<span class="cal-more">予定＋${ms}件</span>`;
   }
   if(calView!=='scheduled'){
-   (byE[iso]||[]).slice(0,3).forEach(x=>{ev+=`<span class="cal-ev ev-exec ${calStatusClass(x.status)}" title="${E(x.job_name)} ${x.time} ${x.status}">${x.time} ${E(x.job_name)}</span>`});
+   (byE[iso]||[]).slice(0,3).forEach(x=>{ev+=`<span class="cal-ev ev-exec ${calStatusClass(x.status)}" title="${E(x.job_name)} ${E(x.time)} ${x.status}">${x.time} ${E(x.job_name)}</span>`});
    let me=(byE[iso]||[]).length-3;if(me>0)ev+=`<span class="cal-more">実績＋${me}件</span>`;
   }
   let cls=['cal-cell'];if(iso===today)cls.push('cal-today');if(dow===0)cls.push('sun');if(dow===6)cls.push('sat');
@@ -2268,19 +2268,19 @@ function openCalDay(iso){
  let html=`<div class="calday-sec"><h3>予定 (${sched.length+ints.length})</h3>`;
  if(sched.length||ints.length){
   html+='<div class="calday-list">';
-  sched.sort((a,b)=>a.time.localeCompare(b.time)).forEach(x=>{html+=`<div class="calday-item sched"><span class="ci-time">${x.time}</span><div class="ci-main"><b>${E(x.job_name)}</b><small>${E(x.rule_name||'')} / ${typeName(x.rule_type)}</small></div><button class="secondary ci-edit" data-jobid="${x.job_id}">編集</button><button class="ci-run" data-jobid="${x.job_id}">今すぐ</button></div>`});
-  ints.forEach(x=>{html+=`<div class="calday-item interval"><span class="ci-time">定期</span><div class="ci-main"><b>${E(x.job_name)}</b><small>${E(x.rule_name||'')} / ${x.minutes}分ごと（約${x.count}回/日）</small></div><button class="secondary ci-edit" data-jobid="${x.job_id}">編集</button></div>`});
+  sched.sort((a,b)=>a.time.localeCompare(b.time)).forEach(x=>{html+=`<div class="calday-item sched"><span class="ci-time">${E(x.time)}</span><div class="ci-main"><b>${E(x.job_name)}</b><small>${E(x.rule_name||'')} / ${E(typeName(x.rule_type))}</small></div><button class="secondary ci-edit" data-jobid="${E(x.job_id)}">編集</button><button class="ci-run" data-jobid="${E(x.job_id)}">今すぐ</button></div>`});
+  ints.forEach(x=>{html+=`<div class="calday-item interval"><span class="ci-time">定期</span><div class="ci-main"><b>${E(x.job_name)}</b><small>${E(x.rule_name||'')} / ${x.minutes}分ごと（約${x.count}回/日）</small></div><button class="secondary ci-edit" data-jobid="${E(x.job_id)}">編集</button></div>`});
   html+='</div>';
  }else html+='<p class="calday-empty">この日の予定はありません。</p>';
  html+=`</div><div class="calday-sec"><div class="calday-sechead"><h3>実績 (${exec.length})</h3>${exec.length?`<button type="button" class="secondary danger-lite ci-clear-day" data-date="${iso}">この日の実績を全削除</button>`:''}</div>`;
  if(exec.length){
   html+='<div class="calday-list">';
-  exec.sort((a,b)=>a.time.localeCompare(b.time)).forEach(x=>{let st=x.status==='ok'?'完了':x.status==='failed'?'失敗':x.status==='cancelled'?'中断':x.status;html+=`<div class="calday-item exec ${calStatusClass(x.status)}"><span class="ci-time">${x.time}</span><div class="ci-main"><b>${E(x.job_name)}</b><small>${st} / ${x.trigger==='schedule'?'定期':'即実行'}${x.rows!=null?` / ${x.rows}行×${x.cols}列`:''}</small></div>${x.id!=null?`<button class="secondary danger-lite ci-del" data-id="${x.id}" title="この実施記録を削除します">削除</button>`:''}</div>`});
+  exec.sort((a,b)=>a.time.localeCompare(b.time)).forEach(x=>{let st=x.status==='ok'?'完了':x.status==='failed'?'失敗':x.status==='cancelled'?'中断':x.status;html+=`<div class="calday-item exec ${calStatusClass(x.status)}"><span class="ci-time">${E(x.time)}</span><div class="ci-main"><b>${E(x.job_name)}</b><small>${E(st)} / ${x.trigger==='schedule'?'定期':'即実行'}${x.rows!=null?` / ${x.rows}行×${x.cols}列`:''}</small></div>${x.id!=null?`<button class="secondary danger-lite ci-del" data-id="${E(x.id)}" title="この実施記録を削除します">削除</button>`:''}</div>`});
   html+='</div>';
  }else html+='<p class="calday-empty">この日の実績はありません。</p>';
  html+='</div>';
  $('#cal-day-body').innerHTML=html;
- if($('#cal-quick-job')&&cfg?.jobs)$('#cal-quick-job').innerHTML=cfg.jobs.map(j=>`<option value="${j.id}">${E(j.name)}</option>`).join('');
+ if($('#cal-quick-job')&&cfg?.jobs)$('#cal-quick-job').innerHTML=cfg.jobs.map(j=>`<option value="${E(j.id)}">${E(j.name)}</option>`).join('');
  if($('#cal-quick-add'))$('#cal-quick-add').dataset.date=iso;
  $$('#cal-day-body .ci-edit').forEach(b=>b.onclick=()=>{let j=cfg?.jobs?.find(x=>x.id===b.dataset.jobid);if(j){$('#cal-day-dialog').close();openEditor(j);setEditorTab('schedule')}});
  $$('#cal-day-body .ci-run').forEach(b=>b.onclick=()=>{runJobs([b.dataset.jobid]);$('#cal-day-dialog').close()});

@@ -44,8 +44,9 @@ ALL_PARTS = PARTS + ('settings', 'rne')
 PART_LABEL = dict(navi_bundle.PART_LABEL, settings='共通設定', rne='RNE')
 # 共通設定として渡す項目（パス・控え・並列など）。渡さない物: 置き場（update_dir・各PCが入れた元から知る）、
 # 接続の認証情報（各PCの資格情報マネージャー）、設定の版（settings_revision）。
-COMMON_KEYS = ('default_output_folder', 'text_folder', 'rne_folder', 'backup_folder',
-               'accdb_template', 'navigator_api_dll', 'navigator_api_search_roots')
+# 読み込む DLL の場所（navigator_api_dll・navigator_api_search_roots）は配らない（2.5.3）。DLL はこの PC の権限で動き、
+# パスワードを受け取るので、置き場を書ける人が全員の PC の DLL を差し替えられないよう、PC ごとに決める。
+COMMON_KEYS = ('default_output_folder', 'text_folder', 'rne_folder', 'backup_folder', 'accdb_template')
 MODES = ('overwrite', 'add', 'keep')
 MODE_LABEL = {'overwrite': '上書き', 'add': '差分追加', 'keep': '今のまま'}
 MARK = 'data.json'

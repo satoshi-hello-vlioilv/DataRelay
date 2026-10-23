@@ -287,6 +287,15 @@ def looks_like_bundle(blob):
   return False
 
 
+# 持ち出しの ZIP の中の1つのファイルの上限（展開したあと）。小さい ZIP が展開すると巨大になるもの（zip 爆弾）で、
+# メモリを使い切らないようにする（2.5.3）。設定の束は大きくても数十 MB。
+ZIP_PART_MAX=256*1024*1024
+
+def _read_part(z,name):
+ size=z.getinfo(name).file_size
+ if size>ZIP_PART_MAX:raise ValueError(f'{name} が大きすぎます（展開すると {size:,} バイト。{ZIP_PART_MAX:,} バイトまで）')
+ return z.read(name)
+
 def read_zip(blob):
  """ZIPから部分ごとのJSONを取り出す。(中身, 覚書, 読めなかった理由) を返す。
 
@@ -298,13 +307,13 @@ def read_zip(blob):
   with zipfile.ZipFile(io.BytesIO(blob)) as z:
    names=set(z.namelist())
    if MANIFEST in names:
-    try:manifest=json.loads(z.read(MANIFEST).decode('utf-8-sig'))
+    try:manifest=json.loads(_read_part(z,MANIFEST).decode('utf-8-sig'))
     except Exception as e:bad.append(f'{MANIFEST} を読めません: {e}')
    if isinstance(manifest,dict) and manifest.get('kind') and str(manifest['kind'])!=BUNDLE_KIND:
     return {},{},[f'DataRelay の持ち出しファイルではありません（kind={manifest.get("kind")}）']
    for part,fname in PART_FILE.items():
     if fname not in names:continue
-    try:body=json.loads(z.read(fname).decode('utf-8-sig'))
+    try:body=json.loads(_read_part(z,fname).decode('utf-8-sig'))
     except Exception as e:bad.append(f'{fname} を読めません: {e}');continue
     if not isinstance(body,dict) or str(body.get('kind') or '')!=PART_KIND[part]:
      bad.append(f'{fname} の中身が {PART_LABEL[part]} ではありません');continue
