@@ -1019,14 +1019,14 @@ def run_all():
  try:
   data=request.get_json(silent=True) or {};requested=clamp_parallel_lines(data.get('parallel_lines',1))
   item,position=enqueue_command(data.get('job_ids'),'manual',requested)
-  return jsonify(ok=True,queued=True,queue_id=item['id'],position=position,parallel_lines=requested,job_names=item['job_names'])
+  return jsonify(ok=True,queued=not item.get('joined'),joined=bool(item.get('joined')),queue_id=item['id'],position=position,parallel_lines=requested,job_names=item['job_names'])
  except Exception as e:return jsonify(error=str(e)),400
 
 @app.post('/api/run/<job_id>')
 def run_one(job_id):
  try:
   item,position=enqueue_command([job_id],'manual-single',1)
-  return jsonify(ok=True,queued=True,queue_id=item['id'],position=position,parallel_lines=1,job_names=item['job_names'])
+  return jsonify(ok=True,queued=not item.get('joined'),joined=bool(item.get('joined')),queue_id=item['id'],position=position,parallel_lines=1,job_names=item['job_names'])
  except Exception as e:return jsonify(error=str(e)),400
 
 @app.post('/api/run/cancel')

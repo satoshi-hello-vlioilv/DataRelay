@@ -79,16 +79,23 @@ class LaneBoard:
  あとから書いたほうが前を消してしまう（片方の行だけ「順番待ち」に戻る）ので、
  書き込み口をここ1つに絞る。
  """
- def __init__(self,plan,api_lines,local_lines,trigger=''):
+ def __init__(self,plan,api_lines,local_lines,trigger='',cap=None):
   self.cond=threading.Condition()
   self.plan=plan;self.trigger=trigger
   self.api_lines=max(0,int(api_lines or 0));self.local_lines=max(0,int(local_lines or 0))
   self.total=len(plan)
   self.done=[];self.failed=[];self.started=set();self.running={}
   self.results=[];self.failures=[];self.job_results=[]
-  self.api_open=any(e['kind']=='rne' for e in plan)
   self.api_note={}          # RNE側が出す全体の様子。そのまま画面へ渡す。
   self.skipped=[]
+  # 合流（2.9.1）: 走っている間に入れた手動の実行を、空いたラインですぐ流す。
+  # cap は同時に流してよい対象の数（設定の並列ライン数）。closed になったら、もう足さない。
+  self.cap=max(1,int(cap or (self.api_lines+self.local_lines) or 1))
+  self.closed=False;self.rne_dead=False
+  self.rne_inbox=deque()     # 合流したRNE。RNE側が拾って、空いたラインで起こす
+  self.slots=set()           # 使ったラインの番号。足すときは次の番号から
+  self.local_waiting=0       # 手が空いて待っている手元のライン
+  self.spawn_local=None      # 手元のラインを足す係（run_lanes が入れる）
 
  # ---- 取り出す ------------------------------------------------------------
  def begin(self):
@@ -102,7 +109,69 @@ class LaneBoard:
                  'detail':'手元のファイルから作ります','slot':slot})
   set_status(parallel_lines=lines,parallel_max_lines=len(lines),parallel_mode=True
                             if self.api_lines else f'手元 {self.local_lines}ライン')
+  with self.cond:self.slots=set(range(1,self.api_lines+self.local_lines+1))
   self.publish()
+
+ def new_slot(self):
+  """合流で足すラインの番号。いま見えているラインの続きから振る。"""
+  with self.cond:
+   n=max(self.slots,default=0)+1;self.slots.add(n);return n
+
+ def join(self,jobs,cfg,trigger):
+  """走っている実行に、あとから入れた対象を足す。足せたら True。
+
+  足さない（実行キューで待たせる）のは次のとき。
+    ・終わりかけ（closed）か、中止された
+    ・同じ対象がこの実行に入っている（同じ出力を2本で書かせない）
+    ・足すと、同時に流す対象の数が並列ライン数を超える（待っているぶんも数える）
+    ・RNE側が落ちたあとに RNE を足そうとした
+  材料の関係（結合が材料を待つ）は、この実行に入っているもの全体で引き直す。
+  """
+  kinds={j['id']:normalize_job_source(j.get('source')) for j in jobs}
+  with self.cond:
+   if self.closed or cancel_requested.is_set():return False
+   ids={e['id'] for e in self.plan}
+   if any(j['id'] in ids for j in jobs):return False
+   if self.rne_dead and any(k=='rne' for k in kinds.values()):return False
+   settled=set(self.done)|set(self.failed)
+   live=sum(1 for e in self.plan if e['id'] not in settled)
+   if live+len(jobs)>self.cap:return False
+   olds=[e['job'] for e in self.plan]
+   combined=navi_lane.build_plan(olds+list(jobs),job_dependencies(olds+list(jobs),cfg),
+                                 {**{e['id']:e['kind'] for e in self.plan},**kinds})
+   new=combined[len(self.plan):]
+   for e in new:
+    # 合流した対象は分割しない（先に走っている対象が持ち分を使っているので、足すとライン数を超える）。
+    # 記録は、その実行の入れ方（手動）で残す。
+    e['job']=dict(e['job'],_trigger=trigger,_split_budget=1);e['trigger']=trigger
+    if e['kind']=='rne':self.rne_inbox.append(e)
+   self.plan.extend(new);self.total=len(self.plan)
+   need=max(0,sum(1 for e in new if e['kind']!='rne')-self.local_waiting)
+   set_status(batch_job_ids=[e['id'] for e in self.plan])
+   self._publish_locked();self.cond.notify_all()
+  if need and self.spawn_local:self.spawn_local(need)
+  log.info('LANE_JOIN jobs=%s trigger=%s 実行中の対象=%s/%s',[j.get('name') for j in jobs],trigger,live+len(jobs),self.cap)
+  return True
+
+ def take_rne(self):
+  """合流したRNEを、RNE側へ渡す。"""
+  with self.cond:
+   out=list(self.rne_inbox);self.rne_inbox.clear();return out
+
+ def _settled_all_locked(self):
+  done=set(self.done)|set(self.failed)
+  return not self.rne_inbox and all(e['id'] in done for e in self.plan)
+
+ def try_close(self):
+  """全部済んだら締める。締めたあとは合流を断る（足した対象が置き去りにならない）。"""
+  with self.cond:
+   if not self.closed and self._settled_all_locked():
+    self.closed=True;self.cond.notify_all()
+   return self.closed
+
+ def _rne_open_locked(self):
+  done=set(self.done)|set(self.failed)
+  return bool(self.rne_inbox) or any(e['kind']=='rne' and e['id'] not in done for e in self.plan)
 
  def claim(self,kinds=navi_lane.LOCAL_KINDS):
   """次に流してよいものを1件取る。無ければ、出てくるまで待つ。終わりなら None。
@@ -119,13 +188,24 @@ class LaneBoard:
      e=ready[0];self.started.add(e['id']);self.running[e['id']]=e['name']
      self._publish_locked();return e
     pending=[x for x in self.plan if x['kind'] in kinds and x['id'] not in self.started]
-    if not pending:return None
+    if not pending:
+     # 流すものが無くても、実行が続いている間は待つ ―― あとから合流する対象を受け持つため。
+     # 全部済んだら締めて抜ける。
+     if self.closed:return None
+     if self._settled_all_locked():
+      self.closed=True;self.cond.notify_all();return None
+     self._wait_locked();continue
     # まだ走れないが、動いているものがある（RNEの並列か、ほかのライン）。
     # どちらも止まっているなら、これ以上待っても何も変わらない。
     inflight=len(self.started-set(self.done)-set(self.failed))
-    if not self.api_open and inflight<=0:
+    if not self._rne_open_locked() and inflight<=0:
      self._break_cycle_locked(pending);continue
-    self.cond.wait(0.5)
+    self._wait_locked()
+
+ def _wait_locked(self):
+  self.local_waiting+=1
+  try:self.cond.wait(0.5)
+  finally:self.local_waiting-=1
 
  def _drop_unreachable_locked(self,kinds):
   """材料が失敗したので、もう走れないもの。待たせずに、理由を付けて落とす。"""
@@ -158,7 +238,7 @@ class LaneBoard:
   self.failures.append({'ok':False,'job':entry['name'],'error':why})
   self.job_results.append({'job':entry['name'],'job_id':entry['id'],'status':'failed','detail':why})
   if skipped:self.skipped.append(entry['name'])
-  record_job_run(entry['id'],entry['name'],'failed',self.trigger,detail=why)
+  record_job_run(entry['id'],entry['name'],'failed',entry['job'].get('_trigger') or self.trigger,detail=why)
   self._publish_locked();self.cond.notify_all()
 
  # ---- 書き込む ------------------------------------------------------------
@@ -187,10 +267,10 @@ class LaneBoard:
   途中で落ちたときこそ必要になるので、必ず finally から呼ぶ。
   """
   with self.cond:
-   self.api_open=False
+   self.rne_dead=True;self.rne_inbox.clear()
    seen=set(self.done)|set(self.failed)
    for e in self.plan:
-    if e['kind']!='rne' or e['id'] in seen or e['id'] not in set(job_ids or ()):continue
+    if e['kind']!='rne' or e['id'] in seen:continue
     self.failed.append(e['id']);self.running.pop(e['id'],None)
     self.failures.append({'ok':False,'job':e['name'],'error':reason or '結果が返りませんでした'})
    self._publish_locked();self.cond.notify_all()
@@ -229,9 +309,13 @@ class LaneBoard:
 
 
 # ---- RNE側（独立プロセス） ---------------------------------------------------
-def run_api_process_batch(jobs,cfg,user,pw,server,dde_work,backup,max_lines,trigger,seed_results=None,board=None):
+def run_api_process_batch(jobs,cfg,user,pw,server,dde_work,backup,max_lines,trigger,seed_results=None,board=None,cap=None,login=None):
  """Run each Navigator API session in an isolated Python process.
  Finished lines immediately pull the next queued query until the reservation queue is empty.
+
+ 黒板（board）があるときは、実行が続く間、合流したRNEを拾って空いたラインで起こす（2.9.1）。
+ 合流ぶんを含めて同時に流すのは cap 本まで。接続情報が無いまま始まった実行（手元の処理だけ）に
+ RNE が合流したら、その時点で login() から読む。
  """
  batch_id=datetime.now().strftime('%Y%m%d_%H%M%S_')+uuid.uuid4().hex[:8]
  runtime=dde_work/'parallel_runtime'/('parallel_'+batch_id);runtime.mkdir(parents=True,exist_ok=True)
@@ -257,14 +341,28 @@ def run_api_process_batch(jobs,cfg,user,pw,server,dde_work,backup,max_lines,trig
  batch_started=time.perf_counter(); total=len(jobs); configured_lines=max(1,int(max_lines)); max_lines=max(1,min(int(max_lines),total)); batch_results=[]
  # 列分割は同時プロセスを増やす。設定した並列数を超えないよう、1対象あたりの持ち分を先に決める。
  # 対象がラインを埋め切っているときは持ち分が1になり、分割は行われない。
- split_budget=max(1,configured_lines//total)
+ split_budget=max(1,configured_lines//max(1,total))
+ cap_jobs=max(configured_lines,int(cap or 0));extra=deque()   # 合流したRNE（分割しない・すぐ起こす）
+ rne_slots=set(range(1,max_lines+1)) if total else set()
  log.info('SPLIT_BUDGET configured_lines=%s jobs=%s per_job=%s',configured_lines,total,split_budget)
  for _j in jobs:_j['_split_budget']=split_budget
  if board is None:
   set_status(parallel_lines=[{'line':f'ライン {n}','job':'','state':'待機','percent':0,'elapsed':0,'detail':'開始待ち','slot':n} for n in range(1,max_lines+1)],queue_total=total,queue_waiting=total,queue_active=0,queue_completed=0,queue_completed_ids=[],queue_failed_ids=[],queue_running_ids=[],queue_waiting_ids=list(all_job_ids),parallel_max_lines=max_lines,parallel_mode=True)
  log.info('PARALLEL_BATCH_START model=process-isolated trigger=%s batch_id=%s runtime=%s jobs=%s max_lines=%s total_jobs=%s parent_pid=%s',trigger,batch_id,runtime,[j['rne'] for j in jobs],max_lines,total,os.getpid())
- def start_one(slot):
-  index,job=queue.popleft();line=f'ライン {slot}'
+ def start_one(slot,src=None):
+  nonlocal user,pw,server
+  index,job=(src if src is not None else queue).popleft();line=f'ライン {slot}'
+  trig=job.get('_trigger') or trigger
+  if not user and login:
+   try:user,pw,server=login()
+   except Exception as e:
+    why=str(e) or '接続情報を読めませんでした'
+    log.error('WORKER_LOGIN_FAILED job=%s error=%s',job['name'],why)
+    failures.append({'ok':False,'job':job['name'],'error':why});failed_ids.append(job['id'])
+    record_job_run(job['id'],job['name'],'failed',trig,detail=why)
+    if board:board.note(job['id'],job['name'],False,error=why)
+    update_parallel_line(line,job=job['name'],job_id=job['id'],state='失敗',percent=100,detail=why,slot=slot)
+    return False
   job_dir=runtime/f'line_{slot}_{index}';job_dir.mkdir(parents=True,exist_ok=True)
   payload={'job':job,'job_index':index,'total_jobs':total,'cfg':cfg,'user':user,'server':server,'dde_work':str(job_dir/'work'),'backup':str(backup),'line':line}
   Path(payload['dde_work']).mkdir(parents=True,exist_ok=True)
@@ -278,6 +376,7 @@ def run_api_process_batch(jobs,cfg,user,pw,server,dde_work,backup,max_lines,trig
   if board:board.note_running(job['id'],job['name'])
   update_parallel_line(line,job=job['name'],job_id=job['id'],state='起動',percent=2,detail=f'予約 {index}/{total} / PID {proc.pid}',queue_index=index,slot=slot,started_at=datetime.now().isoformat(timespec='seconds'))
   log.info('WORKER_START batch_id=%s line=%s pid=%s job=%s queue_index=%s/%s',batch_id,line,proc.pid,job['name'],index,total)
+  return True
  # ワーカーを一斉に起動すると、Navigator APIのセッション接続が競合して1本あたりの接続時間が
  # 数倍に伸びる（実測: 単独 約1.0秒 / 6本同時 2.3〜7.2秒）。少しずつずらして接続を重ねない。
  # 一番重い対象が先頭なので、遅れて起動する軽い対象は全体所要に影響しない。
@@ -293,17 +392,33 @@ def run_api_process_batch(jobs,cfg,user,pw,server,dde_work,backup,max_lines,trig
   if not queue:break
   if slot>1 and stagger>0 and cancel_requested.wait(stagger):break
   start_one(slot)
- while active:
+ while True:
+  if board and not cancel_requested.is_set():
+   for e in board.take_rne():
+    total+=1;extra.append((total,e['job']))
+   # 合流したぶんは、同時に流す数が cap 本に届くまで、空いているラインですぐ起こす
+   while extra and len(active)<cap_jobs and not cancel_requested.is_set():
+    free=[n for n in sorted(rne_slots) if n not in active]
+    slot=free[0] if free else board.new_slot()
+    rne_slots.add(slot);start_one(slot,extra)
+  if not active and not queue and not extra:
+   # 実行が続いている間（手元のラインが走っている・合流しうる）は待つ。全部済んだら抜ける
+   if board is None or cancel_requested.is_set() or board.try_close():break
+   time.sleep(.25);continue
   if cancel_requested.is_set():
-   log.info('PARALLEL_BATCH_CANCELLED batch_id=%s active=%s queued=%s',batch_id,len(active),len(queue))
+   log.info('PARALLEL_BATCH_CANCELLED batch_id=%s active=%s queued=%s',batch_id,len(active),len(queue)+len(extra))
    queue.clear()
+   for _i,job in list(extra):
+    record_job_run(job['id'],job['name'],'cancelled',job.get('_trigger') or trigger,detail='ユーザーにより中断されました')
+    if board:board.note(job['id'],job['name'],False,error='ユーザーにより中断されました')
+   extra.clear()
    for slot,item in list(active.items()):
     # 親だけ止めても、分割で起こした子はNavigatorを掴んだまま残る（Windows）。木ごと落とす。
     try:kill_process_tree(item['proc'],wait_seconds=5)
     except Exception:pass
     failures.append({'ok':False,'job':item['job']['name'],'error':'ユーザーにより中断されました','elapsed':time.perf_counter()-item['started']})
     failed_ids.append(item['job']['id'])
-    record_job_run(item['job']['id'],item['job']['name'],'cancelled',trigger,detail='ユーザーにより中断されました')
+    record_job_run(item['job']['id'],item['job']['name'],'cancelled',item['job'].get('_trigger') or trigger,detail='ユーザーにより中断されました')
     if board:board.note(item['job']['id'],item['job']['name'],False,error='ユーザーにより中断されました')
     update_parallel_line(item['line'],job=item['job']['name'],job_id=item['job']['id'],state='中断',percent=100,detail='ユーザーにより中断されました',elapsed=round(time.perf_counter()-item['started'],1))
     with active_workers_lock:active_workers.pop(slot,None)
@@ -354,7 +469,7 @@ def run_api_process_batch(jobs,cfg,user,pw,server,dde_work,backup,max_lines,trig
                result_text=str(result.get('result') or ''),job_result=one,error=str(result.get('error') or ''))
    else:
     set_status(job_results=seed(batch_results))
-   record_job_run(item['job']['id'],item['job']['name'],'ok' if result.get('ok') else 'failed',trigger,detail=(result.get('result') or result.get('error') or ''),rows=result.get('rows'),cols=result.get('columns'),output_file=Path(result.get('target') or '').name,
+   record_job_run(item['job']['id'],item['job']['name'],'ok' if result.get('ok') else 'failed',item['job'].get('_trigger') or trigger,detail=(result.get('result') or result.get('error') or ''),rows=result.get('rows'),cols=result.get('columns'),output_file=Path(result.get('target') or '').name,
                   metrics={**{k:result.get(k) for k in ('elapsed','execute_seconds','save_seconds','merge_seconds','transfer_bytes','transfer_kbs','split_parts','split_shape','split_how','row_axis','axis_seconds','race_winner','format','variant_results','variant_method','variant_lines') if result.get(k) is not None},
                            # 公開できたか。鮮度の判定がこれを見る（実行できても差し替わっていない場合がある）
                            'published':bool(result.get('published',True)),'pending':str(result.get('pending') or ''),
@@ -365,7 +480,7 @@ def run_api_process_batch(jobs,cfg,user,pw,server,dde_work,backup,max_lines,trig
                            'hold_advice':list(result.get('hold_advice') or [])})
    # RNE単位の実績。時間帯・端末・分け方まで残し、あとから条件別に見比べられるようにする。
    if result.get('rne_path'):
-    record_rne_run(result['rne_path'],item['job'],'ok' if result.get('ok') else 'failed',trigger,
+    record_rne_run(result['rne_path'],item['job'],'ok' if result.get('ok') else 'failed',item['job'].get('_trigger') or trigger,
                    dict(result,rows=result.get('rows'),cols=result.get('columns'),lines=max_lines),engine='api')
    # ワーカーが持ち帰った列名をここで保存する。設定DBへの書き込みを親1本に集約して競合を避ける。
    if result.get('ok') and result.get('column_names'):
@@ -423,7 +538,7 @@ def _local_lane(slot,board,cfg,work,backup,trigger,progress_fn):
   # 同じ実行のなかの順番は黒板が見ている。ここでの待ち合わせは、別の実行や別のPCが
   # 同じファイルを触っているときのためのもの ―― 二重に待たせない。
   try:
-   out=run_one_local(j,cfg,work,backup,trigger,entry['order']+1,board.total,say=say)
+   out=run_one_local(j,cfg,work,backup,j.get('_trigger') or trigger,entry['order']+1,board.total,say=say)
   except Exception as e:
    # run_one_local は例外を返さない約束だが、ここで落ちるとこの対象は「実行中」の
    # まま残り、材料を待っているほかのラインごと止まる。必ず報告して次へ進む。
@@ -439,11 +554,23 @@ def _local_lane(slot,board,cfg,work,backup,trigger,progress_fn):
  update_parallel_line(line,job='',state='終了',percent=100,slot=slot,detail='このラインの割り当ては終わりました')
 
 
-def run_lanes(ordered,local_jobs,api_jobs,cfg,user,pw,server,dde_work,backup,max_lines,trigger,progress):
+# 走っている実行の黒板。手動の実行は、ここに空きがあれば合流する（app.enqueue_command → join_live）。
+_live_lock=threading.Lock();_live=None
+
+def join_live(jobs,cfg,trigger):
+ """走っている実行に足せたら True。足せなければ、呼んだ側が実行キューへ並べる。"""
+ with _live_lock:board=_live
+ return bool(board) and board.join(jobs,cfg,trigger)
+
+
+def run_lanes(ordered,local_jobs,api_jobs,cfg,user,pw,server,dde_work,backup,max_lines,trigger,progress,cap=None,login=None):
  """RNEと手元の処理を同時に流す。返すのは (結果の文, 失敗, 所要秒)。
 
  走らせ方は違う（RNEは独立プロセス、手元はスレッド）が、終わりを書き込む先は同じ
  黒板。結合はその黒板を見て、材料がそろってから走り出す。
+
+ 走っている間は、手動であとから入れた実行を合流させる（2.9.1）。同時に流すのは cap 本
+ （設定の並列ライン数）まで。RNE側と手元のラインは、全部済むまで合流を待ち受ける。
  """
  deps=job_dependencies(ordered,cfg)
  kinds={j['id']:normalize_job_source(j.get('source')) for j in ordered}
@@ -452,30 +579,50 @@ def run_lanes(ordered,local_jobs,api_jobs,cfg,user,pw,server,dde_work,backup,max
  local_plan=[e for e in plan if e['id'] in local_ids]
  api_lines=max(1,min(int(max_lines or 1),len(api_jobs))) if api_jobs else 0
  lanes=navi_lane.local_lines(cfg['settings'].get('local_parallel_lines'),max_lines,len(local_plan)) if local_plan else 0
- board=LaneBoard(plan,api_lines,lanes,trigger)
+ cap=max(int(max_lines or 1),int(cap or 0))
+ board=LaneBoard(plan,api_lines,lanes,trigger,cap=cap)
+ local_cap=navi_lane.local_lines(cfg['settings'].get('local_parallel_lines'),cap,cap)
  log.info('LANE_PLAN 順番=%s',navi_lane.plan_text(plan))
  if navi_lane.wait_text(plan):log.info('LANE_WAIT 材料を待つ=%s',navi_lane.wait_text(plan))
  log.info('LANE_START RNE=%s件/%sライン 手元=%s件/%sライン 合計=%s件',
           len(api_jobs),api_lines,len(local_plan),lanes,len(plan))
  board.begin()
  started=time.perf_counter()
- threads=[]
- for n in range(1,lanes+1):
-  t=threading.Thread(target=_local_lane,args=(api_lines+n,board,cfg,dde_work,backup,trigger,progress),
-                     name=f'local-lane-{n}',daemon=True)
-  t.start();threads.append(t)
+ threads=[];threads_lock=threading.Lock()
+ def spawn_local(n=1,slots=None):
+  """手元のラインを足す（合流した手元の処理を、空いたラインですぐ流す）。合計 local_cap 本まで。"""
+  with threads_lock:
+   alive=sum(1 for t in threads if t.is_alive())
+   for k in range(max(0,min(int(n),local_cap-alive))):
+    slot=slots[k] if slots else board.new_slot()
+    t=threading.Thread(target=_local_lane,args=(slot,board,cfg,dde_work,backup,trigger,progress),
+                       name=f'local-lane-{slot}',daemon=True)
+    t.start();threads.append(t)
+ spawn_local(lanes,[api_lines+n for n in range(1,lanes+1)])
+ board.spawn_local=spawn_local
+ global _live
+ with _live_lock:_live=board
  api_elapsed=0.0;api_error=''
- if api_jobs:
+ try:
+  # RNE側は、RNEが1件も無くても回す ―― 実行が続く間、合流したRNEを受け持つ。
   # RNE側が落ちても、手元のラインは最後まで面倒を見る。ここで例外を素通しすると
   # 走っているスレッドを置き去りにしたまま抜け、結果も画面も途中で止まる。
   try:
    _res,_fail,api_elapsed=run_api_process_batch(api_jobs,cfg,user,pw,server,dde_work,backup,
-                                                max_lines,trigger,board=board)
+                                                max_lines,trigger,board=board,cap=cap,login=login)
   except Exception as e:
    api_error=str(e);log.exception('LANE_API_FAILED error=%s',e)
   finally:
    board.api_closed([j['id'] for j in api_jobs],reason=api_error)
- for t in threads:t.join()
+  while True:
+   with threads_lock:
+    t=next((x for x in threads if x.is_alive()),None)
+   if t is None:break
+   t.join()
+ finally:
+  with _live_lock:
+   if _live is board:_live=None
+  with board.cond:board.closed=True;board.cond.notify_all()
  # 対象1件ごとの失敗として残せなかったとき（全部報告済みのあとで落ちた等）は、
  # 実行そのものの失敗として残す。黙って正常終了にしない。
  if api_error and not any(str(x.get('error') or '')==api_error for x in board.failures):
@@ -485,13 +632,13 @@ def run_lanes(ordered,local_jobs,api_jobs,cfg,user,pw,server,dde_work,backup,max
           len(board.done),len(board.failed),len(board.skipped),elapsed,api_elapsed)
  board.publish(queue_running_ids=[],queue_waiting_ids=[],queue_active=0,queue_waiting=0)
  return {'results':list(board.results),'failures':list(board.failures),
-         'elapsed':elapsed,'skipped':list(board.skipped)}
+         'elapsed':elapsed,'skipped':list(board.skipped),'total':board.total}
 
 
 def finish_batch(res,total_jobs,progress):
  """実行の締め。失敗があれば止め、無ければ結果の1行を残す。"""
  if cancel_requested.is_set():
-  raise app.RunCancelled(f'{len(res["results"])}/{total_jobs}件完了後に中断されました')
+  raise app.RunCancelled(f'{len(res["results"])}/{res.get("total",total_jobs)}件完了後に中断されました')
  if res['failures']:
   set_status(job_errors=[{'job':r.get('job'),'error':str(r.get('error') or '')} for r in res['failures']],
              failed_jobs=len(res['failures']))
