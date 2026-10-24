@@ -35,6 +35,8 @@ import navi_shortcut # 起動アイコン（このPCの写しへ向ける）
 import navi_secret   # Navigator への接続情報（このPCの置き場・1.99.0）
 import navi_defaults # 置き場の既定の設定（新しいPCへ渡す最初の設定・2.0.0）
 import navi_mrun     # クエリ（Power Query の M の式）の出し入れ・下読み・式を作る（2.4.0）
+import navi_m        # M の式の言語（後処理で取り出した表を渡す名前 INPUT_NAME。2.6.0）
+import navi_post     # 後処理（2.6.0）の取り決めの形と、手順から式への直し方
 
 from app import (
     variant_jobs, load_variant_count, save_variant_count,
@@ -2455,14 +2457,66 @@ def m_query_preview():
  """画面の下読み。式・どのクエリ・どのステップ → クエリの並び・ステップ・その時点の表（先頭 200 行）。"""
  d=request.get_json(force=True) or {}
  try:
-  out=navi_mrun.preview(str(d.get('code') or ''),str(d.get('name') or 'クエリ1'),d.get('query') or None,
-                        d.get('step') or None,full=bool(d.get('full')))
+  # 後処理に使うクエリ（取り出した表を参照する式。2.6.0）は、使っている対象の見本を「取り出した表」に入れて下読みする
+  code=str(d.get('code') or '');inputs=info=None
+  if navi_m.INPUT_NAME in code:
+   inputs,info=navi_mrun.post_inputs_for(str(d.get('sample_job') or ''),str(d.get('query_id') or ''))
+  out=navi_mrun.preview(code,str(d.get('name') or 'クエリ1'),d.get('query') or None,
+                        d.get('step') or None,full=bool(d.get('full')),inputs=inputs)
+  out['input_sample']=info
  except Exception as e:
   log.exception('M_QUERY_PREVIEW_FAILED')
   return jsonify(ok=False,error={'message':f'下読みに失敗しました: {e}'}),500
  if not out.get('ok'):
   log.info('M_QUERY_PREVIEW_ERROR query=%s step=%s error=%s',out.get('query'),out.get('step'),(out.get('error') or {}).get('message'))
  return jsonify(out)
+
+# ---- 後処理（2.6.0）: 取り出した表を、変換の前に M の式で整える -------------------------------------
+def _post_job(d):
+ """画面から渡された対象（保存前の後処理を含む）と、保存済みの対象（見本を探すのに使う）。"""
+ c=load();saved=next((x for x in c['jobs'] if x['id']==str(d.get('job_id') or '')),None)
+ return c,saved
+
+@app.get('/api/post/meta')
+def post_meta():
+ """手順の種類・集計の仕方の言葉（画面はここから並べる。言葉を2か所に持たない）。"""
+ return jsonify(ok=True,ops=[{'op':k,**v} for k,v in navi_post.OPS.items()],
+                aggs=[{'agg':k,'label':v['label']} for k,v in navi_post.AGGS.items()],
+                group_aggs=[{'func':k,'label':navi_post.GROUP_AGG_LABEL[k]} for k in navi_post.GROUP_AGGS],
+                input_name=navi_m.INPUT_NAME)
+
+@app.post('/api/post/preview')
+def post_preview():
+ """後処理の下読み。対象の見本（後処理の前の表）に、画面でいま組んでいる後処理を当てる。step は何番目の手順まで（0から）。"""
+ d=request.get_json(force=True) or {}
+ c,saved=_post_job(d)
+ try:
+  sample=navi_mrun.post_sample(saved,c) if saved else None
+  out=navi_mrun.preview_post(d.get('post'),sample,d.get('step'))
+ except Exception as e:
+  log.exception('POST_PREVIEW_FAILED')
+  return jsonify(ok=False,error={'message':f'下読みに失敗しました: {e}'}),500
+ if sample is None:
+  out['no_sample']=('まだ保存していない対象です。保存して一度実行すると、取り出した表を見本にして下読みできます' if not saved else
+                    'この PC には、後処理の前の表の見本がまだありません。この対象を一度実行すると、取り出した表を見本にして下読みできます')
+ return jsonify(out)
+
+@app.post('/api/post/to-query')
+def post_to_query():
+ """手順で組んだ後処理を、クエリ（共通設定 → Power Query）として保存する。以降はクエリのエディターで自由に直せる。"""
+ d=request.get_json(force=True) or {}
+ code=navi_post.compile({**(d.get('post') or {}),'enabled':True,'mode':'steps'})
+ if not code:return jsonify(ok=False,error='手順がありません'),400
+ bad=navi_post.problems({**(d.get('post') or {}),'enabled':True,'mode':'steps'})
+ if bad:return jsonify(ok=False,error='／'.join(bad)),400
+ name=str(d.get('name') or '').strip() or '後処理'
+ names={q['name'] for q in load_m_queries()}
+ base,k=name,2
+ while name in names:name=f'{base} ({k})';k+=1
+ try:saved=save_m_query({'name':name,'code':code,'description':f'対象「{str(d.get("job_name") or "")[:60]}」の後処理の手順から作りました。取り出した表を「{navi_m.INPUT_NAME}」で受け取ります'})
+ except ValueError as e:return jsonify(ok=False,error=str(e)),400
+ log.info('POST_TO_QUERY job=%s query=%s steps=%s',d.get('job_name'),saved['name'],len((d.get('post') or {}).get('steps') or []))
+ return jsonify(ok=True,query=saved)
 
 @app.post('/api/m-query/samples')
 def m_query_samples():
@@ -2632,6 +2686,10 @@ def _merge_jobs(c,items):
   if qn:
    j['query_id']=qry.get(qn,'')
    if qn not in qry:notes.append(f'「{name}」が使うクエリ「{qn}」がこのPCにありません')
+  post=j.get('post')
+  if isinstance(post,dict) and post.get('query_name'):
+   post=dict(post);pn=str(post.pop('query_name') or '');post['query_id']=qry.get(pn,'');j['post']=post
+   if pn not in qry:notes.append(f'「{name}」の後処理が使うクエリ「{pn}」がこのPCにありません')
   seats=spare.get(name) or []
   if seats:
    at=seats.pop(0);old=c['jobs'][at]

@@ -20,6 +20,7 @@ import navi_m as M
 import navi_mconv as C
 import navi_mimport
 import navi_paths
+import navi_post
 from app import log, settings_sync_lock
 
 
@@ -33,7 +34,7 @@ def _borrow(name):
 
 
 for _n in ('_mark_settings_dirty', 'flush_local_to_master_async', 'init_settings_db', 'load', 'normalize_job_source',
-           'resolve_path', 'settings_connection'):
+           'phase_log', 'read_extract', 'resolve_path', 'settings_connection'):
     globals()[_n] = _borrow(_n)
 del _n
 
@@ -147,8 +148,10 @@ def m_query_usage(query_id, cfg=None):
     if not qid:
         return []
     jobs = (cfg or load()).get('jobs') or []
+    # 入力に使う対象と、後処理（2.6.0）に使う対象の両方。後処理で使っている物を消すと、その対象は仕上げの前で止まる
     return [j.get('name', '') for j in jobs
-            if normalize_job_source(j.get('source')) == 'mquery' and str(j.get('query_id') or '') == qid]
+            if (normalize_job_source(j.get('source')) == 'mquery' and str(j.get('query_id') or '') == qid)
+            or (navi_post.normalize(j.get('post')).get('mode') == 'query' and navi_post.normalize(j.get('post')).get('query_id') == qid)]
 
 
 def delete_m_query(query_id):
@@ -322,18 +325,12 @@ def _out_cell(v):
     return C.cell_text(v)
 
 
-def write_m_intermediate(q, cfg, dst, job=None, reject_zero=False, encoding='utf-8-sig', now=None):
-    """クエリを評価し、変換に渡す中間CSVへ書く。→ (行数, 列数, stat)。
+def write_table_csv(t, dst, encoding='utf-8-sig'):
+    """表を、変換に渡す中間CSV（見出し1行）へ書く。→ (行, 列の型, 誤りのセル数, 列ごとの誤りの例, 入れ子の列)。
 
-    誤りのセルは空にして数え（Excel へ読み込んだときと同じく、行は残す）、どの列のどんな誤りかを stat に残す。"""
-    started = time.perf_counter()
-    doc = document(q)
-    name = output_name(doc, q, job)
-    h = host(False, now)
-    t = as_table(doc.evaluate(name, host_=h), name)
+    誤りのセルは空にして数え（Excel へ読み込んだときと同じく、行は残す）、入れ子（表・レコード・リスト）は型の名前で書く。
+    クエリの入力と後処理（2.6.0）で同じ書き方にする（片方だけ直る壊れ方をしないため）。"""
     rows = _forced_rows(t)
-    if reject_zero and not rows:
-        raise ValueError(f'クエリ「{name}」の結果が0件のため出力を中止しました')
     types = {c: column_type(ty, [r[i] for r in rows]) for i, (c, ty) in enumerate(zip(t.columns, t.types))}
     errors, samples, nested = 0, {}, set()
     dst = Path(dst)
@@ -349,11 +346,26 @@ def write_m_intermediate(q, cfg, dst, job=None, reject_zero=False, encoding='utf
                 elif isinstance(v, (M.MTable, M.MRecord, list)):
                     nested.add(t.columns[i])
             w.writerow([_out_cell(v) for v in r])
+    return rows, types, errors, samples, sorted(nested)
+
+
+def write_m_intermediate(q, cfg, dst, job=None, reject_zero=False, encoding='utf-8-sig', now=None):
+    """クエリを評価し、変換に渡す中間CSVへ書く。→ (行数, 列数, stat)。
+
+    誤りのセルは空にして数え（Excel へ読み込んだときと同じく、行は残す）、どの列のどんな誤りかを stat に残す。"""
+    started = time.perf_counter()
+    doc = document(q)
+    name = output_name(doc, q, job)
+    h = host(False, now)
+    t = as_table(doc.evaluate(name, host_=h), name)
+    if reject_zero and not t.rows:
+        raise ValueError(f'クエリ「{name}」の結果が0件のため出力を中止しました')
+    rows, types, errors, samples, nested = write_table_csv(t, dst, encoding)
     stat = {'query': q['name'], 'output': name, 'rows': len(rows), 'columns': len(t.columns), 'error_cells': errors,
-            'error_samples': samples, 'nested_columns': sorted(nested), 'types': types, 'folders': list(h.files_read),
+            'error_samples': samples, 'nested_columns': nested, 'types': types, 'folders': list(h.files_read),
             'elapsed': round(time.perf_counter() - started, 3)}
     log.info('M_QUERY_READ query=%s output=%s rows=%s columns=%s error_cells=%s nested=%s elapsed=%.2fs 中間CSV=%s',
-             q['name'], name, len(rows), len(t.columns), errors, sorted(nested), stat['elapsed'], dst)
+             q['name'], name, len(rows), len(t.columns), errors, nested, stat['elapsed'], dst)
     if errors:
         log.warning('M_QUERY_ERROR_CELLS query=%s 箇所=%s 誤りのセルを空にしました 例=%s', q['name'], errors,
                     '、'.join(f'{k}: {v}' for k, v in list(samples.items())[:3]))
@@ -394,7 +406,7 @@ def _error_view(e):
     return out
 
 
-def preview(code, name='クエリ1', query=None, step=None, limit=PREVIEW_ROWS, full=False, now=None):
+def preview(code, name='クエリ1', query=None, step=None, limit=PREVIEW_ROWS, full=False, now=None, inputs=None):
     """画面の下読み。式を読み、クエリの並び・各クエリのステップ・選んだステップの結果（先頭 limit 行）を返す。
 
     読めない・評価できないときも ok=False で、どこ（何行目・どのクエリのどのステップ）かを返す。"""
@@ -402,10 +414,11 @@ def preview(code, name='クエリ1', query=None, step=None, limit=PREVIEW_ROWS, 
     out = {'ok': False, 'queries': [], 'query': '', 'step': '', 'columns': [], 'rows': [], 'row_count': 0,
            'error_cells': 0, 'notes': [], 'kind': ''}
     try:
-        doc = M.Document.from_text(code, name or 'クエリ1')
+        doc = M.Document.from_text(code, name or 'クエリ1', inputs=inputs)
     except M.MError as e:
         out['error'] = _error_view(e)
         return out
+    out['uses_input'] = doc.uses_input()
     main = doc.main_name()
     helpers = set(doc.helpers())
     out['main'] = main
@@ -633,3 +646,216 @@ def job_inputs(job):
         return [], []
     files, folders = literal_paths(q['code'])
     return ([Path(resolve_m_path(x)) for x in files], [Path(resolve_m_path(x)) for x in folders])
+
+
+# ---- 後処理（2.6.0）: 取り出した表に M の式を当ててから出す ------------------------------
+POST_SAMPLE_ROWS = 1000       # 後処理の下読みのために控える、後処理の前の表の行数
+
+
+def _typed(v, kind):
+    """中間CSVの文字を、列の型（読取マスタ・クエリで決めた型）の値へ戻す。戻せなければ文字のまま（誤りにしない）。"""
+    try:
+        if kind == 'integer':
+            return int(v.replace(',', ''))
+        if kind == 'numeric':
+            x = float(v.replace(',', ''))
+            return int(x) if x.is_integer() and '.' not in v and 'e' not in v.lower() else x
+        if kind == 'datetime':
+            return datetime.fromisoformat(v.replace('/', '-'))
+        if kind == 'date':
+            return datetime.fromisoformat(v.replace('/', '-')).date()
+    except ValueError:
+        pass
+    return v
+
+
+_M_TYPE = {'integer': ('number', 'Int64'), 'numeric': ('number', None), 'date': ('date', None), 'datetime': ('datetime', None)}
+
+
+def input_table(headers, body, types=None):
+    """取り出した表（中間データの見出しと行。どれも文字）→ M の表。
+
+    空のセルは null にする（Power Query で読み込んだ空のセルと同じ。ピボット解除で空のセルを出さない・合計で数えない）。
+    列の型が分かっている列（読取マスタ・クエリの入力）は、その型の値に戻して型も付ける。RNE の列は文字のまま。"""
+    types = types or {}
+    kinds = [str(types.get(h) or 'text') for h in headers]
+    rows = []
+    for r in body:
+        row = []
+        for i, k in enumerate(kinds):
+            v = r[i] if i < len(r) else ''
+            v = '' if v is None else str(v)
+            row.append(None if v == '' else (v if k == 'text' else _typed(v, k)))
+        rows.append(row)
+    mtypes = [M.MType(_M_TYPE[k][0], True, _M_TYPE[k][1]) if k in _M_TYPE else None for k in kinds]
+    return M.MTable([str(h) for h in headers], rows, mtypes)
+
+
+def post_document(post, inputs=None):
+    """後処理の取り決め → (Document, 出すクエリの名前, 見出しの言葉, 手順とステップ名の対応)。使えなければ ValueError。"""
+    p = navi_post.normalize(post)
+    if p.get('mode') == 'query':
+        q = find_m_query(p.get('query_id'))
+        if not q:
+            raise ValueError('後処理のクエリが選ばれていません（または削除されています）。対象の「後処理」で選び直してください')
+        bad = validate_query(q)
+        if bad:
+            raise ValueError(f'後処理のクエリ「{q["name"]}」が使えません: ' + '／'.join(bad))
+        doc = M.Document.from_text(q['code'], q['name'], inputs=inputs)
+        return doc, output_name(doc, q, {'query_out': p.get('query_out')}), f'クエリ「{q["name"]}」', []
+    bad = navi_post.problems(p)
+    if bad:
+        raise ValueError('／'.join(bad))
+    code, made = navi_post.compile_steps(p['steps'])
+    return M.Document.from_text(code, '後処理', inputs=inputs), '後処理', '手順 ' + str(len(p['steps'])), made
+
+
+def run_post(post, headers, body, types, dst, reject_zero=False, now=None):
+    """取り出した表に後処理を当て、変換に渡す中間CSVへ書く。→ (行数, 列数, stat)。"""
+    started = time.perf_counter()
+    src = input_table(headers, body, types)
+    doc, name, label, _made = post_document(post, {M.INPUT_NAME: src})
+    t = as_table(doc.evaluate(name, host_=host(False, now)), name)
+    if reject_zero and not t.rows:
+        raise ValueError(f'後処理（{label}）の結果が0件のため出力を中止しました')
+    rows, out_types, errors, samples, nested = write_table_csv(t, dst)
+    stat = {'label': label, 'summary': navi_post.summary(post, label), 'rows_in': len(body), 'columns_in': len(headers),
+            'rows': len(rows), 'columns': len(t.columns), 'error_cells': errors, 'error_samples': samples,
+            'nested_columns': nested, 'types': out_types, 'elapsed': round(time.perf_counter() - started, 3)}
+    return len(rows), len(t.columns), stat
+
+
+def _safe_id(job_id):
+    return re.sub(r'[^0-9A-Za-z_-]', '_', str(job_id or ''))[:80] or 'job'
+
+
+def post_sample_path(job_id):
+    return Path(app.LOCAL_RUNTIME) / 'post_sample' / f'{_safe_id(job_id)}.json'
+
+
+def save_post_sample(job, headers, body, types):
+    """後処理の前の表の先頭を、この PC に控える（後処理の下読みと列の候補に使う）。失敗しても実行は止めない。"""
+    try:
+        path = post_sample_path(job.get('id'))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        data = {'headers': list(headers), 'rows': [list(r) for r in body[:POST_SAMPLE_ROWS]], 'total_rows': len(body),
+                'types': dict(types or {}), 'value': str(job.get('_variant_value') or ''),
+                'saved_at': datetime.now().isoformat(timespec='seconds')}
+        tmp = path.with_suffix('.tmp')
+        tmp.write_text(json.dumps(data, ensure_ascii=False), encoding='utf-8')
+        tmp.replace(path)
+    except Exception as e:
+        log.warning('POST_SAMPLE_SAVE_FAILED job=%s error=%s', job.get('name'), e)
+
+
+def post_process(j, cfg, intermediate, expected_rows, expected_cols, line=''):
+    """finish_one_job の入口で呼ぶ。取り出した表（中間データ）に後処理を当て、新しい中間データに差し替える。
+
+    → (後処理を当てた対象の写し, 新しい中間CSV, 行数, 列数, stat)。対象の写しは、見出しが1行の中間CSV を読む形にそろえる
+    （RNE の集計表の段は、ここで読んだときに畳んである。もう一度畳むと見出しを読み飛ばす）。"""
+    zero = bool(cfg['settings'].get('reject_zero_rows'))
+    t = phase_log('post_process', job=j.get('name'), line=line) if line else phase_log('post_process', job=j.get('name'))
+    headers, body = read_extract(intermediate, j, zero, expected_rows, expected_cols)
+    types = dict(j.get('_column_types') or {}) if isinstance(j.get('_column_types'), dict) else {}
+    save_post_sample(j, headers, body, types)
+    dst = Path(intermediate).with_name(Path(intermediate).stem + '_post.csv')
+    rows, cols, stat = run_post(j.get('post'), headers, body, types, dst, reject_zero=zero)
+    j2 = {**j, 'type': '詳細データ', '_rne_layout': None, '_intermediate_encoding': 'utf-8-sig', '_column_types': stat['types']}
+    phase_log('post_process', t, job=j.get('name'), rows=rows, columns=cols)
+    log.info('POST_PROCESS job=%s value=%s how=%s rows=%s→%s columns=%s→%s error_cells=%s elapsed=%.2fs 中間CSV=%s',
+             j.get('name'), j.get('_variant_value') or '', stat['summary'], stat['rows_in'], rows, stat['columns_in'], cols,
+             stat['error_cells'], stat['elapsed'], dst)
+    if stat['error_cells']:
+        log.warning('POST_PROCESS_ERROR_CELLS job=%s 箇所=%s 誤りのセルを空にしました 例=%s', j.get('name'), stat['error_cells'],
+                    '、'.join(f'{k}: {v}' for k, v in list(stat['error_samples'].items())[:3]))
+    return j2, dst, rows, cols, stat
+
+
+def post_note(stat):
+    """実行結果の1行に添える言葉（例: / 後処理 ピボット解除 1,200件→85件）。"""
+    if not stat:
+        return ''
+    note = f' / {stat["summary"]} {stat["rows_in"]:,}件→{stat["rows"]:,}件'
+    if stat.get('error_cells'):
+        note += f'（誤りのセル {stat["error_cells"]}か所を空で出しました）'
+    return note
+
+
+def post_sample(job, cfg):
+    """後処理の下読みに使う、後処理の前の表。→ {'headers','rows','types','total_rows','source','saved_at'} か None。
+
+    この PC で後処理を当てた回の控え（いちばん確か）→ 後処理を使っていない対象なら、いまの出力ファイル（＝後処理の前の表）。"""
+    path = post_sample_path(job.get('id'))
+    if path.is_file():
+        try:
+            d = json.loads(path.read_text(encoding='utf-8'))
+            d['source'] = 'sample'
+            return d
+        except Exception as e:
+            log.warning('POST_SAMPLE_READ_FAILED job=%s error=%s', job.get('name'), e)
+    if navi_post.active(job):
+        return None
+    try:
+        files = app.viewer_files(job, cfg)
+        one = next((x for x in files if Path(x['path']).is_file()), None)
+        if not one:
+            return None
+        p = Path(one['path'])
+        _fmt, headers, rows, total, _cols = app.read_preview_data(app.read_copy(p), job, limit=POST_SAMPLE_ROWS)
+        return {'headers': headers, 'rows': rows, 'types': {}, 'total_rows': total, 'source': 'output',
+                'saved_at': datetime.fromtimestamp(p.stat().st_mtime).isoformat(timespec='seconds'), 'value': one.get('value') or ''}
+    except Exception as e:
+        log.info('POST_SAMPLE_OUTPUT_UNREADABLE job=%s error=%s', job.get('name'), e)
+        return None
+
+
+def preview_post(post, sample, step=None, limit=PREVIEW_ROWS):
+    """後処理の下読み。見本（後処理の前の表）に当てて、step 番目の手順（0 から。None なら最後）までの結果を返す。
+
+    手順で組むときは、手順の番号ごとに「どこまで当てたか」を返す（画面で手順を押すと、その手順のあとの表を見せる）。"""
+    p = navi_post.normalize(post)
+    src = input_table(sample['headers'], sample['rows'], sample.get('types')) if sample else None
+    inputs = {M.INPUT_NAME: src} if src is not None else None
+    if p.get('mode') == 'query':
+        q = find_m_query(p.get('query_id'))
+        if not q:
+            return {'ok': False, 'error': {'message': 'クエリを選んでください'}, 'columns': [], 'rows': [], 'row_count': 0}
+        out = preview(q['code'], q['name'], query=p.get('query_out') or q.get('output') or None, limit=limit, inputs=inputs)
+        out['code'] = q['code']
+    else:
+        steps = p.get('steps') or []
+        code, made = navi_post.compile_steps(steps)
+        names = [n for _i, n in made]
+        want = None
+        if step is not None and steps:
+            k = max(0, min(int(step), len(steps) - 1))
+            hit = [n for i, n in made if i == k]
+            want = hit[-1] if hit else None
+        out = preview(code, '後処理', step=want, limit=limit, inputs=inputs)
+        out['code'] = code
+        out['step_names'] = [[i, n] for i, n in made]
+        out['problems'] = navi_post.problems({**p, 'enabled': True}) if steps else []
+        # 止まったステップを、画面の手順の番号へ戻す
+        err = out.get('error') or {}
+        if err.get('step') in names:
+            out['error_step'] = next(i for i, n in made if n == err['step'])
+    out['input'] = {'columns': list(sample['headers']), 'rows': len(sample['rows']), 'total_rows': sample.get('total_rows'),
+                    'source': sample.get('source'), 'saved_at': sample.get('saved_at'), 'value': sample.get('value') or ''} if sample else None
+    return out
+
+
+def post_inputs_for(job_id='', query_id='', cfg=None):
+    """クエリの編集で「取り出した表」を下読みするための見本。→ (inputs か None, 見本の説明か None)。
+
+    対象を指定されればその対象の見本、無ければこのクエリを後処理に使っている対象のうち、見本があるもの。"""
+    jobs = (cfg or load()).get('jobs') or []
+    cands = [j for j in jobs if j.get('id') == job_id] if job_id else []
+    if not cands and query_id:
+        cands = [j for j in jobs if navi_post.normalize(j.get('post')).get('query_id') == query_id]
+    for j in cands:
+        sample = post_sample(j, cfg or load())
+        if sample:
+            info = {'job': j.get('name', ''), 'job_id': j.get('id'), 'rows': len(sample['rows']), 'total_rows': sample.get('total_rows'),
+                    'source': sample.get('source'), 'saved_at': sample.get('saved_at'), 'value': sample.get('value') or ''}
+            return {M.INPUT_NAME: input_table(sample['headers'], sample['rows'], sample.get('types'))}, info
+    return None, None

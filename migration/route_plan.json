@@ -336,6 +336,21 @@
    "to": "python",
    "note": "2.4.0"
   },
+  "GET /api/post/meta": {
+   "area": "後処理（Power Query）",
+   "to": "python",
+   "note": "2.6.0"
+  },
+  "POST /api/post/preview": {
+   "area": "後処理（Power Query）",
+   "to": "python",
+   "note": "2.6.0"
+  },
+  "POST /api/post/to-query": {
+   "area": "後処理（Power Query）",
+   "to": "python",
+   "note": "2.6.0"
+  },
   "POST /api/m-query/samples": {
    "area": "クエリ（Power Query）",
    "to": "python",

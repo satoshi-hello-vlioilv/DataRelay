@@ -55,7 +55,8 @@ for _n in ('_mark_settings_dirty',
            'write_join_intermediate',
            'find_m_query',
            'validate_m_query',
-           'write_m_intermediate'):globals()[_n]=_borrow(_n)
+           'write_m_intermediate',
+           'post_note'):globals()[_n]=_borrow(_n)
 del _n
 
 def _uuid4():
@@ -225,6 +226,7 @@ def local_progress_say(progress_fn,j):
   elif stage=='read':
    what={'mquery':('クエリを評価しています','Power Query'),'join':('ファイルを結合しています','ファイル結合')}.get(kw.get('kind') or '',('テキストを読み取っています','固定長テキスト'))
    progress_fn('save',f'{j["name"]}: {what[0]}',35,current_job_id=j['id'],activity_detail=what[1],activity_value=str(kw.get('source') or ''))
+  elif stage=='post':progress_fn('export',f'{j["name"]}: 後処理（Power Query）で表を整えています',55,activity_detail='後処理')
   elif stage=='unchanged':progress_fn('publish',f'{j["name"]}: 前回と同じ内容のため更新しませんでした',95,activity_detail='変更なし')
   elif stage=='convert':progress_fn('export',f'{j["name"]}: 形式を変換しています',70,activity_detail='形式別変換工程')
   elif stage=='publish':progress_fn('publish',f'{j["name"]}: 検査済みファイルを公開しています',90,activity_detail='公開工程')
@@ -255,7 +257,8 @@ def run_one_local(j,cfg,work,backup,trigger,index,total_all,say=None):
   detail=f'前回と同じ内容のため更新しませんでした / {total:.1f}秒'
  else:
   detail=(f'{fin["rows"]}件/{fin["cols"]}列 / {total:.1f}秒'
-          +('' if fin['published'] else f' / 更新保留: {fin["pending"]}')+extra_format_note(fin['extra_results']))
+          +('' if fin['published'] else f' / 更新保留: {fin["pending"]}')+extra_format_note(fin['extra_results'])
+          +post_note(fin.get('post')))
   if stat.get('error_cells'):
    detail+=f' / 誤りのセル {stat["error_cells"]}か所を空で出しました（'+'、'.join(f'{k}: {v}' for k,v in list(stat['error_samples'].items())[:2])+'）'
  metrics=serial_run_metrics(kind,fmt,total,fin['rows'],fin['cols'])
@@ -268,6 +271,7 @@ def run_one_local(j,cfg,work,backup,trigger,index,total_all,say=None):
  elif 'joins' in stat:
   metrics.update(join_sources=len(stat['sources']),
                  join_matched=[x.get('both') for x in stat['joins']])
+ if fin.get('post'):metrics.update(post=fin['post']['summary'],post_rows_in=fin['post']['rows_in'],post_error_cells=fin['post']['error_cells'])
  if held.get('waited'):metrics.update(wait_seconds=held['waited'])
  record_job_run(j['id'],j['name'],'ok',trigger,detail=detail,rows=fin['rows'],cols=fin['cols'],
                 output_file=j['output_file'],metrics=metrics)
