@@ -69,9 +69,16 @@ def _text(v,limit=400):
 
 
 # ---- 対象の登録 -------------------------------------------------------------
-def job_export_one(job,layout_name='',recipe_name='',query_name=''):
+def job_export_one(job,layout_name='',recipe_name='',query_name='',post_query_name=''):
  """1件を持ち出す形へ。id は落とし、結び直しのための名前を足す。"""
  out={k:v for k,v in dict(job or {}).items() if k not in JOB_DROP}
+ # 後処理（2.6.0）も、使っていない対象では書かない。使うクエリは id ではなく名前で持ち出す（入力のクエリと同じ）
+ post=out.get('post')
+ if isinstance(post,dict) and (post.get('enabled') or post.get('steps') or post.get('query_id')):
+  post=dict(post);post.pop('query_id',None)
+  if post_query_name:post['query_name']=_text(post_query_name,120)
+  out['post']=post
+ else:out.pop('post',None)
  # 読取マスタ・結合マスタの id は環境ごとに違う。名前で結び直せるようにしておく。
  out.pop('layout_id',None);out.pop('recipe_id',None);out.pop('query_id',None)
  # クエリの出す先（query_out）は、使っていない対象では書かない（既定の設定と手元を比べたとき、全部が「違う」にならないように）
@@ -96,7 +103,8 @@ def jobs_export(jobs,layout_name_of=None,recipe_name_of=None,query_name_of=None)
  ln=layout_name_of or (lambda i:'')
  rn=recipe_name_of or (lambda i:'')
  qn=query_name_of or (lambda i:'')
- items=[job_export_one(j,ln(j.get('layout_id') or ''),rn(j.get('recipe_id') or ''),qn(j.get('query_id') or ''))
+ items=[job_export_one(j,ln(j.get('layout_id') or ''),rn(j.get('recipe_id') or ''),qn(j.get('query_id') or ''),
+                       qn(str((j.get('post') or {}).get('query_id') or '')) if isinstance(j.get('post'),dict) else '')
         for j in (jobs or [])]
  return {'kind':JOBS_KIND,'version':JOBS_VERSION,'exported_at':_now(),
          'count':len(items),'jobs':items}

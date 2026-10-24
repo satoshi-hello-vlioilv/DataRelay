@@ -4,5 +4,5 @@
 navi_changelog.py にある ―― 800行の読みものなので、それを必要としない経路
 （抽出ワーカー）が読み込まずに済むように分けてある。
 """
-APP_VERSION='2.5.3'; APP_VERSION_TITLE='脆弱性の確認で見つけた所を直した ―― 共有の DLL を読まない・利用者ごとのフォルダーを本人だけに・画面の守りを固めた'; APP_RELEASED_AT='2026-10-16'
+APP_VERSION='2.6.0'; APP_VERSION_TITLE='後処理 ―― 取り出した表を、出す前に Power Query の式で整える（ピボット・ピボット解除・グループ化など。どの入力でも）'; APP_RELEASED_AT='2026-10-24'
 BUILD_VERSION=f'{APP_VERSION}-web'

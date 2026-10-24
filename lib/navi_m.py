@@ -1764,20 +1764,44 @@ def is_helper_name(name):
     return bool(_HELPER_NAMES.match(str(name or '')))
 
 
-class Document:
-    """クエリの集まり。互いに名前で参照でき、標準の関数（navi_mlib）の上に乗る。"""
+# 外から渡す名前（2.6.0）。対象の後処理として使う式は、取り出した表をこの名前で受け取る（Power Query で別のクエリを
+# 参照するのと同じ書き方）。式の中に定義が無くても「足りない名前」にはせず、渡されていないときは理由を言って止める。
+INPUT_NAME = '取り出した表'
+EXTERNAL_NAMES = (INPUT_NAME,)
 
-    def __init__(self, queries, library=None):
+
+def _not_given(name):
+    def fail():
+        raise MError(f'「{name}」は、対象の後処理として使うときに、取り出した表が入る名前です。'
+                     'ここでは表が渡されていません（下読みには、見本にする対象を選んでください）。',
+                     'Expression.Error', MRecord.of({'Name': name}))
+    return fail
+
+
+class Document:
+    """クエリの集まり。互いに名前で参照でき、標準の関数（navi_mlib）の上に乗る。
+
+    inputs: 外から渡す値（{名前: 値}）。後処理では {INPUT_NAME: 取り出した表}。式の中に同じ名前のクエリがあれば、そちらが勝つ。"""
+
+    def __init__(self, queries, library=None, inputs=None):
         self.queries = list(queries)
         self.by_name = {q.name: q for q in self.queries}
         if library is None:
             import navi_mlib
             library = navi_mlib.library()
         self.library = library
+        self.inputs = dict(inputs or {})
 
     @classmethod
-    def from_text(cls, text, default_name='クエリ1', library=None):
-        return cls(read_queries(text, default_name), library)
+    def from_text(cls, text, default_name='クエリ1', library=None, inputs=None):
+        return cls(read_queries(text, default_name), library, inputs)
+
+    def uses_input(self):
+        """外から渡す名前（取り出した表）を使っているか。式の中に同じ名前のクエリがあれば使っていない扱い。"""
+        used = set()
+        for q in self.queries:
+            referenced_names(q.node, used)
+        return any(n in used and n not in self.by_name for n in EXTERNAL_NAMES)
 
     def names(self):
         return [q.name for q in self.queries]
@@ -1865,7 +1889,8 @@ class Document:
                         walk(x)
         for q in self.queries:
             walk(q.node)
-        return sorted(n for n in used - bound if n not in self.library and n not in _NAMED_TYPES)
+        return sorted(n for n in used - bound
+                      if n not in self.library and n not in _NAMED_TYPES and n not in EXTERNAL_NAMES and n not in self.inputs)
 
     def steps(self, name):
         """クエリの「適用したステップ」（いちばん外の let の各ステップ）。let でなければ1つだけ。"""
@@ -1876,7 +1901,9 @@ class Document:
 
     def _env(self, host_):
         root = Env(self.library)
-        qenv = Env({}, root)
+        outside = {n: Thunk(_not_given(n), n, n) for n in EXTERNAL_NAMES}
+        outside.update(self.inputs)
+        qenv = Env({}, Env(outside, root))
         for q in self.queries:
             qenv.vars[q.name] = Thunk((lambda q=q: compile_node(q.node, q.name)(qenv)), q.name, q.name)
         return qenv

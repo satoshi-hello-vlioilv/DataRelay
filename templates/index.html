@@ -18,6 +18,7 @@
 <div class="modalbody mq-adv-body"><p class="hint">Excel の Power Query の詳細エディターの中身を、そのまま貼り付けます。補助のクエリも一緒に書くときは、<code>// クエリ名</code> の行で区切ります（<code>section Section1;</code> の形も読めます）。</p>
 <textarea id="mq-adv-text" spellcheck="false" wrap="off" aria-label="式（M）"></textarea></div>
 <div class="modalfoot"><small id="mq-adv-pos" class="mq-adv-pos"></small><span class="mqx-sp"></span><button type="button" id="mq-adv-cancel" class="secondary">キャンセル</button><button type="button" id="mq-adv-ok">完了（確かめる）</button></div></div></dialog>
+<dialog id="mq-op-dialog"><div class="modal mq-op-modal"><div class="modalhead"><div><small>変換</small><h2 id="mq-op-title">ピボット列</h2></div><button type="button" id="mq-op-close" class="iconbtn" aria-label="閉じる">×</button></div><div class="modalbody" id="mq-op-body"></div><div class="modalfoot"><small id="mq-op-note" class="mq-op-note"></small><span class="mqx-sp"></span><button type="button" id="mq-op-cancel" class="secondary">キャンセル</button><button type="button" id="mq-op-ok">OK</button></div></div></dialog>
 <dialog id="mq-build-dialog"><div class="modal mq-build-modal">
 <div class="modalhead"><div><small>Power Query</small><h2>フォルダーから作る</h2></div><button type="button" id="mqb-close" class="iconbtn" aria-label="閉じる">×</button></div>
 <div class="modalbody mq-build-body">
@@ -177,6 +178,7 @@
 <button type="button" class="editor-tab on" data-etab="basic" role="tab"><i class="etab-badge eb-io">1</i><span class="etab-text"><b>基本と入出力</b><small>名称・RNE・出力先</small></span></button>
 <button type="button" class="editor-tab" data-etab="period" role="tab"><i class="etab-badge eb-period">2</i><span class="etab-text"><b>抽出期間</b><small>動的な日付指定</small></span><span id="etab-period-on" class="etab-count" hidden>ON</span></button>
 <button type="button" class="editor-tab" data-etab="variant" role="tab"><i class="etab-badge eb-variant">3</i><span class="etab-text"><b>値ごとに分ける</b><small>条件の値ごとに別ファイル</small></span><span id="etab-variant-count" class="etab-count etab-count-variant" hidden>0</span></button>
+<button type="button" class="editor-tab" data-etab="post" role="tab"><i class="etab-badge eb-post">4</i><span class="etab-text"><b>後処理</b><small>ピボット・集計で整える</small></span><span id="etab-post-on" class="etab-count etab-count-post" hidden>ON</span></button>
 <span class="editor-tabsep is-group" aria-hidden="true"></span>
 <button type="button" class="editor-tab" data-etab="naming" role="tab"><i class="etab-badge eb-name">4</i><span class="etab-text"><b>ファイル名</b><small>形式・命名パターン</small></span></button>
 <span class="editor-tabsep is-group" aria-hidden="true"></span>
@@ -228,6 +230,7 @@
 </div>
 </div>
 </div>
+<div class="editor-pane" data-etab="post"><div id="post-pane" class="post"></div></div>
 <div class="editor-pane" data-etab="naming">
 <div class="naming-sub"><b>出力ファイル名と形式</b><small>ファイル名と拡張子（出力形式）はここでまとめて設定します</small></div>
 <div class="naming-box">

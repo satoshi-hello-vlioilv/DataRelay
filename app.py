@@ -415,6 +415,8 @@ def ensure_schema_upgrades():
   if 'query_out' not in cols:c.execute("ALTER TABLE jobs ADD COLUMN query_out TEXT NOT NULL DEFAULT ''")
   # 条件の値ごとに分けて出す（2.1.0）。項目・値の並び・ファイル名と置き場の型を JSON で持つ。
   if 'variants_json' not in cols:c.execute("ALTER TABLE jobs ADD COLUMN variants_json TEXT NOT NULL DEFAULT ''")
+  # 後処理（2.6.0）。取り出した表を、変換の前に M の式で整える取り決め（手順か、使うクエリ）を JSON で持つ（navi_post）。
+  if 'post_json' not in cols:c.execute("ALTER TABLE jobs ADD COLUMN post_json TEXT NOT NULL DEFAULT ''")
   # データビュワーの表示の設定（2.2.0）。列の並び・表示・表示名・計算列・条件を JSON で持つ（navi_viewer）。
   if 'viewer_json' not in cols:c.execute("ALTER TABLE jobs ADD COLUMN viewer_json TEXT NOT NULL DEFAULT ''")
   rc=[r['name'] for r in c.execute('PRAGMA table_info(rne_columns)')]
@@ -483,6 +485,8 @@ import navi_order
 import navi_variants
 # データビュワーの表示の設定（2.2.0。列の並び・計算列・条件）の保存の形は navi_viewer.py。
 import navi_viewer
+# 後処理（2.6.0。取り出した表を変換の前に M の式で整える）の取り決めの形と、手順から式への直し方は navi_post.py。
+import navi_post
 from navi_join import (JOIN_TYPES,JOIN_TYPE_LABEL,JOIN_TYPE_NOTE,SOURCE_FORMATS,SOURCE_FORMAT_LABEL,
                        suggest_keys as suggest_join_keys,
                        MAX_SOURCES as JOIN_MAX_SOURCES,RECIPE_EXPORT_KIND,
@@ -2211,7 +2215,7 @@ def load():
     if x['month_days_json']:q['month_days']=json.loads(x['month_days_json'])
     if x['dates_json']:q['dates']=json.loads(x['dates_json'])
     rules.append(q)
-   fmt=normalize_output_format(r['output_format'],r['output_file']); jobs.append({'id':r['id'],'enabled':bool(r['enabled']),'name':r['name'],'rne':r['rne'],'rne_path':r['rne_path'],'output_folder':r['output_folder'],'output_format':fmt,'output_file':canonical_output_file(r['output_file'],fmt),'table':r['table_name'],'sheet':r['sheet_name'],'type':r['read_type'],'naming_mode':(r['naming_mode'] if 'naming_mode' in r.keys() else 'fixed'),'output_pattern':(r['output_pattern'] if 'output_pattern' in r.keys() else ''),'comment':(r['comment'] if 'comment' in r.keys() else ''),'split_mode':normalize_split_mode(r['split_mode'] if 'split_mode' in r.keys() else ''),'split_shape':normalize_split_shape(r['split_shape'] if 'split_shape' in r.keys() else ''),'row_axis_mode':normalize_row_axis_mode(r['row_axis_mode'] if 'row_axis_mode' in r.keys() else ''),'row_axis_index':int((r['row_axis_index'] if 'row_axis_index' in r.keys() else 1) or 1),'row_axis_name':str((r['row_axis_name'] if 'row_axis_name' in r.keys() else '') or ''),'extra_formats':job_extra_formats({'output_format':fmt,'output_file':r['output_file'],'extra_formats':(r['extra_formats'] if 'extra_formats' in r.keys() else '')}),'index_columns':_json_list(r['index_columns'] if 'index_columns' in r.keys() else ''),'skip_if_unchanged':bool(r['skip_if_unchanged'] if 'skip_if_unchanged' in r.keys() else 0),'source':normalize_job_source(r['source'] if 'source' in r.keys() else ''),'text_path':str((r['text_path'] if 'text_path' in r.keys() else '') or ''),'layout_id':str((r['layout_id'] if 'layout_id' in r.keys() else '') or ''),'recipe_id':str((r['recipe_id'] if 'recipe_id' in r.keys() else '') or ''),'query_id':str((r['query_id'] if 'query_id' in r.keys() else '') or ''),'query_out':str((r['query_out'] if 'query_out' in r.keys() else '') or ''),'period':_decode_period(r['period_json'] if 'period_json' in r.keys() else ''),'variants':navi_variants.normalize(_json_or_empty(r['variants_json'] if 'variants_json' in r.keys() else '')),'viewer':navi_viewer.normalize(_json_or_empty(r['viewer_json'] if 'viewer_json' in r.keys() else '')),'schedules':rules})
+   fmt=normalize_output_format(r['output_format'],r['output_file']); jobs.append({'id':r['id'],'enabled':bool(r['enabled']),'name':r['name'],'rne':r['rne'],'rne_path':r['rne_path'],'output_folder':r['output_folder'],'output_format':fmt,'output_file':canonical_output_file(r['output_file'],fmt),'table':r['table_name'],'sheet':r['sheet_name'],'type':r['read_type'],'naming_mode':(r['naming_mode'] if 'naming_mode' in r.keys() else 'fixed'),'output_pattern':(r['output_pattern'] if 'output_pattern' in r.keys() else ''),'comment':(r['comment'] if 'comment' in r.keys() else ''),'split_mode':normalize_split_mode(r['split_mode'] if 'split_mode' in r.keys() else ''),'split_shape':normalize_split_shape(r['split_shape'] if 'split_shape' in r.keys() else ''),'row_axis_mode':normalize_row_axis_mode(r['row_axis_mode'] if 'row_axis_mode' in r.keys() else ''),'row_axis_index':int((r['row_axis_index'] if 'row_axis_index' in r.keys() else 1) or 1),'row_axis_name':str((r['row_axis_name'] if 'row_axis_name' in r.keys() else '') or ''),'extra_formats':job_extra_formats({'output_format':fmt,'output_file':r['output_file'],'extra_formats':(r['extra_formats'] if 'extra_formats' in r.keys() else '')}),'index_columns':_json_list(r['index_columns'] if 'index_columns' in r.keys() else ''),'skip_if_unchanged':bool(r['skip_if_unchanged'] if 'skip_if_unchanged' in r.keys() else 0),'source':normalize_job_source(r['source'] if 'source' in r.keys() else ''),'text_path':str((r['text_path'] if 'text_path' in r.keys() else '') or ''),'layout_id':str((r['layout_id'] if 'layout_id' in r.keys() else '') or ''),'recipe_id':str((r['recipe_id'] if 'recipe_id' in r.keys() else '') or ''),'query_id':str((r['query_id'] if 'query_id' in r.keys() else '') or ''),'query_out':str((r['query_out'] if 'query_out' in r.keys() else '') or ''),'period':_decode_period(r['period_json'] if 'period_json' in r.keys() else ''),'variants':navi_variants.normalize(_json_or_empty(r['variants_json'] if 'variants_json' in r.keys() else '')),'viewer':navi_viewer.normalize(_json_or_empty(r['viewer_json'] if 'viewer_json' in r.keys() else '')),'post':navi_post.normalize(_json_or_empty(r['post_json'] if 'post_json' in r.keys() else '')),'schedules':rules})
   cfg['jobs']=jobs; cfg['text_layouts']=_load_text_layouts(c); cfg['join_recipes']=_load_join_recipes(c); cfg['m_queries']=_load_m_queries(c); cfg.setdefault('settings',{});
   # 設定の版。画面はこれをそのまま送り返し、ほかで変わっていたら保存を断れるようにする
   # （画面を2つ開いていると、あとから保存したほうが相手の追加した対象を消していた）。
@@ -2261,7 +2265,7 @@ def _save_local(v,quiet=False):
   keep=[]
   for order,j in enumerate(jobs):
    jid=j.get('id') or str(uuid.uuid4()); keep.append(jid)
-   fmt=normalize_output_format(j.get('output_format'),j.get('output_file')); output_file=canonical_output_file(j.get('output_file'),fmt); (None if quiet else log.info('設定保存 job=%s requested_format=%s saved_format=%s requested_file=%s saved_file=%s',j.get('name'),j.get('output_format'),fmt,j.get('output_file'),output_file)); c.execute('INSERT OR REPLACE INTO jobs (id,display_order,enabled,name,rne,rne_path,output_folder,output_format,output_file,table_name,sheet_name,read_type,naming_mode,output_pattern,comment,split_mode,split_shape,row_axis_mode,row_axis_index,row_axis_name,extra_formats,index_columns,skip_if_unchanged,period_json,source,text_path,layout_id,recipe_id,query_id,query_out,variants_json,viewer_json,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',(jid,order,int(bool(j.get('enabled',True))),j.get('name',''),j.get('rne',''),j.get('rne_path',''),j.get('output_folder',''),fmt,output_file,job_table_name(j),j.get('sheet','Page1'),j.get('type','詳細データ'),str(j.get('naming_mode') or 'fixed'),str(j.get('output_pattern') or ''),str(j.get('comment') or ''),normalize_split_mode(j.get('split_mode')),normalize_split_shape(j.get('split_shape')),normalize_row_axis_mode(j.get('row_axis_mode')),max(1,min(200,int(j.get('row_axis_index') or 1))),str(j.get('row_axis_name') or ''),json.dumps(job_extra_formats({**j,'output_format':fmt}),ensure_ascii=False),json.dumps([str(x).strip() for x in (j.get('index_columns') or []) if str(x).strip()][:4],ensure_ascii=False),int(bool(j.get('skip_if_unchanged'))),json.dumps(_decode_period(json.dumps(j.get('period') or {},ensure_ascii=False)),ensure_ascii=False),normalize_job_source(j.get('source')),str(j.get('text_path') or ''),str(j.get('layout_id') or ''),str(j.get('recipe_id') or ''),str(j.get('query_id') or ''),str(j.get('query_out') or ''),json.dumps(navi_variants.normalize(j.get('variants')),ensure_ascii=False),json.dumps(navi_viewer.normalize(j.get('viewer')),ensure_ascii=False),now))
+   fmt=normalize_output_format(j.get('output_format'),j.get('output_file')); output_file=canonical_output_file(j.get('output_file'),fmt); (None if quiet else log.info('設定保存 job=%s requested_format=%s saved_format=%s requested_file=%s saved_file=%s',j.get('name'),j.get('output_format'),fmt,j.get('output_file'),output_file)); c.execute('INSERT OR REPLACE INTO jobs (id,display_order,enabled,name,rne,rne_path,output_folder,output_format,output_file,table_name,sheet_name,read_type,naming_mode,output_pattern,comment,split_mode,split_shape,row_axis_mode,row_axis_index,row_axis_name,extra_formats,index_columns,skip_if_unchanged,period_json,source,text_path,layout_id,recipe_id,query_id,query_out,variants_json,viewer_json,post_json,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',(jid,order,int(bool(j.get('enabled',True))),j.get('name',''),j.get('rne',''),j.get('rne_path',''),j.get('output_folder',''),fmt,output_file,job_table_name(j),j.get('sheet','Page1'),j.get('type','詳細データ'),str(j.get('naming_mode') or 'fixed'),str(j.get('output_pattern') or ''),str(j.get('comment') or ''),normalize_split_mode(j.get('split_mode')),normalize_split_shape(j.get('split_shape')),normalize_row_axis_mode(j.get('row_axis_mode')),max(1,min(200,int(j.get('row_axis_index') or 1))),str(j.get('row_axis_name') or ''),json.dumps(job_extra_formats({**j,'output_format':fmt}),ensure_ascii=False),json.dumps([str(x).strip() for x in (j.get('index_columns') or []) if str(x).strip()][:4],ensure_ascii=False),int(bool(j.get('skip_if_unchanged'))),json.dumps(_decode_period(json.dumps(j.get('period') or {},ensure_ascii=False)),ensure_ascii=False),normalize_job_source(j.get('source')),str(j.get('text_path') or ''),str(j.get('layout_id') or ''),str(j.get('recipe_id') or ''),str(j.get('query_id') or ''),str(j.get('query_out') or ''),json.dumps(navi_variants.normalize(j.get('variants')),ensure_ascii=False),json.dumps(navi_viewer.normalize(j.get('viewer')),ensure_ascii=False),json.dumps(navi_post.normalize(j.get('post')),ensure_ascii=False),now))
    c.execute('DELETE FROM schedules WHERE job_id=?',(jid,))
    for ro,q in enumerate(j.get('schedules',[])):
     c.execute('INSERT INTO schedules VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',(q.get('id') or str(uuid.uuid4()),jid,ro,int(bool(q.get('enabled',True))),q.get('name','実行ルール'),q.get('type','daily'),q.get('time','06:00'),normalize_interval_minutes(q.get('interval_minutes')),json.dumps(q.get('weekdays'),ensure_ascii=False) if 'weekdays' in q else None,json.dumps(q.get('month_days'),ensure_ascii=False) if 'month_days' in q else None,json.dumps(q.get('dates'),ensure_ascii=False) if 'dates' in q else None,now))
@@ -3715,7 +3719,31 @@ def run_race_extraction(j,cfg,user,pw,server,work,chosen,dest_csv,line='',stats=
           line,j['name'],total_elapsed,run_elapsed,total_elapsed-run_elapsed,rows,cols)
  return rows,cols,'split',{'elapsed':round(total_elapsed,2),'results':results}
 
-def finish_one_job(j,cfg,*,intermediate,db,target,backup,out_dir,local_export,stamp,
+def finish_one_job(j,cfg,*,intermediate,expected_rows,expected_cols,api_direct_output,line='',report=None,**kw):
+ """1つの対象を仕上げる後半の入口。後処理（2.6.0）があれば、取り出した表に当ててから _finish_core へ渡す。
+
+ どの入力（RNE・固定長・結合・クエリ）も、値ごとに分けた1ファイルも、ここを通る。だから後処理はここ1か所で当てる
+ （入力ごとに書くと、片方にしか入らない壊れ方を繰り返す）。後処理の中間CSVは仕上げたら消す。
+ 返すものは _finish_core と同じに、post（後処理の記録。当てなければ None）を足したもの。"""
+ if not navi_post.active(j):
+  fin=_finish_core(j,cfg,intermediate=intermediate,expected_rows=expected_rows,expected_cols=expected_cols,
+                   api_direct_output=api_direct_output,line=line,report=report,**kw)
+  fin['post']=None
+  return fin
+ # 直接XLSX（API が出力のファイルをそのまま書く近道）では表を手元で読まないので、後処理を当てられない。呼ぶ側で止めてある
+ if api_direct_output:raise RuntimeError('後処理のある対象を、直接XLSXで書き出そうとしました（中間CSVを経る道で作ってください）')
+ if report:report('post')
+ j2,post_csv,rows,cols,stat=navi_mrun.post_process(j,cfg,intermediate,expected_rows,expected_cols,line)
+ try:
+  fin=_finish_core(j2,cfg,intermediate=post_csv,expected_rows=rows,expected_cols=cols,api_direct_output=False,
+                   line=line,report=report,**kw)
+ finally:
+  try:post_csv.unlink(missing_ok=True)
+  except Exception:pass
+ fin['post']=stat
+ return fin
+
+def _finish_core(j,cfg,*,intermediate,db,target,backup,out_dir,local_export,stamp,
                    expected_rows,expected_cols,fmt,extras,api_direct_output,job_started,
                    line='',report=None,on_published=None,convert_gate=None,share_gate=None):
  """1つの対象を仕上げる後半。中間データを受け取り、変換 → 公開 → 同時出力 までを行う。
@@ -4103,15 +4131,15 @@ def _finish_variants(j,cfg,*,intermediate,backup,local_export,stamp,fmt,extras,e
    """同時に作るときの一言: 何本が変換・公開しているか、残りはいくつか（どの値が動いているかは区切りバーで分かる）。
    変換は1本ずつなので、変換の順番を待っている値（convert_start）は「変換待ち」に数える。"""
    # 保留の確認は、共有で確認している数だけ（共有の空きを待っている値は、まだ何も始めていない値と同じく「待ち」）
-   n_={'保留の確認':share.scanning,**{k2:sum(1 for x in stages if x in v2) for k2,v2 in (('変換中',('convert',)),('変換待ち',('convert_start',)),('公開中',('publish','extras')))}}
+   n_={'保留の確認':share.scanning,**{k2:sum(1 for x in stages if x in v2) for k2,v2 in (('後処理中',('post',)),('変換中',('convert',)),('変換待ち',('convert_start',)),('公開中',('publish','extras')))}}
    n_['待ち']=sum(1 for x,st in zip(slots,stages) if x is None and st in ('','scan'))-share.scanning
    # 共有を触っている数（上限＝ライン数。保留の確認・写す・差し替え）。公開中のうち残りは、目印のあとの猶予を待っている
    return ' · '.join([f'{k2} {v2}' for k2,v2 in n_.items() if v2>0]+[f'共有 {share.inside}/{share.limit}']*bool(n_['公開中'] or share.inside)+[last])
   def one_file(k):
    one=parts[k];value=one['_variant_value'];part=sp['parts'][value]
    def rep(stage,**kw):
-    label={'scan':'保留の確認','convert_start':'変換待ち' if width>1 else '変換・検証','convert':'変換','unchanged':'前回と同じ','publish':'公開','extras':'同時出力'}.get(stage,stage)
-    frac={'scan':0.05,'convert_start':0.1,'convert':0.3,'unchanged':0.9,'publish':0.6,'extras':0.8}.get(stage,0.5)
+    label={'scan':'保留の確認','post':'後処理','convert_start':'変換待ち' if width>1 else '変換・検証','convert':'変換','unchanged':'前回と同じ','publish':'公開','extras':'同時出力'}.get(stage,stage)
+    frac={'scan':0.05,'post':0.08,'convert_start':0.1,'convert':0.3,'unchanged':0.9,'publish':0.6,'extras':0.8}.get(stage,0.5)
     with lock:
      # 同時に作るとき、変換の順番を待っている値（保留の確認・変換待ち）は区切りバーでは待ちのまま。変換に入ってから作成中
      if width<=1 or stage not in ('scan','convert_start'):slots[k]=frac
@@ -4220,7 +4248,7 @@ def _process_api_job_once(j,job_index,total_jobs,cfg,user,pw,server,dde_work,bac
   # 集計表は見出しが段になる。直接受け取ったXLSXは段のまま公開されてしまうので、CSVを通して畳む。
   # 値ごとに分けて出す回は、絞れたかを中身で確かめるため、必ずCSVを通す（受け取ったXLSXは読むのが重い）。
   override=j.get('_cond_override') or None
-  allow_direct_xlsx=(fmt=='xlsx' and not extras and not crosstab and not override)
+  allow_direct_xlsx=(fmt=='xlsx' and not extras and not crosstab and not override and not navi_post.active(j))
   common_intermediate='API_DIRECT_XLSX' if allow_direct_xlsx else 'CSV'
   planned=db if allow_direct_xlsx else dde_work/f'navi_{job_index}_{stamp}.csv'
   if extras:
@@ -4323,7 +4351,8 @@ def _process_api_job_once(j,job_index,total_jobs,cfg,user,pw,server,dde_work,bac
    t=phase_log('api_close_catalog',job=j['name'],line=line_name);api_client.close_catalog();phase_log('api_close_catalog',t,job=j['name'],line=line_name)
   # 仕上げ（変換 → 公開 → 同時出力）は直列と同じ関数で行う。見せ方だけをここで足す。
   def _report(stage,**kw):
-   if stage=='convert_start':update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='変換・検証',percent=line_percent('convert',0),detail=f'{fmt.upper()}へ変換中 · {int(expected_rows or 0):,}件',phase='convert')
+   if stage=='post':update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='後処理',percent=line_percent('convert',0),detail=navi_post.summary(j.get('post')) or '後処理',phase='convert')
+   elif stage=='convert_start':update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='変換・検証',percent=line_percent('convert',0),detail=f'{fmt.upper()}へ変換中 · {int(expected_rows or 0):,}件',phase='convert')
    elif stage=='unchanged':update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='変更なし',percent=100,detail='前回と同じ内容のため更新しませんでした',elapsed=round(kw['total'],1))
    elif stage=='publish':update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='公開',percent=line_percent('publish',0),detail=f'{Path(target).name} へ公開中',phase='publish')
    elif stage=='extras':update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='同時出力',percent=line_percent('publish',0.6),detail=f'あと{len(extras)}形式を同じデータから作成中',phase='publish')
@@ -4363,7 +4392,7 @@ def _process_api_job_once(j,job_index,total_jobs,cfg,user,pw,server,dde_work,bac
   split_label=('' if not split_used else
                (f' / 競争は{"分割なし" if race_winner=="normal" else split_shape_text}の勝ち' if race_winner
                 else f' / {split_shape_text}'))
-  result=f'{j["name"]}: {nr}件/{nc}列 / {total:.1f}秒'+split_label+('' if pub['published'] else f' / 更新保留: {pub["pending"]}')+extra_format_note(extra_results)
+  result=f'{j["name"]}: {nr}件/{nc}列 / {total:.1f}秒'+split_label+('' if pub['published'] else f' / 更新保留: {pub["pending"]}')+extra_format_note(extra_results)+navi_mrun.post_note(fin.get('post'))
   # 列名はここでしか分からないので、作業ファイルの見出しだけ読んで持ち帰る。書き込みは親プロセスが行う
   # （ワーカーが同時に設定DBへ書くと競合するため）。失敗しても抽出結果には影響させない。
   column_names=[]
@@ -5608,7 +5637,7 @@ from navi_joinrun import (_load_join_recipes,load_join_recipes,find_join_recipe,
 import navi_mrun
 from navi_mrun import (_load_m_queries,load_m_queries,find_m_query,save_m_query,m_query_usage,delete_m_query,
                        m_queries_export,m_queries_import,write_m_intermediate,normalize_query as normalize_m_query,
-                       validate_query as validate_m_query)
+                       validate_query as validate_m_query,post_note)
 
 import navi_textrun
 from navi_textrun import (_json_rows,_layout_row,_load_text_layouts,load_text_layouts,
