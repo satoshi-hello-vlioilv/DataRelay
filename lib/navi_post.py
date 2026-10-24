@@ -25,8 +25,10 @@ OPS = {
               'help': '1つの列の値（1月・2月…）を見出しにして横に並べ、値の列を集計します'},
     'group': {'label': 'グループ化', 'step': 'グループ化された行',
               'help': 'キーの列ごとに行をまとめ、合計・件数などを出します'},
-    'select': {'label': '列の選択', 'step': '削除された他の列',
-               'help': '残す列を選び、並べた順に出します'},
+    'select': {'label': '他の列の削除', 'step': '削除された他の列',
+               'help': '選んだ列だけを、選んだ順に残します'},
+    'remove': {'label': '列の削除', 'step': '削除された列',
+               'help': '選んだ列を消します'},
     'rename': {'label': '名前の変更', 'step': '名前が変更された列',
                'help': '列の名前を変えます'},
     'sort': {'label': '並べ替え', 'step': '並べ替えられた行',
@@ -87,7 +89,7 @@ def normalize_step(s):
             aggs.append({'func': fn, 'column': col,
                          'name': _text(a.get('name')) or (GROUP_AGG_LABEL[fn] if fn == 'count' else f'{col}の{GROUP_AGG_LABEL[fn]}')})
         return {'op': op, 'keys': _names(s.get('keys')), 'aggs': aggs or [{'func': 'count', 'column': '', 'name': '件数'}]}
-    if op == 'select':
+    if op in ('select', 'remove'):
         return {'op': op, 'columns': _names(s.get('columns'))}
     if op == 'rename':
         pairs = []
@@ -134,6 +136,16 @@ def m_name(s):
     return '#' + m_text(s)
 
 
+_KEYWORDS = {'and', 'as', 'each', 'else', 'error', 'false', 'if', 'in', 'is', 'let', 'meta', 'not', 'null', 'or', 'otherwise',
+             'section', 'shared', 'then', 'true', 'try', 'type'}
+
+
+def m_ref(name):
+    """ステップを指す名前。そのまま書ける名前（ソース など）は囲まず、記号や空白を含む名前は #"…" で書く（Power Query と同じ）。"""
+    simple = name and all(ch.isalnum() or ch == '_' for ch in name) and not name[0].isdigit() and name not in _KEYWORDS
+    return name if simple else m_name(name)
+
+
 def m_list(names):
     return '{' + ', '.join(m_text(n) for n in names) + '}'
 
@@ -165,8 +177,8 @@ def step_problems(s, n):
         if dup:
             bad.append(head + f'列の名前が重なっています（{"・".join(dup)}）')
         return bad
-    if op == 'select' and not s['columns']:
-        return [head + '残す列を選んでください']
+    if op in ('select', 'remove') and not s['columns']:
+        return [head + ('残す列' if op == 'select' else '消す列') + 'を選んでください']
     if op == 'rename' and not s['pairs']:
         return [head + '変える列と新しい名前を入れてください']
     if op == 'sort' and not s['keys']:
@@ -235,6 +247,8 @@ def _step_builders(s):
         return ([('変更された型', lambda p: _to_number(p, nums))] if nums else []) + [group]
     if op == 'select':
         return [(base, lambda p: f'Table.SelectColumns({p}, {m_list(s["columns"])})')]
+    if op == 'remove':
+        return [(base, lambda p: f'Table.RemoveColumns({p}, {m_list(s["columns"])})')]
     if op == 'rename':
         pairs = ', '.join('{' + m_text(x) + ', ' + m_text(y) + '}' for x, y in s['pairs'])
         return [(base, lambda p: f'Table.RenameColumns({p}, {{{pairs}}})')]
@@ -283,6 +297,8 @@ def step_summary(s):
         return '・'.join(s['keys'][:3]) + ' ごとに ' + '・'.join(a['name'] for a in s['aggs'][:3])
     if op == 'select':
         return f'{len(s["columns"])}列を残す'
+    if op == 'remove':
+        return '・'.join(s['columns'][:3]) + ('ほか' if len(s['columns']) > 3 else '') + ' を消す'
     if op == 'rename':
         return '・'.join(f'{a}→{b}' for a, b in s['pairs'][:2]) + ('ほか' if len(s['pairs']) > 2 else '')
     if op == 'sort':
@@ -298,3 +314,19 @@ def summary(post, query_name=''):
     if p['mode'] == 'query':
         return f'後処理 クエリ「{query_name or "（選ばれていません）"}」'
     return '後処理 ' + ' → '.join(OPS[s['op']]['label'] for s in p['steps'])
+
+
+# ---- 既存の式に、手順を1つ足す（Power Query エディターの「変換」の札。2.6.0）--------------------------
+def step_parts(s, used, ref):
+    """手順1つ → [(ステップ名, 式)]。ステップ名は used（そのクエリのステップ名）と重ならないように「 1」「 2」を付ける。
+    ref は1つ前のステップを指す名前（M の書き方）。足した名前は used に入れる。"""
+    out = []
+    for base, build in _step_builders(s):
+        name, k = base, 1
+        while name in used:
+            name = f'{base} {k}'
+            k += 1
+        used.add(name)
+        out.append((name, build(ref)))
+        ref = m_name(name)
+    return out

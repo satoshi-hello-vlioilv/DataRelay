@@ -895,3 +895,59 @@ def post_inputs_for(job_id='', query_id='', cfg=None):
                     'source': sample.get('source'), 'saved_at': sample.get('saved_at'), 'value': sample.get('value') or ''}
             return {M.INPUT_NAME: input_table(sample['headers'], sample['rows'], sample.get('types'))}, info
     return None, None
+
+
+_IN_TAIL = re.compile(r'^(\s*,?\s*)in\b\s*(.*?)\s*$', re.S)
+
+
+def add_step(code, name='クエリ1', query=None, step=None):
+    """式の中のクエリの最後に、手順（navi_post の手順1つ）を足す。→ {'ok', 'code', 'step'（足した最後のステップ名）} か {'ok': False, 'error'}。
+
+    Power Query エディターで「変換」の札を押したときと同じく、いちばん最後のステップのあとに足し、in をそのステップにする。
+    let で書かれていないクエリ（1つの式だけ）は、それを「ソース」にして let に包む。"""
+    s = navi_post.normalize_step(step)
+    if not s:
+        return {'ok': False, 'error': '手順が分かりません'}
+    bad = navi_post.step_problems(s, 1)
+    if bad:
+        return {'ok': False, 'error': bad[0].split(': ', 1)[-1]}
+    try:
+        doc = M.Document.from_text(code, name or 'クエリ1')
+    except M.MError as e:
+        return {'ok': False, 'error': f'式が読めません: {e.message}'}
+    qn = query if query in doc.names() else doc.main_name()
+    q = doc.by_name[qn]
+    steps = doc.steps(qn)
+    if q.node and q.node[0] == 'let' and q.node[2][0] == 'id' and q.node[2][1] == steps[-1]:
+        last_end = doc.step_spans(qn)[-1][2]
+        end = q.start + len(q.text)
+        tail = _IN_TAIL.match(code[last_end:end])
+        if not tail:
+            return {'ok': False, 'error': 'クエリの終わり（in のあと）を読めません。詳細エディターで直してください'}
+        parts = navi_post.step_parts(s, set(steps), navi_post.m_ref(steps[-1]))
+        add = ''.join(f',\n    {navi_post.m_name(n)} = {x}' for n, x in parts)
+        new = code[:last_end] + add + '\nin\n    ' + navi_post.m_name(parts[-1][0]) + code[end:]
+    else:
+        # let でない（または in が最後のステップでない）クエリは、全体を「ソース」にして包む
+        body = code[q.start:q.start + len(q.text)]
+        parts = navi_post.step_parts(s, {'ソース'}, 'ソース')
+        lines = ['    ソース = ' + body.strip().replace('\n', '\n    ')] + [f'    {navi_post.m_name(n)} = {x}' for n, x in parts]
+        new = code[:q.start] + 'let\n' + ',\n'.join(lines) + '\nin\n    ' + navi_post.m_name(parts[-1][0]) + code[q.start + len(q.text):]
+    try:
+        M.Document.from_text(new, name or 'クエリ1')
+    except M.MError as e:
+        return {'ok': False, 'error': f'足したあとの式が読めません: {e.message}'}
+    return {'ok': True, 'code': new, 'query': qn, 'step': parts[-1][0], 'added': [n for n, _x in parts]}
+
+
+POST_STARTER = 'let\n    ソース = ' + M.INPUT_NAME + '\nin\n    ソース'
+
+
+def post_starter(steps=()):
+    """後処理のクエリの書き始め（取り出した表を「ソース」に受け取る）。steps を渡すと、その手順を足した式。"""
+    code = POST_STARTER
+    for st in steps:
+        r = add_step(code, '後処理', None, st)
+        if r.get('ok'):
+            code = r['code']
+    return code

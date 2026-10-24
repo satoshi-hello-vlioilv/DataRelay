@@ -321,6 +321,11 @@
    "to": "python",
    "note": "2.4.0"
   },
+  "POST /api/m-query/add-step": {
+   "area": "クエリ（Power Query）",
+   "to": "python",
+   "note": "2.6.0"
+  },
   "POST /api/m-query/build": {
    "area": "クエリ（Power Query）",
    "to": "python",

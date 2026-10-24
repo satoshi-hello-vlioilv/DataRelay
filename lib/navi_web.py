@@ -2503,20 +2503,31 @@ def post_preview():
 
 @app.post('/api/post/to-query')
 def post_to_query():
- """手順で組んだ後処理を、クエリ（共通設定 → Power Query）として保存する。以降はクエリのエディターで自由に直せる。"""
+ """後処理のクエリを作る（共通設定 → Power Query に入る）。取り出した表を「ソース」に受け取る式に、渡された手順（無くてよい）を足す。
+ 以降は Power Query エディターで、ほかのクエリと同じように直す。"""
  d=request.get_json(force=True) or {}
- code=navi_post.compile({**(d.get('post') or {}),'enabled':True,'mode':'steps'})
- if not code:return jsonify(ok=False,error='手順がありません'),400
- bad=navi_post.problems({**(d.get('post') or {}),'enabled':True,'mode':'steps'})
+ steps=[x for x in ((d.get('post') or {}).get('steps') or d.get('steps') or []) if navi_post.normalize_step(x)]
+ bad=navi_post.problems({'enabled':True,'mode':'steps','steps':steps}) if steps else []
  if bad:return jsonify(ok=False,error='／'.join(bad)),400
+ code=navi_mrun.post_starter(steps)
  name=str(d.get('name') or '').strip() or '後処理'
  names={q['name'] for q in load_m_queries()}
  base,k=name,2
  while name in names:name=f'{base} ({k})';k+=1
- try:saved=save_m_query({'name':name,'code':code,'description':f'対象「{str(d.get("job_name") or "")[:60]}」の後処理の手順から作りました。取り出した表を「{navi_m.INPUT_NAME}」で受け取ります'})
+ try:saved=save_m_query({'name':name,'code':code,'description':f'対象「{str(d.get("job_name") or "")[:60]}」の後処理。取り出した表を「{navi_m.INPUT_NAME}」で受け取ります'})
  except ValueError as e:return jsonify(ok=False,error=str(e)),400
- log.info('POST_TO_QUERY job=%s query=%s steps=%s',d.get('job_name'),saved['name'],len((d.get('post') or {}).get('steps') or []))
+ log.info('POST_TO_QUERY job=%s query=%s steps=%s',d.get('job_name'),saved['name'],len(steps))
  return jsonify(ok=True,query=saved)
+
+@app.post('/api/m-query/add-step')
+def m_query_add_step():
+ """Power Query エディターの「変換」の札: 選んだクエリの最後に、手順（ピボット解除・ピボット列・グループ化など）を1つ足した式を返す。"""
+ d=request.get_json(force=True) or {}
+ try:out=navi_mrun.add_step(str(d.get('code') or ''),str(d.get('name') or 'クエリ1'),d.get('query') or None,d.get('step'))
+ except Exception as e:
+  log.exception('M_QUERY_ADD_STEP_FAILED');return jsonify(ok=False,error=f'ステップを足せませんでした: {e}'),500
+ if out.get('ok'):log.info('M_QUERY_ADD_STEP query=%s op=%s added=%s',out.get('query'),(d.get('step') or {}).get('op'),out.get('added'))
+ return jsonify(out),(200 if out.get('ok') else 400)
 
 @app.post('/api/m-query/samples')
 def m_query_samples():

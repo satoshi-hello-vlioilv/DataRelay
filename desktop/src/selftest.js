@@ -196,6 +196,24 @@
     const runsShown = document.querySelectorAll('#log-runs .lg-run').length, sel = logRunSel();
     const report = sel ? logReportText(sel, { summary: true, env: true, issues: true }, logEnv()) : '';
     ok('ログ・診断は実行の記録を並べ、選んだ実行の報告用の文を組める', runsShown > 0 && !!sel && report.includes('■ 環境') && $('#log-run-title').textContent !== 'ログを読んでいます', `${runsShown}件 / ${$('#log-run-title').textContent} / ${report.length}字`);
+    // 後処理（2.6.0）: 対象の編集のタブ「後処理」は入口（見本の無い新しい対象では、そのまま出すことと見本が無いことを言う）。
+    // 編集は Power Query エディター: 見出しを押して列を選び、「変換」の札でピボット解除を足すと、Excel と同じ名前のステップが最後に足される
+    openEditor(null);
+    document.querySelector('.editor-tab[data-etab="post"]').click();
+    let postNote = '';
+    for (let i = 0; i < 40 && !postNote; i++) { await sleep(150); postNote = (postView && postView.no_sample) || ''; }
+    const postOff = !!document.querySelector('#post-pane .post-state.off') && !!document.querySelector('#post-pane #post-open') && collectJob().post.enabled === false;
+    $('#editor').close();
+    mqOpen({ id: '', name: '自己診断の変換', description: '', code: 'let\n    ソース = #table({"品番", "4月", "5月"}, {{"A", 1, 2}, {"B", 3, null}})\nin\n    ソース', output: '' });
+    for (let i = 0; i < 40 && !(mqView && mqView.ok); i++) await sleep(150);
+    mqPickCol(0, {});
+    const ribbonOn = !document.querySelector('#mqx-ribbon [data-op="unpivot"]').disabled;
+    await mqOp('unpivot-other');
+    const mqCols = ((mqView || {}).columns || []).map((c) => c.name).join(','), mqStep = (mqView || {}).step;
+    ok('後処理の入口と、Power Query エディターの「変換」の札（列を選んでピボット解除を足す）',
+      postOff && postNote.includes('一度実行すると') && ribbonOn && mqStep === 'ピボット解除された列' && mqCols === '品番,属性,値' && mqView.row_count === 3 && mqEditing.code.includes('Table.UnpivotOtherColumns(ソース, {"品番"}'),
+      `入口 ${postOff} / ${postNote} / 札 ${ribbonOn} / ${mqStep} / ${mqCols} / ${mqView && mqView.row_count}行`);
+    await mqClose(false);
     document.querySelector('nav button[data-p="jobs"]').click();
 
     // tkinter・os.startfile の置き換え（答えの形はいまと同じ {"path": ...}）

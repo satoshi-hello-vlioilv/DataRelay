@@ -3086,8 +3086,9 @@ dialog.mq-editor-dialog::backdrop{background:rgba(16,40,52,.35)}
 .mqx-ib{height:28px;min-height:0;width:28px;padding:0;border-radius:6px;background:#fff;border:1px solid #c8d6dc;color:#0b6577;font-weight:800}
 .mqx-ib:disabled{opacity:.35}
 .mqx-fx .secondary{height:28px;min-height:0;padding:0 10px;font-size:12px}
-.mqx-notes{border:1px solid #f2d28b;background:#fff8e6;border-radius:8px;padding:6px 10px;font-size:12px;color:#6b4a06}
-.mqx-notes p{margin:2px 0}
+.mqx-notes{display:grid;gap:4px;font-size:12px}
+.mqx-notes p{margin:0;border:1px solid #f2d28b;background:#fff8e6;border-radius:8px;padding:5px 10px;color:#6b4a06}
+.mqx-notes p.mqx-info{border-color:#b9dde5;background:#f0f8fa;color:#0b4f5c}   /* 知らせ（取り出した表の見本。2.6.0）は注意と色を分ける */
 .mqx-body{flex:1;min-height:0;overflow:auto;border:1px solid #dce6ea;border-radius:9px;background:#fff}
 .mqx-table{border-collapse:collapse;font-size:12px;width:max-content;min-width:100%}
 .mqx-table th{position:sticky;top:0;background:#f0f5f6;color:#35505b;text-align:left;font-size:11.5px;padding:5px 9px;border-bottom:1px solid #dce6ea;border-right:1px solid #e6eef0;white-space:nowrap;z-index:1}
@@ -3132,3 +3133,82 @@ dialog.mq-editor-dialog::backdrop{background:rgba(16,40,52,.35)}
 .mqx-near span{display:block;padding:0 12px}
 .mqx-near span.bad{background:#fff0ee;color:#a12d1a;font-weight:700}
 .mqx-near i{display:inline-block;width:34px;text-align:right;margin-right:12px;color:#9aabb2;font-style:normal}
+/* 後処理（2.6.0）: 案 N（tests/ui-proposals/2026-10-post.*）。色は既存の青緑（操作・選択）・緑（できあがり）・橙（気をつけること）・赤（止まった所）に合わせる */
+.eb-post{background:#fdeef3;color:#9a2f5a}
+.etab-count-post{background:#0b6577}
+.src-tag-post{background:#fdeef3;color:#9a2f5a}
+.post-line{display:flex;align-items:center;gap:4px}
+.post{display:flex;flex-direction:column;gap:10px;font-size:12.5px;color:#22414c;min-height:0}
+.post .sp{flex:1}.post .note{color:#6b7f88;font-size:11.5px}
+.post-head{display:flex;align-items:center;gap:8px 14px;flex-wrap:wrap}
+.post-state{display:inline-flex;align-items:center;gap:6px;padding:5px 12px;border-radius:999px;font-weight:800;font-size:12px}
+.post-state::before{content:'';width:8px;height:8px;border-radius:50%;background:currentColor}
+.post-state.on{background:#e2f4ec;color:#087a57}.post-state.off{background:#eef3f5;color:#4a6270}
+.post-flow{display:flex;align-items:stretch;gap:0;overflow-x:auto;min-width:0;padding-bottom:2px}
+.post-node{flex:1 1 0;min-width:150px;display:grid;gap:2px;align-content:start;text-align:left;border:1px solid #dce6ea;background:#fff;border-radius:10px;padding:6px 12px;font:inherit;color:#22414c;cursor:pointer}
+.post-node b{color:#17384e;font-weight:800}.post-node small{color:#6b7f88;line-height:1.35}
+.post-node .k{display:flex;gap:6px;align-items:center}
+.post-node .k i{font-style:normal;width:20px;height:20px;border-radius:6px;display:grid;place-items:center;background:#e6f4f6;color:#0b6577;font-size:11px;font-weight:900;flex:none}
+.post-node em{font-style:normal;font-size:11px;color:#0b6577}.post-node em.ng{color:#a12d1a;font-weight:800}
+.post-node.on{border-color:#0b6577;box-shadow:0 0 0 2px #cfe9ee;background:#f2fafb}.post-node.on .k i{background:#0b6577;color:#fff}
+.post-node.ng{border-color:#e08a7a;background:#fff6f4}
+.post-node.io{flex:0 0 150px;background:#f6f9fa}.post-node.out{flex:0 0 150px;background:#e9f6ef;border-color:#b9e0cc;cursor:default}
+.post-node.wide{flex:4 1 0}.post-node.empty{border-style:dashed;color:#5a727c;display:flex;align-items:center;justify-content:center;cursor:default}
+.post-node.next{border:1.5px dashed #0b6577;background:#f2fafb;cursor:default;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:4px 14px}.post-node.next b{color:#0b6577}.post-next-t{display:grid;gap:2px;min-width:0}
+.post-arr{flex:none;display:grid;place-items:center;color:#5a8d98;font-weight:900;font-size:16px;width:22px}
+.post-card{border:1px solid #dce6ea;border-radius:10px;background:#fff;padding:10px 12px;min-width:0}
+.post-btn{height:32px;border-radius:8px;border:1px solid #c8d6dc;background:#fff;color:#17384e;font:inherit;font-weight:800;padding:0 12px;display:inline-flex;align-items:center;gap:6px;white-space:nowrap;cursor:pointer}
+.post-btn.sm{height:28px;font-size:12px;padding:0 10px}.post-btn.pri{background:#0b6577;border-color:#0b6577;color:#fff}
+.post-btn.danger{color:#a12d1a;border-color:#efc4bb}.post-btn:disabled{opacity:.4;cursor:default}
+.post-grow{display:flex;flex-direction:column;gap:8px;min-height:0;flex:1 1 0}
+.post>*{flex:none}.post>.post-grow{flex:1 1 0}
+.post-tblbox{flex:1 1 0;min-height:0;display:flex;flex-direction:column}
+.post-tblbox .post-tbl,.post-tblbox .post-nosample{flex:1 1 0}
+.post-cap{display:flex;align-items:center;gap:8px}.post-cap b{color:#17384e}
+.post-msg{border-radius:8px;padding:7px 10px;font-weight:700;display:grid;gap:2px}
+.post-msg.warn{background:#fff4dc;color:#8a5a0c}.post-msg.ng{background:#fff0ee;color:#a12d1a;font-weight:600}.post-msg.ng b{font-weight:800}
+.post-tbl{overflow:auto;border:1px solid #dce6ea;border-bottom:0;border-radius:9px 9px 0 0;background:#fff;min-height:0}
+.post-tbl table{border-collapse:collapse;font-size:12px;width:max-content;min-width:100%}
+.post-tbl th{position:sticky;top:0;background:#f0f5f6;color:#35505b;text-align:left;font-size:11.5px;padding:5px 9px;border-bottom:1px solid #dce6ea;white-space:nowrap}
+.post-tbl th.n{text-align:right}.post-tbl th.new{background:#e9f6ef}
+.post-tbl th em{font-style:normal;font-size:10px;color:#0b6577;background:#e6f4f6;border-radius:4px;padding:0 4px;margin-right:4px}
+.post-tbl td{padding:4px 9px;border-top:1px solid #f0f4f5;white-space:nowrap;max-width:260px;overflow:hidden;text-overflow:ellipsis}
+.post-tbl td.n{text-align:right;font-variant-numeric:tabular-nums}.post-tbl td.nul{color:#a7b5bb;font-style:italic;text-align:right}
+.post-tbl td.err{background:#fff0ee;color:#a12d1a;font-weight:800}.post-tbl td.nest{color:#0b6577;font-weight:700}
+.post-bar{flex:none;display:flex;justify-content:space-between;gap:10px;padding:5px 10px;border:1px solid #dce6ea;border-top:1px solid #c8d6dc;border-radius:0 0 8px 8px;background:#f0f5f6;color:#35505b;font-weight:800;font-size:11.5px}
+.post-bar.is-busy{opacity:.6}
+.post-nosample{border:1.5px dashed #c8d6dc;border-radius:10px;padding:18px;display:grid;gap:6px;place-content:center;text-align:center;color:#4b6670;background:#fbfdfd}
+.post-nosample b{font-size:14px;color:#17384e}
+/* Power Query エディターの「変換」の札と列の選択（2.6.0）。Excel のリボンと同じく数式バーの上。選んだ列は見出しと列を青緑で示す */
+.mqx-ribbon{display:flex;align-items:center;gap:5px;flex-wrap:wrap;padding:5px 8px;border:1px solid #dce6ea;border-radius:8px;background:#f6f9fa}
+.mqx-rbcap{font-size:11.5px;color:#35505b;margin-right:4px}
+.mqx-rbw{position:relative}
+.mqx-rb{display:inline-flex;align-items:center;gap:5px;height:28px;padding:0 9px 0 5px;border:1px solid #c8d6dc;border-radius:7px;background:#fff;color:#17384e;font:inherit;font-size:12px;font-weight:800;white-space:nowrap;cursor:pointer}
+.mqx-rb i{font-style:normal;width:18px;height:18px;border-radius:5px;display:grid;place-items:center;background:#e6f4f6;color:#0b6577;font-size:11px}
+.mqx-rb:hover:not(:disabled){border-color:#0b6577;background:#f2fafb}
+.mqx-rb:disabled{opacity:.45;cursor:default}
+.mqx-rbhint{font-size:11.5px;color:#6b7f88;margin-left:6px}.mqx-rbhint.warn{color:#8a5a0c}
+.mqx-menu{position:absolute;top:32px;left:0;z-index:20;display:grid;min-width:300px;background:#fff;border:1px solid #c8d6dc;border-radius:9px;box-shadow:0 8px 24px rgba(15,45,60,.18);padding:4px}
+.mqx-menu button{display:grid;gap:1px;text-align:left;border:0;background:#fff;padding:7px 10px;border-radius:7px;font:inherit;color:#17384e;cursor:pointer}
+.mqx-menu button:hover,.mqx-menu button:focus{background:#e6f4f6;outline:0}.mqx-menu small{color:#6b7f88;font-size:11px}
+.mqx-table th[data-k]{cursor:pointer}.mqx-table th[data-k]:hover{background:#e6f1f3}
+.mqx-table th.sel{background:#cfe9ee;color:#0b4f5c;box-shadow:inset 0 -3px #0b6577}
+.mqx-table td[data-sel]{background:#f0f8fa}
+.mqx-table th.mqx-numh{text-align:right}
+.mq-op-modal{width:min(560px,94vw)}
+.mq-op-f{display:grid;gap:4px;font-weight:800;font-size:12.5px;color:#17384e;margin-top:8px}
+.mq-op-f select,.mq-op-f input,.mq-op-row select,.mq-op-row input{height:32px;border:1px solid #c8d6dc;border-radius:8px;padding:0 10px;font:inherit;background:#fff}
+.mq-op-cap,.mq-op-row{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr) minmax(0,1.2fr) 26px;gap:6px;align-items:center}
+.mq-op-cap{font-size:11.5px;font-weight:800;color:#35505b;margin:6px 0 2px}
+#mq-op-rows{display:grid;gap:6px;margin-bottom:8px}
+.mq-op-x{border:0;background:transparent;color:#9aabb2;font-weight:900;font-size:15px;cursor:pointer}
+.mq-op-note{color:#6b7f88}
+.post-cap{display:flex;align-items:center;gap:8px}.post-cap b{color:#17384e}
+.post-acts{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.post-inl{display:inline-flex;align-items:center;gap:6px;font-weight:800;font-size:12px;color:#17384e;white-space:nowrap}
+.post-in{height:32px;border:1px solid #c8d6dc;border-radius:8px;padding:0 10px;font:inherit;background:#fff;color:#22414c;min-width:220px}
+.post-steps{display:flex;flex-wrap:wrap;gap:4px 6px;align-items:center;margin-top:2px}
+.post-steps em{font-style:normal;font-size:11.5px;font-weight:700;color:#0b4f5c;background:#e6f4f6;border-radius:6px;padding:1px 7px}
+.post-steps span{color:#9aabb2;font-size:11px}
+.post-node small.ng{color:#a12d1a;font-weight:800}
+dialog #toast{bottom:auto;top:18px;right:50%;transform:translateX(50%);box-shadow:0 8px 24px rgba(15,45,60,.25)}   /* ダイアログの中では上の中央（下はボタンと重なる。2.6.0） */

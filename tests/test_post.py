@@ -185,6 +185,13 @@ r=c.post('/api/post/to-query',json={'post':j['post'],'name':'縦持ち','job_nam
 out['to_query']=r.get_json()
 pq=out['to_query']['query']
 out['mq_preview']=c.post('/api/m-query/preview',json={'code':pq['code'],'name':pq['name'],'query_id':pq['id'],'sample_job':'J1'}).get_json()
+# Power Query エディターの「変換」の札: クエリの最後にステップを足す（補助のクエリがあっても、選んだクエリに）
+two='// 補助\n1\n\n// 本体\n'+navi_mrun.POST_STARTER
+out['add1']=c.post('/api/m-query/add-step',json={'code':two,'name':'x','query':'本体','step':{'op':'unpivot','mode':'other','columns':['品番','工程'],'attr':'月','value':'数量'}}).get_json()
+out['add2']=c.post('/api/m-query/add-step',json={'code':out['add1']['code'],'name':'x','query':'本体','step':{'op':'pivot','column':'工程','value':'数量','agg':'sum'}}).get_json()
+out['add_prev']=c.post('/api/m-query/preview',json={'code':out['add2']['code'],'name':'x','query':'本体','sample_job':'J1'}).get_json()
+out['add_wrap']=c.post('/api/m-query/add-step',json={'code':'取り出した表','name':'y','step':{'op':'remove','columns':['品名']}}).get_json()
+r=c.post('/api/m-query/add-step',json={'code':two,'name':'x','step':{'op':'pivot','column':'','value':''}});out['add_bad']=[r.status_code,r.get_json()]
 cfg=app.load();j=cfg['jobs'][0];j['post']={'enabled':True,'mode':'query','query_id':pq['id']};j['extra_formats']=[];cfg['jobs']=[j];app.save(cfg)
 cfg=app.load();j=cfg['jobs'][0]
 res2=navi_textrun.run_one_local(dict(j),cfg,tmp/'work',tmp/'backup','manual',1,1)
@@ -270,6 +277,22 @@ class PostAppTest(unittest.TestCase):
         self.assertIn('後処理 クエリ「', o['run_query']['detail'])
         self.assertEqual(o['rows_query'], o['rows'])
         self.assertFalse(o['delete_used']['ok'], '後処理に使っているクエリは消さない')
+
+    def test_add_step(self):
+        a1, a2 = self.o['add1'], self.o['add2']
+        self.assertTrue(a1['ok'], a1)
+        self.assertEqual(a1['step'], 'ピボット解除された列')
+        self.assertTrue(a1['code'].startswith('// 補助\n1\n\n// 本体\nlet\n    ソース = 取り出した表,'), a1['code'])
+        self.assertTrue(a1['code'].rstrip().endswith('in\n    #"ピボット解除された列"'))
+        self.assertEqual(a2['added'], ['変更された型', 'ピボットされた列'], '数で集める列は先に型を変える（Power Query と同じ名前）')
+        pv = self.o['add_prev']
+        self.assertTrue(pv['ok'], pv)
+        self.assertEqual([c['name'] for c in pv['columns']], ['品番', '月', '組立', '検査'])
+        self.assertEqual(pv['queries'][1]['steps'], ['ソース', 'ピボット解除された列', '変更された型', 'ピボットされた列'])
+        self.assertTrue(self.o['add_wrap']['ok'])
+        self.assertIn('ソース = 取り出した表', self.o['add_wrap']['code'], 'let でないクエリは、全体を「ソース」にして包む')
+        self.assertEqual(self.o['add_bad'][0], 400)
+        self.assertIn('見出しにする列', self.o['add_bad'][1]['error'])
 
     def test_bundle(self):
         e = self.o['exported_post']
