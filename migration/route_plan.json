@@ -651,6 +651,11 @@
    "to": "python",
    "note": ""
   },
+  "POST /api/text-sniff": {
+   "area": "読取マスタ・結合マスタ",
+   "to": "python",
+   "note": "区切りの見当付け（2.8.0）。見本のファイルを読む"
+  },
   "GET /api/users-root": {
    "area": "配布と更新",
    "to": "python",

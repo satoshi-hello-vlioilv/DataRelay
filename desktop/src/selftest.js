@@ -239,6 +239,32 @@
     r = await fetch('/api/pick-folder', json({ initial: '<PC>' }));
     const pickedDir = await r.json();
     ok('フォルダー選択は窓が受け持つ（<PC> を直す）', by(r) === 'shell' && absolute(pickedDir.initial) && !pickedDir.initial.includes('<PC>'), `${by(r)} ${pickedDir.initial}`);
+
+    // 読取マスタの区切り（2.8.0）: 新規 → 区切り → 見本から列を作る → 名前を入れると自動で保存。一覧は1件1行で、種類で絞れる
+    document.querySelector('nav button[data-group="masters"]').click();
+    document.querySelector('button[data-p="layouts"]:not([data-group])').click();
+    for (let i = 0; i < 40 && !layoutMeta.delimiters.length; i++) await sleep(150);
+    $('#lay-add').click();
+    await sleep(100);
+    document.querySelector('#lay-mode button[data-mode="delimited"]').click();
+    $('#lay-header-row').checked = true;
+    $('#lay-sample').value = picked.initial.replace(/rne$/, 'text') + (picked.initial.includes('\\') ? '\\' : '/') + '受注明細.csv';
+    await laySniff();
+    const layCols = [...document.querySelectorAll('#lay-cols .lay-name')].map((x) => x.value).join(',');
+    const laySmp = document.querySelector('#lay-cols .lay-col:nth-child(3) .lay-smp')?.textContent;
+    $('#lay-name').value = '自己診断の区切り';
+    $('#lay-name').dispatchEvent(new Event('input'));
+    for (let i = 0; i < 60 && !/保存しました/.test($('#lay-autosave').textContent); i++) await sleep(150);
+    const laySaved = (await (await fetch('/api/text-layouts')).json()).items.find((x) => x.name === '自己診断の区切り');
+    document.querySelector('.lay-list-pane .ml-chips button[data-k="delimited"]').click();
+    const layRows = [...document.querySelectorAll('#lay-list .ml-row')].map((x) => x.querySelector('.ml-name').textContent);
+    ok('読取マスタの区切り（見本から列を作り、自動で保存し、一覧で区切りに絞れる）',
+      layCols === '受注番号,受注日,得意先名,品名,数量,備考' && laySmp === '東和工業, 第二工場' && laySaved && laySaved.mode === 'delimited' &&
+      laySaved.shape === '6列 / カンマ区切り' && layRows.includes('自己診断の区切り') && document.querySelectorAll('#lay-list .ml-row.ml-fx').length === 0,
+      `${layCols} / ${laySmp} / ${$('#lay-autosave').textContent} / ${laySaved && laySaved.shape} / 区切り ${layRows.length}件`);
+    if (laySaved) await fetch('/api/text-layouts/' + encodeURIComponent(laySaved.id), { method: 'DELETE' });
+    document.querySelector('.lay-list-pane .ml-chips button[data-k=""]').click();
+    document.querySelector('nav button[data-p="jobs"]').click();
     r = await fetch('/api/open-path', json({ path: 'static' }));
     const opened = await r.json();
     ok('エクスプローラーで開くは窓が受け持つ（相対パスを直す）', by(r) === 'shell' && opened.ok && absolute(opened.path) && /static$/.test(opened.path), `${by(r)} ${r.status} ${opened.path || opened.error}`);

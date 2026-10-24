@@ -3,7 +3,7 @@ const UI_BUILD='1.72.0-web';
 const TEXT_TABLE_DEFAULT='DATA';
 let cfg,editing=null,editingRule=null,sortDir=1,scheduleInfo={},freshInfo={},rowLive={},rowQueue={},statusFailCount=0,serverLostShown=false;
 // 読取マスタは一覧の描画（sourceCell）からも読むので、ここで先に用意する。
-let layoutCache=[],layoutMeta={encodings:[],units:[],trims:[],types:[],stamp_formats:[],max_scale:9,date_format_default:'YYYYMMDD',datetime_format_default:'YYYYMMDDHHMMSS',type_formats:{}},layEditing=null,laySearch='';
+let layoutCache=[],layoutMeta={encodings:[],units:[],trims:[],modes:[],delimiters:[],quotes:[],types:[],stamp_formats:[],max_scale:9,date_format_default:'YYYYMMDD',datetime_format_default:'YYYYMMDDHHMMSS',type_formats:{}},layEditing=null,laySearch='';
 let joinCache=[],joinMeta={types:[],formats:[],layouts:[],max_sources:8},jnEditing=null,jnSearch='',
     jnProbe={},jnPreviewTimer=null,jnColMode='auto',
     jnCandidates=[],jnCandLoaded=false,jnPickFor=-1,jnPickQ='',jnPickIdx=0,
@@ -65,7 +65,7 @@ function showPane(p){
 $$('nav button,#subnav button').forEach(b=>b.onclick=()=>showPane(b.dataset.p));
 // 一覧の「入力」欄が読取マスタの名前を出すので、最初に一度だけ読んでおく。
 Promise.all([loadLayouts(),loadJoins(),mqLoad()]).then(()=>{if(typeof cfg!=='undefined'&&cfg)render()});
-const paths={default_output_folder:['既定の出力先','folder'],rne_folder:['RNE の置き場','folder'],backup_folder:['控えの置き場','folder'],text_folder:['固定長テキストの置き場','folder'],accdb_template:['ACCDB の雛形','file',[['Access Database','*.accdb'],['すべて','*.*']]],symnavim_conf:['symnavim.conf（接続情報の取り込み元）','file',[['CONFファイル','*.conf'],['すべて','*.*']]]};
+const paths={default_output_folder:['既定の出力先','folder'],rne_folder:['RNE の置き場','folder'],backup_folder:['控えの置き場','folder'],text_folder:['テキストの置き場','folder'],accdb_template:['ACCDB の雛形','file',[['Access Database','*.accdb'],['すべて','*.*']]],symnavim_conf:['symnavim.conf（接続情報の取り込み元）','file',[['CONFファイル','*.conf'],['すべて','*.*']]]};
 const PATH_HOME={symnavim_conf:'#pathform-conn'};   // ほかは「場所」の #pathform
 let waitingTimer=null,waitingStarted=0;function waitingEngineLabel(context='common'){return context==='api'||context==='engine'?'NAVIGATOR API':'COMMON OPERATION'}function showWaiting(title='確認中',detail='処理を続行しています...',context='common'){let d=$('#waiting-dialog');$('#waiting-engine').textContent=waitingEngineLabel(context);$('#waiting-title').textContent=title;$('#waiting-detail').textContent=detail;waitingStarted=Date.now();clearInterval(waitingTimer);let tick=()=>{let sec=Math.floor((Date.now()-waitingStarted)/1000);$('#waiting-elapsed').textContent=`経過 ${String(Math.floor(sec/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`};tick();waitingTimer=setInterval(tick,1000);if(!d.open)d.showModal()}function updateWaiting(title,detail,context){if(title)$('#waiting-title').textContent=title;if(detail)$('#waiting-detail').textContent=detail;if(context)$('#waiting-engine').textContent=waitingEngineLabel(context)}function hideWaiting(){clearInterval(waitingTimer);waitingTimer=null;let d=$('#waiting-dialog');if(d?.open)d.close()}// パスの欄の下の行（2.2.4。案の比較は tests/ui-proposals/2026-10-path-kind）。基準の札（置き場 │ \rne）と書き換えのボタン、
 // 置き場に無くてほかの場所の物を使っているときだけ黄色の帯。書き方の種類と在りかはサーバー（navi_paths.locate）だけが決める
@@ -1102,7 +1102,7 @@ const SETTING_FIELDS=[
   parts:[SF('retry_enabled','bool',{text:'自動実行が失敗したら取り直す'}),SF('retry_delay_minutes','int',{min:1,max:180,unit:'分後',when:s=>s.retry_enabled!==false}),SF('retry_max','int',{min:0,max:5,unit:'回まで',when:s=>s.retry_enabled!==false})]},
  {cat:'run',label:'自動実行の取りこぼし',hint:'予定の時刻にほかの処理が動いていたとき、この時間内なら手が空いてから実行します（0 なら実行しない）',parts:[SF('schedule_catchup_minutes','int',{min:0,max:720,step:5,unit:'分以内なら遅れて実行'})]},
  {cat:'run',adv:true,label:'ライン起動の間隔',hint:'一斉に起動すると接続が混み合うので、少しずつずらします（0 なら一斉）',parts:[SF('api_worker_stagger_ms','int',{min:0,max:5000,step:100,unit:'ミリ秒'})]},
- {cat:'run',adv:true,label:'手元の処理のライン',hint:'固定長テキストと結合を同時に流す数。0 なら自動（同時実行ラインに合わせて最大4）',parts:[SF('local_parallel_lines','int',{min:0,max:12,unit:'ライン'})]},
+ {cat:'run',adv:true,label:'手元の処理のライン',hint:'テキストと結合を同時に流す数。0 なら自動（同時実行ラインに合わせて最大4）',parts:[SF('local_parallel_lines','int',{min:0,max:12,unit:'ライン'})]},
  {cat:'run',adv:true,label:'結合の待ち合わせ',hint:'材料を作る対象が作成中・まもなく作成なら、それが済んでから結合します',
   parts:[SF('join_wait_enabled','bool',{text:'材料がそろうのを待ってから結合する'}),SF('join_wait_lookahead_seconds','int',{min:0,max:3600,unit:'秒先の予定まで見る',when:s=>s.join_wait_enabled!==false}),SF('join_wait_max_seconds','int',{min:0,max:86400,unit:'秒まで待つ',when:s=>s.join_wait_enabled!==false})]},
  {cat:'run',adv:true,label:'ログの大きさ',hint:'app.log がこの大きさを超えたら次のファイルへ送り、古いものは世代数を超えたぶんから消します',parts:[SF('log_max_mb','int',{min:1,max:500,unit:'MB で次へ'}),SF('log_keep','int',{min:0,max:20,unit:'世代残す'})]},
@@ -4178,7 +4178,52 @@ async function exportPivot(){
 }
 
 
-/* ==== 固定長テキスト: 入力の種類と、読取マスタ ============================
+/* ==== マスタの一覧（読取マスタ・ファイル結合・Power Query で共通）=========================
+   1件1行（名前と、右に短い形）にして、数十件を一度に見渡せるようにする（2.8.0。それまでは名前・形・用途メモを
+   積んだ札で、1件が5〜6行あり、30件のうち6件しか見えなかった）。用途メモや形の詳しいことは、名前にかざすと出る。
+   種類があるもの（読取マスタの固定長／区切り）は、行の左の色の帯と、種類ごとの見出し（件数と意味つき・上に残る）で示し、
+   上の札で種類を絞り込める。印の文字を行ごとに並べないのは、そのぶん名前が切れるため。
+   opt: items・query・current（選んでいる id）・text(x)（検索の対象）・meta(x)・title(x)・empty・open(id)
+        groups: [{key,label,cls,note,of(x)}]（無ければ見出しも絞り込みも出さない）・warn(x)（形の代わりに出す注意） */
+const masterFilter={};
+function renderMasterList(box,opt){
+ if(!box)return;
+ let q=String(opt.query||'').trim().toLowerCase();
+ let all=opt.items||[],hit=all.filter(x=>!q||opt.text(x).toLowerCase().includes(q));
+ let groups=opt.groups||[],key=box.id,pick=groups.find(g=>g.key===masterFilter[key]);
+ let shown=pick?hit.filter(pick.of):hit;
+ let chips=groups.length?`<div class="ml-chips" role="radiogroup" aria-label="種類で絞り込む">`
+   +[{key:'',label:'すべて',n:''},...groups.map(g=>({key:g.key,label:g.label,n:hit.filter(g.of).length}))]
+    .map(c=>`<button type="button" role="radio" data-k="${E(c.key)}" class="${(pick?.key||'')===c.key?'on':''}" aria-checked="${(pick?.key||'')===c.key}">${E(c.label)} <b>${c.n}</b></button>`).join('')+'</div>':'';
+ let row=(x,g)=>{let w=opt.warn?.(x);
+  return `<button type="button" class="ml-row${g?' ml-'+g.cls:''}${opt.current===x.id?' on':''}" data-id="${E(x.id)}" title="${E(opt.title(x))}">`
+   +`<span class="ml-name">${E(x.name)}</span><span class="ml-meta${w?' is-warn':''}">${E(w||opt.meta(x))}</span></button>`};
+ let body;
+ if(!shown.length)body=`<p class="lay-empty-note">${q?'見つかりませんでした':pick?`${E(pick.label)}のものはありません`:E(opt.empty)}</p>`;
+ else if(groups.length)body=(pick?[pick]:groups).map(g=>{let xs=shown.filter(g.of);if(!xs.length)return '';
+   return `<div class="ml-group ml-${g.cls}"><i class="lay-tag ${g.cls}">${E(g.label)}</i><b>${xs.length}件</b><span>${E(g.note||'')}</span></div>`+xs.map(x=>row(x,g)).join('')}).join('');
+ else body=shown.map(x=>row(x)).join('');
+ // 絞り込みは見出しの段に置く（一覧の縦を1段ぶん空ける）。
+ let head=box.closest('aside')?.querySelector('.ml-head'),slot=head?.querySelector('.ml-chips-slot');
+ if(head&&!slot&&chips){slot=document.createElement('span');slot.className='ml-chips-slot';head.appendChild(slot)}
+ if(slot)slot.innerHTML=chips;
+ box.innerHTML=`<div class="ml-scroll${groups.length&&!pick?' has-group':''}">${body}</div>`;
+ let count=box.closest('aside')?.querySelector('.ml-count');
+ if(count)count.textContent=q?`${hit.length} / ${all.length}件`:`${all.length}件`;
+ (slot||box).querySelectorAll('.ml-chips button').forEach(b=>b.onclick=()=>{masterFilter[key]=b.dataset.k;renderMasterList(box,opt)});
+ box.querySelectorAll('.ml-row').forEach(b=>b.onclick=()=>opt.open(b.dataset.id));
+ // 選んでいる行を見える所へ（開き直したとき・保存したあとに見失わない）。
+ // 止める位置は行の頭にそろえる（上に残る見出しの下に、欠けた行を残さない）。
+ let on=box.querySelector('.ml-row.on'),sc=box.querySelector('.ml-scroll');
+ if(on&&sc&&(on.offsetTop<sc.scrollTop||on.offsetTop+on.offsetHeight>sc.scrollTop+sc.clientHeight)){
+  let gh=sc.classList.contains('has-group')?(sc.querySelector('.ml-group')?.offsetHeight||0):0;
+  let top=x=>Math.max(0,x.offsetTop-(x.classList.contains('ml-group')?0:gh)),max=sc.scrollHeight-sc.clientHeight;
+  let want=on.offsetTop-sc.clientHeight/3,fit=[...sc.querySelectorAll('.ml-row,.ml-group')].filter(x=>top(x)<=max);
+  let r=fit.find(x=>x.offsetTop>=want)||fit[fit.length-1];
+  if(r)sc.scrollTop=top(r);
+ }
+}
+/* ==== テキスト: 入力の種類と、読取マスタ ============================
    RNEはサーバーが表の形を知っているが、テキストは知らない。どこで切るかを
    こちらで決めて名前を付けて持つ ―― それが読取マスタ。対象の登録からは
    「どのファイルを」「どのマスタで切るか」の2つだけを選ぶ。 */
@@ -4222,6 +4267,7 @@ async function loadLayouts(force){
  try{
   let d=await fetch('/api/text-layouts',{cache:'no-store'}).then(r=>r.json());
   layoutCache=d.items||[];layoutMeta={encodings:d.encodings||[],units:d.units||[],trims:d.trims||[],
+   modes:d.modes||[],delimiters:d.delimiters||[],quotes:d.quotes||[],
    types:d.types||[],stamp_formats:d.stamp_formats||[],max_scale:d.max_scale||9,
    date_format_default:d.date_format_default||'YYYYMMDD',datetime_format_default:d.datetime_format_default||'YYYYMMDDHHMMSS',
    type_formats:d.type_formats||{}};
@@ -4232,7 +4278,7 @@ async function fillLayoutPicker(selected){
  let sel=$('#m-layout');if(!sel)return;
  let items=await loadLayouts();
  sel.innerHTML='<option value="">選択してください</option>'+items.map(x=>
-  `<option value="${E(x.id)}">${E(x.name)}（${x.columns.length}列 / ${x.width}${x.unit==='byte'?'バイト':'文字'}）</option>`).join('');
+  `<option value="${E(x.id)}">${E(x.name)}（${E(x.shape||x.columns.length+'列')}）</option>`).join('');
  sel.value=selected||'';
  let note=$('#m-layout-note');
  if(note){
@@ -4261,10 +4307,21 @@ if($('#m-text-check'))$('#m-text-check').onclick=async()=>{
  if(!d||!d.ok)return toast(d?.error||'読み取れませんでした');
  toast(`読めました: ${d.stat.rows}行を切り出しました（${d.headers.length}列）`);
 };
-/* ---- 読取マスタの画面 ---- */
-function layBlank(){return {id:'',name:'',description:'',encoding:'cp932',unit:'byte',trim:'both',
- skip_head:0,skip_tail:0,skip_blank:true,header_row:false,sample_path:'',
- columns:[{name:'列1',start:1,length:10,type:'text',scale:0,format:'',note:''}]}}
+/* ---- 読取マスタの画面 ----
+   読み方は2通り（2.8.0）。固定長は「開始・長さ」で切り、区切りは「区切りで分けた何番目の項目か」で取る。
+   画面は1つにして、違うところ（区切りの欄・位置の数え方と囲み文字・列の欄）だけを読み方で出し分ける。
+   並びは仕事の順: ① 読み方 → 見本のファイル → ② 切り出す列 → ③ できあがり。保存は見出しの右に置き、
+   取り消せない削除は下へ離す（隣に並べると押し間違える）。 */
+function layBlank(){return {id:'',name:'',description:'',mode:'fixed',delimiter:'comma',delimiter_text:'',quote:'double',collapse:false,
+ encoding:'cp932',unit:'byte',trim:'both',skip_head:0,skip_tail:0,skip_blank:true,header_row:false,sample_path:'',
+ columns:[{name:'列1',start:1,length:10,field:1,type:'text',scale:0,format:'',note:''}]}}
+const layIsDelim=l=>(l&&l.mode)==='delimited';
+/* 区切りの呼び名（navi_text.delimiter_label と同じ言い方）。 */
+function layDelimLabel(){
+ let k=layEditing?.delimiter,t=$('#lay-delim-text')?.value||'';
+ if(k==='custom')return `「${t}」`;if(k==='regex')return `正規表現 ${t}`;
+ return String((layoutMeta.delimiters.find(x=>x.value===k)||{}).label||k).split('（')[0];
+}
 /* 型ごとの「詳細」欄。小数は桁数、日付・日時は書式。文字と整数には無い（押しても効かない
    欄は、空にするのではなく使えないと分かる見た目にする）。 */
 function layTypeDefaultFormat(t){
@@ -4275,16 +4332,17 @@ function layTypeNote(t){return (layoutMeta.types.find(x=>x.value===t)||{}).note|
 function layFillSelect(el,items,value){
  if(!el)return;el.innerHTML=items.map(x=>`<option value="${E(x.value)}">${E(x.label)}</option>`).join('');el.value=value;
 }
+/* 読み方の印。一覧・切り替え・まとめの見出しで同じ言葉と色にする（固定長＝青緑、区切り＝紫）。 */
+function layModeTag(l){return layIsDelim(l)?'<i class="lay-tag dl">区切り</i>':'<i class="lay-tag fx">固定長</i>'}
 function layRenderList(){
- let box=$('#lay-list');if(!box)return;
- let q=laySearch.trim().toLowerCase();
- let items=layoutCache.filter(x=>!q||[x.name,x.description,...(x.columns||[]).map(c=>c.name)].join(' ').toLowerCase().includes(q));
- if(!items.length){box.innerHTML='<p class="lay-empty-note">'+(q?'見つかりませんでした':'まだ登録がありません。「新規作成」から作れます。')+'</p>';return}
- box.innerHTML=items.map(x=>`<button type="button" class="lay-item${layEditing&&layEditing.id===x.id?' on':''}" data-id="${E(x.id)}">`
-  +`<b>${E(x.name)}</b><small>${x.columns.length}列 / ${x.width}${x.unit==='byte'?'バイト':'文字'} / ${E(x.encoding)}${(()=>{let t=(x.columns||[]).filter(c=>(c.type||'text')!=='text').length;return t?` / 型あり ${t}列`:''})()}</small>`
-  +(x.used_by&&x.used_by.length?`<em>${x.used_by.length}件の対象が使用中</em>`:'')
-  +(x.description?`<small>${E(x.description)}</small>`:'')+'</button>').join('');
- $$('#lay-list .lay-item').forEach(b=>b.onclick=()=>layOpen(layoutCache.find(x=>x.id===b.dataset.id)));
+ renderMasterList($('#lay-list'),{items:layoutCache,query:laySearch,current:layEditing?.id,
+  text:x=>[x.name,x.description,...(x.columns||[]).map(c=>c.name)].join(' '),
+  groups:[{key:'fixed',label:'固定長',cls:'fx',note:'位置で切る',of:x=>!layIsDelim(x)},
+          {key:'delimited',label:'区切り',cls:'dl',note:'記号・決まりで分ける',of:layIsDelim}],
+  meta:x=>`${x.columns.length}列`,
+  title:x=>[x.name,x.shape,x.encoding,(x.used_by||[]).length?`${x.used_by.length}件の対象が使用中`:'',x.description].filter(Boolean).join('\n'),
+  empty:'まだ登録がありません。「新規作成」から作れます。',
+  open:async id=>{if(id!==layEditing?.id&&await layLeave())layOpen(layoutCache.find(x=>x.id===id))}});
 }
 /* 型の詳細欄は、型によって意味が変わる1つの欄にした。列を2つに増やすと、300本並ぶ
    一覧で横に伸びすぎる。小数なら桁数、日付・日時なら書式、それ以外では使えない。 */
@@ -4295,14 +4353,24 @@ function layFmtCell(c){
   return `<input class="lay-fmt" list="lay-fmt-list" value="${E(c.format||layTypeDefaultFormat(t))}" placeholder="${E(layTypeDefaultFormat(t))}" title="読み方の並び。YYYY・YY・MM・DD・HH・MI・SS を並べます。区切り文字は何でも読み飛ばします。">`;
  return `<input class="lay-fmt" value="" disabled tabindex="-1" title="この型には設定するものがありません">`;
 }
+/* 列の欄。読み方で違うのは「どこを取るか」の欄だけ（固定長は開始・長さ・終了、区切りは項目と見本の値）。 */
+const LAY_COLS={
+ fixed:{head:['列名','開始','長さ','終了'],
+  cells:c=>`<input class="lay-start" type="number" min="1" step="1" value="${Number(c.start||1)}"><input class="lay-len" type="number" min="1" step="1" value="${Number(c.length||0)}"><input class="lay-end" value="${Number(c.start||1)+Number(c.length||0)-1}" readonly tabindex="-1">`},
+ delimited:{head:['列名','項目','見本の値（1件目）'],
+  cells:(c,i)=>`<input class="lay-field" type="number" min="1" step="1" value="${Number(c.field||i+1)}" title="区切りで分けた何番目の項目か（1から）"><span class="lay-smp" title="${E(laySampleOf(c,i))}">${E(laySampleOf(c,i))}</span>`},
+};
+let laySample=null;   // 見本の1件目（区切りのとき、列の横に値を出すため）。{fields:[...]}
+function laySampleOf(c,i){let f=laySample?.fields||[];let k=Number(c.field||i+1)-1;return k>=0&&k<f.length?f[k]:''}
 function layRenderCols(){
  let box=$('#lay-cols');if(!box)return;
+ let mode=layIsDelim(layEditing)?'delimited':'fixed',spec=LAY_COLS[mode];
  let opts=(layoutMeta.types.length?layoutMeta.types:[{value:'text',label:'文字'}]);
+ $('#lay-edit').dataset.mode=mode;
+ $('#lay-cols-head').innerHTML=spec.head.concat(['型','書式・小数桁','メモ','']).map(h=>`<span>${E(h)}</span>`).join('');
  box.innerHTML=(layEditing.columns||[]).map((c,i)=>`<div class="lay-col${(c.type&&c.type!=='text')?' is-typed':''}" data-i="${i}">`
   +`<input class="lay-name" value="${E(c.name||'')}" placeholder="列名">`
-  +`<input class="lay-start" type="number" min="1" step="1" value="${Number(c.start||1)}">`
-  +`<input class="lay-len" type="number" min="1" step="1" value="${Number(c.length||0)}">`
-  +`<input class="lay-end" value="${Number(c.start||1)+Number(c.length||0)-1}" readonly tabindex="-1">`
+  +spec.cells(c,i)
   +`<select class="lay-type" title="${E(layTypeNote(c.type||'text'))}">`
    +opts.map(o=>`<option value="${E(o.value)}" ${((c.type||'text')===o.value)?'selected':''}>${E(o.label)}</option>`).join('')
   +`</select>`
@@ -4314,13 +4382,18 @@ function layRenderCols(){
   let read=()=>{
    let c=layEditing.columns[i];
    c.name=row.querySelector('.lay-name').value;
-   c.start=Math.max(1,Number(row.querySelector('.lay-start').value)||1);
-   c.length=Math.max(0,Number(row.querySelector('.lay-len').value)||0);
-   row.querySelector('.lay-end').value=c.start+c.length-1;
-   layRenderWidth();
+   if(mode==='delimited'){
+    c.field=Math.max(1,Number(row.querySelector('.lay-field').value)||1);
+    let v=laySampleOf(c,i),s=row.querySelector('.lay-smp');s.textContent=v;s.title=v;
+   }else{
+    c.start=Math.max(1,Number(row.querySelector('.lay-start').value)||1);
+    c.length=Math.max(0,Number(row.querySelector('.lay-len').value)||0);
+    row.querySelector('.lay-end').value=c.start+c.length-1;
+   }
+   layChanged();
   };
-  ['.lay-name','.lay-start','.lay-len'].forEach(sel=>{row.querySelector(sel).oninput=read});
-  row.querySelector('.lay-memo').oninput=()=>{layEditing.columns[i].note=row.querySelector('.lay-memo').value};
+  row.querySelectorAll('.lay-name,.lay-start,.lay-len,.lay-field').forEach(x=>x.oninput=read);
+  row.querySelector('.lay-memo').oninput=()=>{layEditing.columns[i].note=row.querySelector('.lay-memo').value;layChanged(false)};
   row.querySelector('.lay-type').onchange=e=>{
    let c=layEditing.columns[i];c.type=e.target.value;
    // 型を変えたら、その型の既定の詳細に入れ替える（前の型の桁数や書式を持ち越さない）。
@@ -4328,10 +4401,10 @@ function layRenderCols(){
    c.format=layTypeDefaultFormat(c.type);
    row.classList.toggle('is-typed',c.type!=='text');
    row.querySelector('.lay-fmt').outerHTML=layFmtCell(c);
-   layBindFmt(row,i);layRenderWidth();
+   layBindFmt(row,i);layChanged();
   };
   layBindFmt(row,i);
-  row.querySelector('.lay-del').onclick=()=>{layEditing.columns.splice(i,1);layRenderCols()};
+  row.querySelector('.lay-del').onclick=()=>{layEditing.columns.splice(i,1);layRenderCols();layChanged()};
  });
  layRenderWidth();
 }
@@ -4341,58 +4414,140 @@ function layBindFmt(row,i){
   let c=layEditing.columns[i];
   if(c.type==='real')c.scale=Math.max(0,Math.min(layoutMeta.max_scale,Number(f.value)||0));
   else c.format=f.value;
-  layRenderWidth();
+  layChanged();
  };
 }
 function layRenderWidth(){
- let cols=layEditing?.columns||[];
- let width=cols.reduce((m,c)=>Math.max(m,Number(c.start||1)+Number(c.length||0)-1),0);
- let unit=$('#lay-unit')?.value==='byte'?'バイト':'文字';
+ let cols=layEditing?.columns||[],delim=layIsDelim(layEditing);
+ let at=c=>delim?[Number(c.field||1),Number(c.field||1)]:[Number(c.start||1),Number(c.start||1)+Number(c.length||0)-1];
+ let width=cols.reduce((m,c)=>Math.max(m,at(c)[1]),0);
  let typed=cols.filter(c=>(c.type||'text')!=='text').length;
- let w=$('#lay-width');if(w)w.textContent=`1行あたり ${width}${unit} / ${cols.length}列`+(typed?` / 型あり ${typed}列`:'');
+ let w=$('#lay-width');
+ if(w)w.textContent=(delim?`${cols.length}列 / 項目${width}個目まで使用`:`1行あたり ${width}${$('#lay-unit')?.value==='byte'?'バイト':'文字'} / ${cols.length}列`)+(typed?` / 型あり ${typed}列`:'');
  // 重なりと隙間は、間違いとは限らない（日付の全体と年だけ、など）。知らせるだけにする。
- let sorted=cols.slice().sort((a,b)=>a.start-b.start);let over=[],gap=[],pos=1;
- sorted.forEach(c=>{let s=Number(c.start||1),e=s+Number(c.length||0)-1;
-  if(s<pos)over.push(c.name);else if(s>pos)gap.push(`${pos}〜${s-1}`);pos=Math.max(pos,e+1)});
+ let sorted=cols.slice().sort((a,b)=>at(a)[0]-at(b)[0]);let over=[],gap=[],pos=1;
+ sorted.forEach(c=>{let [s,e]=at(c);
+  if(s<pos)over.push(c.name);else if(s>pos)gap.push(s-1>pos?`${pos}〜${s-1}`:`${pos}`);pos=Math.max(pos,e+1)});
  let note=$('#lay-cols-note');
- if(note)note.textContent=[over.length?`重なり: ${over.slice(0,3).join('・')}`:'',
-   gap.length?`どの列にも入らない範囲: ${gap.slice(0,3).join('・')}`:''].filter(Boolean).join(' / ')
-   ||'開始位置は1文字目を1として数えます。';
+ if(note)note.textContent=[over.length?(delim?`同じ項目を取る列: `:`重なり: `)+over.slice(0,3).join('・'):'',
+   gap.length?(delim?`取っていない項目: `:`どの列にも入らない範囲: `)+gap.slice(0,3).join('・'):''].filter(Boolean).join(' / ')
+   ||(delim?'項目は、区切りで分けた何番目か（1から）です。':'開始位置は1文字目を1として数えます。');
+}
+/* 読み方の切り替え。列の取り決めは消さずに持ち替える（固定長の開始・長さも、区切りの項目番号も残る）。
+   区切りへ初めて切り替えたときは、並び順を項目番号にする（1列目は1番目）。 */
+function laySetMode(mode){
+ layEditing.mode=mode==='delimited'?'delimited':'fixed';
+ if(layEditing.mode==='delimited')(layEditing.columns||[]).forEach((c,i)=>{if(!Number(c.field))c.field=i+1});
+ layRenderMode();layRenderCols();layChanged();
+}
+function layRenderMode(){
+ let delim=layIsDelim(layEditing);
+ $$('#lay-mode button').forEach(b=>{let on=b.dataset.mode===layEditing.mode;b.classList.toggle('on',on);b.setAttribute('aria-selected',String(on))});
+ $('#lay-delim-row').hidden=!delim;
+ $$('#lay-edit [data-for]').forEach(x=>x.hidden=(x.dataset.for!==layEditing.mode));
+ $$('#lay-delims button').forEach(b=>{let on=b.dataset.v===layEditing.delimiter;b.classList.toggle('on',on);b.setAttribute('aria-checked',String(on))});
+ let t=$('#lay-delim-text'),k=layEditing.delimiter;
+ t.hidden=!(delim&&(k==='custom'||k==='regex'));
+ t.placeholder=k==='regex'?'例 \\s*[;/]\\s*（決まりに当たったところで分けます）':'例 ::（この文字で分けます）';
+ if(document.activeElement!==t)t.value=layEditing.delimiter_text||'';
+ if(!delim)$('#lay-found').hidden=true;
+}
+/* 保存は自動（2.8.0）。アプリの他の設定と同じく、変えたら少し待って保存し、見出しの右に状態だけを出す
+   （押す保存を置くと、下の帯の「変更はすべて自動で保存されます」と食い違い、押す要るのかを迷わせる）。
+   保存できない形（名前が無い・列名が重なる など）は保存せず、その理由を同じ場所に出す。 */
+let laySaved='',layPreviewTimer=0,layAutoTimer=0,laySaving=null;
+function layWhen(iso){
+ let d=new Date(iso||'');if(isNaN(d))return '';
+ let now=new Date(),hm=d.toTimeString().slice(0,5);
+ return d.toDateString()===now.toDateString()?hm:`${d.getMonth()+1}/${d.getDate()} ${hm}`;
+}
+function layAutoState(kind,text,when=''){
+ let el=$('#lay-autosave');if(!el)return;
+ el.className='lay-autosave'+(kind?' is-'+kind:'');
+ el.innerHTML=E(text)+(when?` <small>${E(when)}</small>`:'');
+}
+function layScheduleSave(){
+ if(!layEditing)return;
+ clearTimeout(layAutoTimer);
+ if(JSON.stringify(layCollect())===laySaved){layAutoTimer=0;return}
+ layAutoState('wait','変更を保存します…');
+ layAutoTimer=setTimeout(layAutoSave,700);
+}
+async function layAutoSave(){
+ layAutoTimer=0;
+ if(laySaving){await laySaving;return layScheduleSave()}
+ let body=layCollect(),snap=JSON.stringify(body);
+ if(snap===laySaved)return;
+ if(!body.name)return layAutoState('wait','マスタ名を入れると保存します');
+ layAutoState('busy','保存しています…');
+ laySaving=fetch('/api/text-layouts',{method:'POST',headers:{'Content-Type':'application/json'},
+   body:snap}).then(r=>r.json()).catch(()=>null);
+ let d=await laySaving;laySaving=null;
+ if(!d||!d.ok)return layAutoState('ng','保存できません: '+(d?.error||'通信に失敗しました'));
+ // 開き直さずに続ける（打っている途中の欄を描き直さない）。新規なら id を受け取り、一覧に足す。
+ let first=!layEditing.id;
+ layEditing.id=d.layout.id;
+ laySaved=JSON.stringify({...body,id:d.layout.id});
+ let i=layoutCache.findIndex(x=>x.id===d.layout.id),keep=i>=0?{used_by:layoutCache[i].used_by}:{used_by:[]};
+ if(i>=0)layoutCache[i]={...d.layout,...keep};else layoutCache.push({...d.layout,...keep});
+ $('#lay-title').textContent=d.layout.name;$('#lay-delete').hidden=false;
+ layRenderList();
+ layEditing.updated_at=d.layout.updated_at;
+ layAutoState('ok',first?'作成して保存しました':'自動で保存しました',layWhen(d.layout.updated_at));
+ if(JSON.stringify(layCollect())!==laySaved)layScheduleSave();
+}
+/* 別のマスタへ移る前に、待っている保存を済ませる。保存できない変更が残っているなら、捨ててよいかを聞く。 */
+async function layLeave(){
+ if(!layEditing)return true;
+ if(layAutoTimer){clearTimeout(layAutoTimer);await layAutoSave()}
+ if(laySaving)await laySaving;
+ if(JSON.stringify(layCollect())!==laySaved&&!confirm('保存できない変更があります（'+($('#lay-autosave')?.textContent||'')+'）。捨てて移りますか？'))return false;
+ return true;
+}
+function layChanged(refresh=true){
+ layRenderWidth();layScheduleSave();
+ // 見本があれば、直すたびに「できあがり」を取り直す（下読みを押しに行かなくても結果が見える）。
+ if(refresh&&$('#lay-sample').value.trim()){clearTimeout(layPreviewTimer);layPreviewTimer=setTimeout(()=>layPreview(true),500)}
 }
 function layOpen(l){
  layEditing=structuredClone(l||layBlank());
+ if(!layEditing.mode)layEditing.mode='fixed';
+ laySample=null;
  $('#lay-empty').hidden=true;$('#lay-edit').hidden=false;
- $('#lay-title').textContent=layEditing.id?'読取マスタを編集':'読取マスタを作成';
+ $('#lay-title').textContent=layEditing.id?layEditing.name:'新しい読取マスタ';
  $('#lay-name').value=layEditing.name||'';$('#lay-desc').value=layEditing.description||'';
  layFillSelect($('#lay-enc'),layoutMeta.encodings,layEditing.encoding);
  layFillSelect($('#lay-unit'),layoutMeta.units,layEditing.unit);
  layFillSelect($('#lay-trim'),layoutMeta.trims,layEditing.trim);
+ layFillSelect($('#lay-quote'),layoutMeta.quotes,layEditing.quote||'double');
  layFillSelect($('#lay-type-pick'),layoutMeta.types,'integer');
+ $('#lay-delims').innerHTML=(layoutMeta.delimiters||[]).map(d=>`<button type="button" role="radio" data-v="${E(d.value)}">${E(d.value==='regex'?'正規表現':d.label)}</button>`).join('');
+ $$('#lay-delims button').forEach(b=>b.onclick=()=>{layEditing.delimiter=b.dataset.v;layRenderMode();layChanged();
+  if(b.dataset.v==='custom'||b.dataset.v==='regex')$('#lay-delim-text').focus()});
  let fl=$('#lay-fmt-list');
  if(fl)fl.innerHTML=(layoutMeta.stamp_formats||[]).map(x=>`<option value="${E(x)}">`).join('');
  $('#lay-skip-head').value=layEditing.skip_head||0;$('#lay-skip-tail').value=layEditing.skip_tail||0;
  $('#lay-skip-blank').checked=layEditing.skip_blank!==false;$('#lay-header-row').checked=!!layEditing.header_row;
+ $('#lay-collapse').checked=!!layEditing.collapse;
  $('#lay-sample').value=layEditing.sample_path||'';
- $('#lay-preview-result').innerHTML='';
+ $('#lay-preview-result').innerHTML=`<p class="hint">${layEditing.sample_path?'見本を読んでいます…':'見本のファイルを入れると、切った結果がここに出ます。'}</p>`;
+ $('#lay-found').hidden=true;$('#lay-found').dataset.sniffed='';
  $('#lay-delete').hidden=!layEditing.id;
- $('#lay-state').textContent=(l&&l.used_by&&l.used_by.length)?`${l.used_by.length}件の対象が使用中: ${l.used_by.slice(0,3).join('・')}`:'';
- layRenderCols();layRenderList();
+ $('#lay-state').textContent=(l&&l.used_by&&l.used_by.length)?`${l.used_by.length}件の対象が使用中`:'';
+ $('#lay-state').title=(l&&l.used_by||[]).join('\n');
+ layRenderMode();layRenderCols();layRenderList();
+ laySaved=JSON.stringify(layCollect());clearTimeout(layAutoTimer);layAutoTimer=0;
+ // いつ保存したかを出す（決まりの説明ではなく状態を。下の帯が決まりを言っている）。
+ if(layEditing.id)layAutoState('ok','自動で保存しました',layWhen(layEditing.updated_at));else layAutoState('wait','マスタ名を入れると保存します');
+ if(layEditing.sample_path)layPreview(true);
 }
 function layCollect(){
  return {...layEditing,name:$('#lay-name').value.trim(),description:$('#lay-desc').value.trim(),
-  encoding:$('#lay-enc').value,unit:$('#lay-unit').value,trim:$('#lay-trim').value,
+  encoding:$('#lay-enc').value,unit:$('#lay-unit').value,trim:$('#lay-trim').value,quote:$('#lay-quote').value,
+  delimiter_text:$('#lay-delim-text').value,collapse:$('#lay-collapse').checked,
   skip_head:Number($('#lay-skip-head').value)||0,skip_tail:Number($('#lay-skip-tail').value)||0,
   skip_blank:$('#lay-skip-blank').checked,header_row:$('#lay-header-row').checked,
   sample_path:$('#lay-sample').value.trim()};
-}
-async function laySave(){
- let body=layCollect();
- let d=await fetch('/api/text-layouts',{method:'POST',headers:{'Content-Type':'application/json'},
-   body:JSON.stringify(body)}).then(r=>r.json()).catch(()=>null);
- if(!d||!d.ok)return toast(d?.error||'保存できませんでした');
- toast('読取マスタを保存しました');
- await loadLayouts(true);layRenderList();
- layOpen(layoutCache.find(x=>x.id===d.layout.id)||d.layout);
 }
 async function layDelete(){
  if(!layEditing?.id)return;
@@ -4403,37 +4558,75 @@ async function layDelete(){
  await loadLayouts(true);layRenderList();
  $('#lay-edit').hidden=true;$('#lay-empty').hidden=false;
 }
-async function layPreview(){
+/* 見本から列を作る（区切り）。区切りの記号と、1行目が見出しなら列名まで見つけて入れる。
+   すでに列があるときは、置き換えてよいかを先に聞く（型やメモを丁寧に入れた列が一度で消えるため）。 */
+async function laySniff(){
  let path=$('#lay-sample').value.trim();
- if(!path)return toast('確かめるファイルを入れてください');
- let box=$('#lay-preview-result');box.innerHTML='<p class="hint">読み取っています…</p>';
+ if(!path)return toast('見本のファイルを入れてください');
+ let d=await fetch('/api/text-sniff',{method:'POST',headers:{'Content-Type':'application/json'},
+   body:JSON.stringify({path,layout:layCollect()})}).then(r=>r.json()).catch(()=>null);
+ if(!d||!d.ok)return toast(d?.error||'見本を読めませんでした');
+ let had=(layEditing.columns||[]).filter(c=>String(c.name||'').trim()).length;
+ let keepCols=had>1&&!confirm(`見本から ${d.columns.length}列を見つけました（${d.label}区切り）。いまの ${had}列を置き換えますか？\n「キャンセル」なら、区切りだけを入れ替えて列はそのままにします。`);
+ Object.assign(layEditing,{delimiter:d.delimiter,delimiter_text:d.delimiter_text||'',collapse:d.collapse,quote:d.quote});
+ $('#lay-collapse').checked=!!d.collapse;$('#lay-quote').value=d.quote;$('#lay-delim-text').value=d.delimiter_text||'';
+ if(!keepCols)layEditing.columns=d.columns.map(c=>({name:c.name,field:c.field,start:1,length:0,type:'text',scale:0,format:'',note:''}));
+ laySample={fields:d.columns.map(c=>c.sample)};
+ let f=$('#lay-found');f.hidden=false;
+ f.dataset.sniffed='1';
+ f.innerHTML=`<span class="ok">見本から見つけました</span>${E(d.label)}区切り · ${d.columns.length}列${$('#lay-header-row').checked?' · 1行目の見出しを列名にしました':''}${keepCols?' · 列はそのまま':''}`;
+ layRenderMode();layRenderCols();layChanged();
+}
+async function layPreview(quiet){
+ let path=$('#lay-sample').value.trim();
+ if(!path){if(!quiet)toast('見本のファイルを入れてください');return}
+ let box=$('#lay-preview-result');
  let d=await fetch('/api/text-preview',{method:'POST',headers:{'Content-Type':'application/json'},
-   body:JSON.stringify({path,layout:layCollect(),lines:12})}).then(r=>r.json()).catch(()=>null);
+   body:JSON.stringify({path,layout:layCollect(),lines:5})}).then(r=>r.json()).catch(()=>null);
  if(!d)return box.innerHTML='<p class="lay-note is-ng">下読みできませんでした（通信に失敗しました）</p>';
  if(!d.ok)return box.innerHTML=`<p class="lay-note is-ng">${E(d.error||'読み取れませんでした')}</p>`;
+ // 見本の値（区切りの列の横に出す）は、項目番号で引けるよう、取った列ではなく1件目の項目そのものを持つ。
+ if(layIsDelim(layEditing)&&d.fields){
+  laySample={fields:d.fields};
+  // 見本から何が決まったかを、開いたときも出す（見本から列を作ったときは、その結果の言葉のまま残す）。
+  let f=$('#lay-found');
+  if(f.hidden||!f.dataset.sniffed){f.hidden=false;f.dataset.sniffed='';
+   f.innerHTML=`<span class="ok">見本を読みました</span>${E(layDelimLabel())}区切り · 1件目は ${d.fields.length}項目${$('#lay-header-row').checked?' · 1行目は見出し':''}`}
+ }
+ $$('#lay-cols .lay-col').forEach(row=>{let i=Number(row.dataset.i),s=row.querySelector('.lay-smp');
+  if(s){let v=laySampleOf(layEditing.columns[i],i);s.textContent=v;s.title=v}});
  let head='<tr><th>#</th>'+d.headers.map((h,i)=>{let t=(d.types||[])[i]||'text';
    return `<th>${E(h)}${t!=='text'?`<small class="lay-th-type">${E(layTypeLabel(t))}</small>`:''}</th>`}).join('')+'</tr>';
  let rows=d.rows.map((r,i)=>`<tr><td>${i+1}</td>`+r.map(v=>`<td>${E(v)}</td>`).join('')+'</tr>').join('');
+ let unit=d.stat.mode==='delimited'?'項目':d.stat.unit==='byte'?'バイト':'文字';
  box.innerHTML=`<div class="lay-scroll"><table>${head}${rows}</table></div>`
-  +`<p class="hint">${d.stat.rows}行を切り出しました（読んだ行 ${d.stat.lines} / 1行あたり ${d.stat.width}${d.stat.unit==='byte'?'バイト':'文字'}必要）</p>`
+  +`<p class="hint">${d.stat.rows}行を切り出しました（読んだ行 ${d.stat.lines} / 1行あたり ${d.stat.width}${unit}必要）</p>`
   +(d.notes||[]).map(n=>`<p class="lay-note">${E(n)}</p>`).join('')
   +(d.raw&&d.raw.length?`<p class="lay-raw hint">元の1行目: <code>${E(d.raw[0])}</code></p>`:'');
 }
 async function openLayouts(){
+ if(layEditing&&(layAutoTimer||laySaving)){clearTimeout(layAutoTimer);await layAutoSave()}
  await loadLayouts(true);layRenderList();
  if(layEditing){let cur=layoutCache.find(x=>x.id===layEditing.id);if(cur)layOpen(cur)}
 }
-if($('#lay-add'))$('#lay-add').onclick=()=>layOpen(null);
-if($('#lay-save'))$('#lay-save').onclick=laySave;
+if($('#lay-add'))$('#lay-add').onclick=async()=>{if(await layLeave())layOpen(null)};
 if($('#lay-delete'))$('#lay-delete').onclick=layDelete;
-if($('#lay-preview'))$('#lay-preview').onclick=layPreview;
+if($('#lay-preview'))$('#lay-preview').onclick=()=>layPreview(false);
+if($('#lay-sniff'))$('#lay-sniff').onclick=laySniff;
+if($('#lay-sample-pick'))$('#lay-sample-pick').onclick=async()=>{
+ let p=await browse('file',$('#lay-sample').value,[['テキスト','*.txt;*.csv;*.tsv;*.dat'],['すべて','*.*']]);
+ if(p){$('#lay-sample').value=p;layChanged()}};
+$$('#lay-mode button').forEach(b=>b.onclick=()=>laySetMode(b.dataset.mode));
 if($('#lay-search'))$('#lay-search').oninput=e=>{laySearch=e.target.value;layRenderList()};
-if($('#lay-unit'))$('#lay-unit').onchange=layRenderWidth;
+// 列以外の欄（名前・文字コード・読み飛ばし・見出し・区切りの文字 など）を直したときも、未保存の印と「できあがり」を取り直す。
+['#lay-name','#lay-desc','#lay-delim-text','#lay-skip-head','#lay-skip-tail','#lay-sample'].forEach(s=>{if($(s))$(s).addEventListener('input',()=>layChanged(s!=='#lay-name'&&s!=='#lay-desc'))});
+['#lay-enc','#lay-unit','#lay-trim','#lay-quote','#lay-skip-blank','#lay-header-row','#lay-collapse'].forEach(s=>{if($(s))$(s).addEventListener('change',()=>layChanged())});
 if($('#lay-col-add'))$('#lay-col-add').onclick=()=>{
  let cols=layEditing.columns||[];
  let next=cols.reduce((m,c)=>Math.max(m,Number(c.start||1)+Number(c.length||0)),1);
- cols.push({name:'列'+(cols.length+1),start:next,length:10,type:'text',scale:0,format:'',note:''});
- layEditing.columns=cols;layRenderCols();
+ let field=cols.reduce((m,c)=>Math.max(m,Number(c.field||0)),0)+1;
+ cols.push({name:'列'+(cols.length+1),start:next,length:10,field,type:'text',scale:0,format:'',note:''});
+ layEditing.columns=cols;layRenderCols();layChanged();
 };
 /* 型をまとめて設定する。1本ずつ選ぶのは300列では現実的でない。
    すでに型を決めてある列は残す（上書きすると、丁寧に入れた設定が一度で消える）。
@@ -4445,7 +4638,7 @@ if($('#lay-type-all'))$('#lay-type-all').onclick=()=>{
  let target=t==='text'?cols.filter(c=>(c.type||'text')!=='text'):cols.filter(c=>(c.type||'text')==='text');
  if(!target.length)return toast(t==='text'?'型を決めている列がありません':`型を決めていない列がありません（すでに全${cols.length}列に型があります）`);
  target.forEach(c=>{c.type=t;c.scale=t==='real'?(Number(c.scale)||0):0;c.format=layTypeDefaultFormat(t)});
- layRenderCols();
+ layRenderCols();layChanged();
  let kept=cols.length-target.length;
  toast(`${target.length}列を「${layTypeLabel(t)}」にしました`
   +(kept?(t==='text'?`（もともと文字の${kept}列はそのまま）`:`（すでに型を決めていた${kept}列はそのまま）`):''));
@@ -4460,7 +4653,7 @@ if($('#lay-swap'))$('#lay-swap').onclick=()=>{
  let target=cols.filter(c=>String(c.note||'').trim());
  if(!target.length)return toast('メモが入っている列がありません。入れ替えるものがありません');
  target.forEach(c=>{let n=String(c.name||'');c.name=String(c.note).trim();c.note=n});
- layRenderCols();
+ layRenderCols();layChanged();
  let names=cols.map(c=>String(c.name||''));
  let dupes=[...new Set(names.filter((x,i)=>names.indexOf(x)!==i))];
  let skipped=cols.length-target.length;
@@ -4637,15 +4830,13 @@ function jnKeyCols(i){
  return out;
 }
 function jnRenderList(){
- let box=$('#jn-list');if(!box)return;
- let q=jnSearch.trim().toLowerCase();
- let items=joinCache.filter(x=>!q||[x.name,x.description,...(x.sources||[]).map(s=>s.path)].join(' ').toLowerCase().includes(q));
- if(!items.length){box.innerHTML='<p class="lay-empty-note">'+(q?'見つかりませんでした':'まだ登録がありません。「新規作成」から作れます。')+'</p>';return}
- box.innerHTML=items.map(x=>`<button type="button" class="lay-item${jnEditing&&jnEditing.id===x.id?' on':''}" data-id="${E(x.id)}">`
-  +`<b>${E(x.name)}</b><small>${(x.sources||[]).length}ファイル / つなぎ目 ${(x.joins||[]).length}</small>`
-  +`<small>${E((x.sources||[]).map(s=>jnBase(s.path)).join(' → '))}</small>`
-  +(x.used_by&&x.used_by.length?`<em>${x.used_by.length}件の対象が使用中</em>`:'')+'</button>').join('');
- $$('#jn-list .lay-item').forEach(b=>b.onclick=()=>jnOpen(joinCache.find(x=>x.id===b.dataset.id)));
+ renderMasterList($('#jn-list'),{items:joinCache,query:jnSearch,current:jnEditing?.id,
+  text:x=>[x.name,x.description,...(x.sources||[]).map(s=>s.path)].join(' '),
+  meta:x=>`${(x.sources||[]).length}ファイル`,
+  title:x=>[x.name,`${(x.sources||[]).length}ファイル / つなぎ目 ${(x.joins||[]).length}`,(x.sources||[]).map(s=>jnBase(s.path)).join(' → '),
+   (x.used_by||[]).length?`${x.used_by.length}件の対象が使用中`:'',x.description].filter(Boolean).join('\n'),
+  empty:'まだ登録がありません。「新規作成」から作れます。',
+  open:id=>jnOpen(joinCache.find(x=>x.id===id))});
 }
 /* ---- 繋ぐ相手を「選ぶ」 ----------------------------------------------------
    場所を手で打たせるのは、いちばん間違えやすく、いちばん確かめにくい。打ち間違えても
@@ -5195,7 +5386,7 @@ function renderLogin(){
   :c&&c.ok?'このPCにはまだ登録していません。いまは共有の symnavim.conf から読んでいます。取り込むとこのPCに移り、ファイルは要らなくなります。'
   :c?`symnavim.conf を読めません: ${c.error}`
   :x.needed?'RNE の対象を実行するには、Navigator の接続情報が要ります。「登録する」から入れてください。'
-  :'固定長テキスト・結合だけなら要りません。RNE を使うときに登録してください。';
+  :'テキスト・結合だけなら要りません。RNE を使うときに登録してください。';
  $('#login-edit').textContent=x&&x.saved?'変更する':'登録する';
  $('#login-import').hidden=!(c&&c.ok&&!(x&&x.saved));
  $('#login-delete').hidden=!(x&&x.saved);
@@ -5745,15 +5936,13 @@ async function mqLoad(){
 }
 async function openMQueries(){await mqLoad();mqRenderList()}
 function mqRenderList(){
- let box=$('#mq-list');if(!box)return;
- let q=mqSearch.trim().toLowerCase();
- let items=mqCache.filter(x=>!q||[x.name,x.description,x.code].join(' ').toLowerCase().includes(q));
- if(!items.length){box.innerHTML='<p class="lay-empty-note">'+(q?'見つかりませんでした':'まだ登録がありません。「新規作成」で式を貼り付けるか、「取り込み」で Excel の .odc・ブックを読み込めます。')+'</p>';return}
- box.innerHTML=items.map(x=>`<button type="button" class="lay-item${mqEditing&&mqEditing.id===x.id?' on':''}" data-id="${E(x.id)}">`
-  +`<b>${E(x.name)}</b><small>${x.broken?'式が読めません':`クエリ ${(x.queries||[]).length}本 / 出す: ${E(x.output||x.main||'')}`}</small>`
-  +(x.description?`<small>${E(x.description)}</small>`:'')
-  +(x.used_by&&x.used_by.length?`<em>${x.used_by.length}件の対象が使用中</em>`:'')+'</button>').join('');
- $$('#mq-list .lay-item').forEach(b=>b.onclick=()=>mqOpen(mqCache.find(x=>x.id===b.dataset.id)));
+ renderMasterList($('#mq-list'),{items:mqCache,query:mqSearch,current:mqEditing?.id,
+  text:x=>[x.name,x.description,x.code].join(' '),
+  meta:x=>`クエリ ${(x.queries||[]).length}本`,warn:x=>x.broken?'式が読めません':'',
+  title:x=>[x.name,x.broken?'式が読めません':`クエリ ${(x.queries||[]).length}本 / 出す: ${x.output||x.main||''}`,
+   (x.used_by||[]).length?`${x.used_by.length}件の対象が使用中`:'',x.description].filter(Boolean).join('\n'),
+  empty:'まだ登録がありません。「新規作成」で式を貼り付けるか、「取り込み」で Excel の .odc・ブックを読み込めます。',
+  open:id=>mqOpen(mqCache.find(x=>x.id===id))});
 }
 /* エディターを開く。閉じるときに保存する（after(保存したクエリ) は閉じたあとに呼ぶ。対象の編集から開いたとき選び直すため） */
 function mqOpen(item,after,sampleJob=''){

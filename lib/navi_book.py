@@ -31,9 +31,11 @@ LAYOUT_COLS_SHEET='列'
 LAYOUT_FIELDS=[('マスタ名','name'),('用途メモ','description'),('文字コード','encoding'),
                ('単位','unit'),('空白の扱い','trim'),('先頭を読み飛ばす','skip_head'),
                ('末尾を読み飛ばす','skip_tail'),('空行を飛ばす','skip_blank'),
-               ('1行目は見出し','header_row'),('テーブル名','table')]
+               ('1行目は見出し','header_row'),('テーブル名','table'),
+               ('読み方','mode'),('区切り','delimiter'),('区切りの文字','delimiter_text'),
+               ('囲み文字','quote'),('続いた区切りは1つ','collapse')]
 LAYOUT_COL_FIELDS=[('マスタ名',None),('順',None),('列名','name'),('開始位置','start'),
-                   ('長さ','length'),('型','type'),('小数桁','scale'),('書式','format'),('メモ','note')]
+                   ('長さ','length'),('項目番号','field'),('型','type'),('小数桁','scale'),('書式','format'),('メモ','note')]
 
 RECIPE_SHEET='結合マスタ'
 RECIPE_SRC_SHEET='ファイル'
@@ -90,21 +92,28 @@ def _stamp_sheet(wb,kind,count):
  ws.cell(row=5,column=1).value='使い方'
  return ws
 
+def _is_delimited(x):
+ # 書き出すときは画面の言葉（区切り（記号で分ける））、内側では delimited。どちらでも見分ける。
+ m=str(x.get('mode') or '')
+ return m=='delimited' or m.startswith('区切り')
+
 def layouts_to_xlsx(layouts,dst):
  """読取マスタをEXCELへ。1行＝1マスタ、列は別シートに1行＝1列で並べる。"""
  from openpyxl import Workbook
  wb=Workbook()
  rows=[]
  for x in (layouts or []):
-  rows.append([_b(x[k]) if k in ('skip_blank','header_row') else x.get(k,'') for _h,k in LAYOUT_FIELDS])
+  rows.append([_b(x.get(k)) if k in ('skip_blank','header_row','collapse') else x.get(k,'') for _h,k in LAYOUT_FIELDS])
  _sheet(wb,LAYOUT_SHEET,[h for h,_k in LAYOUT_FIELDS],rows,
-        widths=[26,34,12,8,12,15,15,12,13,16],first=True)
+        widths=[26,34,12,8,12,15,15,12,13,16,20,14,12,18,16],first=True)
  crows=[]
  for x in (layouts or []):
   for i,c in enumerate(x.get('columns') or [],1):
-   crows.append([x.get('name',''),i]+[c.get(k,'') for _h,k in LAYOUT_COL_FIELDS[2:]])
+   # 使わない側の欄は空にする（区切りの開始位置・固定長の項目番号）。値があると、効くのかと迷わせる。
+   unused=('start','length') if _is_delimited(x) else ('field',)
+   crows.append([x.get('name',''),i]+['' if k in unused else c.get(k,'') for _h,k in LAYOUT_COL_FIELDS[2:]])
  _sheet(wb,LAYOUT_COLS_SHEET,[h for h,_k in LAYOUT_COL_FIELDS],crows,
-        widths=[26,6,28,11,9,9,9,20,30])
+        widths=[26,6,28,11,9,10,9,9,20,30])
  _stamp_sheet(wb,'読取マスタ',len(layouts or []))
  Path(dst).parent.mkdir(parents=True,exist_ok=True)
  wb.save(dst);wb.close()
@@ -165,7 +174,8 @@ def _pick(row,label,default=''):
  v=row.get(label)
  return default if v is None else v
 
-def layouts_from_xlsx(src,label_to_type=None,label_to_encoding=None,label_to_unit=None,label_to_trim=None):
+def layouts_from_xlsx(src,label_to_type=None,label_to_encoding=None,label_to_unit=None,label_to_trim=None,
+                      label_to_mode=None,label_to_delimiter=None,label_to_quote=None):
  """EXCELから読取マスタを組み立てる。(取り決めの並び, 読めなかった理由) を返す。
 
  値は画面の言葉でも、内部の言葉でも受ける。EXCELで直すのは人なので、「整数」と
@@ -202,6 +212,7 @@ def layouts_from_xlsx(src,label_to_type=None,label_to_encoding=None,label_to_uni
    cn=_txt(_pick(c,'列名'))
    if not cn:continue
    columns.append({'name':cn,'start':_num(_pick(c,'開始位置'),1),'length':_num(_pick(c,'長さ'),1),
+                   'field':_num(_pick(c,'項目番号'),len(columns)+1),
                    'type':(label_to_type or (lambda v:v))(_txt(_pick(c,'型'))),
                    'scale':_num(_pick(c,'小数桁'),0),'format':_txt(_pick(c,'書式')),
                    'note':_txt(_pick(c,'メモ'))})
@@ -211,7 +222,15 @@ def layouts_from_xlsx(src,label_to_type=None,label_to_encoding=None,label_to_uni
               'trim':(label_to_trim or (lambda v:v))(_txt(_pick(h,'空白の扱い'))),
               'skip_head':_num(_pick(h,'先頭を読み飛ばす'),0),'skip_tail':_num(_pick(h,'末尾を読み飛ばす'),0),
               'skip_blank':_unb(_pick(h,'空行を飛ばす',_YES)),'header_row':_unb(_pick(h,'1行目は見出し')),
-              'table':_txt(_pick(h,'テーブル名')),'columns':columns})
+              'table':_txt(_pick(h,'テーブル名')),
+              # 読み方の列が無い（2.8.0 より前に書き出した）EXCELは、これまでどおり固定長。
+              'mode':(label_to_mode or (lambda v:v))(_txt(_pick(h,'読み方'))) or 'fixed',
+              'delimiter':(label_to_delimiter or (lambda v:v))(_txt(_pick(h,'区切り'))),
+              # 区切りの文字は前後の空白も意味を持つので、削らずに受ける。
+              'delimiter_text':str(_pick(h,'区切りの文字')),
+              'quote':(label_to_quote or (lambda v:v))(_txt(_pick(h,'囲み文字'))),
+              'collapse':_unb(_pick(h,'続いた区切りは1つ')),
+              'columns':columns})
  if not out:bad.append('取り込める読取マスタが1件もありませんでした')
  return out,bad
 
