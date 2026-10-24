@@ -230,6 +230,27 @@
     await mqClose(false);
     document.querySelector('nav button[data-p="jobs"]').click();
 
+    // 上部（2.9.0）: タブは帯の中。絞り込みは小窓にまとめ、いまの条件をボタンに要約する。選ぶと道具の段が選んだ物の操作に替わる
+    const navInBar = !!document.querySelector('.appbar nav button[data-p="jobs"].on');
+    $('#filter-open').click();
+    await sleep(50);
+    const popOpen = !$('#filter-pop').hidden && document.activeElement === $('#search');
+    $('#filter-enabled').value = 'disabled';
+    $('#filter-enabled').dispatchEvent(new Event('change'));
+    const sumSet = $('#filter-summary').textContent, marked = $('#filter-open').classList.contains('is-set');
+    $('#filter-reset').click();
+    const sumReset = $('#filter-summary').textContent;
+    document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    const popClosed = $('#filter-pop').hidden;
+    const jobRows = document.querySelectorAll('#jobs-body tr').length;
+    setAllSelected(true);
+    const selShown = !document.querySelector('.jb-sel').hidden && document.querySelector('.jb-idle').hidden && $('#sel-count').textContent === String(jobRows);
+    setAllSelected(false);
+    const selBack = document.querySelector('.jb-sel').hidden && !document.querySelector('.jb-idle').hidden;
+    ok('上部: タブは帯の中・絞り込みは小窓で要約をボタンに出し、選ぶと道具の段が選んだ物の操作に替わる',
+      navInBar && popOpen && sumSet.startsWith('無効') && marked && sumReset === 'すべて・登録順' && popClosed && (jobRows === 0 || selShown) && selBack,
+      `帯 ${navInBar} / 小窓 ${popOpen} / ${sumSet} → ${sumReset} / 閉じる ${popClosed} / 選択 ${jobRows}件 ${selShown} → ${selBack}`);
+
     // tkinter・os.startfile の置き換え（答えの形はいまと同じ {"path": ...}）
     // 設定のパスは相対（アプリフォルダー基準）・<PC>（この PC の作業場所）のことがある。窓は Python と同じ決まりで実際の場所へ直す
     const absolute = (p) => typeof p === 'string' && /^(?:\/|[A-Za-z]:[\\/]|\\\\)/.test(p);

@@ -4,5 +4,5 @@
 navi_changelog.py にある ―― 800行の読みものなので、それを必要としない経路
 （抽出ワーカー）が読み込まずに済むように分けてある。
 """
-APP_VERSION='2.8.0'; APP_VERSION_TITLE='読取マスタ ―― 区切り（記号・決まり）で読む方式を足し、一覧を1件1行で見渡せるようにした'; APP_RELEASED_AT='2026-10-24'
+APP_VERSION='2.9.0'; APP_VERSION_TITLE='上部のメニューを詰め直し、一覧の表を広く見せるようにした'; APP_RELEASED_AT='2026-10-24'
 BUILD_VERSION=f'{APP_VERSION}-web'
