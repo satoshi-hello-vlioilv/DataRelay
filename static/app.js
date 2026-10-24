@@ -5762,6 +5762,7 @@ function mqOpen(item,after,sampleJob=''){
  mqEditing={id:item.id||'',name:item.name||'',description:item.description||'',code:item.code||'',output:item.output||''};
  mqDirty=!item.id;mqView=null;mqSel={query:'',step:''};mqSamples=null;mqSampleKey='';mqAfterClose=after||null;
  mqRenderList();mqShell();mqSetDirty(mqDirty);mqMsg('');
+ let fb=$('#mqe-build');if(fb)fb.hidden=!!sampleJob;   // 後処理のクエリ（取り出した表を受け取る）では、フォルダーから作るは使わない
  let dl=$('#mq-editor');if(!dl.open)dl.showModal();
  $('.mqe')?.focus({preventScroll:true});  // 最初のボタンに枠が付かないよう、窓そのものに置く
  if(mqEditing.code.trim())mqPreview();else{mqRender();mqAdvOpen()}
@@ -6140,14 +6141,16 @@ function postRender(){
  let src=`<div class="post-node io"><b>取り出した表</b><small>${inp?postSize(inp):'見本なし'}</small></div>`,mid;
  if(on){let names=postStepNames(),err=v.error&&!v.ok;
   mid=`<div class="post-node wide on${err?' ng':''}"><span class="k"><i>${post.mode==='query'?'Q':'手'}</i><b>${post.mode==='query'?`クエリ「${E(qName||'？')}」`:'手順で組んだ後処理'}</b></span>
-   <span class="post-steps">${names.length?names.map((n,i)=>`<em>${i+1} ${E(n)}</em>`).join('<span>→</span>'):'<small>ステップはまだありません（取り出した表のまま）</small>'}</span>${err?'<small class="ng">止まりました（下に理由）</small>':''}</div>`}
+   <span class="post-steps">${names.length?names.map(n=>`<em>${E(n)}</em>`).join('<span>→</span>'):'<small>ステップはまだありません（取り出した表のまま）</small>'}</span>${err?'<small class="ng">止まりました（下に理由）</small>':''}</div>`}
  else if(postSuggest)mid=`<div class="post-node next wide"><span class="post-next-t"><b>おすすめ: ピボット解除（${E(postSuggest.nums[0])}〜${E(postSuggest.nums[postSuggest.nums.length-1])} の${postSuggest.nums.length}列を縦に）</b><small>${E(postSuggest.why)}。${E(postSuggest.keep.join('・'))} は残し「${E(postSuggest.attr)}」「値」の2列に${postSuggest.after?`（→ ${postSize(postSuggest.after)}）`:''}</small>${postSuggest.after?.dropped?`<small><em>空のセル ${postSuggest.after.dropped.toLocaleString()}件は出さない</em></small>`:''}</span><button type="button" class="post-btn pri" id="post-suggest-go">ピボット解除して開く</button></div>`;
  else mid=`<div class="post-node empty wide">後処理はまだありません（下の「Power Query エディターで作る」から始めます）</div>`;
  let outNode=`<div class="post-node out"><b>出す表</b><small>${on?postSize(out):'取り出した表のまま'}</small></div>`;
  let flow=`<div class="post-flow">${src}<span class="post-arr">→</span>${mid}<span class="post-arr">→</span>${outNode}</div>`;
  let outs=q?(q.queries||[]):[];
+ // 選べるのは、取り出した表を受け取るクエリ（後処理のクエリ）だけ。ほかの入力用のクエリを選んでも、後処理にはならない
+ let usable=mqCache.filter(x=>x.id===post.query_id||String(x.code||'').includes('取り出した表'));
  let acts=`<div class="post-acts"><button type="button" class="post-btn${on||!postSuggest?' pri':''}" id="post-open">${on?'Power Query エディターで開く':'Power Query エディターで作る'}</button>
-  <label class="post-inl">使うクエリ<select id="post-query" class="post-in"><option value="">${on&&post.mode==='steps'?'（手順で組んだ後処理）':'選んでください'}</option>${mqCache.map(x=>`<option value="${E(x.id)}"${x.id===post.query_id&&post.mode==='query'?' selected':''}>${E(x.name)}</option>`).join('')}</select></label>
+  ${usable.length?`<label class="post-inl">使うクエリ<select id="post-query" class="post-in"><option value="">${on&&post.mode==='steps'?'（手順で組んだ後処理）':'選んでください'}</option>${usable.map(x=>`<option value="${E(x.id)}"${x.id===post.query_id&&post.mode==='query'?' selected':''}>${E(x.name)}</option>`).join('')}</select></label>`:''}
   ${on&&post.mode==='query'&&outs.length>1?`<label class="post-inl">出すクエリ<select id="post-query-out" class="post-in"><option value="">クエリの既定（${E(q.output||q.main||'')}）</option>${outs.map(n=>`<option${n===post.query_out?' selected':''}>${E(n)}</option>`).join('')}</select></label>`:''}
   <span class="sp"></span>${on?'<button type="button" class="post-btn danger" id="post-off">後処理を外す</button>':''}</div>`;
  let err=v.error&&!v.ok?`<div class="post-msg ng"><b>${E(v.error.step?`ステップ「${v.error.step}」で止まりました`:'式が止まりました')}</b>${E(v.error.message||'')}</div>`:'';
