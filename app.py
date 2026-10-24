@@ -4479,7 +4479,11 @@ def process(job_ids=None,trigger='manual',parallel_lines_override=None,run_id=No
   log.info('PARALLEL_DECISION selected_jobs=%s configured_lines=%s eligible=%s model=process-isolated',len(api_jobs),api_parallel_lines,bool(api_jobs))
   log.info('EXECUTION_MODE mode=lanes requested_lines=%s rne_jobs=%s local_jobs=%s',api_parallel_lines,len(api_jobs),len(local_jobs))
   lanes_used=True
-  res=run_lanes(jobs,local_jobs,api_jobs,cfg,user,pw,server,dde_work,backup,api_parallel_lines,trigger,progress)
+  # 走っている間に手動で入れた実行は、設定の並列ライン数までこの実行に合流させる（2.9.1）。
+  # 1件だけの実行（行の［実行］）でも、あとから入れた対象のために設定の本数ぶんの枠を持つ。
+  cap=max(api_parallel_lines,clamp_parallel_lines(cfg['settings'].get('api_parallel_lines',1),cfg))
+  res=run_lanes(jobs,local_jobs,api_jobs,cfg,user,pw,server,dde_work,backup,api_parallel_lines,trigger,progress,
+                cap=cap,login=lambda:navi_login(cfg)[:3])
   finish_batch(res,total_all_jobs,progress)
  except RunCancelled as e:
   msg='中断されました: '+str(e); set_status(step='cancelled',step_label='ユーザーの操作により中断しました',step_percent=100,last_result=msg,error_detail='',last_finished_at=datetime.now().isoformat(timespec='seconds'),elapsed_seconds=int(time.time()-getattr(progress,'started',time.time()))); log.info('RUN_CANCELLED %s',msg)
@@ -4514,6 +4518,10 @@ def queue_snapshot():
   items=[]
   if active_command:
    x=dict(active_command);x['state']='running';x['position']=0;items.append(x)
+   # 合流した対象も、実行中の行に並べる（別の行にはしない。同じ実行の一部として走っているので）
+   x['job_names']=list(x.get('job_names') or [])+list(x.get('joined_names') or [])
+   x['job_ids']=list(x.get('job_ids') or [])+list(x.get('joined_ids') or [])
+   x['count']=len(x['job_ids'])
   for i,item in enumerate(command_queue,1):
    x=dict(item);x['state']='waiting';x['position']=i;items.append(x)
   return {'items':items,'active_id':active_command.get('id') if active_command else None,'waiting_count':len(command_queue),'total_count':len(items)}
@@ -4641,8 +4649,12 @@ def after_command(item,error='',cancelled=False):
   detail=str(why or error or status.get('error_detail') or status.get('last_result') or '')
   add_alert('error',f'{len(ids)}件の実行が失敗しました','・'.join(names[:5])+(f' / {detail}' if detail else ''),names)
   # 取り直すのは自動実行だけ。手動は人が見ているので、勝手に走らせない。
+  # 自動実行に手動で合流した対象（2.9.1）も、取り直しには含めない。
   if str(item.get('trigger') or '').startswith('schedule'):
-   schedule_retry(ids,names,item.get('parallel_lines') or 1,int(item.get('attempt') or 0)+1,cfg,reason=detail[:80])
+   joined=set(item.get('joined_ids') or ())
+   keep=[(i,n) for i,n in zip(ids,names) if i not in joined] if len(ids)==len(names) else [(i,'') for i in ids if i not in joined]
+   ids=[i for i,_ in keep];names=[n for _,n in keep if n] or names
+   if ids:schedule_retry(ids,names,item.get('parallel_lines') or 1,int(item.get('attempt') or 0)+1,cfg,reason=detail[:80])
  except Exception:
   log.exception('AFTER_COMMAND_FAILED')
 
@@ -4651,10 +4663,29 @@ def enqueue_command(job_ids,trigger,parallel_lines,attempt=0):
  if not selected:raise ValueError('実行対象がありません')
  lines=clamp_parallel_lines(parallel_lines,cfg)
  item={'id':uuid.uuid4().hex,'job_ids':[j['id'] for j in selected],'job_names':[j['name'] for j in selected],'trigger':trigger,'parallel_lines':lines,'attempt':int(attempt or 0),'enqueued_at':datetime.now().isoformat(timespec='seconds'),'count':len(selected)}
+ if join_running(item,selected,cfg):return item,0
  with command_queue_lock:
   command_queue.append(item);position=len(command_queue)+(1 if active_command else 0)
  command_queue_event.set();log.info('COMMAND_QUEUE_ENQUEUE id=%s position=%s jobs=%s lines=%s trigger=%s',item['id'],position,item['job_names'],item['parallel_lines'],trigger)
  return item,position
+
+def join_running(item,selected,cfg):
+ """手動の実行を、走っている実行に合流させる（2.9.1）。合流できたら True。
+
+ これまでは何かが走っていると、並列ライン数に空きがあっても実行キューで前の実行の終わりを待った。
+ いまは、同時に流す対象の数が並列ライン数に収まるなら、走っている実行の空いたラインですぐ流す。
+ 自動実行は合流させない ―― 失敗したときの取り直しは実行（指令）の単位で決めているため。
+ 合流した対象は、走っている指令の joined_ids に残す（実行キューの表示と、取り直しから外すため）。
+ """
+ if not str(item.get('trigger') or '').startswith('manual'):return False
+ with command_queue_lock:
+  if active_command is None or command_queue:return False   # 先に並んでいる実行は追い越さない
+  if not navi_lanerun.join_live(selected,cfg,item['trigger']):return False
+  active_command.setdefault('joined_ids',[]).extend(item['job_ids'])
+  active_command.setdefault('joined_names',[]).extend(item['job_names'])
+ item['joined']=True;item['joined_to']=active_command.get('id')
+ log.info('COMMAND_QUEUE_JOIN id=%s into=%s jobs=%s trigger=%s',item['id'],item['joined_to'],item['job_names'],item['trigger'])
+ return True
 
 def command_dispatcher():
  global active_command
@@ -4672,6 +4703,8 @@ def command_dispatcher():
   except Exception as e:err=str(e);log.error('COMMAND_QUEUE_FAILED id=%s error=%s',item['id'],e)
   finally:
    # process() は中止を握って正常に戻る。判別できるのは残った工程名だけなので、ここで見る。
+   # 合流した対象（joined_ids）も知らせと取り直しの判断に使うので、締めの時点の指令を渡す
+   with command_queue_lock:item=dict(active_command or item)
    after_command(item,err,cancelled=(status.get('step')=='cancelled'))
    with command_queue_lock:active_command=None
    log.info('COMMAND_QUEUE_END id=%s remaining=%s',item['id'],len(command_queue))
