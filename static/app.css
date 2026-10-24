@@ -3212,3 +3212,49 @@ dialog.mq-editor-dialog::backdrop{background:rgba(16,40,52,.35)}
 .post-steps span{color:#9aabb2;font-size:11px}
 .post-node small.ng{color:#a12d1a;font-weight:800}
 dialog #toast{bottom:auto;top:18px;right:50%;transform:translateX(50%);box-shadow:0 8px 24px rgba(15,45,60,.25)}   /* ダイアログの中では上の中央（下はボタンと重なる。2.6.0） */
+/* 繰り返し列の展開（2.7.0）: 要約と列の帯（どこが共通・何回目か）→ まとめた列（札。直すときだけ欄）→ 展開したあとの見本。
+   色: 見つけた形は青緑（ほかの「変換」と同じ）、手で決めた形は黄、誤りは赤。帯の回は濃い・薄いの交互で区切りを読ませる */
+.mq-rep-modal{width:min(1120px,94vw)}
+.mrp{display:grid;gap:12px;font-size:12.5px;color:#22414c;min-width:0}
+.mrp-box{display:grid;gap:8px;padding:10px 12px;border-radius:10px;border:1px solid #9fd1d9;background:#f2fafb}
+.mrp-box.manual{border-color:#e6cf9b;background:#fffaf0}
+.mrp-top{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.mrp-big{font-size:16px;font-weight:900;color:#0b4f5c;white-space:nowrap}.mrp-box.manual .mrp-big{color:#7a4f00}
+.mrp-top small{color:#4f6873}.mrp-sp{flex:1}
+.mrp-top select{width:auto;height:28px;padding:0 8px;font-size:12px}
+.mrp-seg{display:inline-flex;border:1px solid #c8d6dc;border-radius:8px;overflow:hidden;background:#fff}
+.mrp-seg button{border:0;border-left:1px solid #e3ebee;border-radius:0;background:#fff;color:#5a727c;padding:6px 13px;font-size:12.5px;font-weight:800}
+.mrp-seg button:first-child{border-left:0}.mrp-seg button.on{background:#0b6577;color:#fff}
+.mrp-num{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.mrp-num label{display:grid;gap:3px;font-weight:800;font-size:12px;color:#17384e}
+.mrp-unit{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:6px}.mrp-unit em{font-style:normal;color:#596d77;font-weight:600}
+.mrp input{height:30px;border:1px solid #c8d6dc;border-radius:7px;padding:0 8px;font-size:12.5px}
+.mrp input.bad{border-color:#d0574a;background:#fff6f5;box-shadow:0 0 0 2px #f6d2cc}
+.mrp-strip{display:flex;gap:1px;height:30px;border-radius:7px;overflow:hidden;border:1px solid #d3e0e5;background:#fff}
+.mrp-strip span{flex:1;min-width:0;background:#e7edf0}.mrp-strip span.r0{background:#0b6577}.mrp-strip span.r1{background:#5fb3c0}
+.mrp-strip-l{display:flex;font-size:11px;color:#4f6873;font-weight:700}.mrp-strip-l span{text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.mrp-err{display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:9px;background:#fff0ee;border:1px solid #f0c9c2;color:#8d2a1c;font-weight:700}
+.mrp-err i{font-style:normal;flex:none;width:20px;height:20px;border-radius:50%;display:grid;place-items:center;background:#c2412f;color:#fff;font-size:12px;font-weight:900}
+.mrp-card{border:1px solid #dce6ea;border-radius:10px;background:#fff;padding:10px 12px;display:grid;gap:8px;min-width:0}
+.mrp-cap{display:flex;align-items:center;gap:8px;font-weight:800;color:#17384e}.mrp-cap small{font-weight:600;color:#6b7f88}
+.mrp-cap button{height:28px;padding:0 10px;font-size:12px}
+.mrp-chips{display:flex;flex-wrap:wrap;gap:6px}
+.mrp-chips span{padding:3px 11px;border-radius:999px;background:#e3f3f5;color:#0b4f5c;font-weight:800;font-size:12px;white-space:nowrap;max-width:240px;overflow:hidden;text-overflow:ellipsis}
+.mrp-hid{color:#6b7f88;font-size:11.5px}
+.mrp-names{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:6px 8px}
+.mrp-nm{display:grid;gap:2px;min-width:0}.mrp-nm small{font-size:10.5px;color:#7b8f97;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mrp-nm small b{color:#a12d1a}
+.mrp-opts{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.mrp-opts label{display:flex;align-items:center;gap:6px;font-weight:800;color:#17384e;white-space:nowrap}
+.mrp-opts input[type=text]{width:120px}.mrp-opts input[type=checkbox]{width:16px;height:16px;margin:0}
+.mrp-opts small{color:#6b7f88}
+.mrp-tbl{overflow:auto;border:1px solid #dce6ea;border-radius:9px;background:#fff;min-width:0}
+.mrp-tbl table{border-collapse:collapse;font-size:12px;width:max-content;min-width:100%}
+.mrp-tbl th{position:sticky;top:0;background:#f0f5f6;color:#35505b;text-align:left;font-size:11.5px;padding:5px 9px;border-bottom:1px solid #dce6ea;white-space:nowrap}
+.mrp-tbl th.new{background:#e2f2f4;color:#0b4f5c}.mrp-tbl th.idx{background:#efe8f8;color:#5c3f96}
+.mrp-tbl td{padding:4px 9px;border-top:1px solid #f0f4f5;white-space:nowrap}.mrp-tbl td.k{font-weight:800;color:#5c3f96}
+.mrp-tbl td.nul{color:#a7b5bb;font-style:italic}.mrp-tbl tr.grp td{border-top:2px solid #cfe1e6}
+.mrp-none{padding:14px;border:1px dashed #e0b9b1;border-radius:9px;background:#fffaf9;color:#8d2a1c;font-weight:700;text-align:center}
+.mrp-none.wait{border-color:#d3e0e5;background:#f8fbfb;color:#6b7f88}
+/* 後処理のタブは、広い表（繰り返しの列で 100 列を超えるなど）でも窓の幅に収め、表の中で横に送る（2.7.0。グリッドの既定 min-width:auto だと表の幅まで広がり、おすすめのボタンが窓の外に出た） */
+.editor-pane[data-etab="post"]{grid-template-columns:minmax(0,1fr)}#post-pane{min-width:0}

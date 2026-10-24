@@ -4,5 +4,5 @@
 navi_changelog.py にある ―― 800行の読みものなので、それを必要としない経路
 （抽出ワーカー）が読み込まずに済むように分けてある。
 """
-APP_VERSION='2.6.0'; APP_VERSION_TITLE='後処理 ―― 取り出した表を、出す前に Power Query の式で整える（ピボット・ピボット解除・グループ化など。どの入力でも）'; APP_RELEASED_AT='2026-10-24'
+APP_VERSION='2.7.0'; APP_VERSION_TITLE='繰り返し列の展開 ―― 1行に番号付きで繰り返し入っている列を、列名から見つけて繰り返しごとの行に戻す'; APP_RELEASED_AT='2026-10-24'
 BUILD_VERSION=f'{APP_VERSION}-web'

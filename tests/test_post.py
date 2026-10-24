@@ -192,6 +192,12 @@ out['add2']=c.post('/api/m-query/add-step',json={'code':out['add1']['code'],'nam
 out['add_prev']=c.post('/api/m-query/preview',json={'code':out['add2']['code'],'name':'x','query':'本体','sample_job':'J1'}).get_json()
 out['add_wrap']=c.post('/api/m-query/add-step',json={'code':'取り出した表','name':'y','step':{'op':'remove','columns':['品名']}}).get_json()
 r=c.post('/api/m-query/add-step',json={'code':two,'name':'x','step':{'op':'pivot','column':'','value':''}});out['add_bad']=[r.status_code,r.get_json()]
+# 繰り返し列の展開（2.7.0）: 列名から見つける・並びで決める・足りないところ → ステップを足す
+rc=['伝票','品名1','数量1','品名2','数量2']
+out['repeat']=c.post('/api/m-query/repeat',json={'columns':rc,'layout':{'start':2,'width':2,'count':2},
+  'step':{'groups':[['品名1','数量1'],['品名2','数量2']],'names':['伝票','数量']}}).get_json()
+out['repeat_bad_layout']=c.post('/api/m-query/repeat',json={'columns':rc,'layout':{'start':4,'width':2,'count':2}}).get_json()
+out['add_repeat']=c.post('/api/m-query/add-step',json={'code':navi_mrun.POST_STARTER,'name':'r','step':out['repeat']['candidates'][0]['step']}).get_json()
 cfg=app.load();j=cfg['jobs'][0];j['post']={'enabled':True,'mode':'query','query_id':pq['id']};j['extra_formats']=[];cfg['jobs']=[j];app.save(cfg)
 cfg=app.load();j=cfg['jobs'][0]
 res2=navi_textrun.run_one_local(dict(j),cfg,tmp/'work',tmp/'backup','manual',1,1)
@@ -211,6 +217,7 @@ out['after_import']=cfg['jobs'][0].get('post',{}).get('query_id')==qs.get('縦�
 cfg=app.load();j=cfg['jobs'][0];j['post']=bad;cfg['jobs']=[j];app.save(cfg);cfg=app.load()
 out['run_bad']=navi_textrun.run_one_local(dict(cfg['jobs'][0]),cfg,tmp/'work',tmp/'backup','manual',1,1)
 con=sqlite3.connect(db);out['rows_after_bad']=con.execute(f'select count(*) from "{t}"').fetchone()[0];con.close()
+out['log']=(app.LOCAL_LOGS/'app.log').read_text(encoding='utf-8',errors='replace')
 print(json.dumps(out,ensure_ascii=False,default=str))
 '''
 
@@ -229,7 +236,7 @@ class PostAppTest(unittest.TestCase):
 
     def test_meta(self):
         m = self.o['meta']
-        self.assertEqual([x['op'] for x in m['ops']][:3], ['unpivot', 'pivot', 'group'])
+        self.assertEqual([x['op'] for x in m['ops']][:4], ['unpivot', 'repeat', 'pivot', 'group'])
         self.assertEqual(m['input_name'], '取り出した表')
 
     def test_saved_with_job(self):
@@ -293,6 +300,24 @@ class PostAppTest(unittest.TestCase):
         self.assertIn('ソース = 取り出した表', self.o['add_wrap']['code'], 'let でないクエリは、全体を「ソース」にして包む')
         self.assertEqual(self.o['add_bad'][0], 400)
         self.assertIn('見出しにする列', self.o['add_bad'][1]['error'])
+
+    def test_repeat(self):
+        r = self.o['repeat']
+        self.assertEqual(r['candidates'][0]['step']['names'], ['品名', '数量'])
+        self.assertEqual(r['layout']['step']['groups'], [['品名1', '数量1'], ['品名2', '数量2']])
+        self.assertEqual(r['problems'], ['共通の列と同じ名前です（伝票）。まとめた列の名前を変えてください'])
+        self.assertIn('表の列（5列）を超えます', self.o['repeat_bad_layout']['layout_error'])
+        a = self.o['add_repeat']
+        self.assertTrue(a['ok'], a)
+        self.assertEqual(a['added'], ['展開された繰り返し列'])
+
+    def test_timing_logs(self):
+        """高速化を考えるための記録: 下読み（表示）と後処理の実行に、段ごとの時間を残す。"""
+        log = self.o['log']
+        self.assertRegex(log, r'M_QUERY_PREVIEW query=\S+ step=.* rows=\d+ columns=\d+ shown=\d+ input_rows=\d+ elapsed=[\d.]+s '
+                              r'内訳 parse=[\d.]+s evaluate=[\d.]+s cells=[\d.]+s show=[\d.]+s')
+        self.assertRegex(log, r'POST_PROCESS .* 内訳 read=[\d.]+s input=[\d.]+s evaluate=[\d.]+s cells_write=[\d.]+s')
+        self.assertIn('timing', self.o['preview'])
 
     def test_bundle(self):
         e = self.o['exported_post']

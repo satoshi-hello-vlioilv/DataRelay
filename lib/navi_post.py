@@ -4,23 +4,28 @@
 その入口で、この取り決めの式を当ててから変換・公開へ渡す（Excel でいえば、読み込んだ表にもう1本クエリを重ねる）。
 
 作り方は2つ。どちらも最後は M の式で、評価は navi_m（言語）・navi_mrun（表の出し入れ）が受け持つ。
-  steps … 手順を選んで組む（ピボット解除・ピボット・グループ化・列の選択・名前の変更・並べ替え・M の式）。
+  steps … 手順を選んで組む（ピボット解除・繰り返し列の展開・ピボット・グループ化・列の選択・名前の変更・並べ替え・M の式）。
           compile() が Power Query と同じ関数（Table.UnpivotOtherColumns・Table.Pivot など）の式に直す。
   query … 保存したクエリ（共通設定 → Power Query）を使う。式は取り出した表を INPUT_NAME（取り出した表）で受け取る。
 
 ここは本体（app）を読まない。形を整える・式に直す・言葉にする、だけを持つ（試験で単独に確かめられるように）。
 """
+import re
+
 from navi_m import INPUT_NAME
 
 MODES = ('steps', 'query')
 MAX_STEPS = 30
 MAX_NAMES = 200               # 1つの手順で選べる列の数の上限（貼り間違いで何万列も入れないため）
 MAX_EXPR = 20_000             # M の式の手順1つの上限（文字数）
+MAX_REPEATS = 500             # 繰り返し列の展開で、1行を何回分に分けるかの上限
 
 # 手順の種類。並びは画面の「手順を足す」の並び（よく使う順）。step は Power Query が付けるステップ名（日本語版）。
 OPS = {
     'unpivot': {'label': 'ピボット解除', 'step': 'ピボット解除された列',
                 'help': '横に並んだ列（1月・2月…）を、「属性」「値」の2列の縦持ちにします'},
+    'repeat': {'label': '繰り返し列の展開', 'step': '展開された繰り返し列',
+               'help': '番号付きで横に繰り返す列（品名1・数量1・品名2・数量2…）を、番号を除いた名前の列にまとめ、繰り返しごとの行にします'},
     'pivot': {'label': 'ピボット', 'step': 'ピボットされた列',
               'help': '1つの列の値（1月・2月…）を見出しにして横に並べ、値の列を集計します'},
     'group': {'label': 'グループ化', 'step': 'グループ化された行',
@@ -75,6 +80,8 @@ def normalize_step(s):
         mode = 'selected' if s.get('mode') == 'selected' else 'other'
         return {'op': op, 'mode': mode, 'columns': _names(s.get('columns')),
                 'attr': _text(s.get('attr')) or '属性', 'value': _text(s.get('value')) or '値'}
+    if op == 'repeat':
+        return _normalize_repeat(s)
     if op == 'pivot':
         agg = _text(s.get('agg'))
         return {'op': op, 'column': _text(s.get('column')), 'value': _text(s.get('value')),
@@ -183,6 +190,8 @@ def step_problems(s, n):
         return [head + '変える列と新しい名前を入れてください']
     if op == 'sort' and not s['keys']:
         return [head + '並べ替える列を選んでください']
+    if op == 'repeat':
+        return repeat_problems(s, head=head)
     if op == 'm' and not s['expr'].strip():
         return [head + '式を入れてください']
     return []
@@ -218,6 +227,8 @@ def _step_builders(s):
 
     数として集める列は、Power Query と同じく先に「変更された型」のステップを挟む（取り出した表は文字なので）。"""
     op, base = s['op'], OPS[s['op']]['step']
+    if op == 'repeat':
+        return _repeat_builders(s)
     if op == 'unpivot':
         fn = 'Table.Unpivot' if s['mode'] == 'selected' else 'Table.UnpivotOtherColumns'
         return [(base, lambda p: f'{fn}({p}, {m_list(s["columns"])}, {m_text(s["attr"])}, {m_text(s["value"])})')]
@@ -288,6 +299,8 @@ def compile(post):
 # ---- 言葉にする（一覧・結果・ログ）------------------------------------------------
 def step_summary(s):
     op = s['op']
+    if op == 'repeat':
+        return repeat_summary(s)
     if op == 'unpivot':
         cols = '・'.join(s['columns'][:3]) + ('ほか' if len(s['columns']) > 3 else '')
         return (f'{cols} を縦に' if s['mode'] == 'selected' else f'{cols} 以外を縦に') + f'（{s["attr"]}・{s["value"]}）'
@@ -330,3 +343,240 @@ def step_parts(s, used, ref):
         out.append((name, build(ref)))
         ref = m_name(name)
     return out
+
+
+# ---- 繰り返し列の展開（2.7.0）------------------------------------------------------------
+# 1行に、同じ並びの列が番号付きで繰り返し入っている表（品名1・数量1・品名2・数量2…）を、繰り返しごとの行に戻す。
+#   groups  … 繰り返しごとの元の列 [[品名1, 数量1], [品名2, 数量2], …]。どの組も names と同じ長さで、無い列は None（空として出す）
+#   numbers … 組ごとの番号（列名の番号。手で決めたときは 1, 2, …）。番号の列に入れ、元の行の中の順もこれで決める
+#   names   … まとめた列の名前（列名から番号を除いた共通の名前）
+#   index   … 番号を入れる列の名前。drop_empty … 値がすべて空の組は行にしない（枠だけ用意された空きの繰り返し）
+# 繰り返しの列のほか（共通の列）は、すべてそのまま各行に写す。共通の列は式の中で求めるので、あとから列が増えても崩れない。
+REPEAT_INDEX = '番号'
+_RUN = re.compile(r'\d+')           # 列名の中の番号（全角の数字も \d に入り、int() で読める）
+_MARK = '\0'                        # 型（番号を抜いた列名）の中で、番号のあった場所
+_SEPS = ' 　_-－‐・.:：/／#＃'
+_BRACKETS = ('()', '（）', '[]', '［］', '【】', '<>', '＜＞', '「」')
+
+
+def _normalize_repeat(s):
+    names = [_text(x) for x in (s.get('names') if isinstance(s.get('names'), list) else [])][:MAX_NAMES]
+    raw = [g for g in (s.get('groups') if isinstance(s.get('groups'), list) else []) if isinstance(g, (list, tuple))][:MAX_REPEATS]
+    width = len(names) or max((len(g) for g in raw), default=0)
+    width = min(width, MAX_NAMES)
+    groups = [[(_text(x) or None) for x in list(g)[:width]] + [None] * (width - len(g)) for g in raw]
+    if not names:
+        names = [''] * width
+    nums = s.get('numbers') if isinstance(s.get('numbers'), list) else []
+    try:
+        nums = [int(x) for x in nums]
+    except (TypeError, ValueError):
+        nums = []
+    if len(nums) != len(groups) or any(b <= a for a, b in zip(nums, nums[1:])):
+        nums = list(range(1, len(groups) + 1))       # 番号は、組の並びの順に増える（行の中の順をこれで決めるため）
+    return {'op': 'repeat', 'groups': groups, 'numbers': nums, 'names': names,
+            'index': _text(s.get('index')) or REPEAT_INDEX, 'drop_empty': s.get('drop_empty') is not False}
+
+
+def repeat_problems(s, columns=None, head=''):
+    """繰り返し列の展開の足りないところ。columns（いまの表の列）が分かれば、無い列・共通の列との名前の重なりも見る。"""
+    bad = []
+    if len(s['groups']) < 2:
+        bad.append(head + '繰り返しを2回分以上選んでください')
+    if not s['names']:
+        return bad + [head + 'まとめる列（1回分の列）を選んでください']
+    if any(not n for n in s['names']):
+        bad.append(head + 'まとめた列の名前を、すべて入れてください')
+    used = [c for g in s['groups'] for c in g if c]
+    dup = sorted({c for c in used if used.count(c) > 1})
+    if dup:
+        bad.append(head + f'同じ列が2回以上入っています（{"・".join(dup[:5])}）')
+    if any(all(c is None for c in g) for g in s['groups']):
+        bad.append(head + '列が1つも無い回があります')
+    outs = s['names'] + [s['index']]
+    same = sorted({n for n in outs if n and outs.count(n) > 1})
+    if same:
+        bad.append(head + f'まとめた列の名前が重なっています（{"・".join(same)}）')
+    if any(n.startswith('__') for n in outs):
+        bad.append(head + '「__」で始まる名前は使えません（中で使う列の名前です）')
+    if columns is not None:
+        have = set(columns)
+        lost = [c for c in used if c not in have]
+        if lost:
+            bad.append(head + f'表に無い列があります（{"・".join(lost[:5])}{"ほか" if len(lost) > 5 else ""}）')
+        common = have - set(used)
+        clash = [n for n in outs if n in common]
+        if clash:
+            bad.append(head + f'共通の列と同じ名前です（{"・".join(clash)}）。まとめた列の名前を変えてください')
+    return bad
+
+
+def _repeat_builders(s):
+    groups = ',\n                '.join('{' + ', '.join(m_text(c) if c else 'null' for c in g) + '}' for g in s['groups'])   # 1回分ずつ1行
+    nums = '{' + ', '.join(str(n) for n in s['numbers']) + '}'
+    idx = m_text(s['index'])
+    keep = (f'\n            空を除く = Table.SelectRows(積む, each {" or ".join(f"[{_field(n)}] <> null" for n in s["names"])}),'
+            if s['drop_empty'] else '\n            空を除く = 積む,')
+
+    # 組ごとに「ほかの組の列を除く → 番号を除いた名前に変える → 番号を足す」を表のまま行い（1行ずつの関数より速い）、
+    # 積んでから元の行の順・番号の順に並べ直す。共通の列は、元の表で最初の繰り返しの列より左のものを左に、ほかを右に置く
+    def build(p):
+        return (f'let\n            組 = {{\n                {groups}}},\n            番号の値 = {nums},\n            名前 = {m_list(s["names"])},\n'
+                f'            全列 = List.RemoveNulls(List.Combine(組)),\n            列 = Table.ColumnNames({p}),\n'
+                f'            行番号 = Table.AddIndexColumn({p}, "__行", 0, 1),\n'
+                f'            各組 = List.Transform(List.Positions(組), (i) => Table.AddColumn(Table.RenameColumns('
+                f'Table.RemoveColumns(行番号, List.RemoveItems(全列, 組{{i}})), List.Select(List.Zip({{組{{i}}, 名前}}), each _{{0}} <> null)), '
+                f'{idx}, each 番号の値{{i}}, Int64.Type)),\n            積む = Table.Combine(各組),{keep}\n'
+                f'            並べる = Table.Sort(空を除く, {{{{"__行", Order.Ascending}}, {{{idx}, Order.Ascending}}}}),\n'
+                f'            左 = List.FirstN(列, each not List.Contains(全列, _))\n        in\n'
+                f'            Table.SelectColumns(並べる, 左 & {{{idx}}} & 名前 & List.RemoveItems(列, 左 & 全列))')
+    return [(OPS['repeat']['step'], build)]
+
+
+def repeat_summary(s):
+    names = '・'.join(s['names'][:3]) + ('ほか' if len(s['names']) > 3 else '')
+    return f'{len(s["names"])}列×{len(s["groups"])}回 を行に（{names}）'
+
+
+# ---- 繰り返しを見つける（列名から）・並びで決める ---------------------------------------
+_UNITS = '回月日年期週号番次目件'       # 番号のすぐ後ろの単位（第1回・1月）は番号の一部として、番号の列の名前に回す
+
+
+def _unbracket(t):
+    """番号を囲む括弧を除く（品名(#) → 品名#）。"""
+    for b in _BRACKETS:
+        t = t.replace(b[0] + _MARK + b[1], _MARK)
+    return t
+
+
+def clean_name(t):
+    """型（番号を抜いた列名）→ まとめた列の名前。番号の跡の空の括弧・区切りを除く（品名(1) → 品名、明細_1_品名 → 明細_品名）。"""
+    a, _, z = _unbracket(t).partition(_MARK)
+    a, z = a.rstrip(_SEPS), z.lstrip(_SEPS)
+    joint = next((ch for ch in t.replace(_MARK, '') if ch in _SEPS), '_') if a and z else ''
+    return (a + joint + z).strip(_SEPS) or t.replace(_MARK, '').strip() or '値'
+
+
+def _names_for(templates):
+    """型の並び → (まとめた列の名前, 番号の列の名前)。
+
+    みな同じ前置き（明細1_品名 の「明細」）なら除いて短くし、番号の列を「明細番号」にする。番号のすぐ後ろの単位
+    （2024年1月売上 の「月」）もみな同じなら、番号の一部として名前から除き、番号の列を「2024年月」にする。"""
+    parts = [_unbracket(t).split(_MARK, 1) for t in templates]
+    full = [clean_name(t) for t in templates]
+    unit = parts[0][1][:1] if parts[0][1][:1] in _UNITS and len({p[1][:1] for p in parts}) == 1 else ''
+    if unit:
+        parts = [[a, z[1:]] for a, z in parts]
+    head = parts[0][0] if len(parts) >= 2 and len({p[0] for p in parts}) == 1 else ''   # 1列だけの繰り返しは前置きが名前
+    if head.strip(_SEPS) or unit:
+        short = [clean_name((a if not head else '') + _MARK + z) for a, z in parts]
+        if all(short) and len(set(short)) == len(short) and short != [''] * len(short):
+            full = short
+            base = head.strip(_SEPS)
+            base = base[:-1] if base.endswith('第') else base
+            return _distinct(full), (base + unit if unit else base + REPEAT_INDEX) or REPEAT_INDEX
+    return _distinct(full), REPEAT_INDEX
+
+
+def _distinct(names, taken=()):
+    out, seen = [], set(taken)
+    for n in names:
+        m, k = n, 2
+        while m in seen:
+            m, k = f'{n}_{k}', k + 1
+        seen.add(m)
+        out.append(m)
+    return out
+
+
+def _finish(columns, groups, numbers, names, how, index=REPEAT_INDEX):
+    """見つけた・決めた繰り返し → 画面に出す1案（手順の形＋説明）。"""
+    used = {c for g in groups for c in g if c}
+    common = [c for c in columns if c not in used]
+    idx = _distinct([index], common)[0]
+    names = _distinct(names, common + [idx])
+    at = {c: i for i, c in enumerate(columns)}
+    pos = sorted(at[c] for c in used)
+    rank = {p: r for r, p in enumerate(pos)}           # 繰り返しの列の中で何番目か
+    first = [c for c in groups[0] if c] if groups else []
+    step = {'op': 'repeat', 'groups': groups, 'numbers': numbers, 'names': names, 'index': idx, 'drop_empty': True}
+    # 1回分ずつ固まって並んでいるか（品番1〜備考1、品番2〜…）。列ごとの並び（品番1〜9、品名1〜9…）なら mixed
+    block = bool(names) and len(pos) == len(groups) * len(names) and all(
+        rank[at[c]] // len(names) == k for k, g in enumerate(groups) for c in g if c)
+    return {'how': how, 'step': step, 'width': len(names), 'count': len(groups), 'columns': len(used),
+            'missing': sum(1 for g in groups for c in g if not c), 'common': len(common),
+            'first': pos[0] + 1 if pos else 0, 'last': pos[-1] + 1 if pos else 0,
+            'layout': 'block' if block else 'mixed', 'sample': first[:4]}
+
+
+def find_repeats(columns, limit=5):
+    """列名から、番号付きで繰り返す列のまとまりを見つける。→ 覆う列の多い順の案（_finish の形）。
+
+    列名の中の数字を1か所ずつ抜いて「型」にし（品名12 → 品名#）、2つ以上の番号を持つ型を、同じ番号の組を持つもの同士でまとめる。
+    番号の一部が無い型（備考が 1〜8 だけ など）は、範囲の中にあれば同じまとまりに入れ、無い回は空にする。"""
+    columns = [str(c) for c in columns]
+    tpl = {}                                    # 型 → {番号: 列の位置}
+    for ci, c in enumerate(columns):
+        for m in _RUN.finditer(c):
+            t = c[:m.start()] + _MARK + c[m.end():]
+            tpl.setdefault(t, {}).setdefault(int(m.group()), ci)
+    tpl = {t: v for t, v in tpl.items() if len(v) >= 2}
+    by_set = {}
+    for t, v in tpl.items():
+        by_set.setdefault(frozenset(v), []).append(t)
+    clusters = sorted(by_set.items(), key=lambda kv: (-len(kv[0]) * len(kv[1]), -len(kv[0])))
+    out, taken = [], set()
+    for nums, ts in clusters:
+        if len(nums) * len(ts) < 2:
+            continue
+        span = [i for t in ts for i in tpl[t].values()]
+        lo, hi = min(span), max(span)
+        # 番号の欠けた型（ほかのまとまりで、番号がこのまとまりの一部で、列がこのまとまりの範囲の中にある）を足す
+        extra = [t for n2, t2 in by_set.items() if n2 < nums and len(n2) * 2 >= len(nums) for t in t2
+                 if all(lo <= i <= hi for i in tpl[t].values())]
+        ts = sorted(set(ts) | set(extra), key=lambda t: min(tpl[t].values()))
+        cols = {i for t in ts for i in tpl[t].values()}
+        if cols & taken:                        # 同じ列を別の数字で読んだまとまり（2024年1月 の 2024 など）は、多く覆う方だけ
+            ts = [t for t in ts if not set(tpl[t].values()) & taken]
+            cols = {i for t in ts for i in tpl[t].values()}
+            if len(ts) * len(nums) < 2 or not ts:
+                continue
+        taken |= cols
+        order = sorted(nums)
+        groups = [[columns[tpl[t][k]] if k in tpl[t] else None for t in ts] for k in order]
+        names, index = _names_for(ts)
+        out.append(_finish(columns, groups, order, names, 'auto', index))
+        if len(out) >= limit:
+            break
+    return sorted(out, key=lambda c: -c['columns'])
+
+
+def repeat_by_layout(columns, start, width, count):
+    """並びで決める（手で）: start 列目（1から）から width 列ずつ count 回。名前は、回ごとに変わる番号を除いた共通の部分。"""
+    columns = [str(c) for c in columns]
+    start, width, count = int(start), int(width), int(count)
+    if start < 1 or width < 1 or count < 1 or start - 1 + width * count > len(columns):
+        raise ValueError(f'{start}列目から {width}列×{count}回 は、表の列（{len(columns)}列）を超えます')
+    groups = [columns[start - 1 + k * width: start - 1 + (k + 1) * width] for k in range(count)]
+    names, nums = [], None
+    for j in range(width):
+        col = [g[j] for g in groups]
+        name = col[0]
+        for m in _RUN.finditer(col[0]):
+            t = col[0][:m.start()] + _MARK + col[0][m.end():]
+            got = [_match_number(t, c) for c in col]
+            if None not in got and len(set(got)) == count:
+                name = clean_name(t)
+                nums = nums or (got if all(b > a for a, b in zip(got, got[1:])) else None)
+                break
+        names.append(name)
+    return _finish(columns, [list(g) for g in groups], nums or list(range(1, count + 1)), _distinct(names), 'layout')
+
+
+def _match_number(t, c):
+    a, z = t.split(_MARK, 1)
+    if c.startswith(a) and c.endswith(z) and len(c) > len(a) + len(z):
+        mid = c[len(a):len(c) - len(z)]
+        if _RUN.fullmatch(mid):
+            return int(mid)
+    return None

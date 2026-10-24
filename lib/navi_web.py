@@ -2529,6 +2529,23 @@ def m_query_add_step():
  if out.get('ok'):log.info('M_QUERY_ADD_STEP query=%s op=%s added=%s',out.get('query'),(d.get('step') or {}).get('op'),out.get('added'))
  return jsonify(out),(200 if out.get('ok') else 400)
 
+@app.post('/api/m-query/repeat')
+def m_query_repeat():
+ """「変換」の札の「繰り返し列の展開」（2.7.0）: いまの表の列名から、番号付きで繰り返す列のまとまりを見つける（候補）。
+ layout（start・width・count）を渡すと並びで決めた形を、step を渡すとその形の足りないところ（列名の重なりなど）も返す。"""
+ d=request.get_json(force=True) or {}
+ cols=[str(c) for c in (d.get('columns') or [])][:5000]
+ out={'ok':True,'candidates':navi_post.find_repeats(cols),'layout':None,'problems':[]}
+ lay=d.get('layout')
+ if isinstance(lay,dict):
+  try:out['layout']=navi_post.repeat_by_layout(cols,lay.get('start'),lay.get('width'),lay.get('count'))
+  except (TypeError,ValueError) as e:out['layout_error']=str(e)
+ if isinstance(d.get('step'),dict):
+  s=navi_post.normalize_step({**d['step'],'op':'repeat'})
+  out['problems']=navi_post.repeat_problems(s,cols)
+  out['summary']=navi_post.repeat_summary(s)
+ return jsonify(out)
+
 @app.post('/api/m-query/samples')
 def m_query_samples():
  """見本のファイルの候補（サンプル ファイルのクエリの元の表のファイル）と、式の中の書き換える番号の場所。"""
