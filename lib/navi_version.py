@@ -4,5 +4,5 @@
 navi_changelog.py にある ―― 800行の読みものなので、それを必要としない経路
 （抽出ワーカー）が読み込まずに済むように分けてある。
 """
-APP_VERSION='2.7.0'; APP_VERSION_TITLE='繰り返し列の展開 ―― 1行に番号付きで繰り返し入っている列を、列名から見つけて繰り返しごとの行に戻す'; APP_RELEASED_AT='2026-10-24'
+APP_VERSION='2.8.0'; APP_VERSION_TITLE='読取マスタ ―― 区切り（記号・決まり）で読む方式を足し、一覧を1件1行で見渡せるようにした'; APP_RELEASED_AT='2026-10-24'
 BUILD_VERSION=f'{APP_VERSION}-web'
