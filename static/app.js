@@ -282,8 +282,8 @@ function setAllSelected(on){
 function updateSelCount(){
  let n=$$('#jobs-body tr.selected').length,b=$('#run-selected'),c=$('#sel-count');
  if(c)c.textContent=n;
- document.querySelector('.jb-idle')?.toggleAttribute('hidden',!!n);
- document.querySelector('.jb-sel')?.toggleAttribute('hidden',!n);
+ document.querySelector('#jobs .jb-idle')?.toggleAttribute('hidden',!!n);
+ document.querySelector('#jobs .jb-sel')?.toggleAttribute('hidden',!n);
  if(n)closeJobPops();
  if(b){b.disabled=!n;b.title=`チェックした ${n}件 を実行します`}
  let e=$('#bulk-edit');
@@ -1323,6 +1323,9 @@ $('#filter-open').onclick=e=>toggleJobPop(e.currentTarget,$('#search'));
 $('#search-open').onclick=()=>toggleJobPop($('#filter-open'),$('#search'));
 $('#view-open').onclick=e=>toggleJobPop(e.currentTarget);
 $('#fresh-chip').onclick=()=>{freshDismiss([]);loadFreshness()};
+// 共通設定（読取マスタ・ファイル結合・Power Query）の道具の段も、対象ファイルと同じ小窓の仕組みで開け閉めする（2.10.0）
+$$('.mbar [aria-controls]').forEach(b=>b.onclick=()=>toggleJobPop(b,$('#'+b.getAttribute('aria-controls'))?.querySelector('input')));
+$$('.mbar .mio [role="menuitem"]').forEach(b=>b.addEventListener('click',()=>closeJobPops()));
 $('#filter-reset').onclick=()=>{$('#search').value='';$('#filter-enabled').value='all';$('#filter-schedule').value='all';$('#sort').value='order';sortDir=1;freshOnly=false;render();loadFreshness()};
 document.addEventListener('mousedown',e=>{if(!e.target.closest('.jb-anchor'))closeJobPops()});
 document.addEventListener('keydown',e=>{
@@ -1330,7 +1333,12 @@ document.addEventListener('keydown',e=>{
  // Ctrl+F: 対象ファイルの画面では、一覧の検索を開く（WebView の「ページ内検索」の代わり）
  if((e.ctrlKey||e.metaKey)&&!e.shiftKey&&!e.altKey&&e.key.toLowerCase()==='f'&&document.body.dataset.pane==='jobs'&&!document.querySelector('dialog[open]')){
   e.preventDefault();let pop=$('#filter-pop');if(pop.hidden)toggleJobPop($('#filter-open'),$('#search'));else $('#search').focus();
+  return;
  }
+ // 共通設定の一覧でも Ctrl+F で検索を開く
+ let mb=(e.ctrlKey||e.metaKey)&&!e.shiftKey&&!e.altKey&&e.key.toLowerCase()==='f'&&!document.querySelector('dialog[open]')
+  &&document.querySelector(`#${CSS.escape(document.body.dataset.pane||'')} .mbar [data-search-btn]`);
+ if(mb){e.preventDefault();let pop=$('#'+mb.getAttribute('aria-controls'));if(pop.hidden)toggleJobPop(mb,pop.querySelector('input'));else pop.querySelector('input')?.focus()}
 });function resetProgressView(){let q=$('#queue-summary');if(q){q.hidden=true;q.innerHTML=''}let pr=$('#p-results');if(pr){pr.hidden=true;pr.innerHTML=''}let b=$('#p-parallel-lines');if(b){b.hidden=true;b.innerHTML=''}document.querySelector('.current-box')?.classList.remove('parallel-hidden');$('#p-steps')?.classList.remove('parallel-hidden');$('#p-count').textContent='全体 0 / 0';$('#p-percent').textContent='0%';$('#p-bar').style.width='0%';$('#p-job').textContent='準備中';$('#p-output').textContent='';}async function runJobs(ids){resetProgressView();showWaiting('処理を開始しています','APIセッションと実行対象を準備しています...','engine');let r=await fetch('/api/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_ids:ids,parallel_lines:Math.max(1,Math.min(24,Number(cfg?.settings?.api_parallel_lines)||6))})}),d=await r.json();hideWaiting();if(r.ok){toast(d.joined?`実行中の処理に加えて、空いているラインですぐ実行します（${(d.job_names||[]).slice(0,3).join('・')}）`:`実行キュー ${d.position}番へ追加しました（前の実行が終わってから始まります）`);await loadCommandQueue()}else toast(d.error)}$('#run-all').onclick=()=>runJobs(null);$('#run-selected').onclick=()=>{let ids=$$('#jobs-body tr.selected').map(tr=>tr.dataset.id);if(ids.length)runJobs(ids)};/* 保存ボタンの代わりに、値が変わったところで保存する。数値欄は打っている途中に
    何度も飛ばさないよう、まとめて少し待ってから送る（scheduleSave）。 */
 $('#validate').onclick=async()=>{showWaiting('実行前診断中','実際の設定値と配置を統合して確認しています...','engine');try{let r=await fetch('/api/validate',{method:'POST'}),d=await r.json();if(!r.ok)throw Error(d.error||'診断に失敗しました');renderDiagnostics(d);let dlg=$('#diagnostic-dialog');if(dlg&&!dlg.open)dlg.showModal()}catch(e){toast(e.message)}finally{hideWaiting()}};function renderDiagnostics(d){paintDiagChip(d);$('#check-scope').textContent=d.search_scope||'';let state=$('#diagnostic-state');state.textContent=d.summary||'';state.className='diag-state '+(d.ok?'is-ok':'is-ng');let c=d.counts||{};$('#diagnostic-counts').innerHTML=`<span class="dc-ok">正常 ${c.ok||0}</span><span class="dc-warn">注意 ${c.warning||0}</span><span class="dc-ng">要修正 ${c.error||0}</span>`;let groups={};(d.checks||[]).forEach((x,i)=>(groups[x.group]||(groups[x.group]=[])).push({...x,_i:i}));$('#checks').innerHTML=Object.entries(groups).map(([g,items])=>`<section class="diag-group"><h3>${E(g)}<small>${items.length}項目</small></h3>${items.map(x=>`<div class="diag-row ${E(x.level)}"><i>${x.level==='ok'?'OK':x.level==='warning'?'注意':'要修正'}</i><div><b>${E(x.label)}</b><span>${E(x.detail)}</span></div>${x.candidates?.length?`<button class="fix secondary" data-i="${x._i}">候補 ${x.candidates.length}件</button>`:''}${x.item==='login'&&x.level!=='ok'?'<button class="login-go secondary" type="button">接続情報を開く</button>':''}</div>`).join('')}</section>`).join('');$$('#checks .fix').forEach(b=>b.onclick=()=>showPathResult(d.checks[Number(b.dataset.i)]));$$('#checks .login-go').forEach(b=>b.onclick=()=>{$('#diagnostic-dialog')?.close();openLoginDialog(false)})}if($('#diagnostic-close'))$('#diagnostic-close').onclick=()=>$('#diagnostic-dialog').close();if($('#diagnostic-close-foot'))$('#diagnostic-close-foot').onclick=()=>$('#diagnostic-dialog').close();let commandQueueOpen=false;async function loadCommandQueue(){try{let d=await fetch('/api/execution-queue',{cache:'no-store'}).then(r=>r.json()),list=$('#cq-list'),summary=$('#cq-summary');applyRowQueueProgress(d);if(!list||!summary)return;
@@ -4248,13 +4256,16 @@ function renderMasterList(box,opt){
  else if(groups.length)body=(pick?[pick]:groups).map(g=>{let xs=shown.filter(g.of);if(!xs.length)return '';
    return `<div class="ml-group ml-${g.cls}"><i class="lay-tag ${g.cls}">${E(g.label)}</i><b>${xs.length}件</b><span>${E(g.note||'')}</span></div>`+xs.map(x=>row(x,g)).join('')}).join('');
  else body=shown.map(x=>row(x)).join('');
- // 絞り込みは見出しの段に置く（一覧の縦を1段ぶん空ける）。
- let head=box.closest('aside')?.querySelector('.ml-head'),slot=head?.querySelector('.ml-chips-slot');
- if(head&&!slot&&chips){slot=document.createElement('span');slot.className='ml-chips-slot';head.appendChild(slot)}
+ // 件数・種類の札・絞り込みの要約は、画面の上の道具の段（対象ファイルと同じ形。2.10.0）に出す。
+ let sec=box.closest('section'),slot=sec?.querySelector('.ml-chips-slot');
  if(slot)slot.innerHTML=chips;
  box.innerHTML=`<div class="ml-scroll${groups.length&&!pick?' has-group':''}">${body}</div>`;
- let count=box.closest('aside')?.querySelector('.ml-count');
- if(count)count.textContent=q?`${hit.length} / ${all.length}件`:`${all.length}件`;
+ let count=sec?.querySelector('.ml-count');
+ if(count)count.innerHTML=(q||pick?`${shown.length} / ${all.length}`:`${all.length}`)+'<small>件</small>';
+ let sum=sec?.querySelector('[data-filter-summary]');
+ if(sum)sum.textContent=[q?`「${String(opt.query).trim()}」`:'',pick?pick.label:''].filter(Boolean).join('・')||'すべて';
+ sec?.querySelector('[data-filter-btn]')?.classList.toggle('is-set',!!(q||pick));
+ sec?.querySelector('[data-search-btn]')?.classList.toggle('is-set',!!q);
  (slot||box).querySelectorAll('.ml-chips button').forEach(b=>b.onclick=()=>{masterFilter[key]=b.dataset.k;renderMasterList(box,opt)});
  box.querySelectorAll('.ml-row').forEach(b=>b.onclick=()=>opt.open(b.dataset.id));
  // 選んでいる行を見える所へ（開き直したとき・保存したあとに見失わない）。

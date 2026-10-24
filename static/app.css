@@ -38,7 +38,7 @@ main>section.on{display:block;min-height:0;overflow:hidden}
    下の「保存」が画面の外に出て、押すことも見ることもできなかった（利用者からの指摘）。
    align-self を戻すのが要。下の main>section.on{align-self:start!important} が効いていると
    面は行の高さまで縮まず、中身のぶんだけ伸びて外枠に切り取られる（送る余地が生まれない）。 */
-main>#layouts.on,main>#joins.on{align-self:stretch!important;min-height:0;overflow:auto;padding-bottom:10px}
+
 /* 一覧は左に残す。編集を下まで送っても、どのマスタを触っているかを見失わない。 */
 .lay-list-pane,.jn-list-pane{position:sticky;top:0}
 footer{grid-row:3;position:static;min-height:56px;padding-top:7px;padding-bottom:7px}
@@ -2340,18 +2340,7 @@ body>main{width:var(--app-shell);max-width:var(--app-shell);
 .subnav button:hover{background:#e3edef;color:#31505d}
 .subnav button.on{background:#fff;color:#0b6570;box-shadow:0 1px 3px rgba(18,60,72,.14)}
 
-/* ---- マスタの出し入れ ------------------------------------------------------
-   書き出しと取り込みは一組の操作なので、ひとまとまりに置く。形式を選ぶのは
-   書き出すときだけ ―― 取り込みは中身を見れば分かるので、選ばせない。 */
-#layouts .commandbar,#joins .commandbar{grid-template-columns:minmax(260px,1fr) auto auto}
-.io-group{display:grid;grid-template-columns:auto auto auto;gap:0;align-items:stretch}
-.io-group>button,.io-format{white-space:nowrap}
-.io-group>button{border-radius:0}
-.io-group>button:first-child{border-radius:7px 0 0 7px}
-.io-group>button:last-child{border-radius:0 7px 7px 0;border-left:0}
-.io-format{width:auto;min-width:82px;height:auto;border-radius:0;border-left:0;border-right:0;
- background:#f7fafb;color:#31505d;font-size:11.5px;font-weight:700;padding:0 6px}
-.io-format:focus{outline-offset:-2px}
+/* ---- マスタの出し入れ: 道具の段の［出し入れ▾］の中（形式は書き出すときだけ。取り込みは中身を見れば分かる） ---- */
 /* 落とし場所。受けていることが見えないと、そもそも落とせない。 */
 .drop-veil{position:fixed;inset:0;z-index:80;display:grid;place-items:center;
  background:#0d2433b8;backdrop-filter:blur(2px)}
@@ -3390,3 +3379,50 @@ body[data-pane="jobs"] .foot-hint{display:inline}
 .tbtn.warn{height:28px;border-radius:999px;background:#fdf3e1;border-color:#efd6a6;color:#8a5a0c}
 .tbtn.warn:hover{background:#fbebcc}
 .tbtn.warn.is-ng{background:#fdf1ef;border-color:#f0c9c3;color:#a4463d}
+
+/* ============================================================
+   2.10.0 共通設定（読取マスタ・ファイル結合・Power Query）を、対象ファイル（2.9.0）と同じ形にし、
+   送り（スクロール）を必要最小限にする（案の比べ方は tests/ui-proposals/2026-10-masters-bar）。
+   これまでは「検索（幅いっぱい）・新規作成・書き出し｜形式｜取り込み」の段と、一覧の見出しの2段が縦を使い、
+   一覧の高さは画面の高さから決め打ち（100vh - 320px）、編集が長いと画面全体が送って一覧ごと流れていた
+   （1536×864 で 46〜157px）。
+     ・道具は1段（件数・絞り込み・虫眼鏡・出し入れ・新規作成）。一覧の見出しの代わりに置く。
+       絞り込み（検索と種類）は種類があるとき（読取マスタ）だけ。無ければ虫眼鏡で検索だけを開く
+     ・画面全体は送らない。一覧と編集は、それぞれの枠の中だけで送る（片方を送っても、もう片方は動かない）
+     ・編集は上詰め（枠の高さに合わせて段の間を引き伸ばさない）。見出し（名前・読み方・保存の状態）は上に残す
+   ============================================================ */
+main>#layouts.on,main>#joins.on,main>#mqueries.on{display:flex;flex-direction:column;align-self:stretch;min-height:0;overflow:hidden;padding-bottom:8px}
+/* 下の段・道具の段・枠の間は 6px ずつ（下の段の下の余白と道具の段の上の余白を重ねない） */
+.mbar{flex:none;margin:6px 0}
+main:has(#layouts.on,#joins.on,#mqueries.on)>.subnav{margin-bottom:0}
+.lay-wrap,.jn-wrap{flex:1 1 auto;min-height:0;align-items:stretch}
+.lay-wrap>.ml-pane,.jn-wrap>.ml-pane{display:flex;flex-direction:column;min-height:0}
+.ml-list{flex:1;min-height:0;display:flex;flex-direction:column}
+.ml-scroll{max-height:none;flex:1;min-height:0}
+.lay-wrap>.panel,.jn-wrap>.panel{margin:0;min-height:0;max-height:100%;overflow:auto;align-self:stretch}
+.lay-wrap>.lay-empty,.jn-wrap>.lay-empty{align-self:start}
+.lay-edit,.jn-edit{align-content:start}
+.lay-edit{padding:10px 14px;gap:7px}
+.jn-edit{padding:10px 14px}
+.lay-edit .lay-head{position:sticky;top:-10px;z-index:4;background:#fff;margin:-10px -14px 0;padding:8px 14px 6px;border-bottom:1px solid #e6eef0}
+.jn-edit>.fieldgrid:first-child{position:sticky;top:-10px;z-index:4;background:#fff;margin:-10px -14px 0;padding:8px 14px 8px;border-bottom:1px solid #e6eef0}
+.lay-edit input,.lay-edit select,.jn-edit input,.jn-edit select{height:30px}
+.lay-edit .lay-col input,.lay-edit .lay-col select{height:28px}
+.lay-edit .sectiontitle,.jn-edit .sectiontitle{padding:4px 0;margin-bottom:4px}
+/* 小窓: 絞り込み（検索・種類）と、検索だけ */
+.mpop{display:grid;gap:9px;width:440px}
+.mpop.only-search{width:340px;left:auto;right:0}
+.mpop label{display:grid;gap:4px;font-size:11.5px;font-weight:800;color:#4f6873}
+.mpop input{height:32px;font-size:12.5px}
+.mpop-kinds{display:flex;align-items:center;gap:8px;font-size:11.5px;font-weight:800;color:#4f6873}
+.mpop-kinds .ml-chips button{height:26px}
+.mio{min-width:220px}
+.mio-fmt{display:flex;align-items:center;gap:8px;padding:4px 10px 6px;font-size:12px;font-weight:700;color:#4f6873;border-bottom:1px solid #eef3f5;margin-bottom:2px}
+.mio-fmt select{height:28px;width:auto;font-size:12px}
+/* 共通設定の左の枠は、どの画面でも同じ幅（切り替えても左端と境目が動かない） */
+.settings-shell{grid-template-columns:330px minmax(0,1fr);gap:10px}
+#paths.on{padding-top:6px}
+/* ファイル結合の［削除］は［保存］の隣から離す（読取マスタと同じく、下に文字で） */
+.jn-edit .lay-foot{flex-wrap:wrap}
+.jn-edit #jn-delete{order:9;flex-basis:100%;margin-left:auto;text-align:right;background:transparent;color:#a4463d;font-size:12px;padding:6px 0 0;border:0;border-top:1px dashed #e3ebee;border-radius:0}
+.jn-edit #jn-delete:hover{text-decoration:underline;filter:none}

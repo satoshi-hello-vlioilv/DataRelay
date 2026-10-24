@@ -277,14 +277,21 @@
     $('#lay-name').dispatchEvent(new Event('input'));
     for (let i = 0; i < 60 && !/保存しました/.test($('#lay-autosave').textContent); i++) await sleep(150);
     const laySaved = (await (await fetch('/api/text-layouts')).json()).items.find((x) => x.name === '自己診断の区切り');
-    document.querySelector('.lay-list-pane .ml-chips button[data-k="delimited"]').click();
+    // 種類の札は、道具の段の［絞り込み］の小窓の中（2.10.0）。絞ると要約と件数が道具の段に出る
+    document.querySelector('#layouts [data-filter-btn]').click();
+    await sleep(50);
+    const kindPop = !$('#lay-pop').hidden && document.activeElement === $('#lay-search');
+    document.querySelector('#lay-pop .ml-chips button[data-k="delimited"]').click();
+    const kindSum = document.querySelector('#layouts [data-filter-summary]').textContent, kindCount = document.querySelector('#layouts .ml-count').textContent;
     const layRows = [...document.querySelectorAll('#lay-list .ml-row')].map((x) => x.querySelector('.ml-name').textContent);
     ok('読取マスタの区切り（見本から列を作り、自動で保存し、一覧で区切りに絞れる）',
       layCols === '受注番号,受注日,得意先名,品名,数量,備考' && laySmp === '東和工業, 第二工場' && laySaved && laySaved.mode === 'delimited' &&
-      laySaved.shape === '6列 / カンマ区切り' && layRows.includes('自己診断の区切り') && document.querySelectorAll('#lay-list .ml-row.ml-fx').length === 0,
-      `${layCols} / ${laySmp} / ${$('#lay-autosave').textContent} / ${laySaved && laySaved.shape} / 区切り ${layRows.length}件`);
+      laySaved.shape === '6列 / カンマ区切り' && layRows.includes('自己診断の区切り') && document.querySelectorAll('#lay-list .ml-row.ml-fx').length === 0 &&
+      kindPop && kindSum === '区切り' && kindCount.startsWith(`${layRows.length} / `),
+      `${layCols} / ${laySmp} / ${$('#lay-autosave').textContent} / ${laySaved && laySaved.shape} / 区切り ${layRows.length}件 / 小窓 ${kindPop} ${kindSum} ${kindCount}`);
     if (laySaved) await fetch('/api/text-layouts/' + encodeURIComponent(laySaved.id), { method: 'DELETE' });
-    document.querySelector('.lay-list-pane .ml-chips button[data-k=""]').click();
+    document.querySelector('#lay-pop .ml-chips button[data-k=""]').click();
+    closeJobPops();
     document.querySelector('nav button[data-p="jobs"]').click();
     r = await fetch('/api/open-path', json({ path: 'static' }));
     const opened = await r.json();
