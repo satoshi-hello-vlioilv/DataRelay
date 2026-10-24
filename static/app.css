@@ -210,15 +210,8 @@ main>nav,main>section.on{align-self:stretch}
 .rt-text span{font-size:10px;color:#c3dbe4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
 /* 実行の2つは1つの塊にする。同じ系統の操作だと形で分かる。 */
-.ctl-group{display:flex;height:var(--ctl-h);border:1px solid var(--ctl-edge);border-radius:var(--ctl-r);overflow:hidden;background:#ffffff0f}
-.ctl-group .ctl{height:100%;border-radius:0;border:0}
-.ctl-group .ctl+.ctl{box-shadow:inset 1px 0 0 var(--ctl-edge)}
-.ctl-quiet:hover:not(:disabled){background:var(--ctl-face-on)}
 .ctl-primary{background:#14a89f;color:#fff}
 .ctl-primary:hover:not(:disabled){background:#17bdb2}
-#sel-count{font-style:normal;font-size:10.5px;font-weight:900;min-width:18px;height:18px;padding:0 5px;
-           display:inline-grid;place-items:center;border-radius:99px;background:#ffffff2e;color:#fff}
-#sel-count[hidden]{display:none}
 
 /* 終了は塊から離す。既定は静かに、触れたときだけ赤くする。 */
 .ctl-exit{margin-left:2px;color:#cfe0e7;background:#ffffff0a;border-color:#ffffff24;padding:0 13px}
@@ -921,11 +914,6 @@ body > main{max-width:1620px;padding-left:12px;padding-right:12px}
 .output-link.is-common{color:#8496a0;font-weight:600}
 .output-link.is-common:hover{color:#087c98}
 .output-link.is-different{color:#a76100}
-.lm-counts{display:block}
-.lm-common{display:flex;align-items:center;gap:6px;min-width:0;margin-top:2px}
-.lm-common i{font-style:normal;font-size:10.5px;font-weight:800;color:#6d818c;background:#eef3f5;border-radius:4px;padding:1px 6px;flex:none}
-.lm-common .output-link{font-size:11.5px}
-.listmeta #summary{min-width:0}
 /* Drag handle vertical centering: align the glyph and checkbox to the row's visual center. */
 .jobs-table td.c-check{vertical-align:middle;padding-top:0;padding-bottom:0}
 .jobs-table tr.reorderable .drag-handle{display:inline-flex;align-items:center;justify-content:center;width:12px;height:16px;margin-right:4px;vertical-align:middle;line-height:16px;transform:translateY(-1px)}
@@ -1565,7 +1553,6 @@ body > main{max-width:1620px;padding-left:12px;padding-right:12px}
    「保存できているかを見る場所」になったので、状態が一目で分かる形にする。 */
 footer{justify-content:flex-start;gap:10px}
 .autosave-mark{width:9px;height:9px;border-radius:50%;background:#16805d;flex:none;box-shadow:0 0 0 3px #16805d22}
-.autosave-lead{font-size:12px;font-weight:800;color:#33505c}
 .autosave-state{margin-left:auto;font-size:12px;color:var(--muted);display:inline-flex;align-items:center;gap:6px;padding:4px 11px;border-radius:999px;background:#f1f5f7;border:1px solid #e2eaee}
 .autosave-state.is-saving{color:#0b6d86;background:#e9f5f8;border-color:#cbe6ee}
 .autosave-state.is-ok{color:#0c6b4d;background:#eaf6f1;border-color:#cbe6da}
@@ -1698,9 +1685,6 @@ body:has(.autosave-state.is-saving) .autosave-mark{background:#0b8ea8;box-shadow
 .jcm-label{display:block;font-style:normal;font-size:9.5px;font-weight:900;letter-spacing:.06em;color:#8fa1a9;padding:7px 9px 3px}
 .jcm-pair{display:grid;grid-template-columns:1fr 1fr;gap:4px}
 .jcm-pair button{text-align:center}
-.rc-hint{margin-left:auto;margin-right:12px;font-size:11px;color:#80939b}
-.rc-hint b{color:#0b6d86}
-@media(max-width:1100px){.rc-hint{display:none}}
 
 /* V1.73: 速さを測る。選ぶ場所を1枚にまとめてある。
    以前は「まとめて測る」「1つずつ測る」「軸を比べる」が別々の枠で、同じ設定が
@@ -1942,17 +1926,14 @@ body:has(.autosave-state.is-saving) .autosave-mark{background:#0b8ea8;box-shadow
    これまでは appbar / main / footer がそれぞれ 1580px・1620px と別々に
    最大幅を持ち、横に広いディスプレイでは中身が伸びずに左右の余白だけが
    際限なく広がっていた（実測 2560px幅で片側470px）。
-   考え方は次の3つだけ。
-     ・余白は最小22px。狭い画面では余白を削って中身を優先する
-     ・余白は最大120pxまで。ここを超えたら中身のほうを広げる
+   考え方は次の2つだけ。
+     ・左右の余白は 16px で一定。広い画面ほど余白を増やして中身を細くすると、
+       いちばん長く見る一覧の表が狭くなる（2.9.0 まで 1728px幅で片側 54px あった）
      ・中身は2200pxで頭打ち。1行が長くなりすぎると逆に読みにくいため
    ============================================================ */
 :root{
- --gutter-min:22px;      /* いちばん詰めたときの左右の余白 */
- --gutter-max:120px;     /* 余白はここまで。これ以上は中身を広げる */
- --shell-base:1620px;    /* この幅までは余白を増やして中身を保つ */
+ --app-gutter:16px;      /* 左右の余白 */
  --shell-max:2200px;     /* 中身の上限。読みやすさのため無制限にはしない */
- --app-gutter:clamp(var(--gutter-min),calc((100vw - var(--shell-base)) / 2),var(--gutter-max));
  --app-shell:min(calc(100vw - var(--app-gutter) * 2),var(--shell-max));
  /* 帯（appbar・footer）の内側余白。中身の左右端を main とそろえる */
  --app-pad:max(var(--app-gutter),calc((100vw - var(--shell-max)) / 2));
@@ -1990,30 +1971,6 @@ body>main{width:var(--app-shell);max-width:var(--app-shell);
 .outopt .naming-field>span{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
 .outopt .hint{margin:0;font-size:10.5px;color:#7f929a;line-height:1.6}
 
-/* データの鮮度。すべて予定どおりなら何も出さない（問題が無いときに場所を取らない）。 */
-.fresh-board{margin:11px 0 0;padding:11px 12px;border:1px solid #e7d6b4;border-radius:9px;background:#fdfaf4;display:grid;gap:8px}
-.fresh-board[hidden]{display:none!important}
-.fb-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
-.fb-head b{font-size:12.5px;color:#7a5a18}
-.fb-head small{font-size:10.5px;color:#93a4ab}
-.fb-close{margin-left:auto;align-self:center;background:transparent;color:#9a8a68;font-size:17px;line-height:1;padding:2px 8px;border-radius:6px}
-.fb-close:hover{background:#f3ead8;color:#6d5418}
-.fb-rows{display:grid;gap:5px}
-.fb-row{display:grid;grid-template-columns:102px minmax(120px,1fr) minmax(0,1.4fr) minmax(0,1fr);gap:10px;
- align-items:center;text-align:left;padding:7px 10px;border:1px solid #e2eaee;border-radius:8px;
- background:#fff;color:#3f5661;font-size:11.5px;font-weight:400;cursor:pointer}
-.fb-row:hover{border-color:#8fb6c2;background:#f6fbfc}
-.fb-row>i{font-style:normal;font-size:10px;font-weight:900;text-align:center;padding:4px 0;border-radius:999px}
-.fb-row.fb-ng>i{color:#a4463d;background:#fbe9e6}
-.fb-row.fb-warn>i{color:#8a5f19;background:#f7efe0}
-.fb-row b{font-size:12px;color:#22404d;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.fb-row span,.fb-row small{color:#7f929a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.fb-row small{font-size:10.5px}
-/* 経過は、この板でも一覧でも同じ役割 ―― 最初に読ませる値。言い方も色もそろえる。 */
-.fb-row b.fb-age{font-size:12.5px;font-weight:800;color:#8a5f19;margin-right:5px}
-.fb-row.fb-ng b.fb-age{color:#a4463d}
-.fb-more{font-size:11.5px;color:#7c6a45;padding:5px 3px 1px}
-@media(max-width:900px){.fb-row{grid-template-columns:80px minmax(0,1fr)}.fb-row span,.fb-row small{grid-column:2}}
 /* 実績の推移。並べてみないと「急に減った」「だんだん遅い」に気づけない。 */
 .trendbox{margin-top:12px}
 .trend{display:grid;gap:9px;margin-top:7px}
@@ -2367,12 +2324,6 @@ body>main{width:var(--app-shell);max-width:var(--app-shell);
  border-radius:999px;justify-self:start}
 .jn-hint-again:hover{background:#f2f8f9;border-color:#cfe6ec;color:#0b6570}
 
-/* 差し替えられなかった理由。「使用中でした」だけでは直しようがないので、
-   何番のエラーで、何秒粘って、次に何をすればよいのかまで出す。 */
-.fb-why{grid-column:2/-1;display:grid;gap:2px;margin-top:4px;padding:6px 8px;font-style:normal;
- background:#fffaf1;border:1px solid #ecd9b4;border-radius:7px}
-.fb-why b{font-size:10.5px;color:#8a6114}
-.fb-why span{font-size:10px;color:#7a6a52;line-height:1.6}
 
 /* ---- 共通設定の下の段 -------------------------------------------------------
    読取マスタと結合マスタは「一度決めて、いくつもの対象から使い回すもの」で、
@@ -2388,8 +2339,6 @@ body>main{width:var(--app-shell);max-width:var(--app-shell);
  border:0;border-radius:7px}
 .subnav button:hover{background:#e3edef;color:#31505d}
 .subnav button.on{background:#fff;color:#0b6570;box-shadow:0 1px 3px rgba(18,60,72,.14)}
-.subnav-note{margin-left:auto;padding-right:6px;font-size:10.5px;color:#8299a2}
-@media(max-width:900px){.subnav-note{display:none}}
 
 /* ---- マスタの出し入れ ------------------------------------------------------
    書き出しと取り込みは一組の操作なので、ひとまとまりに置く。形式を選ぶのは
@@ -3331,3 +3280,113 @@ dialog #toast{bottom:auto;top:18px;right:50%;transform:translateX(50%);box-shado
 .mrp-none.wait{border-color:#d3e0e5;background:#f8fbfb;color:#6b7f88}
 /* 後処理のタブは、広い表（繰り返しの列で 100 列を超えるなど）でも窓の幅に収め、表の中で横に送る（2.7.0。グリッドの既定 min-width:auto だと表の幅まで広がり、おすすめのボタンが窓の外に出た） */
 .editor-pane[data-etab="post"]{grid-template-columns:minmax(0,1fr)}#post-pane{min-width:0}
+
+/* ============================================================
+   2.9.0 上部を詰めて、一覧の表を広く見せる（案の比べ方は tests/ui-proposals/2026-10-topbar）。
+   これまでは 帯 68px → タブ → 検索の段 → 件数と操作の2行 → 実行キューの段 と積まれ、
+   表の見出しが 1728×1152 で上から約24%、確認待ちの知らせが出ると約43% まで下がっていた。
+     ・タブは帯の中へ（帯とタブで1段・46px）
+     ・対象ファイルの道具は1段（40px）。ほとんど使わない検索・選ぶ欄は「絞り込み」のポップオーバーへ畳み、
+       いまの条件はボタンに要約して出す。列の表示などは「表示」のメニューへ
+     ・選んだときは、道具の段ごと「選んだ物への操作」に入れ替える（表は下へずれない）
+     ・確認待ちは1行の帯。どの行かは一覧の左の線で示す
+     ・実行キューは、待ちや実行があるときだけ出す
+   ============================================================ */
+/* 帯: アプリ名・タブ・状態・全件実行・終了 */
+.appbar{min-height:0;height:46px;padding-top:0;padding-bottom:0;gap:12px;--ctl-h:32px;--ctl-r:8px}
+.appbar .brand{margin-right:0;flex:none}
+.appbar .brand-title{align-items:center;gap:8px}
+.appbar .brand h1{font-size:17px;letter-spacing:.01em}
+.appbar .version-badge{padding:2px 8px;font-size:10px}
+.appbar-tools{margin-left:auto;gap:8px;min-width:0}
+.appbar>nav{display:flex;align-self:stretch;gap:2px;margin:0 0 0 6px;padding-left:10px;min-height:0;border:0;border-left:1px solid #ffffff22;flex:none}
+.appbar>nav button{height:100%;padding:0 14px;font-size:13px;font-weight:700;color:#a9c7d2;background:transparent;border-radius:0;
+ border-top:3px solid transparent;border-bottom:3px solid transparent;white-space:nowrap}
+.appbar>nav button:hover{color:#fff;background:#ffffff0d;filter:none}
+.appbar>nav button.on{color:#fff;background:#ffffff14;border-bottom-color:#3fd0c9}
+.appbar>nav button:focus-visible{outline:2px solid #7fe3ea;outline-offset:-4px}
+.appbar .ctl{font-size:12px}
+.appbar .runtime{min-width:0;max-width:280px;padding:0 11px;gap:7px}
+.appbar .rt-text{display:flex;align-items:baseline;gap:7px;min-width:0}
+.appbar .rt-text b{font-size:12px;white-space:nowrap}
+.appbar .rt-text span{display:inline;font-size:11px}
+@media (max-height:720px){.appbar{min-height:0;height:42px}}
+/* 共通設定の中の切り替え: 低く（説明はかざすと出る） */
+.subnav{margin:6px 0 6px;padding:3px}
+.subnav button{padding:4px 12px}
+/* 対象ファイル: 道具の段・表・（あれば）確認待ちの帯と実行キュー を縦に積み、余りの高さは表が取る */
+#jobs.on{display:flex;flex-direction:column}
+#jobs>.tablebox{flex:1 1 auto;min-height:0}
+#jobs>*:not(.tablebox){flex:none}
+.jobbar{margin:6px 0}
+.jb-idle,.jb-sel{display:flex;align-items:center;gap:8px;height:40px;min-width:0}
+.jb-idle[hidden],.jb-sel[hidden]{display:none}
+.jb-sp{flex:1}
+.jb-count{display:flex;align-items:baseline;gap:8px;white-space:nowrap;padding-right:4px}
+.jb-count b{font-size:15px;color:#17384e}
+.jb-count b small{font-size:11.5px;font-weight:700;color:#4f6873;margin-left:2px}
+.jb-count span{font-size:11.5px;color:#6b7f88}
+.tbtn{height:30px;display:inline-flex;align-items:center;gap:6px;padding:0 11px;font-size:12px;font-weight:700;border-radius:7px;
+ background:#fff;color:#2b4b59;border:1px solid #c8d6dc;white-space:nowrap}
+.tbtn:hover{background:#f1f7f9;filter:none}
+.tbtn[hidden]{display:none}
+.tbtn small{font-size:11.5px;font-weight:600;color:#7f929a}
+.tbtn svg{flex:none}
+.tbtn.icon{width:30px;padding:0;justify-content:center;color:#4f6873}
+.tbtn.add{background:#0b6577;border-color:#0b6577;color:#fff}
+.tbtn.add:hover{background:#0d7a8d}
+.tbtn.is-set,.tbtn[aria-expanded="true"]{background:#e8f5f7;border-color:#0b6577;color:#0b4f5c}
+.tbtn.is-set small{color:#0b6577;font-weight:800}
+.jb-anchor{position:relative}
+.jb-pop{position:absolute;top:36px;left:0;z-index:30;background:#fff;border:1px solid #c8d6dc;border-radius:10px;
+ box-shadow:0 14px 40px #15384d33;padding:10px}
+.jb-pop[hidden]{display:none}
+.jb-filter{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px 10px;width:520px}
+.jb-filter label{display:grid;gap:4px;font-size:11.5px;font-weight:800;color:#4f6873}
+.jb-filter .jb-search{grid-column:1/-1}
+.jb-filter input,.jb-filter select{height:32px;font-size:12.5px}
+.jb-pop-foot{grid-column:1/-1;display:flex;align-items:center;gap:8px;border-top:1px solid #eef3f5;padding-top:8px}
+.jb-pop-foot small{font-size:11px;color:#7f929a}
+.jb-pop-foot button{margin-left:auto;height:28px;padding:0 10px;font-size:11.5px}
+.jb-menu{left:auto;right:0;display:grid;gap:2px;min-width:240px;padding:6px}
+.jb-menu button{height:32px;padding:0 10px;text-align:left;background:transparent;color:#22404d;font-size:12.5px;font-weight:700;border-radius:6px}
+.jb-menu button:hover{background:#eef6f8;filter:none}
+/* 選んだとき: 濃い色の段に入れ替え、実行は濃い青緑（帯の全件実行と同じ色の役割） */
+.jb-sel{padding:0 6px 0 12px;border-radius:9px;background:#0f4d5e;color:#fff}
+.jb-sel b{font-size:13px;white-space:nowrap;margin-right:4px}
+.jb-sel b em{font-style:normal;font-size:16px;margin-right:2px}
+.jb-sel .tbtn{background:#ffffff14;border-color:#ffffff33;color:#fff}
+.jb-sel .tbtn:hover{background:#ffffff26}
+.jb-sel .tbtn.go{background:#14a89f;border-color:transparent}
+.jb-sel .tbtn.go:hover{background:#17bdb2}
+.jb-sel .tbtn.x{margin-left:auto;background:transparent;border-color:transparent;color:#cfe3ea}
+/* 確認待ち: 1行の帯。色は一覧の左の線と同じ（橙＝遅れ・未実行、赤＝失敗・保留） */
+.fresh-line{--fl:#8a5a0c;--fl-bg:#fdf6e9;--fl-edge:#efd6a6;display:flex;align-items:center;gap:10px;height:34px;margin:0 0 6px;
+ padding:0 6px 0 10px;border:1px solid var(--fl-edge);border-radius:8px;background:var(--fl-bg);color:var(--fl);font-size:12px;min-width:0}
+.fresh-line[hidden]{display:none}
+.fresh-line.is-ng{--fl:#a4463d;--fl-bg:#fdf1ef;--fl-edge:#f0c9c3}
+.fresh-line>svg{flex:none}
+.fresh-line>b{font-weight:900;white-space:nowrap}
+.fl-kinds{white-space:nowrap;font-weight:700}
+.fl-names{display:flex;align-items:center;gap:2px;min-width:0;flex:1;overflow:hidden;white-space:nowrap}
+.fl-name{height:24px;padding:0 6px;background:transparent;color:#22404d;font-size:12px;font-weight:700;border-radius:5px;text-decoration:underline;text-decoration-color:#0000;flex:none}
+.fl-name:hover{background:#ffffffa8;text-decoration-color:currentColor;filter:none}
+.fl-names small{font-size:11.5px;color:#7a6a52;overflow:hidden;text-overflow:ellipsis;padding-left:4px}
+.fl-only{height:26px;padding:0 10px;font-size:11.5px;background:#fff;color:var(--fl);border:1px solid var(--fl-edge);border-radius:6px;white-space:nowrap}
+.fresh-line .fb-close{height:26px;width:26px;padding:0;display:grid;place-items:center;background:transparent;color:var(--fl);opacity:.75;border-radius:6px}
+.fresh-line .fb-close:hover{opacity:1;background:#ffffffa8}
+.jobs-table tbody tr.is-stale>td:first-child{box-shadow:inset 4px 0 0 #e0a43a}
+.jobs-table tbody tr.is-stale-ng>td:first-child{box-shadow:inset 4px 0 0 #c9574d}
+/* 全行が同じ出力先のときは、見出しに1度だけ書く */
+.jobs-table th .th-sub{display:block;margin-top:1px;font-size:10.5px;font-weight:600;color:#7f929a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.jobs-table th .th-sub .output-link{display:inline;font-size:10.5px;color:#4f7f8e}
+/* 下の帯: 低く・言うことは1つ（保存の状態）＋ 対象ファイルでは行の操作の手がかり */
+footer{min-height:0;height:30px;padding-top:0;padding-bottom:0;gap:8px}
+footer .autosave-state{margin-left:0;padding:0;background:transparent;border:0;font-size:11.5px}
+.foot-hint{display:none;margin-left:auto;font-size:11px;color:#7f929a;white-space:nowrap}
+.foot-hint b{color:#4f6873}
+body[data-pane="jobs"] .foot-hint{display:inline}
+@media (max-height:720px){footer{min-height:0;height:28px}}
+.tbtn.warn{height:28px;border-radius:999px;background:#fdf3e1;border-color:#efd6a6;color:#8a5a0c}
+.tbtn.warn:hover{background:#fbebcc}
+.tbtn.warn.is-ng{background:#fdf1ef;border-color:#f0c9c3;color:#a4463d}
