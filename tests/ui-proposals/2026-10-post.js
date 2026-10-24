@@ -4,7 +4,7 @@
 // 案ごとのタブ・欄を差し込む。表の中身は本物の下読み（/api/post/preview）の結果。
 // 組んだ手順: ①ピボット解除（品番・品名・工程 以外を「月」「数量」の縦に）→ ②ピボット（工程を見出しに、数量の合計）。
 // 撮り方: await window.PP.show(k, view)。view 1 = 組んだあと（2つ目の手順を選んでいる）、view 2 = 初めて開いたとき（まだ何もない）。
-// 1回目 A〜G（5案＋方向の違う2案 F・G）、2回目は上位3案 B・G・A と組合せ案 H〜K。
+// 1回目 A〜G（5案＋方向の違う2案 F・G）、2回目は上位3案 B・G・A と組合せ案 H〜K、3回目は上位3案 H・J・B と組合せ案 L〜O。
 (() => {
  const E = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
  const STEPS = [{ op: 'unpivot', mode: 'other', columns: ['品番', '品名', '工程'], attr: '月', value: '数量' },
@@ -115,6 +115,22 @@
  .pp .pstep2.on{background:#e6f4f6;border-color:#9fd1d9}.pp .pstep2.src .ic{background:#f1eaf9;color:#5c3f96}
  .pp .pstep2 .x{color:#9aabb2;font-weight:900;padding-top:4px}
  .pp .tb{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+
+ .pp.fill{display:grid;grid-template-rows:auto auto auto minmax(0,1fr);height:var(--pp-h,560px)}
+ .pp.fill.r5{grid-template-rows:auto auto auto auto minmax(0,1fr)}
+ .pp .grow{display:grid;grid-template-rows:minmax(0,1fr) auto;min-height:0;overflow:hidden}
+ .pp .grow .tbl{max-height:none;min-height:0;border-radius:9px 9px 0 0}
+ .pp .grow .stat{border-radius:0 0 8px 8px}
+ .pp .fl3{display:grid;grid-template-columns:minmax(0,.8fr) 18px minmax(0,1.25fr) 18px minmax(0,1.25fr) 18px minmax(0,1fr) 18px minmax(0,.8fr);align-items:stretch}
+ .pp .fl3 .arr{padding:0}
+ .pp .fl3 .node{min-width:0}.pp .fl3 .node small{white-space:normal;line-height:1.35}
+ .pp .fl3 .node .k{display:flex;gap:6px;align-items:center}.pp .fl3 .node .k i{font-style:normal;width:20px;height:20px;border-radius:6px;display:grid;place-items:center;background:#e6f4f6;color:#0b6577;font-size:11px;font-weight:900}
+ .pp .fl3 .node.on .k i{background:#0b6577;color:#fff}.pp .fl3 .node em{font-style:normal;font-size:11px;color:#8a5a0c}
+ .pp .node.next{border:1.5px dashed #0b6577;background:#f2fafb;display:grid;gap:3px;align-content:center}
+ .pp .node.next b{color:#0b6577}.pp .node.next .btn{justify-self:start}
+ .pp .palb .rec{font-style:normal;font-size:10px;font-weight:900;color:#fff;background:#0b6577;border-radius:4px;padding:0 4px;width:auto;height:auto;margin-left:2px}
+ .pp .palb.recd{border-color:#0b6577;box-shadow:0 0 0 2px #cfe9ee;background:#f2fafb}
+ .pp .hint1{display:flex;align-items:center;gap:8px;color:#0b4f5c;font-weight:700}
  .eb-post{background:#fdeef3;color:#9a2f5a}
  `;
  let data = null;
@@ -194,6 +210,27 @@
  const mt = ([h, r]) => `<table><tr>${h.map(x => `<th>${x}</th>`).join('')}</tr>${r.map(x => `<tr>${x.map(y => `<td>${y}</td>`).join('')}</tr>`).join('')}</table>`;
  const dcards = () => `<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr)) minmax(0,.9fr);gap:8px">${Object.values(MINI).map(m => `<div class="dcard"><div class="mini">${mt(m[2])}<span class="arr">→</span>${mt(m[3])}</div><b>${m[0]}</b><small>${m[1]}</small></div>`).join('')}
   <div class="dcard" style="grid-template-columns:1fr"><b>列を整える</b><div class="pal">${OPS.slice(3).map(o => `<span class="palb" style="height:24px;font-size:11.5px"><span>${o[3]}</span>${o[1]}</span>`).join('')}</div></div></div>`;
+
+
+ // ---- 3回目の部品（2回目の減点を埋める: 表は残りの高さいっぱい＋下に帯で終わりを示す・骨組みを2つの場面でそろえる・次の候補・ボタンの形をそろえる・札の幅）
+ const tableG = (d, rows, opts, foot) => `<div class="grow">${table(d, rows, opts).replace(/style="max-height:\d+px"/, '')}<div class="stat"><span>${foot}</span><span>見本は前回の実行で取り出した表（${data.inp.row_count}行）</span></div></div>`;
+ const ACT = () => `<span class="btn sm">式を見る</span><span class="btn sm">クエリとして保存</span>`;
+ const flow3 = (on, next) => `<div class="fl3"><div class="node io"><b>取り出した表</b><small>${sz(data.inp)}</small></div><span class="arr">→</span>
+  <div class="node${on === 0 ? ' on' : ''}"><span class="k"><i>1</i><b>ピボット解除</b></span><small>品番・品名・工程 以外を縦に（月・数量）</small><small>${sz(data.s1)} <em>空のセル ${dropped()}件は出さない</em></small></div><span class="arr">→</span>
+  <div class="node${on === 1 ? ' on' : ''}"><span class="k"><i>2</i><b>ピボット</b></span><small>工程 を見出しに · 数量 の合計</small><small>${sz(data.out)}</small></div><span class="arr">→</span>
+  ${next ? `<div class="node next"><b>次の候補: グループ化</b><small>品番・月 ごとに合計</small><span class="btn sm">足す</span></div>` : `<div class="node addn">＋ 下から足す</div>`}<span class="arr">→</span>
+  <div class="node out"><b>出す表</b><small>${sz(data.out)}</small></div></div>`;
+ const flow3empty = next => `<div class="fl3"><div class="node io"><b>取り出した表</b><small>${sz(data.inp)}</small></div><span class="arr">→</span>
+  ${next ? `<div class="node next" style="grid-column:span 5"><b>おすすめ: ピボット解除（4月〜9月 の6列を縦に）</b><small>月が横に並んでいるようです。品番・品名・工程 は残し「月」「数量」の2列に（→ ${sz(data.s1)}。空のセル ${dropped()}件は出さない）</small><span class="btn sm pri">縦にする</span></div>`
+   : `<div class="node addn" style="grid-column:span 5">手順はまだありません（下の「手順を足す」から選びます）</div>`}<span class="arr">→</span>
+  <div class="node out"><b>出す表</b><small>取り出した表のまま</small></div></div>`;
+ const pal3 = rec => `<div class="pal"><b>手順を足す</b>${OPS.map((o, i) => `<span class="palb${i < 3 ? ' main' : ''}${rec === o[0] ? ' recd' : ''}"><span>${o[3]}</span>${o[1]}${rec === o[0] ? '<i class="rec">おすすめ</i>' : ''}</span>`).join('')}</div>`;
+ function pivotRow() {
+  return `<div class="card" style="grid-template-columns:auto repeat(3,minmax(0,1fr)) auto;align-items:end;gap:10px">
+  <div class="form2"><div class="h"><b>2 · ピボット</b><small>値を見出しにして横へ</small></div></div>
+  <label class="f">見出しにする列<span class="sel-box">工程</span></label><label class="f">値の列<span class="sel-box">数量</span></label><label class="f">集計<span class="sel-box">合計</span></label>
+  <span class="btn sm">この手順を消す</span></div>`
+ }
 
  // ---- 案 --------------------------------------------------------------------------
  const P = {
@@ -318,6 +355,36 @@
     <div style="display:grid;grid-template-columns:330px minmax(0,1fr);gap:10px"><div class="card">${pivotForm2(1)}</div>
     <div class="card"><div class="cap">出す表 <small>${sz(data.out)}</small><span class="sp"></span><span class="btn sm">クエリとして保存</span></div>${tableV(data.out, 8, { fresh: ['切削', '組立', '検査'] })}</div></div></div>`
   },
+  // L（組合せ）: H ＋ J の「次の候補」を流れの中の札に（帯を増やさない）。2つの場面で骨組みをそろえ、表は残りの高さいっぱい
+  L(view) {
+   if (view === 2) return `<div class="pp fill">${MODE2(2)}${flow3empty(true)}${pal3('unpivot')}
+    <div class="card grow0" style="min-height:0;display:grid;grid-template-rows:auto minmax(0,1fr)"><div class="cap">取り出した表 <small>前回の実行の見本</small></div>${tableG(data.inp, 40, {}, sz(data.inp))}</div></div>`;
+   return `<div class="pp fill">${MODE2(1)}${flow3(1, true)}${pal3()}
+    <div style="display:grid;grid-template-columns:330px minmax(0,1fr);gap:10px;min-height:0"><div class="card">${pivotForm2(1)}</div>
+    <div class="card" style="min-height:0;display:grid;grid-template-rows:auto minmax(0,1fr)"><div class="cap">2 のあとの表 = 出す表<span class="sp"></span>${ACT()}</div>${tableG(data.out, 60, { fresh: ['切削', '組立', '検査'] }, sz(data.out))}</div></div></div>`
+  },
+  // M（組合せ）: H の骨組み ＋ 提案は「手順を足す」の中の「おすすめ」印と1行の理由に（帯を出さない）
+  M(view) {
+   if (view === 2) return `<div class="pp fill r5">${MODE2(2)}${flow3empty(false)}${pal3('unpivot')}<div class="hint1">おすすめ: 4月〜9月 の6列は月が横に並んでいるようです。「ピボット解除」で「月」「数量」の縦にできます。<span class="btn sm pri">縦にする</span></div>
+    <div class="card" style="min-height:0;display:grid;grid-template-rows:auto minmax(0,1fr)"><div class="cap">取り出した表 <small>前回の実行の見本</small></div>${tableG(data.inp, 40, {}, sz(data.inp))}</div></div>`;
+   return `<div class="pp fill r5">${MODE2(1)}${flow3(1, false)}${pal3('group')}<div class="hint1">おすすめ: 「月」ごとの合計が要るなら「グループ化」（品番・月 ごとに 切削・組立・検査 の合計）。<span class="btn sm">グループ化を足す</span></div>
+    <div style="display:grid;grid-template-columns:330px minmax(0,1fr);gap:10px;min-height:0"><div class="card">${pivotForm2(1)}</div>
+    <div class="card" style="min-height:0;display:grid;grid-template-rows:auto minmax(0,1fr)"><div class="cap">2 のあとの表 = 出す表<span class="sp"></span>${ACT()}</div>${tableG(data.out, 60, { fresh: ['切削', '組立', '検査'] }, sz(data.out))}</div></div></div>`
+  },
+  // N（組合せ）: J の「候補が主」＋ 流れの骨組みを2つの場面でそろえる。選んだ手順の設定は表の上に横1行（表を広く）
+  N(view) {
+   if (view === 2) return `<div class="pp fill">${MODE2(2)}${flow3empty(true)}${pal3('unpivot')}
+    <div class="card" style="min-height:0;display:grid;grid-template-rows:auto minmax(0,1fr)"><div class="cap">取り出した表 <small>前回の実行の見本</small></div>${tableG(data.inp, 40, {}, sz(data.inp))}</div></div>`;
+   return `<div class="pp fill r5">${MODE2(1)}${flow3(1, true)}${pal3()}${pivotRow()}
+    <div class="card" style="min-height:0;display:grid;grid-template-rows:auto minmax(0,1fr)"><div class="cap">2 のあとの表 = 出す表<span class="sp"></span>${ACT()}</div>${tableG(data.out, 60, { fresh: ['切削', '組立', '検査'] }, sz(data.out))}</div></div>`
+  },
+  // O（組合せ）: H の骨組みのまま、設定は表の上に横1行（表を全幅に）。提案は空のときだけ流れの中に
+  O(view) {
+   if (view === 2) return `<div class="pp fill">${MODE2(2)}${flow3empty(true)}${pal3()}
+    <div class="card" style="min-height:0;display:grid;grid-template-rows:auto minmax(0,1fr)"><div class="cap">取り出した表 <small>前回の実行の見本</small></div>${tableG(data.inp, 40, {}, sz(data.inp))}</div></div>`;
+   return `<div class="pp fill r5">${MODE2(1)}${flow3(1, false)}${pal3()}${pivotRow()}
+    <div class="card" style="min-height:0;display:grid;grid-template-rows:auto minmax(0,1fr)"><div class="cap">2 のあとの表 = 出す表<span class="sp"></span>${ACT()}</div>${tableG(data.out, 60, { fresh: ['切削', '組立', '検査'] }, sz(data.out))}</div></div>`
+  },
  };
 
  // ---- 本物の画面へ差し込む --------------------------------------------------------------
@@ -359,8 +426,11 @@
   addTab();
   const tab = document.querySelector('.editor-tab[data-etab="post"]');
   tab.querySelector('.etab-count').hidden = view === 2;
-  document.querySelector('.editor-pane[data-etab="post"]').innerHTML = html;
+  const pane = document.querySelector('.editor-pane[data-etab="post"]');
+  pane.innerHTML = html;
   setEditorTab('post');
+  const body = pane.closest('.modalbody'), pp = pane.querySelector('.pp.fill');
+  if (body && pp) pp.style.setProperty('--pp-h', Math.max(360, body.clientHeight - (pane.offsetTop - body.offsetTop) - 20) + 'px');
  }
  window.PP = { show, load, P };
 })();
