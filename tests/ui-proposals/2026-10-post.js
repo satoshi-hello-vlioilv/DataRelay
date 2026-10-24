@@ -4,7 +4,7 @@
 // 案ごとのタブ・欄を差し込む。表の中身は本物の下読み（/api/post/preview）の結果。
 // 組んだ手順: ①ピボット解除（品番・品名・工程 以外を「月」「数量」の縦に）→ ②ピボット（工程を見出しに、数量の合計）。
 // 撮り方: await window.PP.show(k, view)。view 1 = 組んだあと（2つ目の手順を選んでいる）、view 2 = 初めて開いたとき（まだ何もない）。
-// 1回目 A〜G（5案＋方向の違う2案 F・G）。
+// 1回目 A〜G（5案＋方向の違う2案 F・G）、2回目は上位3案 B・G・A と組合せ案 H〜K。
 (() => {
  const E = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
  const STEPS = [{ op: 'unpivot', mode: 'other', columns: ['品番', '品名', '工程'], attr: '月', value: '数量' },
@@ -81,6 +81,40 @@
  .pp .fx i{font-style:italic;color:#0b6577;font-weight:800;margin-right:8px}
  .pp .stat{display:flex;justify-content:space-between;padding:5px 10px;border-radius:7px;background:#0b6577;color:#fff;font-weight:800;font-size:11.5px}
  .pp .warnline{color:#8a5a0c;background:#fff4dc;border-radius:8px;padding:6px 10px;font-weight:700}
+
+ .pp{--pph:330px}
+ @media (max-height:900px){.pp{--pph:232px}}
+ .pp .tblv{max-height:var(--pph)}
+ .pp .stline{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+ .pp .state{display:inline-flex;align-items:center;gap:6px;padding:5px 12px;border-radius:999px;font-weight:800;font-size:12px}
+ .pp .state.off{background:#eef3f5;color:#4a6270}.pp .state.on{background:#e2f4ec;color:#087a57}
+ .pp .state::before{content:'';width:8px;height:8px;border-radius:50%;background:currentColor}
+ .pp .textbtn{color:#a12d1a;font-weight:800;text-decoration:underline;text-underline-offset:3px}
+ .pp .fl2{display:flex;align-items:stretch;gap:0;min-width:0}
+ .pp .fl2 .node{min-width:0;flex:1 1 0}.pp .fl2 .node.io,.pp .fl2 .node.out{flex:0 0 auto;min-width:118px}
+ .pp .fl2 .node small{white-space:normal;line-height:1.35}
+ .pp .fl2 .node .k{display:flex;gap:6px;align-items:center}.pp .fl2 .node .k i{font-style:normal;width:20px;height:20px;border-radius:6px;display:grid;place-items:center;background:#e6f4f6;color:#0b6577;font-size:11px;font-weight:900}
+ .pp .fl2 .node.on .k i{background:#0b6577;color:#fff}
+ .pp .fl2 .node em{font-style:normal;font-size:11px;color:#8a5a0c}
+ .pp .pal{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+ .pp .pal>b{font-size:12px;color:#17384e;margin-right:2px}
+ .pp .palb{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 11px 0 6px;border-radius:8px;border:1px solid #c8d6dc;background:#fff;font-weight:800;color:#17384e;white-space:nowrap}
+ .pp .palb span{width:20px;height:20px;border-radius:5px;display:grid;place-items:center;background:#e6f4f6;color:#0b6577;font-size:11px}
+ .pp .palb.main{border-color:#0b6577}
+ .pp .form2{display:grid;gap:8px}
+ .pp .form2 .h{display:grid;gap:2px}.pp .form2 .h b{font-size:13px;color:#17384e;white-space:nowrap}.pp .form2 .h small{color:#6b7f88}
+ .pp .info{border:1px solid #b9dde5;background:#f0f8fa;border-radius:10px;padding:10px 12px;display:grid;gap:6px}
+ .pp .info b{color:#0b4f5c;font-size:13px}
+ .pp .dcard{border:1px solid #dce6ea;border-radius:10px;background:#fff;padding:8px 10px;display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 10px;align-items:center}
+ .pp .dcard b{color:#17384e;font-size:12.5px}.pp .dcard small{color:#6b7f88;font-size:11px;grid-column:2}
+ .pp .dcard .mini{grid-row:span 2}
+ .pp .pstep2{display:grid;grid-template-columns:20px 24px minmax(0,1fr) auto;gap:6px;align-items:start;padding:6px 8px;border-radius:8px;border:1px solid transparent}
+ .pp .pstep2 .ic{width:24px;height:24px;border-radius:6px;display:grid;place-items:center;background:#eef4f6;color:#0b6577;font-weight:900;font-size:12px}
+ .pp .pstep2 i{font-style:normal;font-size:11px;color:#7b8f97;text-align:right;padding-top:4px}
+ .pp .pstep2 b{display:block;font-weight:800;color:#17384e}.pp .pstep2 small{display:block;color:#6b7f88;line-height:1.35}
+ .pp .pstep2.on{background:#e6f4f6;border-color:#9fd1d9}.pp .pstep2.src .ic{background:#f1eaf9;color:#5c3f96}
+ .pp .pstep2 .x{color:#9aabb2;font-weight:900;padding-top:4px}
+ .pp .tb{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
  .eb-post{background:#fdeef3;color:#9a2f5a}
  `;
  let data = null;
@@ -122,6 +156,44 @@
  }
  const RESULT = () => `<div class="row"><span class="pill">取り出した表 ${sz(data.inp)}</span><span class="note">→</span><span class="pill ok">出す表 ${sz(data.out)}</span><span class="note">見本は前回の実行で取り出した表（2026-10-24 06:35）の ${data.out.input.rows}行</span></div>`;
  const EMPTY_LEAD = '取り出した表を、ファイルに出す前に整えます（Excel の Power Query と同じ）。横に並んだ月を縦にする・値を見出しにして横に並べる・まとめて合計する、など。';
+
+
+ // ---- 2回目の部品（1回目の減点を埋める: 見出しが折り返さない・説明を切らない・空のときの状態・行数の理由・フル HD の高さ）
+ const tableV = (d, rows, opts = {}) => table(d, rows, opts).replace('class="tbl" style="max-height:' + (opts.h || 300) + 'px"', 'class="tbl tblv"');
+ const dropped = () => data.inp.row_count * ((data.inp.columns || []).length - 3) - data.s1.row_count;
+ const MODE2 = view => view === 2
+  ? `<div class="stline"><span class="state off">後処理なし · 取り出した表のまま出します</span><span class="note">下の手順を1つ足すと、後処理が入ります</span><span class="sp"></span><span class="seg"><span class="on">手順で組む</span><span>クエリを使う</span></span></div>`
+  : `<div class="stline"><span class="state on">後処理あり · 手順 2</span>${RESULT()}<span class="sp"></span><span class="seg"><span class="on">手順で組む</span><span>クエリを使う</span></span></div>`;
+ const flow2 = on => `<div class="fl2"><div class="node io"><b>取り出した表</b><small>${sz(data.inp)}</small></div><span class="arr">→</span>
+  <div class="node${on === 0 ? ' on' : ''}"><span class="k"><i>1</i><b>ピボット解除</b></span><small>品番・品名・工程 以外を縦に（月・数量）</small><small>${sz(data.s1)} <em>空のセル ${dropped()}件は出さない</em></small></div><span class="arr">→</span>
+  <div class="node${on === 1 ? ' on' : ''}"><span class="k"><i>2</i><b>ピボット</b></span><small>工程 を見出しに · 数量 の合計</small><small>${sz(data.out)}</small></div><span class="arr">→</span>
+  <div class="node out"><b>出す表</b><small>${sz(data.out)}</small></div></div>`;
+ const flow2empty = () => `<div class="fl2"><div class="node io"><b>取り出した表</b><small>${sz(data.inp)}</small></div><span class="arr">→</span><div class="node addn">手順はまだありません</div><span class="arr">→</span><div class="node out"><b>出す表</b><small>取り出した表のまま</small></div></div>`;
+ const pal = (label = '手順を足す') => `<div class="pal"><b>${label}</b>${OPS.map((o, i) => `<span class="palb${i < 3 ? ' main' : ''}"><span>${o[3]}</span>${o[1]}</span>`).join('')}</div>`;
+ function pivotForm2(cols = 3) {
+  return `<div class="form2"><div class="h"><b>2 · ピボット</b><small>1つの列の値を見出しにして横に並べ、値の列を集計します</small></div>
+  <div style="display:grid;grid-template-columns:repeat(${cols},minmax(0,1fr));gap:8px">
+  <label class="f">見出しにする列<span class="sel-box">工程</span><small>切削・組立・検査 の3列になります</small></label>
+  <label class="f">値の列<span class="sel-box">数量</span></label>
+  <label class="f">集計<span class="sel-box">合計</span><small>1,200 のような文字も数にして合計</small></label></div>
+  <div class="row"><span class="sp"></span><span class="btn sm">この手順を消す</span></div></div>`
+ }
+ const SUG = () => `<div class="info"><b>4月〜9月 の6列は、月が横に並んでいるようです。縦に（ピボット解除）しますか？</b>
+  <span class="note">品番・品名・工程 はそのまま残し、「月」「数量」の2列にします（${sz(data.inp)} → ${sz(data.s1)}。空のセル ${dropped()}件は出しません）。</span>
+  <div class="row"><span class="btn pri">縦にする</span><span class="btn">ほかの手順を選ぶ</span></div></div>`;
+ function steps2(on) {
+  return `<div class="psteps"><div class="pstep2 src"><i></i><span class="ic">▤</span><span><b>取り出した表</b><small>${sz(data.inp)} · 前回の実行の見本</small></span><span></span></div>
+  <div class="pstep2${on === 0 ? ' on' : ''}"><i>1</i><span class="ic">⇣</span><span><b>ピボット解除</b><small>品番・品名・工程 以外を縦に（月・数量）<br>${sz(data.s1)} · 空のセル ${dropped()}件は出さない</small></span><span class="x">×</span></div>
+  <div class="pstep2${on === 1 ? ' on' : ''}"><i>2</i><span class="ic">⇢</span><span><b>ピボット</b><small>工程 を見出しに · 数量 の合計<br>${sz(data.out)}</small></span><span class="x">×</span></div></div>`
+ }
+ const MINI = {
+  unpivot: ['横に並んだ列を縦に', 'ピボット解除', [['品番', '4月', '5月'], [['A', 3, 5]]], [['品番', '月', '値'], [['A', '4月', 3], ['A', '5月', 5]]]],
+  pivot: ['値を見出しにして横に', 'ピボット', [['品番', '工程', '値'], [['A', '切削', 3], ['A', '組立', 5]]], [['品番', '切削', '組立'], [['A', 3, 5]]]],
+  group: ['まとめて合計・件数', 'グループ化', [['品番', '値'], [['A', 3], ['A', 5]]], [['品番', '合計'], [['A', 8]]]],
+ };
+ const mt = ([h, r]) => `<table><tr>${h.map(x => `<th>${x}</th>`).join('')}</tr>${r.map(x => `<tr>${x.map(y => `<td>${y}</td>`).join('')}</tr>`).join('')}</table>`;
+ const dcards = () => `<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr)) minmax(0,.9fr);gap:8px">${Object.values(MINI).map(m => `<div class="dcard"><div class="mini">${mt(m[2])}<span class="arr">→</span>${mt(m[3])}</div><b>${m[0]}</b><small>${m[1]}</small></div>`).join('')}
+  <div class="dcard" style="grid-template-columns:1fr"><b>列を整える</b><div class="pal">${OPS.slice(3).map(o => `<span class="palb" style="height:24px;font-size:11.5px"><span>${o[3]}</span>${o[1]}</span>`).join('')}</div></div></div>`;
 
  // ---- 案 --------------------------------------------------------------------------
  const P = {
@@ -208,6 +280,43 @@
     <div class="note">① 4月〜9月 を縦に（月・数量）　② 工程 を見出しに横へ（数量の合計）</div></div>
     <div class="sug"><b>次の候補: 「工程」の列が 切削・組立・検査 の3つの値です。見出しにして横に並べますか？</b><div class="row"><span class="btn pri">済み（②）</span><span class="btn ghost">ほかの候補</span></div></div>
     <div class="card"><div class="cap">出す表 <small>${sz(data.out)}</small></div>${table(data.out, 11, { h: 330, fresh: ['切削', '組立', '検査'] })}</div></div>`
+  },
+  // H（組合せ）: B の流れ ＋ A の「手順の候補がいつも見える」＋ G の提案（空のとき）。空のときの状態は「後処理なし」と言い切る
+  H(view) {
+   if (view === 2) return `<div class="pp">${MODE2(2)}${flow2empty()}${SUG()}${pal()}
+    <div class="card"><div class="cap">取り出した表 <small>${sz(data.inp)} · 前回の実行の見本</small></div>${tableV(data.inp, 12)}</div></div>`;
+   return `<div class="pp">${MODE2(1)}${flow2(1)}${pal()}
+    <div style="display:grid;grid-template-columns:340px minmax(0,1fr);gap:10px"><div class="card">${pivotForm2(1)}</div>
+    <div class="card"><div class="cap">2 のあとの表 = 出す表 <small>${sz(data.out)}</small><span class="sp"></span><span class="btn sm ghost">式を見る</span><span class="btn sm">クエリとして保存</span></div>${tableV(data.out, 12, { fresh: ['切削', '組立', '検査'] })}</div></div></div>`
+  },
+  // I（組合せ）: A の Power Query エディターと同じ3列を詰め直す（右の欄を広げ、手順の説明を切らない・設定の見出しを1行に）＋ G の提案（空のとき）
+  I(view) {
+   const head = `<div class="tb">${MODE2(view)}</div>`;
+   if (view === 2) return `<div class="pp">${head}<div style="display:grid;grid-template-columns:200px minmax(0,1fr) 330px;gap:10px">
+    <div class="card"><div class="cap">手順を足す</div>${addList()}</div>
+    <div class="card"><div class="cap">取り出した表 <small>${sz(data.inp)} · 前回の実行の見本</small></div>${tableV(data.inp, 12)}</div>
+    <div class="card"><div class="cap">適用したステップ</div><p class="note">まだありません。左から選ぶと、ここに並び、真ん中の表が変わります。</p>${SUG()}</div></div></div>`;
+   return `<div class="pp">${head}<div style="display:grid;grid-template-columns:200px minmax(0,1fr) 330px;gap:10px">
+    <div class="card"><div class="cap">手順を足す</div>${addList()}</div>
+    <div class="card"><div class="cap">2 · ピボット のあと = 出す表 <small>${sz(data.out)}</small><span class="sp"></span><span class="btn sm ghost">式を見る</span><span class="btn sm">クエリとして保存</span></div>${tableV(data.out, 12, { fresh: ['切削', '組立', '検査'] })}</div>
+    <div class="card"><div class="cap">適用したステップ</div>${steps2(1)}<hr style="border:0;border-top:1px solid #edf1f2;margin:2px 0">${pivotForm2(1)}</div></div></div>`
+  },
+  // J（組合せ）: G の「見本から提案して1押し」を主に、組んだあとは B の流れで見せる（文だけの要約にしない）。手順の候補は流れの下にいつも出す
+  J(view) {
+   if (view === 2) return `<div class="pp">${MODE2(2)}${SUG()}${pal('自分で選ぶ')}
+    <div class="card"><div class="cap">取り出した表 <small>${sz(data.inp)} · 前回の実行の見本</small></div>${tableV(data.inp, 12)}</div></div>`;
+   return `<div class="pp">${MODE2(1)}${flow2(1)}
+    <div class="info" style="grid-template-columns:minmax(0,1fr) auto;align-items:center"><span><b>次の手順の候補</b><span class="note">「月」ごとの合計が要るなら、グループ化（品番・月 ごとに 切削・組立・検査 の合計）を足せます。</span></span><span class="btn sm">グループ化を足す</span></div>
+    ${pal()}<div style="display:grid;grid-template-columns:330px minmax(0,1fr);gap:10px"><div class="card">${pivotForm2(1)}</div>
+    <div class="card"><div class="cap">出す表 <small>${sz(data.out)}</small><span class="sp"></span><span class="btn sm">クエリとして保存</span></div>${tableV(data.out, 9, { fresh: ['切削', '組立', '検査'] })}</div></div></div>`
+  },
+  // K（組合せ）: B の流れ ＋ D の図（変換の前後のミニ表）を「手順を足す」に。図は低く1段に収め、設定と表を押し下げない
+  K(view) {
+   if (view === 2) return `<div class="pp">${MODE2(2)}${flow2empty()}<div class="cap">手順を足す <small>図の形に整えます</small></div>${dcards()}
+    <div class="card"><div class="cap">取り出した表 <small>${sz(data.inp)} · 前回の実行の見本</small></div>${tableV(data.inp, 10)}</div></div>`;
+   return `<div class="pp">${MODE2(1)}${flow2(1)}<div class="cap">手順を足す</div>${dcards()}
+    <div style="display:grid;grid-template-columns:330px minmax(0,1fr);gap:10px"><div class="card">${pivotForm2(1)}</div>
+    <div class="card"><div class="cap">出す表 <small>${sz(data.out)}</small><span class="sp"></span><span class="btn sm">クエリとして保存</span></div>${tableV(data.out, 8, { fresh: ['切削', '組立', '検査'] })}</div></div></div>`
   },
  };
 

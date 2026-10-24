@@ -691,6 +691,20 @@ def input_table(headers, body, types=None):
     return M.MTable([str(h) for h in headers], rows, mtypes)
 
 
+def input_cell(row, i):
+    """見本の1セルを、型を見積もるための値に（数に見える文字は数に。input_table と違い、列の型を知らない見本の列に使う）。"""
+    v = row[i] if i < len(row) else ''
+    if v is None or v == '':
+        return None
+    try:
+        return int(str(v).replace(',', ''))
+    except ValueError:
+        try:
+            return float(str(v).replace(',', ''))
+        except ValueError:
+            return str(v)
+
+
 def post_document(post, inputs=None):
     """後処理の取り決め → (Document, 出すクエリの名前, 見出しの言葉, 手順とステップ名の対応)。使えなければ ValueError。"""
     p = navi_post.normalize(post)
@@ -809,6 +823,27 @@ def post_sample(job, cfg):
         return None
 
 
+def _step_info(code, made, count, inputs, stop=None):
+    """手順ごとの、当てたあとの表の大きさと列（画面の流れの札と、次の手順の列の候補に使う）。止まった手順から先は None。"""
+    info = [None] * count
+    if inputs is None:
+        return info
+    doc = M.Document.from_text(code, '後処理', inputs=inputs)
+    last = {}
+    for i, n in made:
+        last[i] = n
+    for i in range(count):
+        if stop is not None and i >= stop:
+            break
+        try:
+            t = as_table(doc.evaluate('後処理', host_=host(True), step=last[i]), '後処理')
+        except (M.MError, KeyError):
+            break
+        info[i] = {'rows': len(t.rows), 'columns': list(t.columns),
+                   'types': [column_type(ty, [r[k] for r in _forced_rows(t)]) for k, ty in enumerate(t.types)]}
+    return info
+
+
 def preview_post(post, sample, step=None, limit=PREVIEW_ROWS):
     """後処理の下読み。見本（後処理の前の表）に当てて、step 番目の手順（0 から。None なら最後）までの結果を返す。
 
@@ -839,7 +874,8 @@ def preview_post(post, sample, step=None, limit=PREVIEW_ROWS):
         err = out.get('error') or {}
         if err.get('step') in names:
             out['error_step'] = next(i for i, n in made if n == err['step'])
-    out['input'] = {'columns': list(sample['headers']), 'rows': len(sample['rows']), 'total_rows': sample.get('total_rows'),
+        out['step_info'] = _step_info(code, made, len(steps), inputs, out.get('error_step'))
+    out['input'] = {'columns': list(sample['headers']), 'types': [column_type(None, [input_cell(r, i) for r in sample['rows']]) if not (sample.get('types') or {}).get(h) else sample['types'][h] for i, h in enumerate(sample['headers'])], 'rows': len(sample['rows']), 'total_rows': sample.get('total_rows'),
                     'source': sample.get('source'), 'saved_at': sample.get('saved_at'), 'value': sample.get('value') or ''} if sample else None
     return out
 

@@ -245,11 +245,18 @@ class PostAppTest(unittest.TestCase):
         self.assertEqual(p['input']['source'], 'sample')
         self.assertEqual(p['input']['columns'], ['品番', '工程', '1月', '2月'])
         self.assertEqual([c['name'] for c in p['columns']], ['品番', '月', '数量'])
+        info = p['step_info']
+        self.assertEqual(len(info), 3)
+        self.assertEqual(info[2]['rows'], p['row_count'])
+        self.assertEqual(info[0]['columns'], ['品番', '工程', '月', '数量'], '手順ごとの列（次の手順の列の候補）')
+        self.assertEqual(info[0]['rows'], 4, '空のセルは出さない（3行×2か月=6 のうち空が2つ）')
+        self.assertEqual(p['input']['types'], ['text', 'text', 'integer', 'integer'])
         s0 = self.o['preview_step0']
         self.assertEqual([c['name'] for c in s0['columns']], ['品番', '工程', '月', '数量'], '1番目の手順のあとの表')
         b = self.o['preview_bad']
         self.assertFalse(b['ok'])
         self.assertEqual(b['error_step'], 0, '止まった手順の番号を返す')
+        self.assertEqual(b['step_info'], [None], '止まった手順から先の大きさは出さない')
         self.assertIn('無い列', b['error']['message'])
 
     def test_to_query_and_run_with_query(self):
