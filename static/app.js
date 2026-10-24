@@ -6149,7 +6149,7 @@ function postRender(){
  if(on){let names=postStepNames(),err=v.error&&!v.ok;
   mid=`<div class="post-node wide on${err?' ng':''}"><span class="k"><i>${post.mode==='query'?'Q':'手'}</i><b>${post.mode==='query'?`クエリ「${E(qName||'？')}」`:'手順で組んだ後処理'}</b></span>
    <span class="post-steps">${names.length?names.map(n=>`<em>${E(n)}</em>`).join('<span>→</span>'):'<small>ステップはまだありません（取り出した表のまま）</small>'}</span>${err?'<small class="ng">止まりました（下に理由）</small>':''}</div>`}
- else if(postSuggest?.repeat){let c=postSuggest.repeat;mid=`<div class="post-node next wide"><span class="post-next-t"><b>おすすめ: 繰り返し列の展開（${c.first}〜${c.last}列目の ${c.width}列×${c.count}回を行に）</b><small>番号付きで横に繰り返す列があります。${E(c.step.names.slice(0,4).join('・'))}${c.width>4?` ほか${c.width-4}列`:''} にまとめ、番号の列「${E(c.step.index)}」を足します${postSuggest.after?`（→ ${postSize(postSuggest.after)}）`:''}</small></span><button type="button" class="post-btn pri" id="post-suggest-go">繰り返し列を展開して開く</button></div>`}
+ else if(postSuggest?.repeat){let c=postSuggest.repeat;mid=`<div class="post-node next wide"><span class="post-next-t"><b>おすすめ: 繰り返し列の展開（${c.first}〜${c.last}列目の ${c.width}列×${c.count}回を行に）</b><small>番号付きで横に繰り返す列があります。${E(c.step.names.slice(0,4).join('・'))}${c.width>4?` ほか${c.width-4}列`:''} にまとめ、番号の列「${E(c.step.index)}」を足します${postSuggest.after?`（→ ${postSize(postSuggest.after)}）`:''}</small></span><button type="button" class="post-btn pri" id="post-suggest-go">繰り返し列を展開してエディターで開く</button></div>`}
  else if(postSuggest)mid=`<div class="post-node next wide"><span class="post-next-t"><b>おすすめ: ピボット解除（${E(postSuggest.nums[0])}〜${E(postSuggest.nums[postSuggest.nums.length-1])} の${postSuggest.nums.length}列を縦に）</b><small>${E(postSuggest.why)}。${E(postSuggest.keep.join('・'))} は残し「${E(postSuggest.attr)}」「値」の2列に${postSuggest.after?`（→ ${postSize(postSuggest.after)}）`:''}</small>${postSuggest.after?.dropped?`<small><em>空のセル ${postSuggest.after.dropped.toLocaleString()}件は出さない</em></small>`:''}</span><button type="button" class="post-btn pri" id="post-suggest-go">ピボット解除して開く</button></div>`;
  else mid=`<div class="post-node empty wide">後処理はまだありません（下の「Power Query エディターで作る」から始めます）</div>`;
  let outNode=`<div class="post-node out"><b>出す表</b><small>${on?postSize(out):'取り出した表のまま'}</small></div>`;
@@ -6347,7 +6347,7 @@ function mqRepBad(j){
  if(!n)return '名前が空です';
  if(n.startsWith('__'))return '「__」で始まる名前は使えません';
  if(outs.filter(x=>x===n).length>1)return '名前が重なっています';
- if(mqRep.cols.includes(n)&&!used.has(n))return '共通の列にある名前です';
+ if(mqRep.cols.includes(n)&&!used.has(n))return '共通の列と同じ名前です';
  return '';
 }
 function mqRepStrip(st,info){
@@ -6369,7 +6369,7 @@ function mqRepRender(){
  let r=mqRep,b=$('#mq-rep-body');if(!r||!b)return;
  let st=r.step,info=r.info,man=r.mode==='layout',W=st?st.names.length:0,N=st?st.groups.length:0;
  let bad=r.problems.length>0||!!r.layoutError,edit=r.edit||r.problems.length>0;
- let fixWhat=r.layoutError?'先頭の列・列数・回数':st&&[...st.names.keys(),-1].some(j=>mqRepBad(j))?'まとめた列の名前':'設定';
+ let fixWhat=r.layoutError?'先頭の列・列数・回数':st&&[...st.names.keys(),-1].some(j=>mqRepBad(j))?'名前':'設定';
  let sub=man?(st?`並びで決めています（${info.first}列目から）`:'先頭の列・1回分の列数・回数を入れてください'):`${info.first}〜${info.last}列目を、列名から見つけました`;
  let pick=!man&&r.cands.length>1?`<select id="mrp-cand" aria-label="ほかの候補">${r.cands.map((c,i)=>`<option value="${i}"${i===r.ci?' selected':''}>${c.width}列 × ${c.count}回（${c.first}〜${c.last}列目）</option>`).join('')}</select>`:'';
  let seg=`<span class="mrp-seg" role="group" aria-label="繰り返しの決め方"><button type="button" data-m="auto" class="${man?'':'on'}"${r.cands.length?'':' disabled title="列名に番号の付いた繰り返しがありません"'}>列名から見つける</button><button type="button" data-m="layout" class="${man?'on':''}">並びで決める</button></span>`;
@@ -6388,7 +6388,7 @@ function mqRepRender(){
  }
  let size=r.after&&r.after.ok?`${r.rowsIn.toLocaleString()}行 → ${Number(r.after.row_count).toLocaleString()}行 · ${(r.after.columns||[]).length}列`:'';
  let after=`<div class="mrp-card"><div class="mrp-cap">展開したあと <small>${E(size)}</small></div>${!st?'<div class="mrp-none wait">繰り返しが決まると、ここに展開したあとの表が出ます</div>'
-  :r.problems.length?`<div class="mrp-none">${E(fixWhat)}が直るまで、展開したあとの表は出せません（${E(fixWhat)}を直すと出ます）</div>`
+  :r.problems.length?`<div class="mrp-none">${fixWhat==='名前'?'名前が重なっているため、':''}展開したあとの表はまだ出せません（${E(fixWhat)}を直すと出ます）</div>`
   :r.after&&r.after.ok?mqRepTable(r.after,st):r.after&&!r.after.ok?`<div class="mrp-none">${E((r.after.error||{}).message||'下読みできませんでした')}</div>`:'<div class="mrp-none wait">展開したあとの表を作っています…</div>'}</div>`;
  let focus=document.activeElement&&b.contains(document.activeElement)?document.activeElement.dataset:null,caret=focus?document.activeElement.selectionStart:null;
  b.innerHTML=`<div class="mrp">${box}${err}${names}${after}</div>`;

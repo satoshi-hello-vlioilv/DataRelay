@@ -3225,9 +3225,9 @@ dialog #toast{bottom:auto;top:18px;right:50%;transform:translateX(50%);box-shado
 .mrp-seg{display:inline-flex;border:1px solid #c8d6dc;border-radius:8px;overflow:hidden;background:#fff}
 .mrp-seg button{border:0;border-left:1px solid #e3ebee;border-radius:0;background:#fff;color:#5a727c;padding:6px 13px;font-size:12.5px;font-weight:800}
 .mrp-seg button:first-child{border-left:0}.mrp-seg button.on{background:#0b6577;color:#fff}
-.mrp-num{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.mrp-num{display:flex;flex-wrap:wrap;gap:10px 28px}
 .mrp-num label{display:grid;gap:3px;font-weight:800;font-size:12px;color:#17384e}
-.mrp-unit{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:6px}.mrp-unit em{font-style:normal;color:#596d77;font-weight:600}
+.mrp-unit{display:flex;align-items:center;gap:6px}.mrp-unit input{width:92px}.mrp-unit em{font-style:normal;color:#596d77;font-weight:600}
 .mrp input{height:30px;border:1px solid #c8d6dc;border-radius:7px;padding:0 8px;font-size:12.5px}
 .mrp input.bad{border-color:#d0574a;background:#fff6f5;box-shadow:0 0 0 2px #f6d2cc}
 .mrp-strip{display:flex;gap:1px;height:30px;border-radius:7px;overflow:hidden;border:1px solid #d3e0e5;background:#fff}
