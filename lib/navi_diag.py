@@ -333,7 +333,7 @@ def check_path_item(value,kind='file',expected_name=''):
  if not ok and kind=='file':candidates=find_nearby_file(expected_name or p.name)
  return {'ok':ok,'configured':str(value),'resolved':str(p),'candidates':candidates,'needs_reselect':not ok and not candidates}
 
-PATH_SETTING_LABEL={'rne_folder':'RNE基本フォルダー','text_folder':'固定長テキストの基本フォルダー',
+PATH_SETTING_LABEL={'rne_folder':'RNE基本フォルダー','text_folder':'テキストの基本フォルダー',
  'default_output_folder':'既定の出力先',
  'backup_folder':'バックアップ先','symnavim_conf':'symnavim.conf',
  'accdb_template':'ACCDB空テンプレート','navigator_api_dll':'Navigator API DLL'}

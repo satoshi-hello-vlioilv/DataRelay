@@ -67,8 +67,15 @@ def _json_rows(text):
  try:v=json.loads(text or '[]')
  except Exception:return []
  return [x for x in v if isinstance(x,dict)] if isinstance(v,list) else []
+# 読み方（固定長／区切り）は1つの JSON の列に入れる。区切りの設定は今後も増えうるので、
+# 増えるたびに列を足さずに済むようにする。
+PARSE_KEYS=('mode','delimiter','delimiter_text','quote','collapse')
+def _parse_of(r):
+ try:v=json.loads(r['parse_json'] or '{}') if 'parse_json' in r.keys() else {}
+ except Exception:v={}
+ return {k:v[k] for k in PARSE_KEYS if isinstance(v,dict) and k in v}
 def _layout_row(r):
- return normalize_text_layout({'id':r['id'],'name':r['name'],'description':r['description'],
+ return normalize_text_layout({**_parse_of(r),'id':r['id'],'name':r['name'],'description':r['description'],
                                'encoding':r['encoding'],'unit':r['unit'],'trim':r['trim'],
                                'skip_head':r['skip_head'],'skip_tail':r['skip_tail'],
                                'skip_blank':bool(r['skip_blank']),'header_row':bool(r['header_row']),
@@ -95,15 +102,16 @@ def save_text_layout(layout):
   order=c.execute('SELECT COALESCE(MAX(display_order),-1)+1 n FROM text_layouts').fetchone()['n']
   cur=c.execute('SELECT display_order FROM text_layouts WHERE id=?',(lid,)).fetchone()
   c.execute('INSERT OR REPLACE INTO text_layouts (id,display_order,name,description,encoding,unit,trim,'
-            'skip_head,skip_tail,skip_blank,header_row,columns_json,sample_path,updated_at)'
-            ' VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+            'skip_head,skip_tail,skip_blank,header_row,columns_json,sample_path,updated_at,parse_json)'
+            ' VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
             (lid,cur['display_order'] if cur else order,l['name'],l['description'],l['encoding'],l['unit'],
              l['trim'],l['skip_head'],l['skip_tail'],int(l['skip_blank']),int(l['header_row']),
-             json.dumps(l['columns'],ensure_ascii=False),l['sample_path'],now))
+             json.dumps(l['columns'],ensure_ascii=False),l['sample_path'],now,
+             json.dumps({k:l[k] for k in PARSE_KEYS},ensure_ascii=False)))
   _mark_settings_dirty()
  flush_local_to_master_async('text-layout-save')
- log.info('TEXT_LAYOUT_SAVE id=%s name=%s 列=%s 単位=%s 文字コード=%s 幅=%s',
-          lid,l['name'],len(l['columns']),l['unit'],l['encoding'],text_layout_width(l))
+ log.info('TEXT_LAYOUT_SAVE id=%s name=%s 読み方=%s 列=%s 単位=%s 文字コード=%s 幅=%s',
+          lid,l['name'],l['mode'],len(l['columns']),l['unit'],l['encoding'],text_layout_width(l))
  return dict(l,id=lid,updated_at=now)
 def text_layout_usage(layout_id,cfg=None):
  """このマスタを使っている対象の名前。消してよいかの判断に要る。"""

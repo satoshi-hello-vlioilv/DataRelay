@@ -390,6 +390,9 @@ def ensure_schema_upgrades():
   cols=[r['name'] for r in c.execute('PRAGMA table_info(jobs)')]
   if 'naming_mode' not in cols:c.execute("ALTER TABLE jobs ADD COLUMN naming_mode TEXT NOT NULL DEFAULT 'fixed'")
   if 'output_pattern' not in cols:c.execute("ALTER TABLE jobs ADD COLUMN output_pattern TEXT NOT NULL DEFAULT ''")
+  # 読取マスタの読み方（2.8.0: 固定長／区切り、区切り・囲み文字・連続をまとめる）。古いマスタは空＝固定長。
+  tl=[r['name'] for r in c.execute('PRAGMA table_info(text_layouts)')]
+  if tl and 'parse_json' not in tl:c.execute("ALTER TABLE text_layouts ADD COLUMN parse_json TEXT NOT NULL DEFAULT ''")
   if 'comment' not in cols:c.execute("ALTER TABLE jobs ADD COLUMN comment TEXT NOT NULL DEFAULT ''")
   if 'period_json' not in cols:c.execute("ALTER TABLE jobs ADD COLUMN period_json TEXT NOT NULL DEFAULT ''")
   if 'split_mode' not in cols:c.execute("ALTER TABLE jobs ADD COLUMN split_mode TEXT NOT NULL DEFAULT 'auto'")
@@ -504,6 +507,8 @@ from navi_join import (JOIN_TYPES,JOIN_TYPE_LABEL,JOIN_TYPE_NOTE,SOURCE_FORMATS,
 import navi_text
 from navi_text import (TEXT_ENCODINGS,TEXT_ENCODING_LABEL,TEXT_UNITS,TEXT_UNIT_LABEL,
                        TRIM_MODES,TRIM_LABEL,LAYOUT_EXPORT_KIND,
+                       TEXT_MODES,TEXT_MODE_LABEL,DELIMITERS,DELIMITER_LABEL,QUOTES,QUOTE_LABEL,
+                       layout_shape as text_layout_shape,sniff_delimited,
                        normalize_layout as normalize_text_layout,
                        validate_layout as validate_text_layout,
                        layout_width as text_layout_width,
@@ -2164,7 +2169,7 @@ def last_run_info(run):
 TEXT_FOLDER_DEFAULT='\\\\nlmfanago02d\\QPMS'
 TEXT_TABLE_DEFAULT='DATA'
 JOB_SOURCES=('rne','text','join','mquery')
-JOB_SOURCE_LABEL={'rne':'RNE（Navigatorへ問い合わせ）','text':'固定長テキスト（手元のファイル）',
+JOB_SOURCE_LABEL={'rne':'RNE（Navigatorへ問い合わせ）','text':'テキスト（固定長・区切り。手元のファイル）',
                   'join':'複数ファイルの結合（クエリで繋ぐ）','mquery':'Power Query（M の式で Excel などを読む）'}
 # 手元のファイルから作る入力（Navigator へ問い合わせない）。流し方・表の既定・診断で、RNE と分けるのに使う
 LOCAL_SOURCES=('text','join','mquery')

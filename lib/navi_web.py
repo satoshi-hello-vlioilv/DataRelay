@@ -80,6 +80,8 @@ from app import (
     text_layout_width, text_layout_overlaps, text_layout_gaps, preview_text, resolve_text_path,
     load_text_layouts, find_text_layout, save_text_layout, delete_text_layout, text_layout_usage,
     text_layouts_export, text_layouts_import,
+    TEXT_MODES, TEXT_MODE_LABEL, DELIMITERS, DELIMITER_LABEL, QUOTES, QUOTE_LABEL,
+    text_layout_shape, sniff_delimited,
     JOIN_TYPES, JOIN_TYPE_LABEL, JOIN_TYPE_NOTE, SOURCE_FORMATS, SOURCE_FORMAT_LABEL,
     JOIN_MAX_SOURCES, join_types_available, normalize_join_recipe, validate_join_recipe,
     preview_join_recipe, join_recipes_export, join_recipes_import, load_join_recipes,
@@ -2065,7 +2067,7 @@ def validate():
   else:
    bad=validate_text_layout(lay)
    add('テキスト読取',j.get('name','対象')+' 読取マスタ',not bad,
-       f'{lay["name"]} / {len(lay["columns"])}列 / {text_layout_width(lay)}{"バイト" if lay["unit"]=="byte" else "文字"}' if not bad else '／'.join(bad),
+       f'{lay["name"]} / {text_layout_shape(lay)}' if not bad else '／'.join(bad),
        job_id=j.get('id'),item='')
    # 読取マスタは列の数が先に分かる。出す形式に入らないなら、実行してから落ちる前に言う。
    # 入らない形式はACCESS(255)くらいで、たいていは何も出ない検査になる。
@@ -2144,12 +2146,16 @@ def text_layouts_list():
  items=load_text_layouts();c=load()
  for x in items:
   x['width']=text_layout_width(x)
+  x['shape']=text_layout_shape(x)
   x['used_by']=text_layout_usage(x['id'],c)
   x['overlaps']=[[a,b] for a,b in text_layout_overlaps(x)]
   x['gaps']=[[a,b] for a,b in text_layout_gaps(x)]
  return jsonify(ok=True,items=items,
                 encodings=[{'value':k,'label':TEXT_ENCODING_LABEL.get(k,k)} for k in TEXT_ENCODINGS],
                 units=[{'value':k,'label':TEXT_UNIT_LABEL.get(k,k)} for k in TEXT_UNITS],
+                modes=[{'value':k,'label':TEXT_MODE_LABEL.get(k,k)} for k in TEXT_MODES],
+                delimiters=[{'value':k,'label':DELIMITER_LABEL.get(k,k)} for k in DELIMITERS],
+                quotes=[{'value':k,'label':QUOTE_LABEL.get(k,k)} for k in QUOTES],
                 trims=[{'value':k,'label':TRIM_LABEL.get(k,k)} for k in TRIM_MODES],
                 types=[{'value':k,'label':COLUMN_TYPE_LABEL.get(k,k),'note':COLUMN_TYPE_NOTE.get(k,'')} for k in COLUMN_TYPES],
                 stamp_formats=list(STAMP_FORMAT_SAMPLES),max_scale=MAX_SCALE,
@@ -2164,7 +2170,7 @@ def text_layouts_save():
  except ValueError as e:return jsonify(ok=False,error=str(e)),400
  except Exception as e:
   log.exception('TEXT_LAYOUT_SAVE_FAILED');return jsonify(ok=False,error=str(e)),500
- return jsonify(ok=True,layout=dict(saved,width=text_layout_width(saved)))
+ return jsonify(ok=True,layout=dict(saved,width=text_layout_width(saved),shape=text_layout_shape(saved)))
 
 @app.delete('/api/text-layouts/<layout_id>')
 def text_layouts_delete(layout_id):
@@ -2205,6 +2211,9 @@ _TYPE_FROM=_from_label(COLUMN_TYPE_LABEL,'text',fallback=normalize_column_type)
 _ENC_FROM=_from_label(TEXT_ENCODING_LABEL,'cp932')
 _UNIT_FROM=_from_label(TEXT_UNIT_LABEL,'byte')
 _TRIM_FROM=_from_label(TRIM_LABEL,'both')
+_MODE_FROM=_from_label(TEXT_MODE_LABEL,'fixed')
+_DELIM_FROM=_from_label(DELIMITER_LABEL,'comma')
+_QUOTE_FROM=_from_label(QUOTE_LABEL,'double')
 _JOIN_FROM=_from_label(JOIN_TYPE_LABEL,'inner')
 
 def _book_response(path,name):
@@ -2239,7 +2248,10 @@ def text_layouts_export_file():
                          for c in (x.get('columns') or [])],
               encoding=TEXT_ENCODING_LABEL.get(x.get('encoding'),x.get('encoding','')),
               unit=TEXT_UNIT_LABEL.get(x.get('unit'),x.get('unit','')),
-              trim=TRIM_LABEL.get(x.get('trim'),x.get('trim',''))) for x in items]
+              trim=TRIM_LABEL.get(x.get('trim'),x.get('trim','')),
+              mode=TEXT_MODE_LABEL.get(x.get('mode'),x.get('mode','')),
+              delimiter=DELIMITER_LABEL.get(x.get('delimiter'),x.get('delimiter','')),
+              quote=QUOTE_LABEL.get(x.get('quote'),x.get('quote',''))) for x in items]
   name=f'読取マスタ_{stamp}.xlsx';tmp=_book_tmp(name)
   navi_book.layouts_to_xlsx(shown,tmp)
   log.info('TEXT_LAYOUT_EXPORT format=xlsx count=%s file=%s',len(items),name)
@@ -2260,7 +2272,9 @@ def text_layouts_import_file():
   tmp=_book_tmp('import.xlsx');tmp.write_bytes(blob)
   try:
    layouts,bad=navi_book.layouts_from_xlsx(tmp,label_to_type=_TYPE_FROM,label_to_encoding=_ENC_FROM,
-                                           label_to_unit=_UNIT_FROM,label_to_trim=_TRIM_FROM)
+                                           label_to_unit=_UNIT_FROM,label_to_trim=_TRIM_FROM,
+                                           label_to_mode=_MODE_FROM,label_to_delimiter=_DELIM_FROM,
+                                           label_to_quote=_QUOTE_FROM)
   finally:
    try:shutil.rmtree(tmp.parent,ignore_errors=True)
    except Exception:pass
@@ -2283,6 +2297,16 @@ def text_layouts_import_file():
   save_text_layout(l)
  log.info('TEXT_LAYOUT_IMPORT 追加=%s 置き換え=%s 読めなかったもの=%s',added,replaced,len(bad))
  return jsonify(ok=True,added=added,replaced=replaced,skipped=bad)
+
+@app.post('/api/text-sniff')
+def text_sniff_route():
+ """区切りの見当付け。見本のファイルから、区切りと列（見出しがあれば列名も）を出す。"""
+ d=request.get_json(force=True) or {}
+ layout=normalize_text_layout(d.get('layout') or {})
+ raw=str(d.get('path') or layout.get('sample_path') or '').strip()
+ if not raw:return jsonify(ok=False,error='見本のファイルを選んでください'),400
+ out=sniff_delimited(resolve_text_path({'text_path':raw},load()),layout)
+ return jsonify(out) if out.get('ok') else (jsonify(out),400)
 
 @app.post('/api/text-preview')
 def text_preview_route():
@@ -2824,7 +2848,7 @@ def join_source_probe():
   if not pv.get('ok'):return jsonify(ok=False,error=pv.get('error') or '読み取れませんでした'),400
   return jsonify(ok=True,columns=pv['headers'],rows=None,sample=pv['rows'][:3],
                  path=str(origin),format='fixed',copy=copy_info,
-                 note='固定長テキスト（件数は実行時に数えます）')
+                 note='テキスト（件数は実行時に数えます）')
  if not origin.is_file():return jsonify(ok=False,error=f'ファイルがありません: {origin}'),400
  path=read_path
  try:
