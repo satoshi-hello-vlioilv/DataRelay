@@ -406,6 +406,27 @@ def _error_view(e):
     return out
 
 
+class _Laps:
+    """段ごとの時間（秒）を測る。lap('名前') でその段の終わり。ログの「内訳」と、画面・試験に返す timing に使う。
+
+    M の評価は遅れて進む（セルは求められたときに計算する）ので、「評価」は表の形まで、「セル」は値を求める時間になる。"""
+    def __init__(self, started=None):
+        self.last = started if started is not None else time.perf_counter()
+        self.laps = {}
+
+    def __call__(self, name):
+        now = time.perf_counter()
+        self.laps[name] = round(self.laps.get(name, 0) + now - self.last, 3)
+        self.last = now
+
+    def text(self):
+        return laps_text(self.laps)
+
+
+def laps_text(laps):
+    return ' '.join(f'{k}={v:.3f}s' for k, v in (laps or {}).items())
+
+
 def preview(code, name='クエリ1', query=None, step=None, limit=PREVIEW_ROWS, full=False, now=None, inputs=None):
     """画面の下読み。式を読み、クエリの並び・各クエリのステップ・選んだステップの結果（先頭 limit 行）を返す。
 
@@ -413,11 +434,13 @@ def preview(code, name='クエリ1', query=None, step=None, limit=PREVIEW_ROWS, 
     started = time.perf_counter()
     out = {'ok': False, 'queries': [], 'query': '', 'step': '', 'columns': [], 'rows': [], 'row_count': 0,
            'error_cells': 0, 'notes': [], 'kind': ''}
+    lap = _Laps(started)
     try:
         doc = M.Document.from_text(code, name or 'クエリ1', inputs=inputs)
     except M.MError as e:
         out['error'] = _error_view(e)
         return out
+    lap('parse')
     out['uses_input'] = doc.uses_input()
     main = doc.main_name()
     helpers = set(doc.helpers())
@@ -444,10 +467,12 @@ def preview(code, name='クエリ1', query=None, step=None, limit=PREVIEW_ROWS, 
         out['notes'] = list(h.notes)
         out['elapsed'] = round(time.perf_counter() - started, 3)
         return out
+    lap('evaluate')
     out['kind'] = M.type_name(v)
     if isinstance(v, (M.MTable, list, M.MRecord)):
         t = as_table(v, qn)
         rows = _forced_rows(t)
+        lap('cells')
         out['columns'] = [{'name': c, 'type': (ty.name() if ty is not None else 'any'),
                            'out': column_type(ty, [r[i] for r in rows])} for i, (c, ty) in enumerate(zip(t.columns, t.types))]
         out['row_count'] = len(rows)
@@ -455,9 +480,14 @@ def preview(code, name='クエリ1', query=None, step=None, limit=PREVIEW_ROWS, 
         out['rows'] = [[_show(x) for x in r] for r in rows[:max(1, int(limit or PREVIEW_ROWS))]]
     else:
         out['value'] = _show(v)
+    lap('show')
     out['ok'] = True
     out['notes'] = list(h.notes)
     out['elapsed'] = round(time.perf_counter() - started, 3)
+    out['timing'] = lap.laps
+    in_rows = sum(len(x.rows) for x in (inputs or {}).values() if isinstance(x, M.MTable))
+    log.info('M_QUERY_PREVIEW query=%s step=%s rows=%s columns=%s shown=%s input_rows=%s elapsed=%.3fs 内訳 %s',
+             qn, out['step'], out['row_count'], len(out['columns']), len(out['rows']), in_rows, out['elapsed'], lap.text())
     return out
 
 
@@ -727,15 +757,20 @@ def post_document(post, inputs=None):
 def run_post(post, headers, body, types, dst, reject_zero=False, now=None):
     """取り出した表に後処理を当て、変換に渡す中間CSVへ書く。→ (行数, 列数, stat)。"""
     started = time.perf_counter()
+    lap = _Laps(started)
     src = input_table(headers, body, types)
+    lap('input')
     doc, name, label, _made = post_document(post, {M.INPUT_NAME: src})
     t = as_table(doc.evaluate(name, host_=host(False, now)), name)
+    lap('evaluate')
     if reject_zero and not t.rows:
         raise ValueError(f'後処理（{label}）の結果が0件のため出力を中止しました')
     rows, out_types, errors, samples, nested = write_table_csv(t, dst)
+    lap('cells_write')
     stat = {'label': label, 'summary': navi_post.summary(post, label), 'rows_in': len(body), 'columns_in': len(headers),
             'rows': len(rows), 'columns': len(t.columns), 'error_cells': errors, 'error_samples': samples,
-            'nested_columns': nested, 'types': out_types, 'elapsed': round(time.perf_counter() - started, 3)}
+            'nested_columns': nested, 'types': out_types, 'elapsed': round(time.perf_counter() - started, 3),
+            'timing': lap.laps}
     return len(rows), len(t.columns), stat
 
 
@@ -769,16 +804,19 @@ def post_process(j, cfg, intermediate, expected_rows, expected_cols, line=''):
     （RNE の集計表の段は、ここで読んだときに畳んである。もう一度畳むと見出しを読み飛ばす）。"""
     zero = bool(cfg['settings'].get('reject_zero_rows'))
     t = phase_log('post_process', job=j.get('name'), line=line) if line else phase_log('post_process', job=j.get('name'))
+    read_started = time.perf_counter()
     headers, body = read_extract(intermediate, j, zero, expected_rows, expected_cols)
+    read_elapsed = time.perf_counter() - read_started
     types = dict(j.get('_column_types') or {}) if isinstance(j.get('_column_types'), dict) else {}
     save_post_sample(j, headers, body, types)
     dst = Path(intermediate).with_name(Path(intermediate).stem + '_post.csv')
     rows, cols, stat = run_post(j.get('post'), headers, body, types, dst, reject_zero=zero)
     j2 = {**j, 'type': '詳細データ', '_rne_layout': None, '_intermediate_encoding': 'utf-8-sig', '_column_types': stat['types']}
     phase_log('post_process', t, job=j.get('name'), rows=rows, columns=cols)
-    log.info('POST_PROCESS job=%s value=%s how=%s rows=%s→%s columns=%s→%s error_cells=%s elapsed=%.2fs 中間CSV=%s',
+    # 内訳: read=中間データを読む input=M の表にする evaluate=式（表の形まで） cells_write=セルの値を求めて中間CSVへ書く
+    log.info('POST_PROCESS job=%s value=%s how=%s rows=%s→%s columns=%s→%s error_cells=%s elapsed=%.2fs 内訳 read=%.3fs %s 中間CSV=%s',
              j.get('name'), j.get('_variant_value') or '', stat['summary'], stat['rows_in'], rows, stat['columns_in'], cols,
-             stat['error_cells'], stat['elapsed'], dst)
+             stat['error_cells'], stat['elapsed'], read_elapsed, laps_text(stat['timing']), dst)
     if stat['error_cells']:
         log.warning('POST_PROCESS_ERROR_CELLS job=%s 箇所=%s 誤りのセルを空にしました 例=%s', j.get('name'), stat['error_cells'],
                     '、'.join(f'{k}: {v}' for k, v in list(stat['error_samples'].items())[:3]))

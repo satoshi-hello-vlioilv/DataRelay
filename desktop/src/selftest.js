@@ -214,6 +214,20 @@
       postOff && postNote.includes('一度実行すると') && ribbonOn && mqStep === 'ピボット解除された列' && mqCols === '品番,属性,値' && mqView.row_count === 3 && mqEditing.code.includes('Table.UnpivotOtherColumns(ソース, {"品番"}'),
       `入口 ${postOff} / ${postNote} / 札 ${ribbonOn} / ${mqStep} / ${mqCols} / ${mqView && mqView.row_count}行`);
     await mqClose(false);
+    // 繰り返し列の展開（2.7.0）: 列名から「品名・数量 × 2回」を見つけ、見本を出し、「行に展開」でステップを足す（空の回は行にしない）
+    mqOpen({ id: '', name: '自己診断の繰り返し', description: '', code: 'let\n    ソース = #table({"伝票", "品名1", "数量1", "品名2", "数量2", "合計"}, {{"A", "りんご", "1", "みかん", "2", "3"}, {"B", "なし", "5", null, null, "5"}})\nin\n    ソース', output: '' });
+    for (let i = 0; i < 40 && !(mqView && mqView.ok); i++) await sleep(150);
+    await mqOp('repeat');
+    for (let i = 0; i < 60 && !(mqRep && !mqRep.busy && mqRep.after); i++) await sleep(150);
+    const repFound = mqRep && mqRep.step ? `${mqRep.step.names.join('・')} × ${mqRep.step.groups.length}` : '';
+    const repShown = !!document.querySelector('#mq-rep-body .mrp-strip') && !!document.querySelector('#mq-rep-body .mrp-tbl') && !$('#mq-rep-ok').disabled;
+    $('#mq-rep-ok').click();
+    for (let i = 0; i < 60 && !(mqView && mqView.step === '展開された繰り返し列'); i++) await sleep(150);
+    const repCols = ((mqView || {}).columns || []).map((c) => c.name).join(',');
+    ok('繰り返し列の展開（列名から見つけて、見本を見て、行に展開する）',
+      repFound === '品名・数量 × 2' && repShown && !$('#mq-rep-dialog').open && repCols === '伝票,番号,品名,数量,合計' && mqView.row_count === 3,
+      `${repFound} / 見本 ${repShown} / ${mqView && mqView.step} / ${repCols} / ${mqView && mqView.row_count}行`);
+    await mqClose(false);
     document.querySelector('nav button[data-p="jobs"]').click();
 
     // tkinter・os.startfile の置き換え（答えの形はいまと同じ {"path": ...}）

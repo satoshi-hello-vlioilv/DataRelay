@@ -6086,7 +6086,7 @@ if($('#m-query-open'))$('#m-query-open').onclick=async()=>{let id=$('#m-query').
    受け取る式）として持ち、ここは入口: 状態・流れ（取り出した表 → クエリのステップ → 出す表）・出す表の下読み・エディターで開く。
    見本は「この PC で前回の実行で取り出した表」（無ければ、後処理を使っていない対象のいまの出力）。 */
 let post={enabled:false,mode:'query',steps:[],query_id:'',query_out:''},postView=null,postSeq=0,postTimer=null,postSuggest=null;
-const POST_LABEL={unpivot:'ピボット解除',pivot:'ピボット',group:'グループ化',select:'他の列の削除',remove:'列の削除',rename:'名前の変更',sort:'並べ替え',m:'M の式'};
+const POST_LABEL={unpivot:'ピボット解除',repeat:'繰り返し列の展開',pivot:'ピボット',group:'グループ化',select:'他の列の削除',remove:'列の削除',rename:'名前の変更',sort:'並べ替え',m:'M の式'};
 const POST_AGGS=[['sum','合計'],['count','カウント'],['average','平均'],['min','最小'],['max','最大'],['first','最初の値'],['none','集計しない']];
 const POST_GROUP_AGGS=[['sum','合計'],['average','平均'],['min','最小'],['max','最大'],['count','行のカウント'],['count_distinct','個別の行のカウント']];
 function postActive(p=post){return p.mode==='query'?!!p.query_id:(p.steps||[]).length>0}
@@ -6118,14 +6118,21 @@ async function postPreview(now){
   try{d=await fetch('/api/post/preview',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_id:editing.id,post:{...postBody(),enabled:true}})}).then(r=>r.json())}
   catch(e){d={ok:false,error:{message:'下読みに失敗しました: '+e.message}}}
   if(seq!==postSeq)return;
-  postView=d;postSuggest=postFindSuggest();
+  postView=d;postSuggest=await postFindRepeat(d)||postFindSuggest();
+  if(seq!==postSeq)return;
   if(postSuggest){try{let t=await fetch('/api/post/preview',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({job_id:editing.id,post:{enabled:true,mode:'steps',steps:[postSuggestStep()]}})}).then(r=>r.json());
-   if(seq===postSeq&&t.ok)postSuggest.after={rows:t.row_count,columns:(t.columns||[]).map(c=>c.name),dropped:Math.max(0,Number(d.input?.rows||0)*postSuggest.nums.length-t.row_count)}}catch{}}
+   if(seq===postSeq&&t.ok)postSuggest.after={rows:t.row_count,columns:(t.columns||[]).map(c=>c.name),dropped:postSuggest.repeat?0:Math.max(0,Number(d.input?.rows||0)*postSuggest.nums.length-t.row_count)}}catch{}}
   if(seq===postSeq)postRender();
  },now?0:260);
 }
-const postSuggestStep=()=>({op:'unpivot',mode:'other',columns:postSuggest.keep,attr:postSuggest.attr,value:'値'});
+const postSuggestStep=()=>postSuggest.repeat?postSuggest.repeat.step:({op:'unpivot',mode:'other',columns:postSuggest.keep,attr:postSuggest.attr,value:'値'});
+/* 見本の列名に、1回分が2列以上の番号付きの繰り返し（品番1・品名1・品番2…）があれば、ピボット解除より先に「繰り返し列の展開」を勧める（2.7.0） */
+async function postFindRepeat(d){
+ let inp=(d||{}).input;if(!inp||postActive()||!(inp.columns||[]).length)return null;
+ try{let r=await fetch('/api/m-query/repeat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({columns:inp.columns})}).then(x=>x.json());
+  let c=(r.candidates||[]).find(x=>x.width>=2);return c?{repeat:{...c,step:{...c.step,op:'repeat'}}}:null}catch{return null}
+}
 /* いまの後処理のステップ名（クエリの出すクエリのステップ。最初の「ソース」は取り出した表なので除く） */
 function postStepNames(){
  let v=postView||{};
@@ -6142,6 +6149,7 @@ function postRender(){
  if(on){let names=postStepNames(),err=v.error&&!v.ok;
   mid=`<div class="post-node wide on${err?' ng':''}"><span class="k"><i>${post.mode==='query'?'Q':'手'}</i><b>${post.mode==='query'?`クエリ「${E(qName||'？')}」`:'手順で組んだ後処理'}</b></span>
    <span class="post-steps">${names.length?names.map(n=>`<em>${E(n)}</em>`).join('<span>→</span>'):'<small>ステップはまだありません（取り出した表のまま）</small>'}</span>${err?'<small class="ng">止まりました（下に理由）</small>':''}</div>`}
+ else if(postSuggest?.repeat){let c=postSuggest.repeat;mid=`<div class="post-node next wide"><span class="post-next-t"><b>おすすめ: 繰り返し列の展開（${c.first}〜${c.last}列目の ${c.width}列×${c.count}回を行に）</b><small>番号付きで横に繰り返す列があります。${E(c.step.names.slice(0,4).join('・'))}${c.width>4?` ほか${c.width-4}列`:''} にまとめ、番号の列「${E(c.step.index)}」を足します${postSuggest.after?`（→ ${postSize(postSuggest.after)}）`:''}</small></span><button type="button" class="post-btn pri" id="post-suggest-go">繰り返し列を展開してエディターで開く</button></div>`}
  else if(postSuggest)mid=`<div class="post-node next wide"><span class="post-next-t"><b>おすすめ: ピボット解除（${E(postSuggest.nums[0])}〜${E(postSuggest.nums[postSuggest.nums.length-1])} の${postSuggest.nums.length}列を縦に）</b><small>${E(postSuggest.why)}。${E(postSuggest.keep.join('・'))} は残し「${E(postSuggest.attr)}」「値」の2列に${postSuggest.after?`（→ ${postSize(postSuggest.after)}）`:''}</small>${postSuggest.after?.dropped?`<small><em>空のセル ${postSuggest.after.dropped.toLocaleString()}件は出さない</em></small>`:''}</span><button type="button" class="post-btn pri" id="post-suggest-go">ピボット解除して開く</button></div>`;
  else mid=`<div class="post-node empty wide">後処理はまだありません（下の「Power Query エディターで作る」から始めます）</div>`;
  let outNode=`<div class="post-node out"><b>出す表</b><small>${on?postSize(out):'取り出した表のまま'}</small></div>`;
@@ -6208,6 +6216,7 @@ function postCellLine(j){
    足す先は最後のステップのあと。途中のステップを見ているときは使えない（後ろのステップの参照が崩れるため。理由は札に出す） */
 const MQ_OPS=[
  {k:'unpivot',ic:'⇣',label:'列のピボット解除',need:'cols',menu:[['unpivot-sel','列のピボット解除','選んだ列を「属性」「値」の縦にする（ほかの列は残す）'],['unpivot-other','その他の列のピボット解除','選んだ列を残し、ほかの列を縦にする'],['unpivot-only','選択した列のみをピボット解除','選んだ列だけを縦にする（あとから列が増えても縦にしない）']]},
+ {k:'repeat',ic:'⇊',label:'繰り返し列の展開',need:'any',tip:'番号付きで横に繰り返す列（品番1・品名1・品番2…）を、番号を除いた名前の列にまとめ、繰り返しごとの行にします（列名から見つけます。1回分の列を選んでから押すと、その並びで決めます）'},
  {k:'pivot',ic:'⇢',label:'ピボット列',need:'one',tip:'選んだ列の値を見出しにして横に並べ、値の列を集計します'},
  {k:'group',ic:'Σ',label:'グループ化',need:'any',tip:'選んだ列（キー）ごとに行をまとめ、合計・件数などを出します'},
  {k:'select',ic:'▥',label:'他の列の削除',need:'cols',tip:'選んだ列だけを残します'},
@@ -6232,6 +6241,7 @@ function mqOp(k,btn){
  if(k==='unpivot-sel')return mqAddStep({op:'unpivot',mode:'other',columns:other,attr:'属性',value:'値'});
  if(k==='unpivot-other')return mqAddStep({op:'unpivot',mode:'other',columns:sel,attr:'属性',value:'値'});
  if(k==='unpivot-only')return mqAddStep({op:'unpivot',mode:'selected',columns:sel,attr:'属性',value:'値'});
+ if(k==='repeat')return mqRepOpen();
  if(k==='select'||k==='remove')return mqAddStep({op:k,columns:sel});
  if(k==='asc'||k==='desc')return mqAddStep({op:'sort',keys:sel.map(c=>[c,k])});
  if(k==='pivot')return mqOpDialog('ピボット列',`<p class="hint">列「<b>${E(sel[0])}</b>」の値を、新しい列の名前にします（Excel の「ピボット列」と同じ）。</p>
@@ -6275,7 +6285,136 @@ async function mqAddStep(step){
  let q=mqCurQuery(),d;
  try{d=await fetch('/api/m-query/add-step',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:mqEditing.code,name:mqEditing.name||'クエリ1',query:q?q.name:null,step})}).then(r=>r.json())}
  catch(e){d={ok:false,error:e.message}}
- if(!d.ok){$('#mq-op-dialog').open?($('#mq-op-note').textContent=d.error||'足せませんでした'):mqMsg(d.error||'ステップを足せませんでした');return false}
+ if(!d.ok){let note=$('#mq-op-dialog').open?$('#mq-op-note'):$('#mq-rep-dialog')?.open?$('#mq-rep-note'):null;note?(note.textContent=d.error||'足せませんでした'):mqMsg(d.error||'ステップを足せませんでした');return false}
  mqEditing.code=d.code;mqSel={query:d.query,step:d.step};mqColSel=[];mqSetDirty();mqSampleKey='';mqMsg('');
  await mqPreview();return true;
+}
+/* 繰り返し列の展開（2.7.0）: 1行に番号付きで繰り返す列（品番1・品名1…品番2…）を、繰り返しごとの行に戻す。
+   開くと列名から繰り返しを見つけ（/api/m-query/repeat）、要約と列の帯 → まとめた列（札）→ 展開したあとの見本 を出す。ふつうは「行に展開」だけで済む。
+   違うときは「並びで決める」（先頭の列・1回分の列数・回数）と「名前を直す」。名前の重なりは赤い帯と欄で示し、直すまで足さない。
+   案の比べ方は tests/ui-proposals/2026-10-repeat.*（3回目の1位 M） */
+let mqRep=null,mqRepTimer=null;
+const mqRepPost=(u,b)=>fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)}).then(r=>r.json());
+async function mqRepOpen(){
+ let cols=((mqView||{}).columns||[]).map(c=>c.name),sel=mqColSel.slice(),d;
+ try{d=await mqRepPost('/api/m-query/repeat',{columns:cols})}catch(e){return mqMsg('繰り返しを調べられませんでした: '+e.message)}
+ let cands=d.candidates||[];
+ // 列を選んでから押したときは、選んだ列を含む候補を使う。無ければ、選んだ列を1回分として並びで決める
+ let ci=sel.length?cands.findIndex(c=>sel.every(n=>c.step.groups.some(g=>g.includes(n)))):0;
+ mqRep={cols,cands,ci:Math.max(0,ci),mode:cands.length&&ci>=0?'auto':'layout',layout:null,info:null,step:null,edit:false,problems:[],after:null,busy:true,seq:0,rowsIn:(mqView||{}).row_count||0};
+ if(mqRep.mode==='layout'){let s=sel.length?cols.indexOf(sel[0])+1:1,w=Math.max(1,sel.length);mqRep.layout={start:s,width:w,count:Math.max(2,Math.floor((cols.length-s+1)/w))}}
+ $('#mq-rep-dialog').showModal();
+ await mqRepShape();
+}
+/* 形（どの列が何回目か）を決め直す。名前の直しは、形が変わったら見つけた名前に戻す */
+async function mqRepShape(){
+ let r=mqRep;if(!r)return;
+ r.layoutError='';
+ if(r.mode==='auto'&&r.cands.length){r.info=r.cands[r.ci];r.step=structuredClone(r.info.step)}
+ else{
+  let d;try{d=await mqRepPost('/api/m-query/repeat',{columns:r.cols,layout:r.layout})}catch(e){d={layout_error:e.message}}
+  if(r!==mqRep)return;
+  r.info=d.layout||null;r.step=d.layout?structuredClone(d.layout.step):null;r.layoutError=d.layout_error||'';
+ }
+ await mqRepCheck(true);
+}
+/* 足りないところを確かめ、よければ展開したあとの見本を出す（本物の式を足して下読みする。エディターの式は変えない） */
+async function mqRepCheck(now){
+ clearTimeout(mqRepTimer);
+ let r=mqRep;if(!r)return;
+ r.busy=true;mqRepRender();
+ mqRepTimer=setTimeout(async()=>{
+  let seq=++r.seq;
+  if(!r.step){r.problems=[];r.after=null;r.busy=false;return mqRepRender()}
+  try{
+   let c=await mqRepPost('/api/m-query/repeat',{columns:r.cols,step:r.step});
+   if(seq!==r.seq)return;
+   r.problems=c.problems||[];r.after=null;
+   if(!r.problems.length){
+    let q=mqCurQuery(),a=await mqRepPost('/api/m-query/add-step',{code:mqEditing.code,name:mqEditing.name||'クエリ1',query:q?q.name:null,step:{...r.step,op:'repeat'}});
+    if(a.ok)r.after=await mqRepPost('/api/m-query/preview',{code:a.code,name:mqEditing.name||'クエリ1',query:a.query,query_id:mqEditing.id||'',sample_job:mqSampleJob||''});
+    else r.problems=[a.error||'足せませんでした'];
+   }
+  }catch(e){r.problems=['確かめられませんでした: '+e.message]}
+  if(seq!==r.seq)return;
+  r.busy=false;mqRepRender();
+ },now?0:250);
+}
+/* 欄ごとの誤り（赤い枠と、元の列の注記の横の理由）。言葉はバックエンドの repeat_problems と同じ考え */
+function mqRepBad(j){
+ let st=mqRep.step,n=j<0?st.index:st.names[j],outs=[...st.names,st.index];
+ let used=new Set(st.groups.flat().filter(Boolean));
+ if(!n)return '名前が空です';
+ if(n.startsWith('__'))return '「__」で始まる名前は使えません';
+ if(outs.filter(x=>x===n).length>1)return '名前が重なっています';
+ if(mqRep.cols.includes(n)&&!used.has(n))return '共通の列と同じ名前です';
+ return '';
+}
+function mqRepStrip(st,info){
+ let at=new Map();st.groups.forEach((g,k)=>g.forEach(c=>c&&at.set(c,k)));
+ let cols=mqRep.cols,cells=cols.map(c=>at.has(c)?`<span class="r${at.get(c)%2}" title="${E(c)}（${at.get(c)+1}回目）"></span>`:`<span title="${E(c)}（共通）"></span>`).join('');
+ let a=info.first-1,b=info.last,L=cols.length,W=st.names.length;
+ let mid=info.layout==='block'?st.groups.map((g,k)=>`<span style="flex:${W}">${st.numbers[k]}回目</span>`).join(''):`<span style="flex:${b-a}">繰り返し（列ごとの並び）</span>`;
+ return `<div class="mrp-strip">${cells}</div><div class="mrp-strip-l">${a?`<span style="flex:${a}">共通 ${a>1?`1〜${a}`:'1'}列目</span>`:''}${mid}${b<L?`<span style="flex:${L-b}">共通 ${b+1}${L>b+1?`〜${L}`:''}列目</span>`:''}</div>`;
+}
+/* 展開したあとの見本。元の1行から出た行のまとまりの間（番号が振り直される所）に線を引く */
+function mqRepTable(a,st){
+ let cols=(a.columns||[]).map(c=>c.name),idx=cols.indexOf(st.index),W=st.names.length;
+ // 見るのは「どの共通の行から、何番目の何が出たか」。共通の列は左の3列だけにし、残りは数で言う（窓の幅で右が切れないように）
+ let keep=cols.map((c,i)=>i).filter(i=>(i<idx&&i<3)||(i>=idx&&i<=idx+W)),hid=cols.length-keep.length;
+ let fit=innerHeight<1000?(mqRep.edit?3:6):(mqRep.edit?6:9);
+ return `<div class="mrp-tbl"><table><thead><tr>${keep.map(i=>`<th class="${i===idx?'idx':i>idx?'new':''}">${E(cols[i])}</th>`).join('')}</tr></thead><tbody>${(a.rows||[]).slice(0,fit).map((row,q,rs)=>`<tr class="${q&&idx>=0&&row[idx]<=rs[q-1][idx]?'grp':''}">${keep.map(i=>{let x=row[i];return x===null?'<td class="nul">null</td>':`<td class="${i===idx?'k':''}">${E(x&&typeof x==='object'?(x.e?'Error':x.n):x)}</td>`}).join('')}</tr>`).join('')}</tbody></table></div>${hid?`<small class="mrp-hid">ほかの共通の列 ${hid}列も、どの行にもそのまま写ります（行に展開すると、エディターの表で全部見られます）</small>`:''}`;
+}
+function mqRepRender(){
+ let r=mqRep,b=$('#mq-rep-body');if(!r||!b)return;
+ let st=r.step,info=r.info,man=r.mode==='layout',W=st?st.names.length:0,N=st?st.groups.length:0;
+ let bad=r.problems.length>0||!!r.layoutError,edit=r.edit||r.problems.length>0;
+ let fixWhat=r.layoutError?'先頭の列・列数・回数':st&&[...st.names.keys(),-1].some(j=>mqRepBad(j))?'名前':'設定';
+ let sub=man?(st?`並びで決めています（${info.first}列目から）`:'先頭の列・1回分の列数・回数を入れてください'):`${info.first}〜${info.last}列目を、列名から見つけました`;
+ let pick=!man&&r.cands.length>1?`<select id="mrp-cand" aria-label="ほかの候補">${r.cands.map((c,i)=>`<option value="${i}"${i===r.ci?' selected':''}>${c.width}列 × ${c.count}回（${c.first}〜${c.last}列目）</option>`).join('')}</select>`:'';
+ let seg=`<span class="mrp-seg" role="group" aria-label="繰り返しの決め方"><button type="button" data-m="auto" class="${man?'':'on'}"${r.cands.length?'':' disabled title="列名に番号の付いた繰り返しがありません"'}>列名から見つける</button><button type="button" data-m="layout" class="${man?'on':''}">並びで決める</button></span>`;
+ let L=r.layout||{start:info?info.first:1,width:W||1,count:N||2};
+ let num=man?`<div class="mrp-num"><label>先頭の列<span class="mrp-unit"><input type="number" min="1" max="${r.cols.length}" data-l="start" value="${L.start}"><em>列目${r.cols[L.start-1]?`（${E(r.cols[L.start-1])}）`:''}</em></span></label><label>1回分の列数<span class="mrp-unit"><input type="number" min="1" data-l="width" value="${L.width}"><em>列</em></span></label><label>回数<span class="mrp-unit"><input type="number" min="1" data-l="count" value="${L.count}"><em>回</em></span></label></div>`:'';
+ let box=`<div class="mrp-box${man?' manual':''}"><div class="mrp-top"><span class="mrp-big">${st?`${W}列 × ${N}回`:'—'}</span><small>${E(sub)}</small>${pick}<span class="mrp-sp"></span>${seg}</div>${num}${st&&info?mqRepStrip(st,info):''}</div>`;
+ let err=bad?`<div class="mrp-err" role="alert"><i>!</i><span>${E(r.layoutError||r.problems[0])}</span></div>`:'';
+ let names='';
+ if(st){
+  let srcOf=j=>{let g=st.groups.map(x=>x[j]).filter(Boolean);return g.length?`← ${g[0]}${g.length>1?` … ${g[g.length-1]}`:''}`:''};
+  let grid=`<div class="mrp-names">${st.names.map((n,j)=>{let why=mqRepBad(j);return `<div class="mrp-nm"><input data-n="${j}" value="${E(n)}" maxlength="120" class="${why?'bad':''}" aria-label="${E(srcOf(j))} のまとめた名前"><small title="${E(srcOf(j))}">${why?`<b>${E(why)}</b>`:E(srcOf(j))}</small></div>`}).join('')}</div>`;
+  let ib=mqRepBad(-1);
+  let opts=`<div class="mrp-opts"><label>番号の列の名前<input type="text" data-n="-1" value="${E(st.index)}" maxlength="120" class="${ib?'bad':''}"></label>${ib?`<small><b style="color:#a12d1a">${E(ib)}</b></small>`:''}<label><input type="checkbox" id="mrp-drop"${st.drop_empty?' checked':''}>値がすべて空の回は行にしない</label><small>（${N}回分の枠のうち、使っていない回）</small></div>`;
+  names=`<div class="mrp-card"><div class="mrp-cap">まとめた列 <small>番号を除いた名前 · 番号の列「${E(st.index)}」 · ${st.drop_empty?'値がすべて空の回は行にしない':'空の回も行にする'}</small><span class="mrp-sp"></span>${edit?'':'<button type="button" class="secondary" id="mrp-edit">名前を直す</button>'}</div>
+   ${edit?grid+opts:`<div class="mrp-chips">${st.names.map(n=>`<span title="${E(n)}">${E(n)}</span>`).join('')}</div>`}</div>`;
+ }
+ let size=r.after&&r.after.ok?`${r.rowsIn.toLocaleString()}行 → ${Number(r.after.row_count).toLocaleString()}行 · ${(r.after.columns||[]).length}列`:'';
+ let after=`<div class="mrp-card"><div class="mrp-cap">展開したあと <small>${E(size)}</small></div>${!st?'<div class="mrp-none wait">繰り返しが決まると、ここに展開したあとの表が出ます</div>'
+  :r.problems.length?`<div class="mrp-none">${fixWhat==='名前'?'名前が重なっているため、':''}展開したあとの表はまだ出せません（${E(fixWhat)}を直すと出ます）</div>`
+  :r.after&&r.after.ok?mqRepTable(r.after,st):r.after&&!r.after.ok?`<div class="mrp-none">${E((r.after.error||{}).message||'下読みできませんでした')}</div>`:'<div class="mrp-none wait">展開したあとの表を作っています…</div>'}</div>`;
+ let focus=document.activeElement&&b.contains(document.activeElement)?document.activeElement.dataset:null,caret=focus?document.activeElement.selectionStart:null;
+ b.innerHTML=`<div class="mrp">${box}${err}${names}${after}</div>`;
+ if(focus&&(focus.n!==undefined||focus.l)){let el=b.querySelector(focus.n!==undefined?`[data-n="${focus.n}"]`:`[data-l="${focus.l}"]`);if(el){el.focus();try{if(caret!==null)el.setSelectionRange(caret,caret)}catch{}}}
+ let note=$('#mq-rep-note');
+ note.textContent=bad?`${fixWhat}を直すと展開できます`:!st?'':r.busy?'確かめています…':size;
+ $('#mq-rep-ok').disabled=!st||bad||r.busy;
+}
+if($('#mq-rep-body')){
+ let b=$('#mq-rep-body');
+ b.addEventListener('click',e=>{
+  let m=e.target.closest('[data-m]');
+  if(m&&!m.disabled&&mqRep&&m.dataset.m!==mqRep.mode){mqRep.mode=m.dataset.m;mqRep.edit=false;if(mqRep.mode==='layout'&&!mqRep.layout){let i=mqRep.info,st=mqRep.step;mqRep.layout=i&&st?{start:i.first,width:st.names.length,count:st.groups.length}:{start:1,width:1,count:2}}mqRepShape()}
+  if(e.target.id==='mrp-edit'){mqRep.edit=true;mqRepRender();b.querySelector('[data-n="0"]')?.focus()}
+ });
+ b.addEventListener('input',e=>{
+  let t=e.target,r=mqRep;if(!r)return;
+  if(t.dataset.n!==undefined&&r.step){let j=+t.dataset.n;if(j<0)r.step.index=t.value.trim();else r.step.names[j]=t.value.trim();mqRepCheck()}
+  else if(t.dataset.l){r.layout={...r.layout,[t.dataset.l]:Math.max(1,parseInt(t.value,10)||1)};clearTimeout(mqRepTimer);mqRepTimer=setTimeout(mqRepShape,300)}
+ });
+ b.addEventListener('change',e=>{
+  let r=mqRep;if(!r)return;
+  if(e.target.id==='mrp-drop'&&r.step){r.step.drop_empty=e.target.checked;mqRepCheck(true)}
+  if(e.target.id==='mrp-cand'){r.ci=+e.target.value;r.edit=false;mqRepShape()}
+ });
+ let close=()=>{mqRep=null;clearTimeout(mqRepTimer);$('#mq-rep-dialog').close()};
+ ['#mq-rep-cancel','#mq-rep-close'].forEach(s=>{if($(s))$(s).onclick=close});
+ $('#mq-rep-ok').onclick=async()=>{let r=mqRep;if(!r||!r.step||r.busy||r.problems.length)return;if(await mqAddStep({...r.step,op:'repeat'}))close()};
 }
