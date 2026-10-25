@@ -421,7 +421,7 @@ const COLUMNS=[
   opts:{mode:'smart'},
   optUI:[{name:'mode',label:'見せ方',
           choices:[['smart','同じ場所は「共通」と省略'],['full','いつもフルパス'],['tail','いちばん下のフォルダー名だけ']]}]},
- {key:'progress',name:'進捗・次回実行',w:308,cls:'c-progress',
+ {key:'progress',name:'進捗・次回実行',w:270,cls:'c-progress',
   why:'いつのデータか、次はいつ動くか。実行中はここが進捗になります',
   opts:{metrics:true},optUI:[{name:'metrics',label:'前回の実績も出す（所要・件数・速度）',toggle:true}]},
  {key:'action',name:'操作',w:176,cls:'c-action',why:'行から直接押せるボタン',
@@ -457,12 +457,15 @@ function colMinWidth(cols){
  return cols.reduce((a,k)=>a+(colDef(k).w||COL_AUTO_MIN),0);
 }
 /* 列の幅（2.12.0）: 決めた幅を下限にし、表の幅の余りを、文字が長くなりやすい列（名前・入力・出力ファイル・出力先）へ割合で配る。
-   全行が同じ出力先（「共通」）のときは、出力先の列はほとんど空くので、割合を小さくして名前の側へ回す（名前が切れないように） */
-const COL_GROW={name:3,source:2,file:2,folder:3};
-let colCommon=false;
+   全行が同じ出力先（「共通」）でも、出力先の列は見出しに共通の場所（長い）を出すので、割合は変えない */
+const COL_GROW={name:3,source:3,file:2,folder:2};
+// 全行が同じ出力先のとき、出力先の列は見出しの「共通: …」が1行で入る幅を下限にする（列が狭いと見出しだけ折れて高くなる）
+let colCommonPath='';
+function textWidth(t,font){let c=textWidth.c||(textWidth.c=document.createElement('canvas').getContext('2d'));c.font=font;return Math.ceil(c.measureText(t).width)}
 function colWidths(cols){
  let box=document.querySelector('#jobs .tablebox'),avail=Math.max(0,(box?.clientWidth||0)-2),
-     base=k=>colDef(k).w||COL_AUTO_MIN,grow=k=>k==='folder'&&colCommon&&colOpt('folder','mode')==='smart'?2:(COL_GROW[k]||0),
+     common=colCommonPath&&colOpt('folder','mode')==='smart'?Math.min(340,textWidth('共通: '+colCommonPath,'600 10.5px "Yu Gothic UI",Meiryo,sans-serif')+20):0,
+     base=k=>k==='folder'?Math.max(colDef(k).w||COL_AUTO_MIN,common):(colDef(k).w||COL_AUTO_MIN),grow=k=>COL_GROW[k]||0,
      extra=Math.max(0,avail-cols.reduce((a,k)=>a+base(k),0)),g=cols.reduce((a,k)=>a+grow(k),0);
  return Object.fromEntries(cols.map(k=>[k,Math.floor(base(k)+(g?extra*grow(k)/g:0))]));
 }
@@ -602,8 +605,9 @@ if($('#col-reset'))$('#col-reset').onclick=()=>{
 };
 function render(){let a=filtered(),body=$('#jobs-body');let canReorder=(!$('#search').value.trim()&&$('#filter-enabled').value==='all'&&$('#filter-schedule').value==='all');
  let cols=colVisible(),ctx={canReorder,commonOut:commonOutputFolder(a)};
- colCommon=!!ctx.commonOut;renderJobsHead(cols);
- let rowHtml=j=>`<tr data-id="${E(j.id)}" draggable="${canReorder}" class="${canReorder?'reorderable':''}">`
+ colCommonPath=ctx.commonOut||'';renderJobsHead(cols);
+ // 子のグループの行は、管理名称を段の深さぶん字下げする（どの段の行か、見出しまで戻らずに分かる）
+ let rowHtml=j=>`<tr data-id="${E(j.id)}" draggable="${canReorder}" class="${canReorder?'reorderable':''}"${hasGroups()&&groupParts(groupOf(j)).length>1?` style="--rd:${groupParts(groupOf(j)).length-1}"`:''}>`
   +cols.map(k=>`<td class="col-${k} ${colDef(k).cls||''}">${cellHtml(k,j,ctx)}</td>`).join('')
   +`</tr>`;
  // グループがあれば、見出しの行で区切る。畳んだグループの行は作らない（見出しに件数と状態が出る）
@@ -613,7 +617,7 @@ function render(){let a=filtered(),body=$('#jobs-body');let canReorder=(!$('#sea
  $('#summary').innerHTML=`<b>${a.length===all?all:`${a.length} / ${all}`}<small>件</small></b><span>有効 ${cfg.jobs.filter(j=>j.enabled).length} ・ 自動実行ルール ${cfg.jobs.flatMap(j=>j.schedules||[]).filter(r=>r.enabled).length}</span>`;
  // 全行が同じ出力先なら、その場所は列の見出しに1度だけ書く（行には「共通」）。表の上に段を足さない
  let fth=$('#jobs-head th.col-folder');
- if(fth&&ctx.commonOut&&colOpt('folder','mode')==='smart')fth.insertAdjacentHTML('beforeend',`<span class="th-sub">共通: <a class="output-link" href="#" data-path="${E(ctx.commonOut)}" title="${E(ctx.commonOut)}">${E(ctx.commonOut)}</a></span>`);
+ if(fth&&ctx.commonOut&&colOpt('folder','mode')==='smart')fth.insertAdjacentHTML('beforeend',`<span class="th-sub">共通: <a class="output-link" href="#" data-path="${E(ctx.commonOut)}" title="${E(ctx.commonOut)}">${E(ctx.commonOut).replace(/\\/g,'\\<wbr>')}</a></span>`);
  // グループの見出しは表の見出しのすぐ下に残す（長いグループの途中でも、どのグループの行か分かる）。
  // 表の見出しの高さは「共通: 出力先」を足したあとで測り、1px 下へ潜らせて隙間から行が透けないようにする
  let thead=$('#jobs-head');if(thead)body.parentElement.style.setProperty('--jobs-th',Math.max(0,thead.getBoundingClientRect().height-1)+'px');
@@ -716,12 +720,19 @@ function groupHeadHtml(r,cols,first,reorder){
   +`<b class="grp-name" title="${E(label)}">${E(leaf)}</b><span class="grp-n">${all.length}件${r.shown!==all.length?`<small>（表示 ${r.shown}）</small>`:''}</span>`
   +`<span class="grp-chips">${groupChipsHtml(all)}</span>`
   // 畳んだときは、中の対象の名前を並べる（開かずに何が入っているか分かる）
-  +(closed?`<span class="grp-names" title="${E(all.map(j=>j.name).join('\n'))}">${E(all.slice(0,6).map(j=>j.name).join('・'))}${all.length>6?` ほか${all.length-6}件`:''}</span>`:'<span class="grp-sp"></span>')
+  +(closed?closedNamesHtml(path,all):'<span class="grp-sp"></span>')
   +`<span class="grp-live" hidden></span>`
   +`<button type="button" class="grp-run" title="「${E(label)}」の有効な対象をまとめて実行します（子のグループも）">${gsvg(GI.play)}グループを実行</button>`
   +`<button type="button" class="grp-stop" hidden title="実行を止めます">${gsvg(GI.stop,12)}止める</button>`
   +`<button type="button" class="grp-more" aria-haspopup="menu" title="グループの操作" aria-label="グループの操作">${gsvg(GI.more,16)}</button>`
   +`</div></td></tr>`;
+}
+// 畳んだ見出しに並べる中身: 子のグループを先に「計測（2件）」と分けて、そのあとにこのグループの対象の名前
+function closedNamesHtml(path,all){
+ let node=treeNode(groupTree(),path),kids=(node?.kids||[]).map(n=>`${groupLeaf(n.path)}（${groupJobs(n.path).length}件）`),
+     own=all.filter(j=>groupOf(j)===path).map(j=>j.name),items=[...kids,...own],shown=items.slice(0,6);
+ return `<span class="grp-names" title="${E([...kids.map(k=>'▸ '+k),...own].join('\n'))}">`
+  +shown.map((t,i)=>i<kids.length?`<b>▸ ${E(t)}</b>`:E(t)).join('・')+(items.length>6?` ほか${items.length-6}件`:'')+`</span>`;
 }
 // 実行中の様子を見出しへ（行の進み具合と同じ rowLive・rowQueue から数える）
 function paintGroupHeads(){
@@ -908,11 +919,9 @@ function bindGroupHeads(body){
  });
 }
 /* ==== 選択（2.12.0）: 行を押す・チェックで1件ずつ。SHIFT を押しながらだと、前に押した行からここまでをまとめて選ぶ ==== */
-/* 選んだ行の見せ方（2.12.0。案の比べ方は tests/ui-proposals/2026-10-job-groups2）: 続けて選んだ行は1つの枠で囲む（行ごとの枠を重ねない）。
+/* 選んだ行の見せ方（2.12.0。案の比べ方は tests/ui-proposals/2026-10-job-groups2）: 行は地色だけ（CSS）。
    上の段には、どのグループから何件選んだかを添える */
 function paintSelection(){
- let rows=$$('#jobs-body tr');
- rows.forEach((tr,i)=>{let on=tr.classList.contains('selected');tr.classList.toggle('sel-first',on&&!rows[i-1]?.classList.contains('selected'));tr.classList.toggle('sel-last',on&&!rows[i+1]?.classList.contains('selected'))});
  let box=$('#sel-groups');if(!box)return;
  let by=new Map();$$('#jobs-body tr.selected[data-id]').forEach(tr=>{let g=groupOf(cfg.jobs.find(j=>j.id===tr.dataset.id));by.set(g,(by.get(g)||0)+1)});
  box.textContent=hasGroups()?[...by].map(([g,n])=>`${groupLeaf(g)} ${n}件`).join('・'):'';

@@ -3479,6 +3479,25 @@ main:has(#layouts.on,#joins.on,#mqueries.on)>.subnav{margin-bottom:0}
 .jobs-table tr.grp-head.is-sub td{box-shadow:inset 0 1px 0 var(--line),inset 0 -1px 0 color-mix(in srgb,var(--gc) 55%,#fff)}
 .grp-crumb{font-size:11.5px;color:#7a8d96;white-space:nowrap;max-width:260px;overflow:hidden;text-overflow:ellipsis;flex:0 1 auto;min-width:0}
 .grp-pick small{font-size:10.5px;color:#7f929a;font-weight:600;margin-left:2px}
-/* 「共通: 出力先」は列が狭いとき3行まで折り返す（切って隠さない。2.12.0） */
-.jobs-table th .th-sub{white-space:normal;word-break:break-all;line-height:1.3;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical}
+/* 「共通: 出力先」は列が狭いとき、フォルダーの区切り（\）で3行まで折り返す（切って隠さない。2.12.0） */
+.jobs-table th .th-sub{white-space:normal;word-break:normal;overflow-wrap:anywhere;line-height:1.3;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical}
 .jobs-table th .th-sub .output-link{white-space:normal}
+/* 選んだ行（2.12.0。案の比べ方は tests/ui-proposals/2026-10-job-groups2 の B）: 地色と濃い名前だけ。行ごとの枠を重ねない。
+   行の左の線（確認待ちの印）はそのまま残す */
+.jobs-table tbody tr.selected{outline:0;background:#e6f4f7}
+.jobs-table tbody tr.selected .col-name .primarytext{color:#0b4f5c}
+.jb-sel .sel-groups{font-size:12px;color:#cfe3ea;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:360px;margin-right:4px}
+.jb-sel .sel-groups:empty{display:none}
+/* 落とす先の言葉（グループの中へ・グループの並べ替え）と、動かしているグループの見出し */
+.jobs-table tbody tr.grp-head.drop-into td{background:#eef8fa;outline:2px dashed #0d8191;outline-offset:-4px;box-shadow:none}
+.drop-say-into{margin-left:8px;font-size:11.5px;font-weight:800;color:#0b6577;white-space:nowrap}
+.grp-bar{position:relative}
+.drop-say-move{position:absolute;left:50%;transform:translateX(-50%);font-size:11px;font-weight:800;color:#fff;background:#0d8191;border-radius:999px;padding:1px 10px;white-space:nowrap;z-index:5;pointer-events:none}
+.drop-say-move.before{top:-9px}.drop-say-move.after{bottom:-9px}
+.jobs-table tbody tr.grp-head.drop-before td{box-shadow:inset 0 4px 0 #0d8191}
+.jobs-table tbody tr.grp-head.drop-after td{box-shadow:inset 0 -4px 0 #0d8191}
+.jobs-table tbody tr.grp-head.dragging{opacity:1}
+.jobs-table tbody tr.grp-head.dragging td{background:repeating-linear-gradient(135deg,#f3f6f8 0 8px,#e9eff2 8px 16px)}
+.jobs-table tbody tr.grp-head.dragging .grp-bar{opacity:.55}
+.grp-names b{font-weight:800;color:#35505b}
+.jobs-table tr[data-id] td.col-name{padding-left:calc(8px + var(--rd,0) * 22px)}
