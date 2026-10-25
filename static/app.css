@@ -3430,8 +3430,9 @@ main:has(#layouts.on,#joins.on,#mqueries.on)>.subnav{margin-bottom:0}
 /* 対象のグループ（2.11.0。案の比べ方は tests/ui-proposals/2026-10-job-groups）。見出しの下の線とグループの間の空きで
    区切る（行の左の線は確認待ちの印のまま。グループの色と混ぜない）。見出しは表の見出しの下に残る */
 .jobs-table tr.grp-gap td{height:10px;padding:0;background:#f3f6f8;border:0}
-.jobs-table tr.grp-head td{position:sticky;top:var(--jobs-th,37px);z-index:1;height:42px;padding:0;background:#fff;
- border-top:1px solid var(--line);border-bottom:2px solid var(--gc);cursor:pointer}
+/* 線は影で引く（表の線は貼り付いたセルと一緒に動かないので、貼り付くと色の線が消える） */
+.jobs-table tr.grp-head td{position:sticky;top:var(--jobs-th,37px);z-index:1;height:44px;padding:0;background:#fff;
+ border:0;box-shadow:inset 0 1px 0 var(--line),inset 0 -2px 0 var(--gc);cursor:pointer}
 .jobs-table tr.grp-head:hover td{background:#f7fbfc}
 .jobs-table tr.grp-head.is-closed td{background:#f9fbfc}
 .grp-bar{display:flex;align-items:center;gap:10px;height:42px;padding:0 10px 0 8px;min-width:0}
@@ -3451,8 +3452,9 @@ main:has(#layouts.on,#joins.on,#mqueries.on)>.subnav{margin-bottom:0}
 .grp-live i{display:block;width:170px;height:7px;border-radius:999px;background:#dce7ea;overflow:hidden}
 .grp-live i b{display:block;height:100%;background:linear-gradient(90deg,#14a39f,#237fbc);transition:width .3s}
 .grp-live em{font-style:normal;color:#a4463d}
-/* グループを実行: 行の「実行」と同じ塗り（範囲が広いぶん、文字で「グループを」と言う） */
-.grp-run{height:30px;display:inline-flex;align-items:center;gap:6px;padding:0 13px;font-size:12px;white-space:nowrap}
+/* グループを実行: まとめて実行するボタン（全件実行・選んだ対象を実行）と同じ明るい青緑に ▷。1件の「実行」（行の青）と色で分ける */
+.grp-run{height:30px;display:inline-flex;align-items:center;gap:6px;padding:0 13px;font-size:12px;white-space:nowrap;background:#14a89f;color:#fff}
+.grp-run:hover{background:#17bdb2;filter:none}
 .grp-run:disabled{opacity:.55}
 .grp-more{width:30px;height:30px;padding:0;display:grid;place-items:center;border-radius:7px;background:transparent;color:#4f6873;flex:none}
 .grp-more:hover,.grp-more[aria-expanded="true"]{background:#e3edf0;filter:none}
@@ -3468,9 +3470,10 @@ main:has(#layouts.on,#joins.on,#mqueries.on)>.subnav{margin-bottom:0}
 .gd-name{display:grid;gap:4px;font-size:12px;font-weight:800;color:#425661}
 .gd-sp{flex:1}
 .group-modal .modalfoot .gd-clear{color:#a4463d}
-.jobs-table tr.grp-head td.grp-ckcell{padding:0 8px;cursor:default}
-.grp-ckcell .drag-handle{visibility:hidden}
-.grp-ckcell .grp-dh{display:inline-flex;width:12px;height:16px;margin-right:4px;vertical-align:middle}
+/* 見出しのチェックは行のチェックと同じ横位置（列の左の余白 8px ＋ 並べ替えの印 12px と間 4px） */
+.grp-bar.has-ck{padding-left:8px}.grp-bar.has-dh{padding-left:24px}
+.grp-bar .grp-ck{flex:none;margin:0 2px 0 0}
 .grp-stop{height:30px;display:inline-flex;align-items:center;gap:6px;padding:0 12px;font-size:12px;white-space:nowrap;background:#fff;color:#a4463d;border:1px solid #e2b4ae}
 .grp-stop:hover{background:#fdf1ef;filter:none}
 .grp-stop[hidden],.grp-run[hidden]{display:none}
+.grp-names{flex:1 1 auto;min-width:0;margin-left:6px;font-size:11.5px;color:#4f6873;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}

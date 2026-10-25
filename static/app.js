@@ -590,13 +590,15 @@ function render(){let a=filtered(),body=$('#jobs-body');let canReorder=(!$('#sea
   +`</tr>`;
  // グループがあれば、見出しの行で区切る。畳んだグループの行は作らない（見出しに件数と状態が出る）
  body.innerHTML=hasGroups()?groupBlocks(a).map((b,i)=>groupHeadHtml(b,cols,!i,canReorder)+(groupIsClosed(b.name)?'':b.jobs.map(rowHtml).join(''))).join(''):a.map(rowHtml).join('');
- // 見出しの行は表の見出しのすぐ下に残す（長いグループの途中でも、どのグループの行か分かる）
- let th=$('#jobs-head');if(th)body.parentElement.style.setProperty('--jobs-th',th.offsetHeight+'px');
- bindGroupHeads(body);paintGroupFold();paintRowProgress();applyScheduleCells();updateSelCount();$('#empty').hidden=a.length>0;let all=cfg.jobs.length;
+ bindGroupHeads(body);paintGroupFold();paintRowProgress();
+ let tb=body.closest('.tablebox');if(tb&&!tb.dataset.grpPush){tb.dataset.grpPush='1';tb.addEventListener('scroll',()=>requestAnimationFrame(pushGroupHeads),{passive:true})}pushGroupHeads();applyScheduleCells();updateSelCount();$('#empty').hidden=a.length>0;let all=cfg.jobs.length;
  $('#summary').innerHTML=`<b>${a.length===all?all:`${a.length} / ${all}`}<small>件</small></b><span>有効 ${cfg.jobs.filter(j=>j.enabled).length} ・ 自動実行ルール ${cfg.jobs.flatMap(j=>j.schedules||[]).filter(r=>r.enabled).length}</span>`;
  // 全行が同じ出力先なら、その場所は列の見出しに1度だけ書く（行には「共通」）。表の上に段を足さない
  let fth=$('#jobs-head th.col-folder');
  if(fth&&ctx.commonOut&&colOpt('folder','mode')==='smart')fth.insertAdjacentHTML('beforeend',`<span class="th-sub">共通: <a class="output-link" href="#" data-path="${E(ctx.commonOut)}" title="${E(ctx.commonOut)}">${E(ctx.commonOut)}</a></span>`);
+ // グループの見出しは表の見出しのすぐ下に残す（長いグループの途中でも、どのグループの行か分かる）。
+ // 表の見出しの高さは「共通: 出力先」を足したあとで測り、1px 下へ潜らせて隙間から行が透けないようにする
+ let thead=$('#jobs-head');if(thead)body.parentElement.style.setProperty('--jobs-th',Math.max(0,thead.getBoundingClientRect().height-1)+'px');
  let lc=$('#jobs-head .output-link');if(lc)lc.onclick=e=>{e.preventDefault();e.stopPropagation();openOutputFolder(lc.dataset.path)};
  paintFilterSummary();body.querySelectorAll('tr[data-id]').forEach(tr=>{let j=cfg.jobs.find(x=>x.id===tr.dataset.id);tr.onclick=e=>{if(!e.target.closest('button,a,input')){tr.classList.toggle('selected');let cb=tr.querySelector('.rowcheck');if(cb)cb.checked=tr.classList.contains('selected');updateSelCount()}};let cb=tr.querySelector('.rowcheck');if(cb)cb.onchange=e=>{tr.classList.toggle('selected',e.target.checked);updateSelCount()};tr.ondblclick=e=>{if(!e.target.closest('button,input,select,a'))openEditor(j)};let ed=tr.querySelector('.edit');if(ed)ed.onclick=()=>openEditor(j);let st=tr.querySelector('.state');if(st)st.onclick=e=>{e.stopPropagation();setJobEnabled(j.id,!j.enabled)};let ro=tr.querySelector('.run-one');if(ro)ro.onclick=()=>runJobs([j.id]);let cp=tr.querySelector('.copy-one');if(cp)cp.onclick=()=>duplicateJob(j);let dl=tr.querySelector('.rowactions .delete');if(dl)dl.onclick=()=>deleteJob(j);let l=tr.querySelector('.output-link');if(l)bindOutputLink(l,j);bindRowDnD(tr);tr.oncontextmenu=e=>{if(e.target.closest("a.output-link"))return;e.preventDefault();showJobContextMenu(e,j,tr)}})}
 /* ==== 対象のグループ（2.11.0。案の比べ方は tests/ui-proposals/2026-10-job-groups） ====
@@ -606,14 +608,15 @@ function render(){let a=filtered(),body=$('#jobs-body');let canReorder=(!$('#sea
    ・グループの並びは一覧の並びで最初に出てくる順。上下へ動かすのは、対象のまとまりを並べ替えること
    ・畳んだかどうかはこの PC の画面だけの好み（localStorage）。検索している間は、当たった行のあるグループを開いて見せる */
 const GROUP_CLOSED_KEY='datarelay-groups-closed';
-// 色の印。隣り合っても見分けやすい色相を順に。グループなしは灰色
+// 色の印。並びの順に、隣り合っても見分けやすい色相を配る。グループなしは灰色
 const GROUP_COLORS=['#0f8a8f','#4a67c9','#b5730f','#8a55b3','#2f8f4e','#c0507a','#5b7f99','#9a7b1c'],GROUP_NONE_COLOR='#9aa9b0';
 let groupClosed=new Set();
 try{groupClosed=new Set(JSON.parse(localStorage.getItem(GROUP_CLOSED_KEY)||'[]'))}catch{}
 const groupOf=j=>String(j?.group||'').trim();
 const hasGroups=()=>(cfg?.jobs||[]).some(j=>groupOf(j));
 function groupOrder(){let seen=[];for(let j of cfg?.jobs||[]){let g=groupOf(j);if(g&&!seen.includes(g))seen.push(g)}return seen}
-function groupColor(name){if(!name)return GROUP_NONE_COLOR;let h=0;for(let c of name)h=(h*31+c.codePointAt(0))>>>0;return GROUP_COLORS[h%GROUP_COLORS.length]}
+// 色はグループの並び順で配る（名前から決めると、近いグループが同じ色になることがある）
+function groupColor(name){if(!name)return GROUP_NONE_COLOR;let i=groupOrder().indexOf(name);return GROUP_COLORS[(i<0?0:i)%GROUP_COLORS.length]}
 const groupLabel=name=>name||'グループなし';
 // 見せる行（絞り込み・並びを済ませた a）を、グループの並び → グループなし の順に分ける
 function groupBlocks(a){return [...groupOrder(),''].map(name=>({name,jobs:a.filter(j=>groupOf(j)===name)})).filter(b=>b.jobs.length)}
@@ -627,23 +630,27 @@ const groupJobs=name=>(cfg?.jobs||[]).filter(j=>groupOf(j)===name);
 // 状態の札: 有効・無効と、確認待ち（失敗・未実行など。行の左の線・上の「確認待ち」と同じ言葉と色）
 function groupChipsHtml(jobs){
  let on=jobs.filter(j=>j.enabled).length,off=jobs.length-on,fresh={};
- jobs.forEach(j=>{let f=freshInfo[j.id];if(f&&f.state!=='ok'&&FRESH_STATE[f.state])fresh[f.state]=(fresh[f.state]||0)+1});
+ // この回で済んだ対象は、確認待ちの数から外す（鮮度の読み直しを待たずに、見出しの数を進み具合と合わせる）
+ jobs.forEach(j=>{let f=freshInfo[j.id];if(f&&f.state!=='ok'&&FRESH_STATE[f.state]&&rowLive[j.id]?.cls!=='is-done')fresh[f.state]=(fresh[f.state]||0)+1});
  return `<span class="grp-chip on">有効 ${on}</span>`+(off?`<span class="grp-chip off">無効 ${off}</span>`:'')
   +Object.entries(fresh).map(([s,n])=>`<span class="grp-chip ${FRESH_STATE[s][1]==='fb-ng'?'ng':'warn'}">${E(FRESH_STATE[s][0])} ${n}</span>`).join('');
 }
-const GI={down:'<path d="M6 9.5l6 6 6-6"/>',right:'<path d="M9.5 6l6 6-6 6"/>',play:'<path d="M8 5.5v13l10.5-6.5z"/>',more:'<circle cx="5.5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="18.5" cy="12" r="1.4"/>',stop:'<rect x="6" y="6" width="12" height="12" rx="1.5" fill="currentColor"/>'};
+const GI={down:'<path d="M6 9.5l6 6 6-6"/>',right:'<path d="M9.5 6l6 6-6 6"/>',play:'<path d="M8 5.5v13l10.5-6.5z"/>',more:'<circle cx="5.5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="18.5" cy="12" r="1.4"/>',stop:'<rect x="6" y="6" width="12" height="12" rx="1.5" fill="currentColor"/>',fold:'<path d="M7 14.5l5-5 5 5"/>'};
 const gsvg=(d,w=14)=>`<svg viewBox="0 0 24 24" width="${w}" height="${w}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
 function groupHeadHtml(b,cols,first,reorder){
  let closed=groupIsClosed(b.name),all=groupJobs(b.name),label=groupLabel(b.name),ncols=cols.length,
-     // まとめて選ぶチェックは、行のチェックと同じ列に置く（チェックの列を先頭に出しているとき）
+     // まとめて選ぶチェックは、行のチェックと縦に揃う位置に置く（チェックの列を先頭に出しているとき）
      ck=cols[0]==='check'&&ncols>1;
  return (first?'':`<tr class="grp-gap" aria-hidden="true"><td colspan="${ncols}"></td></tr>`)
   +`<tr class="grp-head${closed?' is-closed':''}" data-group="${E(b.name)}" style="--gc:${groupColor(b.name)}">`
-  +(ck?`<td class="col-check grp-ckcell"><span class="drag-handle${reorder?' grp-dh':''}" aria-hidden="true">⋮⋮</span><input class="grp-ck" type="checkbox" title="「${E(label)}」の対象をまとめて選ぶ" aria-label="「${E(label)}」の対象をまとめて選ぶ"></td>`:'')
-  +`<td colspan="${ck?ncols-1:ncols}"><div class="grp-bar">`
+  +`<td colspan="${ncols}"><div class="grp-bar${ck?` has-ck${reorder?' has-dh':''}`:''}">`
+  +(ck?`<input class="grp-ck" type="checkbox" title="「${E(label)}」の対象をまとめて選ぶ" aria-label="「${E(label)}」の対象をまとめて選ぶ">`:'')
   +`<button type="button" class="grp-tw" aria-expanded="${!closed}" title="${closed?'開く':'畳む'}（見出しを押しても同じ）">${gsvg(closed?GI.right:GI.down,15)}</button>`
   +`<i class="grp-dot" aria-hidden="true"></i><b class="grp-name">${E(label)}</b><span class="grp-n">${all.length}件${b.jobs.length!==all.length?`<small>（表示 ${b.jobs.length}）</small>`:''}</span>`
-  +`<span class="grp-chips">${groupChipsHtml(all)}</span><span class="grp-sp"></span><span class="grp-live" hidden></span>`
+  +`<span class="grp-chips">${groupChipsHtml(all)}</span>`
+  // 畳んだときは、中の対象の名前を並べる（開かずに何が入っているか分かる）
+  +(closed?`<span class="grp-names" title="${E(all.map(j=>j.name).join('\n'))}">${E(all.slice(0,6).map(j=>j.name).join('・'))}${all.length>6?` ほか${all.length-6}件`:''}</span>`:'<span class="grp-sp"></span>')
+  +`<span class="grp-live" hidden></span>`
   +`<button type="button" class="grp-run" title="「${E(label)}」の有効な対象をまとめて実行します">${gsvg(GI.play)}グループを実行</button>`
   +`<button type="button" class="grp-stop" hidden title="実行を止めます">${gsvg(GI.stop,12)}止める</button>`
   +`<button type="button" class="grp-more" aria-haspopup="menu" title="グループの操作" aria-label="グループの操作">${gsvg(GI.more,16)}</button>`
@@ -720,7 +727,7 @@ function openGroupMenu(btn,name){
  let m=$('#group-menu');if(!m)return;closeGroupMenu();groupMenuFor=name;btn.setAttribute('aria-expanded','true');
  let label=groupLabel(name),jobs=groupJobs(name),named=!!name,order=groupOrder(),i=order.indexOf(name);
  m.innerHTML=`<div class="jcm-head"><b>${E(label)}</b><span>${jobs.length}件・有効 ${jobs.filter(j=>j.enabled).length}</span></div>`
-  +`<button type="button" data-g="run">${gsvg(GI.play)}グループを実行<small>有効なものだけ</small></button>`
+  // 実行は見出しのボタンにある。メニューには重ねない
   +`<button type="button" data-g="select">このグループの対象をすべて選ぶ</button><hr>`
   +`<button type="button" data-g="on">すべて有効にする</button><button type="button" data-g="off">すべて無効にする</button>`
   +(named?`<hr><button type="button" data-g="rename">名前を変える…</button>`
@@ -752,8 +759,7 @@ function groupDialogInit(){
  $('#group-menu').onclick=async e=>{
   let b=e.target.closest('[data-g]');if(!b||groupMenuFor===null)return;
   let name=groupMenuFor,act=b.dataset.g,ids=groupJobs(name).map(j=>j.id);closeGroupMenu();
-  if(act==='run')runGroup(name);
-  else if(act==='select')selectGroup(name);
+  if(act==='select')selectGroup(name);
   else if(act==='on'||act==='off')setJobsEnabled(ids,act==='on');
   else if(act==='rename')askGroup({title:'グループの名前を変える',value:name,ok:'変える',onOk:v=>renameGroup(name,v)});
   else if(act==='up'||act==='down')moveGroup(name,act==='up'?-1:1);
@@ -769,13 +775,26 @@ function groupDialogInit(){
 // すべて畳む／開く（道具の段。グループがあるときだけ出す）。1つでも開いていれば「畳む」
 function paintGroupFold(){
  let b=$('#groups-fold');if(!b)return;let names=[...groupOrder(),''].filter(n=>groupJobs(n).length),anyOpen=names.some(n=>!groupClosed.has(n));
- b.hidden=!hasGroups();b.innerHTML=gsvg(anyOpen?GI.right:GI.down)+(anyOpen?'すべて畳む':'すべて開く');
+ b.hidden=!hasGroups();b.innerHTML=gsvg(anyOpen?GI.fold:GI.down)+(anyOpen?'すべて畳む':'すべて開く');
  b.onclick=()=>{names.forEach(n=>anyOpen?groupClosed.add(n):groupClosed.delete(n));try{localStorage.setItem(GROUP_CLOSED_KEY,JSON.stringify([...groupClosed]))}catch{}render()};
+}
+/* 貼り付いた見出しは、次のグループの見出しが来たら押し上げる（行の無くなった前のグループの見出しを残さない）。
+   表の行は1つの tbody にあるので、貼り付きの範囲がグループで切れない。そのぶんを送るたびに計算する */
+function pushGroupHeads(){
+ let box=document.querySelector('#jobs .tablebox'),heads=$$('#jobs-body tr.grp-head');if(!box||!heads.length)return;
+ let line=box.getBoundingClientRect().top+box.clientTop+(parseFloat(getComputedStyle(box.querySelector('table')).getPropertyValue('--jobs-th'))||0);
+ heads.forEach((h,i)=>{
+  let tds=[...h.children],next=heads[i+1];
+  // グループの終わり = 次のグループの前の空き行の上端（最後のグループは表の下端）。そこが見出しの下へ来たら、そのぶん押し上げる
+  let end=next?next.previousElementSibling.getBoundingClientRect().top:box.querySelector('table').getBoundingClientRect().bottom,hh=h.offsetHeight,
+      push=Math.max(0,Math.min(hh,line+hh-end));
+  tds.forEach(td=>td.style.transform=push?`translateY(${-push}px)`:'');
+ });
 }
 function bindGroupHeads(body){
  body.querySelectorAll('tr.grp-head').forEach(h=>{
   let name=h.dataset.group;
-  h.onclick=e=>{if(e.target.closest('.grp-run,.grp-stop,.grp-more,.grp-ckcell'))return;if($('#search').value.trim())return toast('検索している間は、当たった行のあるグループを開いて見せます');setGroupClosed(name,!groupIsClosed(name))};
+  h.onclick=e=>{if(e.target.closest('.grp-run,.grp-stop,.grp-more,.grp-ck'))return;if($('#search').value.trim())return toast('検索している間は、当たった行のあるグループを開いて見せます');setGroupClosed(name,!groupIsClosed(name))};
   h.querySelector('.grp-run').onclick=()=>runGroup(name);
   h.querySelector('.grp-stop').onclick=()=>stopGroupRun(name);
   let ck=h.querySelector('.grp-ck');
