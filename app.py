@@ -5555,6 +5555,8 @@ def read_preview_data(path,job,limit=500,max_columns=None):
     break
    except UnicodeDecodeError:continue
   if data is None:raise UnicodeError('文字コードを判定できません')
+  # 終わりの印（0x1A）など、読めない記号だけの行はデータにしない（2.10.1。テキストの読み取りと同じ決まり）
+  import navi_text;data=[r for r in data if not navi_text.is_junk_row(r)]
   headers=data[0] if data else [];rows=data[1:limit+1];total=max(0,len(data)-1)
  elif fmt=='xlsx':
   from openpyxl import load_workbook

@@ -4,5 +4,5 @@
 navi_changelog.py にある ―― 800行の読みものなので、それを必要としない経路
 （抽出ワーカー）が読み込まずに済むように分けてある。
 """
-APP_VERSION='2.10.0'; APP_VERSION_TITLE='共通設定の道具を対象ファイルと同じ1段にし、画面全体が送らない（がたつかない）作りにした'; APP_RELEASED_AT='2026-10-24'
+APP_VERSION='2.10.1'; APP_VERSION_TITLE='テキストの終わりの印だけの行を外し、ファイル結合の編集が手戻りしないようにした'; APP_RELEASED_AT='2026-10-24'
 BUILD_VERSION=f'{APP_VERSION}-web'

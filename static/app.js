@@ -4876,7 +4876,11 @@ function jnBlank(){return {id:'',name:'',description:'',
  sources:[{alias:'A',path:'',format:'csv',table:'',sheet:'',layout_id:''},
           {alias:'B',path:'',format:'csv',table:'',sheet:'',layout_id:''}],
  joins:[{type:'inner',keys:[{left:'',right:''}]}],columns:[]}}
-function jnColsOf(i){return (jnProbe[i]&&jnProbe[i].columns)||[]}
+/* カードの印（2.10.1）。読み取りの結果・入れ方は、カードの番号ではなくこの印で覚える ――
+   番号で覚えると、途中のカードを外したとき、別のカードに前の結果が付いた。 */
+function jnKey(s){if(s&&!s._k)s._k=uid();return s?s._k:''}
+function jnProbeOf(i){let s=jnEditing?.sources[i];return (s&&jnProbe[jnKey(s)])||null}
+function jnColsOf(i){return jnProbeOf(i)?.columns||[]}
 function jnKeyCols(i){
  // その表がキーとして使われている列名。カードの列チップに印を付ける。
  let out=new Set();
@@ -4892,7 +4896,7 @@ function jnRenderList(){
   title:x=>[x.name,`${(x.sources||[]).length}ファイル / つなぎ目 ${(x.joins||[]).length}`,(x.sources||[]).map(s=>jnBase(s.path)).join(' → '),
    (x.used_by||[]).length?`${x.used_by.length}件の対象が使用中`:'',x.description].filter(Boolean).join('\n'),
   empty:'まだ登録がありません。「新規作成」から作れます。',
-  open:id=>jnOpen(joinCache.find(x=>x.id===id))});
+  open:async id=>{if(id===jnEditing?.id)return;if(!(await jnLeave()))return;jnOpen(joinCache.find(x=>x.id===id))}});
 }
 /* ---- 繋ぐ相手を「選ぶ」 ----------------------------------------------------
    場所を手で打たせるのは、いちばん間違えやすく、いちばん確かめにくい。打ち間違えても
@@ -4939,7 +4943,8 @@ function jnCandOf(path){
    一覧には出すが（別の繋ぎ方でも使い回せる）、それは開き方を変える理由にはしない
    ―― 1回保存しただけで、手で打った場所まで候補側で開くようになってしまう。 */
 function jnModeOf(i){
- if(jnMode[i])return jnMode[i];
+ let k=jnKey(jnEditing?.sources[i]);
+ if(jnMode[k])return jnMode[k];
  let p=jnEditing&&jnEditing.sources[i]&&jnEditing.sources[i].path;
  if(!p)return 'pick';
  let c=jnCandOf(p);
@@ -4996,12 +5001,12 @@ function jnPickChoose(n){
  s.path=x.path;
  if(x.format&&x.format!=='fixed')s.format=x.format;
  s.table='';s.sheet='';
- jnMode[i]='pick';delete jnHints[i];delete jnHints[i-1];
+ jnMode[jnKey(s)]='pick';delete jnHints[i];delete jnHints[i-1];
  jnClosePick();jnRenderFlow();jnProbeSource(i);
 }
 /* ---- 1枚＝1ファイル ---- */
 function jnCardHtml(s,i){
- let p=jnProbe[i]||{};
+ let p=jnProbeOf(i)||{};
  let keys=jnKeyCols(i);
  let extra='';
  if(s.format==='sqlite3')
@@ -5089,25 +5094,40 @@ function jnHintHtml(i){
   +`</div>`;
 }
 async function jnSuggestKeys(i,force){
- let a=jnEditing.sources[i],b=jnEditing.sources[i+1];
+ let ed=jnEditing,a=ed.sources[i],b=ed.sources[i+1];
  if(!a||!b||!a.path||!b.path)return;
  if(jnHintBusy[i]||(jnHints[i]&&!force))return;
+ let pa=a.path,pb=b.path;
  jnHintBusy[i]=true;jnRenderFlow();
+ let got;
  try{
   let d=await fetch('/api/join-keys',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({recipe:jnCollect(),index:i})}).then(r=>r.json());
-  jnHints[i]=d.ok?{items:d.items||[]}:{error:d.error||'探せませんでした'};
- }catch{jnHints[i]={error:'探せませんでした（通信に失敗しました）'}}
- jnHintBusy[i]=false;jnRenderFlow();
+  got=d.ok?{items:d.items||[]}:{error:d.error||'探せませんでした'};
+ }catch{got={error:'探せませんでした（通信に失敗しました）'}}
+ // 返事が来るまでに、開いているマスタ・両側のファイルが変わっていたら、この見当は古い。捨てる
+ if(jnEditing!==ed)return;
+ jnHintBusy[i]=false;
+ if(ed.sources[i]===a&&ed.sources[i+1]===b&&a.path===pa&&b.path===pb)jnHints[i]=got;
+ jnRenderFlow();
 }
 function jnRenderFlow(){
  let box=$('#jn-flow');if(!box||!jnEditing)return;
+ // 描き直す前に、いま打っている欄を覚えておく（値は打つたびに jnEditing へ入れてあるので、描き直しても消えない。
+ // 戻すのはフォーカスとカーソルの位置）。2.10.1 まで、打っている途中に返事が届くと、打った文字が消えていた
+ let act=document.activeElement,keep=null;
+ if(act&&box.contains(act)&&act.matches('input,select')){
+  let host=act.closest('[data-i]'),row=act.closest('[data-n]');
+  keep={sel:`.${host.className.split(' ')[0]}[data-i="${host.dataset.i}"] `+(row?`[data-n="${row.dataset.n}"] `:'')+'.'+act.className.split(' ')[0],
+        a:act.selectionStart,b:act.selectionEnd};
+ }
  let html='';
  jnEditing.sources.forEach((s,i)=>{
   html+=jnCardHtml(s,i);
   if(i<jnEditing.sources.length-1)html+=jnLinkHtml(jnEditing.joins[i]||{type:'inner',keys:[{left:'',right:''}]},i);
  });
  box.innerHTML=html;
+ if(keep){let el=box.querySelector(keep.sel);if(el){el.focus();try{if(keep.a!=null)el.setSelectionRange(keep.a,keep.b)}catch{}}}
  let note=$('#jn-flow-note');
  if(note)note.textContent=`${jnEditing.sources.length}ファイル / つなぎ目 ${jnEditing.joins.length}`
   +((jnEditing._rows!=null)?` / できあがり ${Number(jnEditing._rows).toLocaleString()}行`:'');
@@ -5117,22 +5137,27 @@ function jnRenderFlow(){
   // 入れ方を切り替えても、入っている場所はそのまま持ち越す。切り替えで消えると、
   // 「戻せない」不安から片方しか使えなくなる。
   card.querySelectorAll('.jn-how button').forEach(b=>b.onclick=()=>{
-   jnMode[i]=b.dataset.how;jnRenderFlow();
-   if(jnMode[i]==='pick'&&!s.path)jnOpenPick(i,card.querySelector('.jn-pick-btn'));
+   jnMode[jnKey(s)]=b.dataset.how;jnRenderFlow();
+   if(jnMode[jnKey(s)]==='pick'&&!s.path)jnOpenPick(i,card.querySelector('.jn-pick-btn'));
   });
   let pb=card.querySelector('.jn-pick-btn');
   if(pb)pb.onclick=()=>jnOpenPick(i,pb);
   let pi=card.querySelector('.jn-path');
-  if(pi)pi.onchange=e=>{s.path=e.target.value.trim();delete jnHints[i];delete jnHints[i-1];jnProbeSource(i)};
+  // 打つたびに覚える（描き直しで消えない）。読み取りは、欄を離れたときに1回
+  if(pi){pi.oninput=e=>{s.path=e.target.value.trim()};
+   pi.onchange=e=>{s.path=e.target.value.trim();delete jnHints[i];delete jnHints[i-1];jnProbeSource(i)}}
   card.querySelector('.jn-format').onchange=e=>{s.format=e.target.value;jnProbeSource(i)};
   let t=card.querySelector('.jn-table');if(t)t.onchange=e=>{s.table=e.target.value;jnProbeSource(i)};
   let sh=card.querySelector('.jn-sheet');if(sh)sh.onchange=e=>{s.sheet=e.target.value;jnProbeSource(i)};
   let l=card.querySelector('.jn-layout');if(l)l.onchange=e=>{s.layout_id=e.target.value;jnProbeSource(i)};
   let d=card.querySelector('.jn-card-del');
   if(d)d.onclick=()=>{
-   jnEditing.sources.splice(i,1);jnEditing.joins.splice(Math.max(0,i-1),1);
+   let gone=jnEditing.sources.splice(i,1)[0];jnEditing.joins.splice(Math.max(0,i-1),1);
    jnEditing.sources.forEach((x,n)=>x.alias=JN_ALIAS[n]||('S'+(n+1)));
-   jnProbe={};jnEditing.columns=[];jnRenderFlow();jnRenderColumns();jnEditing.sources.forEach((_,n)=>jnProbeSource(n));
+   // 残ったカードの読み取りの結果はそのまま使う（印で覚えているので、番号がずれても付け違えない）。
+   // つなぎ目の見当と一致の数は、つなぎ目の番号が変わるので捨てる
+   delete jnProbe[jnKey(gone)];jnHints={};jnHintBusy={};jnHintOpen={};jnEditing._match=[];
+   jnEditing.columns=[];jnRenderFlow();jnRenderColumns();jnRefresh();
   };
  });
  // つなぎ目の操作
@@ -5199,31 +5224,89 @@ function jnRenderColumns(){
   });
  });
 }
+let jnProbeSeq={};
 async function jnProbeSource(i){
- let s=jnEditing.sources[i];
+ let ed=jnEditing,s=ed.sources[i],k=jnKey(s);
  // このファイルが変われば、その両隣のつなぎ目の見当はもう古い。持ち越すと、
  // 前のファイルの列名を勧め続けることになる。
  delete jnHints[i];delete jnHints[i-1];
- if(!s.path){jnProbe[i]=null;jnRenderFlow();jnRenderColumns();return}
+ let seq=jnProbeSeq[k]=(jnProbeSeq[k]||0)+1;
+ if(!s.path){jnProbe[k]=null;jnRenderFlow();jnRenderColumns();jnRefresh();return}
+ let got;
  try{
   let d=await fetch('/api/join-source',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify(s)}).then(r=>r.json());
-  jnProbe[i]=d.ok?d:{error:d.error||'読み取れませんでした'};
-  if(d.ok){
-   if(d.format&&d.format!==s.format&&d.format!=='fixed')s.format=d.format;
-   if(d.tables&&d.tables.length&&!s.table)s.table=d.tables[0];
-   if(d.sheets&&d.sheets.length&&!s.sheet)s.sheet=d.sheets[0];
-  }
- }catch{jnProbe[i]={error:'読み取れませんでした（通信に失敗しました）'}}
+    body:JSON.stringify(jnSourceBody(s))}).then(r=>r.json());
+  got=d.ok?d:{error:d.error||'読み取れませんでした'};
+ }catch{got={error:'読み取れませんでした（通信に失敗しました）'}}
+ // 返事が来るまでに、このカードを選び直した・外した・別のマスタを開いたなら、この返事は古い。捨てる
+ // （2.10.1 まで、遅れて届いた前のファイルの列が、新しく選んだファイルの列を上書きしていた）
+ if(jnEditing!==ed||!ed.sources.includes(s)||jnProbeSeq[k]!==seq)return;
+ jnProbe[k]=got;
+ if(got.ok){
+  if(got.format&&got.format!==s.format&&got.format!=='fixed')s.format=got.format;
+  if(got.tables&&got.tables.length&&!s.table)s.table=got.tables[0];
+  if(got.sheets&&got.sheets.length&&!s.sheet)s.sheet=got.sheets[0];
+ }
  jnRenderFlow();jnRenderColumns();jnRefresh();
 }
+function jnSourceBody(s){let {_k,...x}=s;return x}
 function jnCollect(){
- return {...jnEditing,name:$('#jn-name').value.trim(),description:$('#jn-desc').value.trim(),
-  columns:(jnColMode==='auto'?[]:(jnEditing.columns||[]))};
+ // 送る・比べるのは保存する中身だけ（画面の都合の印・一致の数・使っている対象は入れない）
+ let e=jnEditing;
+ return {id:e.id||'',name:$('#jn-name').value.trim(),description:$('#jn-desc').value.trim(),
+  sources:e.sources.map(jnSourceBody),joins:e.joins,columns:(jnColMode==='auto'?[]:(e.columns||[]))};
 }
 function jnRefresh(){
  clearTimeout(jnPreviewTimer);
  jnPreviewTimer=setTimeout(()=>{jnPreview();jnRenderOrder()},350);
+ jnScheduleSave();
+}
+/* 保存は自動（2.10.1。読取マスタ 2.8.0 と同じ）。変えたら少し待って保存し、状態だけを出す。
+   保存できない形（名前が無い・キーが無い など）は保存せず、その理由を同じ場所に出す。
+   保存しても開き直さない ―― 2.10.0 までは［保存］のたびに開き直し、全部のファイルを読み直して、
+   その間に打っていた欄も描き直していた。 */
+let jnSaved='',jnAutoTimer=0,jnSaving=null,jnPreviewSeq=0,jnOrderSeq=0;
+function jnAutoState(kind,text,when=''){
+ let el=$('#jn-autosave');if(!el)return;
+ el.className='lay-autosave'+(kind?' is-'+kind:'');
+ el.innerHTML=E(text)+(when?` <small>${E(when)}</small>`:'');
+}
+function jnScheduleSave(){
+ if(!jnEditing)return;
+ clearTimeout(jnAutoTimer);
+ if(JSON.stringify(jnCollect())===jnSaved){jnAutoTimer=0;return}
+ jnAutoState('wait','変更を保存します…');
+ jnAutoTimer=setTimeout(jnAutoSave,800);
+}
+async function jnAutoSave(){
+ jnAutoTimer=0;
+ if(jnSaving){await jnSaving;return jnScheduleSave()}
+ if(!jnEditing)return;
+ let ed=jnEditing,body=jnCollect(),snap=JSON.stringify(body);
+ if(snap===jnSaved)return;
+ if(!body.name)return jnAutoState('wait','結合マスタ名を入れると保存します');
+ jnAutoState('busy','保存しています…');
+ jnSaving=fetch('/api/join-recipes',{method:'POST',headers:{'Content-Type':'application/json'},body:snap})
+  .then(r=>r.json()).catch(()=>null);
+ let d=await jnSaving;jnSaving=null;
+ if(jnEditing!==ed)return;
+ if(!d||!d.ok)return jnAutoState('ng','保存できません: '+(d?.error||'通信に失敗しました'));
+ let first=!ed.id;
+ ed.id=d.recipe.id;ed.updated_at=d.recipe.updated_at;
+ jnSaved=JSON.stringify({...body,id:d.recipe.id});
+ let i=joinCache.findIndex(x=>x.id===d.recipe.id),keep={used_by:i>=0?joinCache[i].used_by:[]};
+ if(i>=0)joinCache[i]={...d.recipe,...keep};else joinCache.push({...d.recipe,...keep});
+ $('#jn-delete').hidden=false;jnRenderList();
+ jnAutoState('ok',first?'作成して保存しました':'自動で保存しました',layWhen(d.recipe.updated_at));
+ if(JSON.stringify(jnCollect())!==jnSaved)jnScheduleSave();
+}
+/* 別のマスタへ移る前に、待っている保存を済ませる。保存できない変更が残っているなら、捨ててよいかを聞く。 */
+async function jnLeave(){
+ if(!jnEditing)return true;
+ if(jnAutoTimer){clearTimeout(jnAutoTimer);await jnAutoSave()}
+ if(jnSaving)await jnSaving;
+ if(JSON.stringify(jnCollect())!==jnSaved&&!confirm('保存できない変更があります（'+($('#jn-autosave')?.textContent||'')+'）。捨てて移りますか？'))return false;
+ return true;
 }
 /* ---- 実行の順番 ------------------------------------------------------------
    結合の材料が、このアプリのほかの対象の出力であることは珍しくない。そのときは
@@ -5232,8 +5315,10 @@ function jnRefresh(){
    組み立てているその場に出す。 */
 async function jnRenderOrder(){
  let box=$('#jn-order');if(!box||!jnEditing)return;
+ let seq=++jnOrderSeq;
  let d=await fetch('/api/join-order',{method:'POST',headers:{'Content-Type':'application/json'},
    body:JSON.stringify({recipe:jnCollect()})}).then(r=>r.json()).catch(()=>null);
+ if(seq!==jnOrderSeq)return;
  if(!d||!d.ok||!d.made_count){box.hidden=true;return}
  box.hidden=false;
  let made=d.sources.filter(x=>x.made_by.length);
@@ -5248,11 +5333,14 @@ async function jnRenderOrder(){
 }
 async function jnPreview(){
  let box=$('#jn-preview');if(!box||!jnEditing)return;
+ let seq=++jnPreviewSeq;
  let ready=jnEditing.sources.every(s=>s.path)&&jnEditing.joins.every(j=>(j.keys||[]).some(k=>k.left&&k.right));
  if(!ready){box.innerHTML='<p class="hint">ファイルとキーがそろうと、できあがりの先頭12行がここに出ます。</p>';return}
  box.innerHTML='<p class="hint">繋いでいます…</p>';
  let d=await fetch('/api/join-preview',{method:'POST',headers:{'Content-Type':'application/json'},
    body:JSON.stringify({recipe:jnCollect(),lines:12})}).then(r=>r.json()).catch(()=>null);
+ // 返事が来るまでに設定を変えていたら、この結果は古い。捨てる（新しい頼みの返事を待つ）
+ if(seq!==jnPreviewSeq||!jnEditing)return;
  if(!d)return box.innerHTML='<p class="lay-note is-ng">できあがりを取得できませんでした（通信に失敗しました）</p>';
  if(!d.ok){
   jnEditing._match=[];jnEditing._rows=null;jnRenderFlow();
@@ -5270,6 +5358,8 @@ async function jnPreview(){
 function jnOpen(r){
  jnEditing=structuredClone(r||jnBlank());
  jnEditing.columns=jnEditing.columns||[];
+ jnEditing.sources.forEach(jnKey);
+ clearTimeout(jnAutoTimer);jnAutoTimer=0;jnProbeSeq={};
  jnColMode=(jnEditing.columns.length?'pick':'auto');
  $$('#jn-col-mode button').forEach(b=>b.classList.toggle('on',b.dataset.colmode===jnColMode));
  jnProbe={};jnMode={};jnHints={};jnHintBusy={};jnHintOpen={};jnClosePick();
@@ -5278,29 +5368,27 @@ function jnOpen(r){
  $('#jn-delete').hidden=!jnEditing.id;
  $('#jn-state').textContent=(r&&r.used_by&&r.used_by.length)?`${r.used_by.length}件の対象が使用中: ${r.used_by.slice(0,3).join('・')}`:'';
  $('#jn-preview').innerHTML='';
+ // 開いたときの形を覚える（新規でも。何も変えていないのに「保存します」と出さない・移るときに聞かない）
+ jnSaved=JSON.stringify(jnCollect());
+ jnAutoState(r&&r.updated_at?'ok':'',r&&r.updated_at?'保存済み':'',r&&r.updated_at?layWhen(r.updated_at):'');
  jnRenderFlow();jnRenderColumns();jnRenderList();jnRenderOrder();
  jnEditing.sources.forEach((_,i)=>jnProbeSource(i));
-}
-async function jnSave(){
- let d=await fetch('/api/join-recipes',{method:'POST',headers:{'Content-Type':'application/json'},
-   body:JSON.stringify(jnCollect())}).then(r=>r.json()).catch(()=>null);
- if(!d||!d.ok)return toast(d?.error||'保存できませんでした');
- toast('結合マスタを保存しました');
- await loadJoins(true);jnRenderList();
- jnOpen(joinCache.find(x=>x.id===d.recipe.id)||d.recipe);
 }
 async function jnDelete(){
  if(!jnEditing?.id)return;
  if(!confirm(`結合マスタ「${jnEditing.name}」を削除しますか？`))return;
  let d=await fetch('/api/join-recipes/'+encodeURIComponent(jnEditing.id),{method:'DELETE'}).then(r=>r.json()).catch(()=>null);
  if(!d||!d.ok)return toast(d?.error||'削除できませんでした');
- toast('削除しました');jnEditing=null;
+ toast('削除しました');jnEditing=null;jnSaved='';clearTimeout(jnAutoTimer);jnAutoTimer=0;
  await loadJoins(true);jnRenderList();
  $('#jn-edit').hidden=true;$('#jn-empty').hidden=false;
 }
 async function openJoins(){
  await loadJoins(true);jnLoadCandidates(true);jnRenderList();
- if(jnEditing){let cur=joinCache.find(x=>x.id===jnEditing.id);if(cur)jnOpen(cur)}
+ // 開いているマスタは開き直さない。2.10.0 までは、ほかの画面から戻るたびに保存済みの形で開き直し、
+ // 保存前の変更を捨て、全部のファイルを読み直していた。使っている対象の数だけ新しくする
+ if(jnEditing&&jnEditing.id){let cur=joinCache.find(x=>x.id===jnEditing.id);
+  if(cur)$('#jn-state').textContent=(cur.used_by&&cur.used_by.length)?`${cur.used_by.length}件の対象が使用中: ${cur.used_by.slice(0,3).join('・')}`:''}
 }
 /* 候補の一覧: 打って絞り、上下で選び、Enterで決める。マウスへ持ち替えずに済ませる。 */
 if($('#jn-pick-q'))$('#jn-pick-q').oninput=e=>{jnPickQ=e.target.value;jnPickIdx=0;jnRenderPick()};
@@ -5315,15 +5403,15 @@ if($('#jn-pick-close'))$('#jn-pick-close').onclick=jnClosePick;
 if($('#jn-pick-manual'))$('#jn-pick-manual').onclick=()=>{
  // 「一覧に無い」は行き止まりにしない。そのまま直接入力へ切り替えて、打てる状態で返す。
  let i=jnPickFor;jnClosePick();
- if(i>=0){jnMode[i]='manual';jnRenderFlow();
+ if(i>=0){jnMode[jnKey(jnEditing.sources[i])]='manual';jnRenderFlow();
   let el=document.querySelector(`#jn-flow .jn-card[data-i="${i}"] .jn-path`);if(el)el.focus()}
 };
 document.addEventListener('mousedown',e=>{
  let p=$('#jn-pick');
  if(p&&!p.hidden&&!p.contains(e.target)&&!e.target.closest('.jn-pick-btn'))jnClosePick();
 });
-if($('#jn-add'))$('#jn-add').onclick=()=>jnOpen(null);
-if($('#jn-save'))$('#jn-save').onclick=jnSave;
+if($('#jn-add'))$('#jn-add').onclick=async()=>{if(await jnLeave())jnOpen(null)};
+['jn-name','jn-desc'].forEach(k=>{if($('#'+k))$('#'+k).oninput=jnScheduleSave});
 if($('#jn-delete'))$('#jn-delete').onclick=jnDelete;
 if($('#jn-search'))$('#jn-search').oninput=e=>{jnSearch=e.target.value;jnRenderList()};
 if($('#jn-add-source'))$('#jn-add-source').onclick=()=>{

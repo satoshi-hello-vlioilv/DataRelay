@@ -424,6 +424,27 @@ def _read_lines(path,encoding,unit):
    for line in f:
     yield line.rstrip('\r\n')
 
+# 読めない記号だけの行（2.10.1）。元のシステムによっては、最後の改行のあとに「ファイルの終わり」の印
+# （Ctrl+Z ＝ 0x1A）や NUL を付けて書き出す。空行ではないので「空行を飛ばす」では外れず、出力の最後に
+# 「□」だけの行ができていた。タブ・改行以外の制御文字と DEL、読めなかった文字（U+FFFD）だけでできた行は、
+# どんな取り決めでもデータにはならないので、設定によらず外して数える。
+EOF_MARK='\x1a'
+_JUNK_CHARS=frozenset(chr(c) for c in range(0x20) if chr(c)!='\t')|{'\x7f','\ufffd'}
+_JUNK_BYTES=frozenset(c for c in range(0x20) if c!=0x09)|{0x7f}
+
+def is_junk_line(line):
+ """読めない記号だけの行か。空白・タブだけの行は空行なので、ここでは数えない（「空行を飛ばす」に任せる）。"""
+ if isinstance(line,bytes):
+  body=line.strip(b' \t')
+  return bool(body) and all(c in _JUNK_BYTES for c in body)
+ body=line.strip(' \t\u3000')
+ return bool(body) and all(c in _JUNK_CHARS for c in body)
+
+def is_junk_row(cells):
+ """CSV などで読んだ1行が、空か読めない記号だけのセルでできているか（終わりの印だけの行が1件になったもの）。"""
+ vals=[str(c or '') for c in (cells or [])]
+ return any(is_junk_line(v) for v in vals) and all(not v.strip(' \t\u3000') or is_junk_line(v) for v in vals)
+
 def read_text_rows(path,layout,limit=None,keep_raw=False):
  """固定長テキストを表にする。(見出し, 本体, 内訳) を返す。
 
@@ -436,7 +457,7 @@ def read_text_rows(path,layout,limit=None,keep_raw=False):
  headers=[c['name'] for c in cols]
  body=[];raws=[]
  stat={'lines':0,'rows':0,'skipped_blank':0,'skipped_head':0,'skipped_tail':0,
-       'short_rows':0,'broken_cells':0,'width':width,'unit':l['unit'],'encoding':l['encoding'],
+       'skipped_junk':0,'short_rows':0,'broken_cells':0,'width':width,'unit':l['unit'],'encoding':l['encoding'],
        'mode':l['mode'],'fields_max':0,
        'types':layout_column_types(l),'type_errors':0,'type_samples':{}}
  # 型を1つも決めていなければ、ここは丸ごと通らない（これまでとまったく同じ道）。
@@ -478,6 +499,11 @@ def read_text_rows(path,layout,limit=None,keep_raw=False):
   stat['lines']+=used
   if stat['lines']<=l['skip_head']:
    stat['skipped_head']+=1;continue
+  if is_junk_line(line):
+   stat['skipped_junk']+=1;continue
+  # 最後の行の後ろに付いた終わりの印（改行が無いとき）は、印だけを外して行は残す
+  mark=EOF_MARK.encode() if isinstance(line,bytes) else EOF_MARK
+  if line.endswith(mark):line=line.rstrip(mark)
   if l['skip_blank'] and line.strip()==blank:
    stat['skipped_blank']+=1;continue
   if l['header_row'] and not header_seen[0]:
@@ -520,6 +546,8 @@ def preview_text(path,layout,lines=12):
  # 区切りでは、1件目の項目そのもの（取った列ではなく、分けた全部）も返す。画面が「項目の何番目に
  # 何が入っているか」を列の横に出すため ―― 番号を直したとき、その場で値が変わって見える。
  if stat['mode']=='delimited' and raws:out['fields']=splitter(layout)(raws[0])
+ if stat['skipped_junk']:
+  out['notes'].append(f'読めない記号だけの行（ファイルの終わりの印など）{stat["skipped_junk"]}行は、データにせず外しました')
  if stat['short_rows']:
   if stat['mode']=='delimited':
    out['notes'].append(f'{stat["short_rows"]}行は項目が{stat["width"]}個に足りず、足りない列は空になりました'
@@ -608,10 +636,10 @@ def write_intermediate_csv(path,layout,dst,reject_zero=False,encoding='utf-8-sig
  dst.parent.mkdir(parents=True,exist_ok=True)
  with dst.open('w',encoding=encoding,newline='') as f:
   w=csv.writer(f,quoting=csv.QUOTE_MINIMAL);w.writerow(headers);w.writerows(body)
- log.info('TEXT_READ file=%s size=%s mode=%s encoding=%s unit=%s width=%s 行=%s（読んだ行%s 空%s 見出し・先頭%s 末尾%s）'
+ log.info('TEXT_READ file=%s size=%s mode=%s encoding=%s unit=%s width=%s 行=%s（読んだ行%s 空%s 読めない記号だけ%s 見出し・先頭%s 末尾%s）'
           ' 短い行=%s 文字の途中で切れた=%s 列=%s 中間CSV=%s',
           p,p.stat().st_size,stat['mode'],stat['encoding'],stat['unit'],stat['width'],stat['rows'],stat['lines'],
-          stat['skipped_blank'],stat['skipped_head'],stat['skipped_tail'],stat['short_rows'],
+          stat['skipped_blank'],stat['skipped_junk'],stat['skipped_head'],stat['skipped_tail'],stat['short_rows'],
           stat['broken_cells'],len(headers),dst)
  if stat['short_rows']:
   log.warning('TEXT_SHORT_ROWS file=%s 行=%s が%s%sに足りません。足りない列は空になります',

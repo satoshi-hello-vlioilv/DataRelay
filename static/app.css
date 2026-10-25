@@ -3424,5 +3424,6 @@ main:has(#layouts.on,#joins.on,#mqueries.on)>.subnav{margin-bottom:0}
 #paths.on{padding-top:6px}
 /* ファイル結合の［削除］は［保存］の隣から離す（読取マスタと同じく、下に文字で） */
 .jn-edit .lay-foot{flex-wrap:wrap}
+.jn-edit .lay-foot #jn-autosave{margin-left:auto}
 .jn-edit #jn-delete{order:9;flex-basis:100%;margin-left:auto;text-align:right;background:transparent;color:#a4463d;font-size:12px;padding:6px 0 0;border:0;border-top:1px dashed #e3ebee;border-radius:0}
 .jn-edit #jn-delete:hover{text-decoration:underline;filter:none}
