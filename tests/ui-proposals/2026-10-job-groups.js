@@ -44,6 +44,22 @@
  .tg-menu hr{border:0;border-top:1px solid #eef3f5;margin:3px 0}
  .tg-menu .danger{color:#a4463d}
  .tg-hide{display:none!important}
+ /* 2回目（組合せ）: 塗りの実行・見出しを上に残す・まとめて選ぶ・止める・跳ぶ */
+ .tg-run.solid{background:#0b7f8c;border-color:#0b7f8c;color:#fff}.tg-run.solid:hover{background:#086f7b}
+ .tg-run.stop{background:#fff;border-color:#e2b4ae;color:#a4463d}
+ .tg-head.sticky td{position:sticky;top:var(--th,37px);z-index:3}
+ .tg-ck{width:16px!important;height:16px!important;margin:0 2px 0 4px}
+ .tg-next{font-size:11.5px;color:#5b707a;font-weight:700;white-space:nowrap}
+ .tg-jump{display:flex;align-items:center;gap:6px;margin:0 0 6px;flex:none;flex-wrap:nowrap;overflow:hidden}
+ .tg-jump button{height:28px;display:inline-flex;align-items:center;gap:6px;padding:0 10px;border-radius:7px;border:1px solid #d3e0e5;background:#fff;color:#35505b;font-size:12px;font-weight:800}
+ .tg-jump button small{font-weight:700;color:#7f929a}.tg-jump .lab{font-size:11.5px;color:#6b7f88;font-weight:800;margin-right:2px}
+ .tg-jump .sp{flex:1}
+ .tg-seg{display:inline-flex;height:8px;width:120px;border-radius:999px;overflow:hidden;background:#e6ecef}
+ .tg-seg i{display:block;height:100%}
+ .tg-head.sticky td.tg-ckcell{padding:0 8px!important;vertical-align:middle}
+ .tg-names{font-size:11.5px;color:#7a8d96;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:1 1 auto;margin-left:6px}
+ .tg-jump .dotst{width:7px;height:7px;border-radius:50%;display:inline-block}
+
  /* C: 左のグループの一覧 */
  .tg-split{display:grid;grid-template-columns:220px minmax(0,1fr);gap:10px;min-height:0;flex:1}
  .tg-side{background:#fff;border:1px solid #d7e0e5;border-radius:10px;padding:8px;display:flex;flex-direction:column;gap:2px;overflow:auto}
@@ -89,6 +105,27 @@
  function menu(g) {
   return `<div class="tg-menu" role="menu">${btn('', 'play', `「${E(g.name)}」を実行<small>有効なものだけ</small>`)}${btn('', '', 'このグループの対象をすべて選ぶ')}<hr>${btn('', '', 'すべて有効にする')}${btn('', '', 'すべて無効にする')}<hr>${btn('', '', '名前を変える…')}${btn('', '', '上へ<small>グループの並び</small>')}${btn('', '', '下へ')}<hr>${btn('danger', '', 'グループを解く<small>対象は残ります</small>')}</div>`;
  }
+ // 状態を1本の帯で（緑=有効で前回成功・橙=未実行・灰=無効）
+ const seg = s => `<span class="tg-chips"><span class="tg-seg" title="有効 ${s.on}・無効 ${s.off}・未実行 ${s.never}"><i style="width:${(s.on - Math.min(s.on, s.never)) / s.n * 100}%;background:#16a37a"></i><i style="width:${Math.min(s.on, s.never) / s.n * 100}%;background:#e0a33a"></i><i style="width:${s.off / s.n * 100}%;background:#b8c3c8"></i></span><span class="tg-chip ok">有効 ${s.on}</span>${s.off ? `<span class="tg-chip off">無効 ${s.off}</span>` : ''}${s.never ? `<span class="tg-chip warn">未実行 ${s.never}</span>` : ''}</span>`;
+ // 実行中の様子（本物の画面と同じ: 行の進み具合・右上の状態）。2回目は全案に入れる（1回目は見本の作りが足りず、行が「未実行」のままだった）
+ function live(key) {
+  const trs = rows().filter(t => groupOf(t).key === key && /有効/.test(t.querySelector('.state')?.textContent || ''));
+  trs.forEach((t, i) => {
+   const rp = t.querySelector('.rowprogress'); if (!rp) return;
+   const st = i < 2 ? ['is-done', '完了', 100, '12,480行 ・ 0:41'] : i < 4 ? ['is-running', '実行中', i === 2 ? 64 : 31, i === 2 ? '問い合わせ中 ・ 0:22' : '保存中 ・ 0:09'] : ['is-wait', '待ち', 0, `待ち ${i - 3}番目`];
+   rp.classList.add(st[0]); rp.querySelector('.rp-state').textContent = st[1]; rp.querySelector('.rp-bar').style.width = st[2] + '%'; rp.querySelector('.rp-detail').textContent = st[3];
+  });
+  const stt = $('#st'), sub = $('#sub'); if (stt) stt.textContent = '処理中'; if (sub) sub.textContent = `仕掛 2 / ${trs.length}`;
+ }
+ function foldBtn(v) {
+  const sp = $('#jobs .jb-idle .jb-sp'); sp?.insertAdjacentHTML('afterend', btn('tbtn', v === 2 ? 'down' : 'right', v === 2 ? 'すべて開く' : 'すべて畳む', 'title="グループをすべて畳む・開く"'));
+ }
+ function jump(v) {
+  const all = rows(), bar = document.createElement('div'); bar.className = 'tg-jump';
+  bar.innerHTML = `<span class="lab">グループ</span>` + GROUPS.map(g => `<button type="button"><i class="tg-dot" style="background:${g.color}"></i>${E(g.name)} <small>${all.filter(t => groupOf(t) === g).length}</small>${TG.r3 ? `<span class="dotst" title="確認待ちあり" style="background:#e0a33a"></span>` : ''}</button>`).join('')
+   + `<span class="sp"></span>` + btn('tbtn', '', v === 2 ? 'すべて開く' : 'すべて畳む');
+  $('#jobs .tablebox').before(bar);
+ }
  // 表の中に見出し行を差し込み、行をグループの順に並べ直す
  function inTable(o) {
   const body = $('#jobs-body'), all = rows(), n = ncol();
@@ -97,13 +134,20 @@
    const s = summary(trs), closed = (o.closed || []).includes(g.key), running = o.running === g.key, menuOpen = o.menu === g.key;
    if (o.card && gi) body.insertAdjacentHTML('beforeend', `<tr class="tg-card-gap"><td colspan="${n}"></td></tr>`);
    const head = document.createElement('tr');
-   head.className = `tg-head${closed ? ' closed' : ''}${o.stripe ? ' stripe' : ''}${o.card ? ' card' : ''}`;
+   head.className = `tg-head${closed ? ' closed' : ''}${o.stripe ? ' stripe' : ''}${o.card ? ' card' : ''}${o.sticky ? ' sticky' : ''}`;
    head.style.setProperty('--gc', g.color);
-   head.innerHTML = `<td colspan="${n}"><div class="tg-bar">${btn('tg-tw', closed ? 'right' : 'down', '', `aria-expanded="${!closed}" title="${closed ? '開く' : '畳む'}"`)}`
+   // align: 見出しのチェックを、行のチェックと同じ列（1列目）に置く
+   const sv = running && o.liveChips ? { ...s, never: Math.max(0, s.never - 2) } : s;
+   head.innerHTML = (o.align ? `<td class="tg-ckcell"><span class="drag-handle" style="visibility:hidden">⋮⋮</span><input type="checkbox" class="rowcheck" title="このグループの対象をすべて選ぶ"></td><td colspan="${n - 1}">` : `<td colspan="${n}">`)
+    + `<div class="tg-bar">${btn('tg-tw', closed ? 'right' : 'down', '', `aria-expanded="${!closed}" title="${closed ? '開く' : '畳む'}"`)}`
     + (o.dot ? `<i class="tg-dot" style="background:${g.color}"></i>` : '')
-    + `<b>${E(g.name)}</b><span class="tg-n">${s.n}件</span>${chips(s)}<span class="sp"></span>`
+    + (o.check && !o.align ? `<input type="checkbox" class="tg-ck" title="このグループの対象をすべて選ぶ">` : '')
+    + `<b>${E(g.name)}</b><span class="tg-n">${s.n}件</span>${o.seg ? seg(sv) : chips(sv)}`
+    + (o.names && closed ? `<span class="tg-names">${trs.slice(0, 6).map(nameOf).map(E).join('・')}${trs.length > 6 ? ` ほか${trs.length - 6}件` : ''}</span>` : '')
+    + (o.next && g.key && !running ? `<span class="tg-next">次回 ${g.key === 'sk' ? '今日 14:00' : g.key === 'pr' ? '明日 06:00' : '手動のみ'}</span>` : '') + `<span class="sp"></span>`
     + (running ? `<span class="tg-prog">実行中 2 / ${s.on}<i style="--p:${Math.round(200 / Math.max(1, s.on))}%"><b></b></i></span>` : '')
-    + (g.key || o.runNone ? btn('tg-run', 'play', running ? '実行中…' : (o.runLabel || 'グループを実行'), running ? 'disabled' : '') : '')
+    + (running && o.stop ? btn('tg-run stop', '', '■ 止める') : '')
+    + (g.key || o.runNone ? (running && o.stop ? '' : btn(`tg-run${o.solid ? ' solid' : ''}`, 'play', running ? '実行中…' : (o.runLabel || 'グループを実行'), running ? 'disabled' : '')) : '')
     + btn('tg-more', 'more', '', 'title="グループの操作"') + (menuOpen ? menu(g) : '') + `</div></td>`;
    body.append(head);
    trs.forEach(t => { if (o.stripe) { t.classList.add('tg-stripe'); t.style.setProperty('--gc', g.color); } if (closed) t.classList.add('tg-hide'); body.append(t); });
@@ -158,5 +202,28 @@
   bar?.querySelector('[data-filter-btn],#filter-open')?.closest('.jb-anchor')?.after(anchor);
   if (v === 3) anchor.insertAdjacentHTML('beforeend', `<span class="tg-prog" style="margin-left:8px">仕掛 実行中 2 / 6<i style="--p:33%"><b></b></i></span>`);
  };
- window.TG = { keys: Object.keys(P), show(k, v) { st(); P[k](v); return true; } };
+
+ // ---- 2回目: 組合せ4案（1回目の上位 E・A・B の良いところと、採点で挙がった欠点の直し） ----
+ const R2 = v => ({ card: true, dot: true, solid: true, sticky: true, closed: v === 2 ? ['pr', 'mg'] : [], running: v === 3 ? 'sk' : '', menu: v === 4 ? 'sk' : '' });
+ // H: E ＋ グループの実行を行の「実行」と同じ塗りに ＋ 見出しを表の上に残す（長いグループでも、どのグループの行か分かる）
+ P.H = v => inTable(R2(v));
+ // I: H ＋ 見出しのチェックでグループをまとめて選ぶ ＋ 実行中は「実行中…」の代わりに「止める」
+ P.I = v => inTable({ ...R2(v), check: true, stop: true });
+ // J: H ＋ 表の上にグループの札（押すとそのグループへ跳んで開く）と「すべて畳む／開く」 ＋ 状態を1本の帯でも示す
+ P.J = v => { jump(v); inTable({ ...R2(v), seg: true }); };
+ // K: H ＋ 見出しに次の予定（いつ動くか） ＋ 止める ＋ 見出しのチェック
+ P.K = v => inTable({ ...R2(v), next: true, stop: true, check: true });
+
+ // ---- 3回目: 組合せ4案（2回目の上位 I・J・H の良いところと、残った欠点の直し） ----
+ // 直し: 見出しのチェックを行のチェックと同じ列に・貼り付く見出しの隙間を無くす・実行中は札の数も進む
+ const R3 = v => ({ ...R2(v), stop: true, check: true, align: true, liveChips: true });
+ // L: I ＋ 直し
+ P.L = v => inTable(R3(v));
+ // M: L ＋ 表の上にグループの札（跳ぶ・確認待ちの点）と「すべて畳む／開く」
+ P.M = v => { TG.r3 = true; jump(v); inTable(R3(v)); };
+ // N: L ＋ 道具の段に「すべて畳む／開く」（段を増やさない）
+ P.N = v => { foldBtn(v); inTable(R3(v)); };
+ // O: N ＋ 畳んだ見出しに中の対象の名前を並べる（開かずに何が入っているか分かる）
+ P.O = v => { foldBtn(v); inTable({ ...R3(v), names: true }); };
+ window.TG = { keys: Object.keys(P), live: false, show(k, v) { st(); const th = $('#jobs-head'); if (th) document.documentElement.style.setProperty('--th', th.offsetHeight + 'px'); P[k](v); if (this.live && v === 3) live('sk'); return true; } };
 })();

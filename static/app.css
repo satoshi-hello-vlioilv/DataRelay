@@ -3427,3 +3427,50 @@ main:has(#layouts.on,#joins.on,#mqueries.on)>.subnav{margin-bottom:0}
 .jn-edit .lay-foot #jn-autosave{margin-left:auto}
 .jn-edit #jn-delete{order:9;flex-basis:100%;margin-left:auto;text-align:right;background:transparent;color:#a4463d;font-size:12px;padding:6px 0 0;border:0;border-top:1px dashed #e3ebee;border-radius:0}
 .jn-edit #jn-delete:hover{text-decoration:underline;filter:none}
+/* 対象のグループ（2.11.0。案の比べ方は tests/ui-proposals/2026-10-job-groups）。見出しの下の線とグループの間の空きで
+   区切る（行の左の線は確認待ちの印のまま。グループの色と混ぜない）。見出しは表の見出しの下に残る */
+.jobs-table tr.grp-gap td{height:10px;padding:0;background:#f3f6f8;border:0}
+.jobs-table tr.grp-head td{position:sticky;top:var(--jobs-th,37px);z-index:1;height:42px;padding:0;background:#fff;
+ border-top:1px solid var(--line);border-bottom:2px solid var(--gc);cursor:pointer}
+.jobs-table tr.grp-head:hover td{background:#f7fbfc}
+.jobs-table tr.grp-head.is-closed td{background:#f9fbfc}
+.grp-bar{display:flex;align-items:center;gap:10px;height:42px;padding:0 10px 0 8px;min-width:0}
+.grp-tw{width:26px;height:26px;padding:0;display:grid;place-items:center;border-radius:6px;background:transparent;color:#4f6873;flex:none}
+.grp-tw:hover{background:#e3edf0;filter:none}
+.grp-dot{width:10px;height:10px;border-radius:3px;background:var(--gc);flex:none}
+.grp-name{font-size:14px;color:#17384e;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:320px}
+.grp-n{font-size:11.5px;font-weight:700;color:#6b7f88;white-space:nowrap}
+.grp-n small{font-size:11px;font-weight:600;margin-left:2px}
+.grp-chips{display:flex;gap:6px;align-items:center;min-width:0;overflow:hidden}
+.grp-chip{font-size:11px;font-weight:800;border-radius:999px;padding:1px 8px;white-space:nowrap}
+.grp-chip.on{background:#e5f5ef;color:#087a57}.grp-chip.off{background:#edf0f2;color:#6e7880}
+.grp-chip.warn{background:#fdf3e1;color:#8a5a0c}.grp-chip.ng{background:#fdeeec;color:#a4463d}
+.grp-sp{flex:1}
+.grp-live{display:flex;align-items:center;gap:8px;font-size:11.5px;font-weight:800;color:#0b6577;white-space:nowrap}
+.grp-live[hidden]{display:none}
+.grp-live i{display:block;width:170px;height:7px;border-radius:999px;background:#dce7ea;overflow:hidden}
+.grp-live i b{display:block;height:100%;background:linear-gradient(90deg,#14a39f,#237fbc);transition:width .3s}
+.grp-live em{font-style:normal;color:#a4463d}
+/* グループを実行: 行の「実行」と同じ塗り（範囲が広いぶん、文字で「グループを」と言う） */
+.grp-run{height:30px;display:inline-flex;align-items:center;gap:6px;padding:0 13px;font-size:12px;white-space:nowrap}
+.grp-run:disabled{opacity:.55}
+.grp-more{width:30px;height:30px;padding:0;display:grid;place-items:center;border-radius:7px;background:transparent;color:#4f6873;flex:none}
+.grp-more:hover,.grp-more[aria-expanded="true"]{background:#e3edf0;filter:none}
+.group-menu{width:250px}
+.group-menu button{display:flex;align-items:center;gap:7px}
+.group-menu button small{margin-left:auto;font-size:10.5px;color:#8b9ca3;font-weight:600}
+.group-menu button:disabled{opacity:.4}
+.group-modal{width:min(520px,92vw)}
+.gd-chips{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 12px}
+.gd-chips[hidden]{display:none}
+.grp-pick{height:30px;display:inline-flex;align-items:center;gap:6px;padding:0 11px;border-radius:7px;background:#fff;color:#22404d;border:1px solid #c8d6dc;font-size:12px}
+.grp-pick:hover{background:#eef6f8;filter:none}
+.gd-name{display:grid;gap:4px;font-size:12px;font-weight:800;color:#425661}
+.gd-sp{flex:1}
+.group-modal .modalfoot .gd-clear{color:#a4463d}
+.jobs-table tr.grp-head td.grp-ckcell{padding:0 8px;cursor:default}
+.grp-ckcell .drag-handle{visibility:hidden}
+.grp-ckcell .grp-dh{display:inline-flex;width:12px;height:16px;margin-right:4px;vertical-align:middle}
+.grp-stop{height:30px;display:inline-flex;align-items:center;gap:6px;padding:0 12px;font-size:12px;white-space:nowrap;background:#fff;color:#a4463d;border:1px solid #e2b4ae}
+.grp-stop:hover{background:#fdf1ef;filter:none}
+.grp-stop[hidden],.grp-run[hidden]{display:none}
