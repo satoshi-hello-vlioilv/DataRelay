@@ -253,8 +253,14 @@ def run_recipe(recipe,reader,layouts=None,limit=None,source_limit=None):
   sql,names=build_sql(recipe,meta,limit)
   # 合わなかった側は NULL で返る。CSVへは空欄として書きたいので、ここで揃えておく。
   rows=[['' if v is None else v for v in r] for r in conn.execute(sql)]
+  # できあがりの件数は、先頭だけ取ったときも全体で数える（2.10.1 まで、下読みでは見せた行数＝上限12 を
+  # 件数として返し、画面の「できあがり n行」が設定のたびに 12 と本当の数のあいだを行き来していた）
+  total=len(rows)
+  if limit and len(rows)>=int(limit):
+   whole,_n=build_sql(recipe,meta,None)
+   total=int(conn.execute(f'SELECT COUNT(*) FROM ({whole})').fetchone()[0])
   stats={'sources':[{k:m[k] for k in ('alias','name','rows','columns','format')} for m in meta],
-         'joins':join_stats(conn,recipe,meta),'rows':len(rows),'columns':len(names),'sql':sql}
+         'joins':join_stats(conn,recipe,meta),'rows':total,'shown':len(rows),'columns':len(names),'sql':sql}
   return names,rows,stats
  finally:
   conn.close()
@@ -266,7 +272,9 @@ def preview_recipe(recipe,reader,layouts=None,lines=12,source_limit=2000):
  件数の内訳は「読み込んだぶんの中での話」なので、その旨も返す。
  """
  out={'ok':False,'headers':[],'rows':[],'stats':{},'notes':[]}
- bad=validate_recipe(recipe)
+ # 名前は保存のための決まりで、繋ぎ方とは関係が無い。作りかけ（名前がまだ無い）でも下読みできるようにする
+ # （2.10.1 まで、名前を入れるまで「結合マスタ名を入れてください」で下読みが止まっていた）
+ bad=validate_recipe(dict(recipe or {},name=str((recipe or {}).get('name') or '').strip() or '下読み'))
  if bad:
   out['error']='／'.join(bad);return out
  try:

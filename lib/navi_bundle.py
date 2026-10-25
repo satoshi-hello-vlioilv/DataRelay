@@ -89,6 +89,8 @@ def job_export_one(job,layout_name='',recipe_name='',query_name='',post_query_na
  if not (isinstance(v,dict) and (v.get('enabled') or v.get('item') or v.get('values'))):out.pop('variants',None)
  # データビュワーの表示の設定（2.2.0）も、使っていない対象は書かない（同じ理由）
  if not out.get('viewer'):out.pop('viewer',None)
+ # グループ（2.11.0）も、グループなしの対象は書かない（同じ理由）
+ if not out.get('group'):out.pop('group',None)
  if layout_name:out['layout_name']=_text(layout_name,120)
  if recipe_name:out['recipe_name']=_text(recipe_name,120)
  if query_name:out['mquery_name']=_text(query_name,120)
