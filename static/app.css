@@ -3479,3 +3479,6 @@ main:has(#layouts.on,#joins.on,#mqueries.on)>.subnav{margin-bottom:0}
 .jobs-table tr.grp-head.is-sub td{box-shadow:inset 0 1px 0 var(--line),inset 0 -1px 0 color-mix(in srgb,var(--gc) 55%,#fff)}
 .grp-crumb{font-size:11.5px;color:#7a8d96;white-space:nowrap;max-width:260px;overflow:hidden;text-overflow:ellipsis;flex:0 1 auto;min-width:0}
 .grp-pick small{font-size:10.5px;color:#7f929a;font-weight:600;margin-left:2px}
+/* 「共通: 出力先」は列が狭いとき3行まで折り返す（切って隠さない。2.12.0） */
+.jobs-table th .th-sub{white-space:normal;word-break:break-all;line-height:1.3;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical}
+.jobs-table th .th-sub .output-link{white-space:normal}
