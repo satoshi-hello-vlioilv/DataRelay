@@ -282,7 +282,7 @@ function setAllSelected(on){
    選択を実行を帯の全件実行の隣に置かない（押し間違えると取り消しにくい）ためでもある。 */
 function updateSelCount(){
  let n=$$('#jobs-body tr.selected').length,b=$('#run-selected'),c=$('#sel-count');
- if(c)c.textContent=n;paintGroupChecks();
+ if(c)c.textContent=n;paintGroupChecks();paintSelection();
  document.querySelector('#jobs .jb-idle')?.toggleAttribute('hidden',!!n);
  document.querySelector('#jobs .jb-sel')?.toggleAttribute('hidden',!n);
  if(n)closeJobPops();
@@ -421,7 +421,7 @@ const COLUMNS=[
   opts:{mode:'smart'},
   optUI:[{name:'mode',label:'見せ方',
           choices:[['smart','同じ場所は「共通」と省略'],['full','いつもフルパス'],['tail','いちばん下のフォルダー名だけ']]}]},
- {key:'progress',name:'進捗・次回実行',w:308,cls:'c-progress',
+ {key:'progress',name:'進捗・次回実行',w:270,cls:'c-progress',
   why:'いつのデータか、次はいつ動くか。実行中はここが進捗になります',
   opts:{metrics:true},optUI:[{name:'metrics',label:'前回の実績も出す（所要・件数・速度）',toggle:true}]},
  {key:'action',name:'操作',w:176,cls:'c-action',why:'行から直接押せるボタン',
@@ -456,12 +456,33 @@ function colMinWidth(cols){
  // 隠した列のぶんは詰める。固定のまま残すと、列を減らしたのに横スクロールが残る。
  return cols.reduce((a,k)=>a+(colDef(k).w||COL_AUTO_MIN),0);
 }
+/* 列の幅（2.12.0）: 決めた幅を下限にし、表の幅の余りを、文字が長くなりやすい列（名前・入力・出力ファイル・出力先）へ割合で配る。
+   全行が同じ出力先（「共通」）でも、出力先の列は見出しに共通の場所（長い）を出すので、割合は変えない */
+const COL_GROW={name:3,source:3,file:2,folder:2};
+// 全行が同じ出力先のとき、出力先の列は見出しの「共通: …」が1行で入る幅を下限にする（列が狭いと見出しだけ折れて高くなる）
+let colCommonPath='';
+function textWidth(t,font){let c=textWidth.c||(textWidth.c=document.createElement('canvas').getContext('2d'));c.font=font;return Math.ceil(c.measureText(t).width)}
+function colWidths(cols){
+ let box=document.querySelector('#jobs .tablebox'),avail=Math.max(0,(box?.clientWidth||0)-2),
+     common=colCommonPath&&colOpt('folder','mode')==='smart'?Math.min(340,textWidth('共通: '+colCommonPath,'600 10.5px "Yu Gothic UI",Meiryo,sans-serif')+20):0,
+     base=k=>k==='folder'?Math.max(colDef(k).w||COL_AUTO_MIN,common):(colDef(k).w||COL_AUTO_MIN),grow=k=>COL_GROW[k]||0,
+     extra=Math.max(0,avail-cols.reduce((a,k)=>a+base(k),0)),g=cols.reduce((a,k)=>a+grow(k),0);
+ return Object.fromEntries(cols.map(k=>[k,Math.floor(base(k)+(g?extra*grow(k)/g:0))]));
+}
+function applyColWidths(){
+ let ths=$$('#jobs-head th');if(!ths.length)return;
+ let cols=ths.map(th=>[...th.classList].find(c=>c.startsWith('col-')).slice(4)),w=colWidths(cols);
+ ths.forEach((th,i)=>th.style.width=w[cols[i]]+'px');
+}
+// 窓の大きさを変えたときや、ほかの画面から戻って表が見えたとき（隠れている間は幅が測れない）に配り直す
+if(window.ResizeObserver){let box=document.querySelector('#jobs .tablebox');if(box)new ResizeObserver(()=>requestAnimationFrame(()=>{applyColWidths();pushGroupHeads()})).observe(box)}
 function renderJobsHead(cols){
  let head=$('#jobs-head');if(!head)return;
+ let w=colWidths(cols);
  head.innerHTML='<tr>'+cols.map(k=>{
   let d=colDef(k),label=d.head===undefined?d.name:d.head;
   return `<th class="col-${k} ${d.cls||''} ${d.sort?'sortable':''}" ${d.sort?`data-sort="${d.sort}"`:''}`
-   +` style="width:${d.w?d.w+'px':'auto'}">${E(label)}</th>`;
+   +` style="width:${w[k]}px">${E(label)}</th>`;
  }).join('')+'</tr>';
  let t=head.closest('table');if(t)t.style.minWidth=colMinWidth(cols)+'px';
  $$('#jobs-head .sortable').forEach(h=>h.onclick=()=>{$('#sort').value=h.dataset.sort;sortDir*=-1;render()});
@@ -584,49 +605,95 @@ if($('#col-reset'))$('#col-reset').onclick=()=>{
 };
 function render(){let a=filtered(),body=$('#jobs-body');let canReorder=(!$('#search').value.trim()&&$('#filter-enabled').value==='all'&&$('#filter-schedule').value==='all');
  let cols=colVisible(),ctx={canReorder,commonOut:commonOutputFolder(a)};
- renderJobsHead(cols);
- let rowHtml=j=>`<tr data-id="${E(j.id)}" draggable="${canReorder}" class="${canReorder?'reorderable':''}">`
+ colCommonPath=ctx.commonOut||'';renderJobsHead(cols);
+ // 子のグループの行は、管理名称を段の深さぶん字下げする（どの段の行か、見出しまで戻らずに分かる）
+ let rowHtml=j=>`<tr data-id="${E(j.id)}" draggable="${canReorder}" class="${canReorder?'reorderable':''}"${hasGroups()&&groupParts(groupOf(j)).length>1?` style="--rd:${groupParts(groupOf(j)).length-1}"`:''}>`
   +cols.map(k=>`<td class="col-${k} ${colDef(k).cls||''}">${cellHtml(k,j,ctx)}</td>`).join('')
   +`</tr>`;
  // グループがあれば、見出しの行で区切る。畳んだグループの行は作らない（見出しに件数と状態が出る）
- body.innerHTML=hasGroups()?groupBlocks(a).map((b,i)=>groupHeadHtml(b,cols,!i,canReorder)+(groupIsClosed(b.name)?'':b.jobs.map(rowHtml).join(''))).join(''):a.map(rowHtml).join('');
- bindGroupHeads(body);paintGroupFold();paintRowProgress();
- let tb=body.closest('.tablebox');if(tb&&!tb.dataset.grpPush){tb.dataset.grpPush='1';tb.addEventListener('scroll',()=>requestAnimationFrame(pushGroupHeads),{passive:true})}pushGroupHeads();applyScheduleCells();updateSelCount();$('#empty').hidden=a.length>0;let all=cfg.jobs.length;
+ body.innerHTML=hasGroups()?groupRows(a).map((r,i)=>r.job?rowHtml(r.job):groupHeadHtml(r,cols,!i,canReorder)).join(''):a.map(rowHtml).join('');
+ bindGroupHeads(body);bindListDnD(body);paintGroupFold();paintRowProgress();
+ let tb=body.closest('.tablebox');if(tb&&!tb.dataset.grpPush){tb.dataset.grpPush='1';tb.addEventListener('scroll',()=>requestAnimationFrame(pushGroupHeads),{passive:true})}applyScheduleCells();updateSelCount();$('#empty').hidden=a.length>0;let all=cfg.jobs.length;
  $('#summary').innerHTML=`<b>${a.length===all?all:`${a.length} / ${all}`}<small>件</small></b><span>有効 ${cfg.jobs.filter(j=>j.enabled).length} ・ 自動実行ルール ${cfg.jobs.flatMap(j=>j.schedules||[]).filter(r=>r.enabled).length}</span>`;
  // 全行が同じ出力先なら、その場所は列の見出しに1度だけ書く（行には「共通」）。表の上に段を足さない
  let fth=$('#jobs-head th.col-folder');
- if(fth&&ctx.commonOut&&colOpt('folder','mode')==='smart')fth.insertAdjacentHTML('beforeend',`<span class="th-sub">共通: <a class="output-link" href="#" data-path="${E(ctx.commonOut)}" title="${E(ctx.commonOut)}">${E(ctx.commonOut)}</a></span>`);
+ if(fth&&ctx.commonOut&&colOpt('folder','mode')==='smart')fth.insertAdjacentHTML('beforeend',`<span class="th-sub">共通: <a class="output-link" href="#" data-path="${E(ctx.commonOut)}" title="${E(ctx.commonOut)}">${E(ctx.commonOut).replace(/\\/g,'\\<wbr>')}</a></span>`);
  // グループの見出しは表の見出しのすぐ下に残す（長いグループの途中でも、どのグループの行か分かる）。
  // 表の見出しの高さは「共通: 出力先」を足したあとで測り、1px 下へ潜らせて隙間から行が透けないようにする
  let thead=$('#jobs-head');if(thead)body.parentElement.style.setProperty('--jobs-th',Math.max(0,thead.getBoundingClientRect().height-1)+'px');
+ pushGroupHeads();
  let lc=$('#jobs-head .output-link');if(lc)lc.onclick=e=>{e.preventDefault();e.stopPropagation();openOutputFolder(lc.dataset.path)};
- paintFilterSummary();body.querySelectorAll('tr[data-id]').forEach(tr=>{let j=cfg.jobs.find(x=>x.id===tr.dataset.id);tr.onclick=e=>{if(!e.target.closest('button,a,input')){tr.classList.toggle('selected');let cb=tr.querySelector('.rowcheck');if(cb)cb.checked=tr.classList.contains('selected');updateSelCount()}};let cb=tr.querySelector('.rowcheck');if(cb)cb.onchange=e=>{tr.classList.toggle('selected',e.target.checked);updateSelCount()};tr.ondblclick=e=>{if(!e.target.closest('button,input,select,a'))openEditor(j)};let ed=tr.querySelector('.edit');if(ed)ed.onclick=()=>openEditor(j);let st=tr.querySelector('.state');if(st)st.onclick=e=>{e.stopPropagation();setJobEnabled(j.id,!j.enabled)};let ro=tr.querySelector('.run-one');if(ro)ro.onclick=()=>runJobs([j.id]);let cp=tr.querySelector('.copy-one');if(cp)cp.onclick=()=>duplicateJob(j);let dl=tr.querySelector('.rowactions .delete');if(dl)dl.onclick=()=>deleteJob(j);let l=tr.querySelector('.output-link');if(l)bindOutputLink(l,j);bindRowDnD(tr);tr.oncontextmenu=e=>{if(e.target.closest("a.output-link"))return;e.preventDefault();showJobContextMenu(e,j,tr)}})}
-/* ==== 対象のグループ（2.11.0。案の比べ方は tests/ui-proposals/2026-10-job-groups） ====
-   グループは対象ごとのグループ名1つ（j.group）。空はグループなし。1件でもグループがあると、一覧はグループごとに
-   見出しの行で区切る（無ければ、これまでどおり見出しの無い一覧）。
-   ・見出し: 畳む・色の印・名前・件数・状態（有効・無効・確認待ち）・実行中の進み具合・グループを実行・操作
-   ・グループの並びは一覧の並びで最初に出てくる順。上下へ動かすのは、対象のまとまりを並べ替えること
-   ・畳んだかどうかはこの PC の画面だけの好み（localStorage）。検索している間は、当たった行のあるグループを開いて見せる */
-const GROUP_CLOSED_KEY='datarelay-groups-closed';
-// 色の印。並びの順に、隣り合っても見分けやすい色相を配る。グループなしは灰色
+ paintFilterSummary();body.querySelectorAll('tr[data-id]').forEach(tr=>{let j=cfg.jobs.find(x=>x.id===tr.dataset.id);tr.onmousedown=e=>{if(e.shiftKey)e.preventDefault()};tr.onclick=e=>{if(!e.target.closest('button,a,input'))pickRow(tr,e,!tr.classList.contains('selected'))};let cb=tr.querySelector('.rowcheck');if(cb)cb.onclick=e=>{e.stopPropagation();pickRow(tr,e,cb.checked)};tr.ondblclick=e=>{if(!e.target.closest('button,input,select,a'))openEditor(j)};let ed=tr.querySelector('.edit');if(ed)ed.onclick=()=>openEditor(j);let st=tr.querySelector('.state');if(st)st.onclick=e=>{e.stopPropagation();setJobEnabled(j.id,!j.enabled)};let ro=tr.querySelector('.run-one');if(ro)ro.onclick=()=>runJobs([j.id]);let cp=tr.querySelector('.copy-one');if(cp)cp.onclick=()=>duplicateJob(j);let dl=tr.querySelector('.rowactions .delete');if(dl)dl.onclick=()=>deleteJob(j);let l=tr.querySelector('.output-link');if(l)bindOutputLink(l,j);tr.oncontextmenu=e=>{if(e.target.closest("a.output-link"))return;e.preventDefault();showJobContextMenu(e,j,tr)}})}
+/* ==== 対象のグループ（2.11.0。2.12.0 で5階層・ドラッグ・範囲選択。案の比べ方は tests/ui-proposals/2026-10-job-groups・2026-10-job-groups2） ====
+   グループは対象ごとの「グループの道筋」1つ（j.group。例: 生産・品質/品質/圧延）。空はグループなし。5階層まで。
+   1件でもグループがあると、一覧はグループの木の順（見出し → そのグループの対象 → 子のグループ）に見出しの行で区切る。
+   ・見出し: 畳む・色の印・名前・件数・状態（有効・無効・確認待ち）・実行中の進み具合・グループを実行・操作。数と実行は子のグループも含む
+   ・グループの並びは一覧の並びで最初に出てくる順。対象の並び（問い合わせ順）はいつも木の順にそろえて保存する
+   ・畳んだかどうかはこの PC の画面だけの好み（localStorage）。検索している間は、当たった行のあるグループを開いて見せる
+   保存の決まり（段の区切り・階層の数・1段の長さ）は lib/navi_groups.py と同じ。 */
+const GROUP_CLOSED_KEY='datarelay-groups-closed',GROUP_SEP='/',GROUP_DEPTH=5,GROUP_PART_MAX=40;
+// 色の印。いちばん上の段の並びの順に、隣り合っても見分けやすい色相を配る（子のグループは親の色）。グループなしは灰色
 const GROUP_COLORS=['#0f8a8f','#4a67c9','#b5730f','#8a55b3','#2f8f4e','#c0507a','#5b7f99','#9a7b1c'],GROUP_NONE_COLOR='#9aa9b0';
 let groupClosed=new Set();
 try{groupClosed=new Set(JSON.parse(localStorage.getItem(GROUP_CLOSED_KEY)||'[]'))}catch{}
-const groupOf=j=>String(j?.group||'').trim();
-const hasGroups=()=>(cfg?.jobs||[]).some(j=>groupOf(j));
-function groupOrder(){let seen=[];for(let j of cfg?.jobs||[]){let g=groupOf(j);if(g&&!seen.includes(g))seen.push(g)}return seen}
-// 色はグループの並び順で配る（名前から決めると、近いグループが同じ色になることがある）
-function groupColor(name){if(!name)return GROUP_NONE_COLOR;let i=groupOrder().indexOf(name);return GROUP_COLORS[(i<0?0:i)%GROUP_COLORS.length]}
-const groupLabel=name=>name||'グループなし';
-// 見せる行（絞り込み・並びを済ませた a）を、グループの並び → グループなし の順に分ける
-function groupBlocks(a){return [...groupOrder(),''].map(name=>({name,jobs:a.filter(j=>groupOf(j)===name)})).filter(b=>b.jobs.length)}
-function groupIsClosed(name){return groupClosed.has(name)&&!$('#search').value.trim()}
-function setGroupClosed(name,closed){
- closed?groupClosed.add(name):groupClosed.delete(name);
- try{localStorage.setItem(GROUP_CLOSED_KEY,JSON.stringify([...groupClosed]))}catch{}
- render();
+function saveGroupClosed(){try{localStorage.setItem(GROUP_CLOSED_KEY,JSON.stringify([...groupClosed]))}catch{}}
+function normGroup(s){
+ if(typeof s!=='string')return '';
+ return s.split(GROUP_SEP).map(p=>p.replace(/\s+/g,' ').trim().slice(0,GROUP_PART_MAX)).filter(Boolean).slice(0,GROUP_DEPTH).join(GROUP_SEP);
 }
-const groupJobs=name=>(cfg?.jobs||[]).filter(j=>groupOf(j)===name);
+const groupOf=j=>normGroup(j?.group||'');
+const groupParts=p=>p?p.split(GROUP_SEP):[];
+const groupParent=p=>groupParts(p).slice(0,-1).join(GROUP_SEP);
+const groupLeaf=p=>groupParts(p).pop()||'グループなし';
+const groupLabel=p=>p?groupParts(p).join(' › '):'グループなし';
+// そのグループ（子のグループも含む）に入るか。グループなし（''）は、どこにも入っていない対象だけ
+const inGroup=(g,p)=>p?(g===p||g.startsWith(p+GROUP_SEP)):!g;
+const hasGroups=()=>(cfg?.jobs||[]).some(j=>groupOf(j));
+/* グループの木。対象の並びで最初に出てくる順に、親の下へ子を並べる。親だけのグループ（対象が無く子だけある）も節になる */
+function groupTree(jobs=cfg?.jobs||[]){
+ let root={path:'',kids:[]},map=new Map([['',root]]);
+ for(let j of jobs){
+  let parts=groupParts(groupOf(j));
+  for(let i=1;i<=parts.length;i++){let p=parts.slice(0,i).join(GROUP_SEP);if(!map.has(p)){let n={path:p,kids:[]};map.set(p,n);map.get(parts.slice(0,i-1).join(GROUP_SEP)).kids.push(n)}}
+ }
+ return root;
+}
+function walkTree(node,f,depth=0){for(let k of node.kids){f(k,depth);walkTree(k,f,depth+1)}}
+// グループの道筋を木の順（親 → 子）に並べたもの
+function groupOrder(){let out=[];walkTree(groupTree(),n=>out.push(n.path));return out}
+function treeNode(root,path){let hit=null;walkTree(root,n=>{if(n.path===path)hit=n});return hit}
+// 木の順に対象を並べる: グループの対象 → 子のグループ。グループなしは最後。グループの中の順は今の順のまま
+function jobsInTreeOrder(root=groupTree(),jobs=cfg?.jobs||[]){
+ let out=[];
+ (function emit(n){if(n.path)out.push(...jobs.filter(j=>groupOf(j)===n.path));for(let k of n.kids)emit(k)})(root);
+ return out.concat(jobs.filter(j=>!groupOf(j)));
+}
+function groupColor(path){
+ if(!path)return GROUP_NONE_COLOR;
+ let top=groupParts(path)[0],i=groupTree().kids.findIndex(n=>n.path===top);
+ return GROUP_COLORS[(i<0?0:i)%GROUP_COLORS.length];
+}
+// 畳んだか: 自分か、上の段のどれかを畳んでいれば隠れる。検索している間は畳まない
+const groupSearching=()=>!!$('#search')?.value.trim();
+function groupIsClosed(path){return groupClosed.has(path)&&!groupSearching()}
+function setGroupClosed(path,closed){closed?groupClosed.add(path):groupClosed.delete(path);saveGroupClosed();render()}
+function openGroupPath(path){let ps=groupParts(path),hit=false;for(let i=1;i<=ps.length;i++)if(groupClosed.delete(ps.slice(0,i).join(GROUP_SEP)))hit=true;if(hit)saveGroupClosed();return hit}
+const groupJobs=path=>(cfg?.jobs||[]).filter(j=>inGroup(groupOf(j),path));
+/* 一覧に出す行の組み立て。a は絞り込み・並べ替えを済ませた対象。返すのは見出しと行の並び */
+function groupRows(a){
+ let out=[],shown=p=>a.filter(j=>groupOf(j)===p);
+ let root=groupTree();
+ for(let k of root.kids)(function emit(n,depth){
+  let sub=a.filter(j=>inGroup(groupOf(j),n.path));if(!sub.length)return;
+  out.push({head:n.path,depth,shown:sub.length});
+  if(groupIsClosed(n.path))return;
+  shown(n.path).forEach(j=>out.push({job:j}));
+  for(let c of n.kids)emit(c,depth+1);
+ })(k,0);
+ let none=shown('');
+ if(none.length){out.push({head:'',depth:0,shown:none.length});if(!groupIsClosed(''))none.forEach(j=>out.push({job:j}))}
+ return out;
+}
 // 状態の札: 有効・無効と、確認待ち（失敗・未実行など。行の左の線・上の「確認待ち」と同じ言葉と色）
 function groupChipsHtml(jobs){
  let on=jobs.filter(j=>j.enabled).length,off=jobs.length-on,fresh={};
@@ -637,29 +704,40 @@ function groupChipsHtml(jobs){
 }
 const GI={down:'<path d="M6 9.5l6 6 6-6"/>',right:'<path d="M9.5 6l6 6-6 6"/>',play:'<path d="M8 5.5v13l10.5-6.5z"/>',more:'<circle cx="5.5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="18.5" cy="12" r="1.4"/>',stop:'<rect x="6" y="6" width="12" height="12" rx="1.5" fill="currentColor"/>',fold:'<path d="M7 14.5l5-5 5 5"/>'};
 const gsvg=(d,w=14)=>`<svg viewBox="0 0 24 24" width="${w}" height="${w}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
-function groupHeadHtml(b,cols,first,reorder){
- let closed=groupIsClosed(b.name),all=groupJobs(b.name),label=groupLabel(b.name),ncols=cols.length,
+function groupHeadHtml(r,cols,first,reorder){
+ let path=r.head,closed=groupIsClosed(path),all=groupJobs(path),leaf=groupLeaf(path),label=groupLabel(path),ncols=cols.length,
      // まとめて選ぶチェックは、行のチェックと縦に揃う位置に置く（チェックの列を先頭に出しているとき）
-     ck=cols[0]==='check'&&ncols>1;
- return (first?'':`<tr class="grp-gap" aria-hidden="true"><td colspan="${ncols}"></td></tr>`)
-  +`<tr class="grp-head${closed?' is-closed':''}" data-group="${E(b.name)}" style="--gc:${groupColor(b.name)}">`
+     ck=cols[0]==='check'&&ncols>1,crumb=groupParts(groupParent(path));
+ return (first||r.depth?'':`<tr class="grp-gap" aria-hidden="true"><td colspan="${ncols}"></td></tr>`)
+  +`<tr class="grp-head${closed?' is-closed':''}${r.depth?' is-sub':''}" data-group="${E(path)}" data-depth="${r.depth}" style="--gc:${groupColor(path)};--depth:${r.depth}"`
+  +` draggable="${reorder&&!!path}">`
   +`<td colspan="${ncols}"><div class="grp-bar${ck?` has-ck${reorder?' has-dh':''}`:''}">`
   +(ck?`<input class="grp-ck" type="checkbox" title="「${E(label)}」の対象をまとめて選ぶ" aria-label="「${E(label)}」の対象をまとめて選ぶ">`:'')
+  +`<span class="grp-indent" aria-hidden="true"></span>`
   +`<button type="button" class="grp-tw" aria-expanded="${!closed}" title="${closed?'開く':'畳む'}（見出しを押しても同じ）">${gsvg(closed?GI.right:GI.down,15)}</button>`
-  +`<i class="grp-dot" aria-hidden="true"></i><b class="grp-name">${E(label)}</b><span class="grp-n">${all.length}件${b.jobs.length!==all.length?`<small>（表示 ${b.jobs.length}）</small>`:''}</span>`
+  +`<i class="grp-dot" aria-hidden="true"></i>`
+  +(crumb.length?`<span class="grp-crumb" title="${E(label)}">${E(crumb.join(' › '))} ›</span>`:'')
+  +`<b class="grp-name" title="${E(label)}">${E(leaf)}</b><span class="grp-n">${all.length}件${r.shown!==all.length?`<small>（表示 ${r.shown}）</small>`:''}</span>`
   +`<span class="grp-chips">${groupChipsHtml(all)}</span>`
   // 畳んだときは、中の対象の名前を並べる（開かずに何が入っているか分かる）
-  +(closed?`<span class="grp-names" title="${E(all.map(j=>j.name).join('\n'))}">${E(all.slice(0,6).map(j=>j.name).join('・'))}${all.length>6?` ほか${all.length-6}件`:''}</span>`:'<span class="grp-sp"></span>')
+  +(closed?closedNamesHtml(path,all):'<span class="grp-sp"></span>')
   +`<span class="grp-live" hidden></span>`
-  +`<button type="button" class="grp-run" title="「${E(label)}」の有効な対象をまとめて実行します">${gsvg(GI.play)}グループを実行</button>`
+  +`<button type="button" class="grp-run" title="「${E(label)}」の有効な対象をまとめて実行します（子のグループも）">${gsvg(GI.play)}グループを実行</button>`
   +`<button type="button" class="grp-stop" hidden title="実行を止めます">${gsvg(GI.stop,12)}止める</button>`
   +`<button type="button" class="grp-more" aria-haspopup="menu" title="グループの操作" aria-label="グループの操作">${gsvg(GI.more,16)}</button>`
   +`</div></td></tr>`;
 }
+// 畳んだ見出しに並べる中身: 子のグループを先に「計測（2件）」と分けて、そのあとにこのグループの対象の名前
+function closedNamesHtml(path,all){
+ let node=treeNode(groupTree(),path),kids=(node?.kids||[]).map(n=>`${groupLeaf(n.path)}（${groupJobs(n.path).length}件）`),
+     own=all.filter(j=>groupOf(j)===path).map(j=>j.name),items=[...kids,...own],shown=items.slice(0,6);
+ return `<span class="grp-names" title="${E([...kids.map(k=>'▸ '+k),...own].join('\n'))}">`
+  +shown.map((t,i)=>i<kids.length?`<b>▸ ${E(t)}</b>`:E(t)).join('・')+(items.length>6?` ほか${items.length-6}件`:'')+`</span>`;
+}
 // 実行中の様子を見出しへ（行の進み具合と同じ rowLive・rowQueue から数える）
 function paintGroupHeads(){
  $$('#jobs-body tr.grp-head').forEach(h=>{
-  let name=h.dataset.group,jobs=groupJobs(name),st={run:0,done:0,wait:0,err:0};
+  let path=h.dataset.group,jobs=groupJobs(path),st={run:0,done:0,wait:0,err:0};
   jobs.forEach(j=>{let l=rowLive[j.id];if(l)st[l.cls==='is-running'?'run':l.cls==='is-done'?'done':l.cls==='is-error'?'err':'wait']++;else if(rowQueue[j.id])st.wait++});
   let total=st.run+st.done+st.wait+st.err,busy=st.run+st.wait>0,live=h.querySelector('.grp-live'),run=h.querySelector('.grp-run');
   h.querySelector('.grp-chips').innerHTML=groupChipsHtml(jobs);
@@ -670,192 +748,265 @@ function paintGroupHeads(){
  });
  paintGroupChecks();
 }
-// 見出しのチェック: グループの行が全部選ばれていれば入、一部なら途中（−）
+const rowsOfGroup=path=>$$('#jobs-body tr[data-id]').filter(tr=>inGroup(groupOf(cfg.jobs.find(j=>j.id===tr.dataset.id)),path));
+// 見出しのチェック: グループ（子も含む）の行が全部選ばれていれば入、一部なら途中（−）
 function paintGroupChecks(){
  $$('#jobs-body tr.grp-head').forEach(h=>{
   let ck=h.querySelector('.grp-ck');if(!ck)return;
-  let rows=$$('#jobs-body tr[data-id]').filter(tr=>groupOf(cfg.jobs.find(j=>j.id===tr.dataset.id))===h.dataset.group),n=rows.filter(tr=>tr.classList.contains('selected')).length;
+  let rows=rowsOfGroup(h.dataset.group),n=rows.filter(tr=>tr.classList.contains('selected')).length;
   ck.checked=!!rows.length&&n===rows.length;ck.indeterminate=n>0&&n<rows.length;
  });
 }
 /* 止める: いまの実行を止める。待っている実行も取り消すので、ほかのグループの分が入っているときはそう言ってから */
-async function stopGroupRun(name){
- let mine=new Set(groupJobs(name).map(j=>j.id)),others=Object.keys(rowLive).concat(Object.keys(rowQueue)).filter(id=>!mine.has(id)&&(rowQueue[id]||['is-running','is-wait'].includes(rowLive[id]?.cls)));
- if(!confirm(others.length?`実行を止めます。\nほかの対象（${new Set(others).size}件）の実行と、待っている実行も止まります。`:`「${groupLabel(name)}」の実行を止めます。\n実行中の対象は安全な区切りで止め、待っている対象は始めません。`))return;
+async function stopGroupRun(path){
+ let mine=new Set(groupJobs(path).map(j=>j.id)),others=Object.keys(rowLive).concat(Object.keys(rowQueue)).filter(id=>!mine.has(id)&&(rowQueue[id]||['is-running','is-wait'].includes(rowLive[id]?.cls)));
+ if(!confirm(others.length?`実行を止めます。\nほかの対象（${new Set(others).size}件）の実行と、待っている実行も止まります。`:`「${groupLabel(path)}」の実行を止めます。\n実行中の対象は安全な区切りで止め、待っている対象は始めません。`))return;
  try{let r=await fetch('/api/run/cancel',{method:'POST'});toast(r.ok?'実行を止めています':'止められませんでした')}catch{toast('止められませんでした')}
 }
-function runGroup(name){
- let ids=groupJobs(name).filter(j=>j.enabled).map(j=>j.id);
- if(!ids.length)return toast(`「${groupLabel(name)}」に有効な対象がありません`);
+function runGroup(path){
+ let ids=groupJobs(path).filter(j=>j.enabled).map(j=>j.id);
+ if(!ids.length)return toast(`「${groupLabel(path)}」に有効な対象がありません`);
  runJobs(ids);
 }
-// グループ名を付け替える（行のグループを変える・名前を変える・グループを解く）。保存は1回
-async function setJobsGroup(ids,name){
- name=String(name||'').replace(/\s+/g,' ').trim().slice(0,40);
- let hit=(cfg?.jobs||[]).filter(j=>ids.includes(j.id)&&groupOf(j)!==name);
- if(!hit.length)return;
- hit.forEach(j=>{j.group=name});
- // 移した対象は、移した先のグループの最後へ並べる（見出しの下でばらばらにならない）
- if(name){let rest=cfg.jobs.filter(j=>!hit.includes(j)),last=rest.map(groupOf).lastIndexOf(name);cfg.jobs=last<0?[...rest,...hit]:[...rest.slice(0,last+1),...hit,...rest.slice(last+1)]}
- groupClosed.delete(name);render();
- toast((hit.length>1?`${hit.length}件`:`「${hit[0].name}」`)+(name?`を「${name}」へまとめました`:'をグループから外しました'));
+// 並べ替え・グループの付け替えのあとは、対象の並びを木の順にそろえて保存する（見た目の順＝問い合わせ順）
+async function commitGroups(message){
+ cfg.jobs=jobsInTreeOrder();
+ if($('#sort'))$('#sort').value='order';sortDir=1;
+ render();if(message)toast(message);
  saveRetry=0;await saveSettingsNow();
 }
-async function renameGroup(from,to){
- to=String(to||'').replace(/\s+/g,' ').trim().slice(0,40);
- if(!to||to===from)return;
- let wasClosed=groupClosed.has(from);groupClosed.delete(from);if(wasClosed)groupClosed.add(to);
- groupJobs(from).forEach(j=>{j.group=to});render();toast(`グループ「${from}」を「${to}」にしました`);saveRetry=0;await saveSettingsNow();
+// 対象をグループへ移す（行をまとめる・右クリック・見出しへ落とす で共通）。移した対象は、そのグループの最後へ
+async function setJobsGroup(ids,path){
+ path=normGroup(path);
+ let hit=(cfg?.jobs||[]).filter(j=>ids.includes(j.id)&&groupOf(j)!==path);
+ if(!hit.length)return;
+ hit.forEach(j=>{j.group=path});
+ cfg.jobs=[...cfg.jobs.filter(j=>!hit.includes(j)),...hit];
+ openGroupPath(path);
+ await commitGroups((hit.length>1?`${hit.length}件`:`「${hit[0].name}」`)+(path?`を「${groupLabel(path)}」へ移しました`:'をグループから外しました'));
 }
-// グループを上下へ: グループの並びを入れ替え、対象をグループの順に並べ直す（グループの中の順は変えない）
-async function moveGroup(name,dir){
- let order=groupOrder(),i=order.indexOf(name),to=i+dir;
- if(i<0||to<0||to>=order.length)return toast(dir<0?'すでに先頭のグループです':'すでに最後のグループです');
- order.splice(to,0,order.splice(i,1)[0]);
- cfg.jobs=[...order.flatMap(g=>groupJobs(g)),...groupJobs('')];
- render();saveRetry=0;await saveSettingsNow();
+// 道筋の付け替え: from とその下の段を、すべて to の下へ（名前を変える・グループを動かす・解く で共通）
+function retargetGroup(from,to){
+ groupJobs(from).forEach(j=>{let g=groupOf(j);j.group=normGroup(to+g.slice(from.length))});
+ let moved=[...groupClosed].filter(p=>inGroup(p,from));moved.forEach(p=>{groupClosed.delete(p);let q=normGroup(to+p.slice(from.length));if(q)groupClosed.add(q)});saveGroupClosed();
 }
-function selectGroup(name){
- $$(`#jobs-body tr[data-id]`).forEach(tr=>{let j=cfg.jobs.find(x=>x.id===tr.dataset.id),on=groupOf(j)===name;
-  if(on){tr.classList.add('selected');let cb=tr.querySelector('.rowcheck');if(cb)cb.checked=true}});
- updateSelCount();
+// 下の段のいちばん深いところまでの段の数（自分を1とする）
+const groupHeight=path=>Math.max(1,...groupJobs(path).map(j=>groupParts(groupOf(j)).length-groupParts(path).length+1));
+async function renameGroup(path,leaf){
+ leaf=normGroup(String(leaf||'').split(GROUP_SEP).join(' '));
+ let parent=groupParent(path),to=parent?parent+GROUP_SEP+leaf:leaf;
+ if(!leaf||to===path)return;
+ retargetGroup(path,to);
+ await commitGroups(`グループ「${groupLabel(path)}」を「${groupLabel(to)}」にしました`);
 }
+/* グループを動かす: target の前・後ろ（同じ段の兄弟として）か、target の中（子として）へ。5階層を超えるときは動かさない */
+async function moveGroupTo(src,target,mode){
+ if(!src||src===target)return;
+ if(target&&inGroup(target,src))return toast('グループを自分の中へは動かせません');
+ let parent=mode==='into'?target:groupParent(target),leaf=groupLeaf(src),to=parent?parent+GROUP_SEP+leaf:leaf;
+ if(groupParts(parent).length+groupHeight(src)>GROUP_DEPTH)return toast(`グループは${GROUP_DEPTH}階層までです（「${groupLabel(src)}」は下に${groupHeight(src)-1}段あります）`);
+ if(to!==src&&treeNode(groupTree(),to))return toast(`「${groupLabel(to)}」はもうあります。名前を変えてから動かしてください`);
+ retargetGroup(src,to);
+ // 兄弟の中の位置: 木を作り直し、動かした節を target の前・後ろ（中へのときは最後）に置く
+ let root=groupTree(),par=parent?treeNode(root,parent):root,node=par&&par.kids.find(n=>n.path===to);
+ if(par&&node&&mode!=='into'){par.kids.splice(par.kids.indexOf(node),1);let i=par.kids.findIndex(n=>n.path===target);if(i>=0)par.kids.splice(mode==='after'?i+1:i,0,node);else par.kids.push(node)}
+ cfg.jobs=jobsInTreeOrder(root);
+ openGroupPath(parent);
+ await commitGroups(mode==='into'?`「${leaf}」を「${groupLabel(parent)}」の中へ動かしました`:`グループ「${leaf}」の並びを変えました`);
+}
+// 同じ段の兄弟の中で、上下へ1つ動かす（メニューの「上へ」「下へ」）
+async function moveGroup(path,dir){
+ let root=groupTree(),par=groupParent(path)?treeNode(root,groupParent(path)):root,sib=par.kids.map(n=>n.path),i=sib.indexOf(path),to=i+dir;
+ if(i<0||to<0||to>=sib.length)return toast(dir<0?'すでに先頭です':'すでに最後です');
+ return moveGroupTo(path,sib[to],dir<0?'before':'after');
+}
+// グループを解く: その段を道筋から外す。対象と子のグループは1つ上の段へ移る（対象は消えない）
+async function ungroupGroup(path){
+ retargetGroup(path,groupParent(path));
+ await commitGroups(`グループ「${groupLabel(path)}」を解きました`);
+}
+function selectGroup(path){rowsOfGroup(path).forEach(tr=>setRowSelected(tr,true));updateSelCount()}
 /* グループの操作（見出しの「…」）。取り消せない「グループを解く」は最後に離して赤で置く（対象は消えない、と添える） */
 let groupMenuFor=null;
 function closeGroupMenu(){let m=$('#group-menu');if(m)m.hidden=true;groupMenuFor=null;$$('#jobs-body .grp-more[aria-expanded="true"]').forEach(b=>b.setAttribute('aria-expanded','false'))}
-function openGroupMenu(btn,name){
- let m=$('#group-menu');if(!m)return;closeGroupMenu();groupMenuFor=name;btn.setAttribute('aria-expanded','true');
- let label=groupLabel(name),jobs=groupJobs(name),named=!!name,order=groupOrder(),i=order.indexOf(name);
- m.innerHTML=`<div class="jcm-head"><b>${E(label)}</b><span>${jobs.length}件・有効 ${jobs.filter(j=>j.enabled).length}</span></div>`
+function openGroupMenu(btn,path){
+ let m=$('#group-menu');if(!m)return;closeGroupMenu();groupMenuFor=path;btn.setAttribute('aria-expanded','true');
+ let jobs=groupJobs(path),named=!!path,root=groupTree(),par=groupParent(path)?treeNode(root,groupParent(path)):root,sib=par?par.kids.map(n=>n.path):[],i=sib.indexOf(path),
+     canChild=named&&groupParts(path).length<GROUP_DEPTH;
+ m.innerHTML=`<div class="jcm-head"><b>${E(groupLabel(path))}</b><span>${jobs.length}件・有効 ${jobs.filter(j=>j.enabled).length}</span></div>`
   // 実行は見出しのボタンにある。メニューには重ねない
   +`<button type="button" data-g="select">このグループの対象をすべて選ぶ</button><hr>`
   +`<button type="button" data-g="on">すべて有効にする</button><button type="button" data-g="off">すべて無効にする</button>`
   +(named?`<hr><button type="button" data-g="rename">名前を変える…</button>`
-   +`<div class="jcm-pair"><button type="button" data-g="up" ${i<=0?'disabled':''}>↑ 上へ</button><button type="button" data-g="down" ${i>=order.length-1?'disabled':''}>↓ 下へ</button></div>`
+   +(canChild?`<button type="button" data-g="child">選んだ対象で子のグループを作る…<small>${GROUP_DEPTH}階層まで</small></button>`:'')
+   +`<div class="jcm-pair"><button type="button" data-g="up" ${i<=0?'disabled':''}>↑ 上へ</button><button type="button" data-g="down" ${i<0||i>=sib.length-1?'disabled':''}>↓ 下へ</button></div>`
    +`<hr><button type="button" data-g="ungroup" class="danger">グループを解く<small>対象は残ります</small></button>`:'');
  m.hidden=false;
  let r=btn.getBoundingClientRect(),x=Math.min(r.right-m.offsetWidth,innerWidth-m.offsetWidth-8),y=r.bottom+4;
  if(y+m.offsetHeight>innerHeight-8)y=Math.max(8,r.top-m.offsetHeight-4);
  m.style.left=Math.max(8,x)+'px';m.style.top=y+'px';
 }
-/* グループ名を入れる小窓（行をまとめる・名前を変える・右クリックから移す で共通）。あるグループは札で1回で選べる */
+/* グループの道筋を入れる小窓（行をまとめる・名前を変える・右クリックから移す・子を作る で共通）。あるグループは札で1回で選べる */
 let groupAsk=null;
-function askGroup({title,note,value='',ok,onOk,clear}){
+function askGroup({title,note,value='',ok,onOk,clear,picks=true}){
  let d=$('#group-dialog');if(!d)return;groupAsk=onOk;$('#gd-clear').hidden=!clear;
  $('#gd-title').textContent=title;$('#gd-note').textContent=note||'';$('#gd-name').value=value;$('#gd-ok').textContent=ok||'決める';
- let names=groupOrder();
- $('#gd-chips').innerHTML=names.map(n=>`<button type="button" class="grp-pick" data-name="${E(n)}" style="--gc:${groupColor(n)}"><i class="grp-dot"></i>${E(n)}</button>`).join('');
+ let names=picks?groupOrder():[];
+ $('#gd-chips').innerHTML=names.map(n=>`<button type="button" class="grp-pick" data-name="${E(n)}" style="--gc:${groupColor(n)};--depth:${groupParts(n).length-1}"><i class="grp-dot"></i>${E(groupLeaf(n))}${groupParts(n).length>1?`<small>${E(groupParts(groupParent(n)).join(' › '))}</small>`:''}</button>`).join('');
  $('#gd-chips').hidden=!names.length;
  d.showModal();$('#gd-name').focus();$('#gd-name').select();
 }
+const GROUP_NOTE=`あるグループを選ぶか、新しい名前を入れてください。「親/子」のように / で区切ると、子のグループになります（${GROUP_DEPTH}階層まで）`;
 function groupDialogInit(){
  let d=$('#group-dialog');if(!d)return;
  let done=v=>{d.close();let f=groupAsk;groupAsk=null;if(f)f(v)};
- $('#gd-ok').onclick=()=>{let v=$('#gd-name').value.trim();if(!v){$('#gd-name').focus();return}done(v)};
+ $('#gd-ok').onclick=()=>{let v=normGroup($('#gd-name').value);if(!v){$('#gd-name').focus();return}done(v)};
  $('#gd-name').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();$('#gd-ok').click()}};
  $('#gd-cancel').onclick=$('#gd-close').onclick=()=>{d.close();groupAsk=null};
  $('#gd-clear').onclick=()=>done('');
  $('#gd-chips').onclick=e=>{let b=e.target.closest('.grp-pick');if(b)done(b.dataset.name)};
  $('#group-menu').onclick=async e=>{
   let b=e.target.closest('[data-g]');if(!b||groupMenuFor===null)return;
-  let name=groupMenuFor,act=b.dataset.g,ids=groupJobs(name).map(j=>j.id);closeGroupMenu();
-  if(act==='select')selectGroup(name);
+  let path=groupMenuFor,act=b.dataset.g,ids=groupJobs(path).map(j=>j.id);closeGroupMenu();
+  if(act==='select')selectGroup(path);
   else if(act==='on'||act==='off')setJobsEnabled(ids,act==='on');
-  else if(act==='rename')askGroup({title:'グループの名前を変える',value:name,ok:'変える',onOk:v=>renameGroup(name,v)});
-  else if(act==='up'||act==='down')moveGroup(name,act==='up'?-1:1);
-  else if(act==='ungroup'&&confirm(`グループ「${name}」を解きます。\n${ids.length}件の対象は消えず、「グループなし」へ移ります。`))setJobsGroup(ids,'');
+  else if(act==='rename')askGroup({title:'グループの名前を変える',note:'この段の名前だけが変わります（上の段・下の段はそのまま）',value:groupLeaf(path),ok:'変える',picks:false,onOk:v=>renameGroup(path,v)});
+  else if(act==='child'){let sel=selectedJobs().map(j=>j.id);if(!sel.length)return toast('先に、子のグループへ入れる対象を選んでください');
+   askGroup({title:`「${groupLabel(path)}」の中に子のグループを作る`,note:`選んだ ${sel.length}件を入れます`,ok:'作る',picks:false,onOk:v=>setJobsGroup(sel,path+GROUP_SEP+v.split(GROUP_SEP).join(' '))})}
+  else if(act==='up'||act==='down')moveGroup(path,act==='up'?-1:1);
+  else if(act==='ungroup'&&confirm(`グループ「${groupLabel(path)}」を解きます。\n${ids.length}件の対象と子のグループは消えず、1つ上の段（${groupLabel(groupParent(path))}）へ移ります。`))ungroupGroup(path);
  };
  document.addEventListener('click',e=>{if(!e.target.closest('#group-menu,.grp-more'))closeGroupMenu()});
  document.addEventListener('keydown',e=>{if(e.key==='Escape')closeGroupMenu()});
  $('#group-selected').onclick=()=>{
   let ids=selectedJobs().map(j=>j.id);if(!ids.length)return;
-  askGroup({title:`選んだ ${ids.length}件をグループにまとめる`,note:'あるグループを選ぶか、新しい名前を入れてください',ok:'まとめる',onOk:v=>setJobsGroup(ids,v)});
+  askGroup({title:`選んだ ${ids.length}件をグループにまとめる`,note:GROUP_NOTE,ok:'まとめる',onOk:v=>setJobsGroup(ids,v)});
  };
 }
 // すべて畳む／開く（道具の段。グループがあるときだけ出す）。1つでも開いていれば「畳む」
 function paintGroupFold(){
  let b=$('#groups-fold');if(!b)return;let names=[...groupOrder(),''].filter(n=>groupJobs(n).length),anyOpen=names.some(n=>!groupClosed.has(n));
  b.hidden=!hasGroups();b.innerHTML=gsvg(anyOpen?GI.fold:GI.down)+(anyOpen?'すべて畳む':'すべて開く');
- b.onclick=()=>{names.forEach(n=>anyOpen?groupClosed.add(n):groupClosed.delete(n));try{localStorage.setItem(GROUP_CLOSED_KEY,JSON.stringify([...groupClosed]))}catch{}render()};
+ b.onclick=()=>{names.forEach(n=>anyOpen?groupClosed.add(n):groupClosed.delete(n));saveGroupClosed();render()};
 }
-/* 貼り付いた見出しは、次のグループの見出しが来たら押し上げる（行の無くなった前のグループの見出しを残さない）。
+/* 貼り付いた見出しは、次の見出しが来たら押し上げる（行の無くなった前のグループの見出しを残さない）。
    表の行は1つの tbody にあるので、貼り付きの範囲がグループで切れない。そのぶんを送るたびに計算する */
 function pushGroupHeads(){
  let box=document.querySelector('#jobs .tablebox'),heads=$$('#jobs-body tr.grp-head');if(!box||!heads.length)return;
  let line=box.getBoundingClientRect().top+box.clientTop+(parseFloat(getComputedStyle(box.querySelector('table')).getPropertyValue('--jobs-th'))||0);
  heads.forEach((h,i)=>{
   let tds=[...h.children],next=heads[i+1];
-  // グループの終わり = 次のグループの前の空き行の上端（最後のグループは表の下端）。そこが見出しの下へ来たら、そのぶん押し上げる
-  let end=next?next.previousElementSibling.getBoundingClientRect().top:box.querySelector('table').getBoundingClientRect().bottom,hh=h.offsetHeight,
+  // 区切りの終わり = 次の見出し（の前の空き行があればその上端）。最後は表の下端。そこが見出しの下へ来たら、そのぶん押し上げる
+  let edge=next&&(next.previousElementSibling?.classList.contains('grp-gap')?next.previousElementSibling:next),
+      end=edge?edge.getBoundingClientRect().top:box.querySelector('table').getBoundingClientRect().bottom,hh=h.offsetHeight,
       push=Math.max(0,Math.min(hh,line+hh-end));
   tds.forEach(td=>td.style.transform=push?`translateY(${-push}px)`:'');
  });
 }
 function bindGroupHeads(body){
  body.querySelectorAll('tr.grp-head').forEach(h=>{
-  let name=h.dataset.group;
-  h.onclick=e=>{if(e.target.closest('.grp-run,.grp-stop,.grp-more,.grp-ck'))return;if($('#search').value.trim())return toast('検索している間は、当たった行のあるグループを開いて見せます');setGroupClosed(name,!groupIsClosed(name))};
-  h.querySelector('.grp-run').onclick=()=>runGroup(name);
-  h.querySelector('.grp-stop').onclick=()=>stopGroupRun(name);
+  let path=h.dataset.group;
+  h.onclick=e=>{if(e.target.closest('.grp-run,.grp-stop,.grp-more,.grp-ck'))return;if(groupSearching())return toast('検索している間は、当たった行のあるグループを開いて見せます');setGroupClosed(path,!groupIsClosed(path))};
+  h.querySelector('.grp-run').onclick=()=>runGroup(path);
+  h.querySelector('.grp-stop').onclick=()=>stopGroupRun(path);
   let ck=h.querySelector('.grp-ck');
   if(ck){ck.onclick=e=>e.stopPropagation();ck.onchange=()=>{
    // 畳んだグループは開いてから選ぶ（選んだ行が見えないままにしない）
-   if(ck.checked&&groupIsClosed(name)){groupClosed.delete(name);try{localStorage.setItem(GROUP_CLOSED_KEY,JSON.stringify([...groupClosed]))}catch{}render()}
-   $$('#jobs-body tr[data-id]').forEach(tr=>{if(groupOf(cfg.jobs.find(j=>j.id===tr.dataset.id))!==name)return;tr.classList.toggle('selected',ck.checked);let cb=tr.querySelector('.rowcheck');if(cb)cb.checked=ck.checked});
-   updateSelCount();
+   let on=ck.checked;if(on&&(openGroupPath(path)||[...groupClosed].some(p=>inGroup(p,path)))){[...groupClosed].filter(p=>inGroup(p,path)).forEach(p=>groupClosed.delete(p));saveGroupClosed();render()}
+   rowsOfGroup(path).forEach(tr=>setRowSelected(tr,on));updateSelCount();
   }}
-  h.querySelector('.grp-more').onclick=e=>{e.stopPropagation();groupMenuFor===name?closeGroupMenu():openGroupMenu(e.currentTarget,name)};
+  h.querySelector('.grp-more').onclick=e=>{e.stopPropagation();groupMenuFor===path?closeGroupMenu():openGroupMenu(e.currentTarget,path)};
  });
 }
-/* v1.9.0: 一覧のドラッグ&ドロップ並べ替え（問い合わせ順に反映）と管理単位の削除 */
-let dragSrcId=null,dragGhost=null,dragTargetId=null,dragAfter=false,dragImage=null;
-function clearDragVisuals(){
- if(dragGhost){dragGhost.remove();dragGhost=null}
- if(dragImage){dragImage.remove();dragImage=null}
- $$('#jobs-body tr').forEach(x=>x.classList.remove('drop-before','drop-after','drag-near'));
+/* ==== 選択（2.12.0）: 行を押す・チェックで1件ずつ。SHIFT を押しながらだと、前に押した行からここまでをまとめて選ぶ ==== */
+/* 選んだ行の見せ方（2.12.0。案の比べ方は tests/ui-proposals/2026-10-job-groups2）: 行は地色だけ（CSS）。
+   上の段には、どのグループから何件選んだかを添える */
+function paintSelection(){
+ let box=$('#sel-groups');if(!box)return;
+ let by=new Map();$$('#jobs-body tr.selected[data-id]').forEach(tr=>{let g=groupOf(cfg.jobs.find(j=>j.id===tr.dataset.id));by.set(g,(by.get(g)||0)+1)});
+ box.textContent=hasGroups()?[...by].map(([g,n])=>`${groupLeaf(g)} ${n}件`).join('・'):'';
+ box.title=[...by].map(([g,n])=>`${groupLabel(g)} ${n}件`).join('\n');
 }
-function makeDragGhost(source){
- let ghost=document.createElement('tr');ghost.className='drop-ghost';ghost.setAttribute('aria-hidden','true');
- let name=source.querySelector('.col-name .primarytext')?.textContent||'選択した対象';
- ghost.innerHTML=`<td colspan="${source.children.length||8}"><div class="drop-ghost-inner"><i></i><span><b>${E(name)}</b> をここへ移動</span></div></td>`;
- return ghost;
+let selAnchor=null;
+function setRowSelected(tr,on){tr.classList.toggle('selected',on);let cb=tr.querySelector('.rowcheck');if(cb)cb.checked=on}
+function pickRow(tr,e,on){
+ let rows=$$('#jobs-body tr[data-id]'),a=selAnchor?rows.findIndex(r=>r.dataset.id===selAnchor):-1,b=rows.indexOf(tr);
+ if(e?.shiftKey&&a>=0&&b>=0){let [s,t]=a<b?[a,b]:[b,a];rows.slice(s,t+1).forEach(r=>setRowSelected(r,true))}
+ else{setRowSelected(tr,on);selAnchor=tr.dataset.id}
+ updateSelCount();
 }
-function makeDragImage(source,e){
- let img=source.cloneNode(true);img.className='row-drag-image';img.removeAttribute('draggable');
- img.style.width=source.getBoundingClientRect().width+'px';document.body.appendChild(img);
- try{e.dataTransfer.setDragImage(img,28,Math.min(22,img.offsetHeight/2))}catch{}
- return img;
+/* ==== ドラッグ（2.12.0）: 表の全体で受け取る ====
+   行 → 行: その行の前・後ろへ（そのグループへ移る）。行 → 見出し: そのグループへ（畳んだ見出しにも）。
+   選んだ行をつかむと、選んだ全部を動かす。見出し → 見出し: 上 1/3 は前・下 1/3 は後ろ（同じ段）、まん中はその中（子）へ。
+   落とす位置は線（前・後ろ）と枠（中へ）で示す。行を差し込まないので、落とす場所が動かない */
+let dnd=null;
+function clearDropMarks(){$$('#jobs-body .drop-before,#jobs-body .drop-after,#jobs-body .drop-into').forEach(x=>x.classList.remove('drop-before','drop-after','drop-into'));$$('#jobs-body .drop-say').forEach(x=>x.remove())}
+// 落とす先を言葉でも示す: グループの中へは見出しに「『品質』へ入れる」、グループの並べ替えは線の上に「『管理・保全』をここへ（『生産・品質』の前）」
+function sayDrop(s){
+ if(!s.tr.classList.contains('grp-head'))return;
+ let bar=s.tr.querySelector('.grp-bar'),tgt=groupLeaf(s.group);
+ if(s.mode==='into'){let sp=bar.querySelector('.grp-sp,.grp-names');(sp||bar.lastChild).insertAdjacentHTML('beforebegin',`<span class="drop-say drop-say-into">「${E(tgt)}」へ入れる</span>`)}
+ else if(dnd?.kind==='group')bar.insertAdjacentHTML('afterbegin',`<span class="drop-say drop-say-move ${s.mode}">「${E(groupLeaf(dnd.group))}」をここへ（「${E(tgt)}」の${s.mode==='before'?'前':'後ろ'}）</span>`);
 }
-function placeDragGhost(target,after){
- if(!dragGhost)dragGhost=makeDragGhost(document.querySelector(`#jobs-body tr[data-id="${dragSrcId}"]`));
- let parent=target.parentNode,next=after?target.nextSibling:target;
- if(next!==dragGhost)parent.insertBefore(dragGhost,next);
- $$('#jobs-body tr').forEach(x=>x.classList.remove('drop-before','drop-after','drag-near'));
- target.classList.add(after?'drop-after':'drop-before','drag-near');
- dragTargetId=target.dataset.id;dragAfter=after;
+function dropSpot(e){
+ let tr=e.target.closest?.('#jobs-body tr');if(!tr||!dnd)return null;
+ if(tr.classList.contains('grp-gap'))tr=tr.nextElementSibling;if(!tr)return null;
+ let r=tr.getBoundingClientRect(),y=(e.clientY-r.top)/r.height,head=tr.classList.contains('grp-head');
+ if(dnd.kind==='rows'){
+  if(head)return {tr,mode:'into',group:tr.dataset.group};
+  if(dnd.ids.includes(tr.dataset.id))return null;
+  return {tr,mode:y<.5?'before':'after',id:tr.dataset.id};
+ }
+ // グループをつかんでいるとき
+ if(head){let g=tr.dataset.group;if(g&&inGroup(g,dnd.group))return null;
+  return {tr,mode:!g?'into':y<.3?'before':y>.7?'after':'into',group:g}}
+ let g=groupOf(cfg.jobs.find(j=>j.id===tr.dataset.id));if(inGroup(g,dnd.group))return null;
+ return {tr,mode:'into',group:g};
 }
-function bindRowDnD(tr){
- if(tr.getAttribute('draggable')!=='true')return;
- tr.addEventListener('dragstart',e=>{dragSrcId=tr.dataset.id;dragTargetId=null;dragAfter=false;tr.classList.add('dragging');dragImage=makeDragImage(tr,e);requestAnimationFrame(()=>tr.classList.add('dragging-active'));try{e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('text/plain',tr.dataset.id)}catch{}});
- tr.addEventListener('dragend',()=>{dragSrcId=null;dragTargetId=null;tr.classList.remove('dragging','dragging-active');clearDragVisuals()});
- tr.addEventListener('dragover',e=>{if(!dragSrcId||dragSrcId===tr.dataset.id)return;e.preventDefault();try{e.dataTransfer.dropEffect='move'}catch{}let r=tr.getBoundingClientRect(),after=(e.clientY-r.top)>r.height/2;placeDragGhost(tr,after)});
- tr.addEventListener('drop',e=>{e.preventDefault();e.stopPropagation();let srcId=dragSrcId||e.dataTransfer?.getData('text/plain'),targetId=dragTargetId||tr.dataset.id,after=dragTargetId!==null?dragAfter:(e.clientY-tr.getBoundingClientRect().top)>tr.getBoundingClientRect().height/2;if(!srcId||srcId===targetId){clearDragVisuals();return}clearDragVisuals();reorderJobs(srcId,targetId,after)})
+function bindListDnD(body){
+ if(body.dataset.dnd)return;body.dataset.dnd='1';
+ body.addEventListener('dragstart',e=>{
+  let tr=e.target.closest?.('tr[draggable="true"]');if(!tr)return;
+  if(tr.classList.contains('grp-head'))dnd={kind:'group',group:tr.dataset.group};
+  else{let sel=$$('#jobs-body tr.selected[data-id]').map(x=>x.dataset.id);dnd={kind:'rows',ids:sel.includes(tr.dataset.id)?sel:[tr.dataset.id]}}
+  tr.classList.add('dragging');if(dnd.kind==='rows')dnd.ids.forEach(id=>body.querySelector(`tr[data-id="${CSS.escape(id)}"]`)?.classList.add('dragging'));
+  try{e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('text/plain',dnd.kind==='rows'?dnd.ids.join(','):dnd.group);
+   let n=dnd.kind==='rows'?dnd.ids.length:0,img=document.createElement('div');img.className='drag-label';
+   img.textContent=dnd.kind==='rows'?(n>1?`${n}件を動かす`:`「${cfg.jobs.find(j=>j.id===dnd.ids[0])?.name||''}」を動かす`):`グループ「${groupLeaf(dnd.group)}」を動かす`;
+   document.body.appendChild(img);e.dataTransfer.setDragImage(img,14,14);setTimeout(()=>img.remove(),0)}catch{}
+ });
+ body.addEventListener('dragover',e=>{
+  let s=dropSpot(e);clearDropMarks();if(!s)return;
+  e.preventDefault();try{e.dataTransfer.dropEffect='move'}catch{}
+  s.tr.classList.add('drop-'+s.mode);sayDrop(s);
+ });
+ body.addEventListener('dragleave',e=>{if(!body.contains(e.relatedTarget))clearDropMarks()});
+ body.addEventListener('drop',e=>{
+  let s=dropSpot(e),d=dnd;clearDropMarks();if(!s||!d)return;e.preventDefault();
+  if(d.kind==='rows'){if(s.mode==='into')setJobsGroup(d.ids,s.group);else moveJobsTo(d.ids,s.id,s.mode==='after')}
+  else if(s.mode==='into'&&!s.group)moveGroupToTop(d.group);
+  else moveGroupTo(d.group,s.group,s.mode);
+ });
+ body.addEventListener('dragend',()=>{dnd=null;clearDropMarks();$$('#jobs-body tr.dragging').forEach(x=>x.classList.remove('dragging'))});
 }
-async function reorderJobs(srcId,targetId,after){
- let from=cfg.jobs.findIndex(x=>x.id===srcId),to=cfg.jobs.findIndex(x=>x.id===targetId);
- if(from<0||to<0)return;
- let moved=cfg.jobs.splice(from,1)[0];
- let idx=cfg.jobs.findIndex(x=>x.id===targetId);
- cfg.jobs.splice(after?idx+1:idx,0,moved);
- // ほかのグループの行のあいだへ落としたら、そのグループへ移す（見出しの下に並んだ物は、そのグループの物）
- let toGroup=groupOf(cfg.jobs.find(x=>x.id===targetId)),moveTo=hasGroups()&&groupOf(moved)!==toGroup;
- if(moveTo)moved.group=toGroup;
- // カラム並べ替え中の表示順と保存する問い合わせ順が食い違わないよう、ドロップ後は登録順へ戻す。
- if($('#sort'))$('#sort').value='order';sortDir=1;
- render();
- let payload=structuredClone(cfg);
- try{let rp=await putConfig(payload);if(rp.ok){saveState('並び順を保存しました','is-ok');toast(moveTo?`「${moved.name}」を「${groupLabel(toGroup)}」へ移しました`:'問い合わせ順を更新しました')}else{dirty();toast('並び順を保存できませんでした。自動で再試行します')}}catch{dirty();toast('並び順を保存できませんでした。自動で再試行します')}
+// グループなしの見出しへ落としたグループは、いちばん上の段へ
+async function moveGroupToTop(path){
+ if(!groupParent(path))return;
+ let leaf=groupLeaf(path);if(treeNode(groupTree(),leaf))return toast(`「${leaf}」はもうあります。名前を変えてから動かしてください`);
+ retargetGroup(path,leaf);await commitGroups(`「${leaf}」をいちばん上の段へ動かしました`);
 }
+/* 対象を target の前・後ろへ動かす。動かした対象は target のグループへ移る（見出しの下に並んだ物は、そのグループの物） */
+async function moveJobsTo(ids,targetId,after){
+ let moving=cfg.jobs.filter(j=>ids.includes(j.id)),target=cfg.jobs.find(j=>j.id===targetId);
+ if(!moving.length||!target||moving.includes(target))return;
+ let toGroup=groupOf(target),moved=moving.filter(j=>groupOf(j)!==toGroup);
+ let rest=cfg.jobs.filter(j=>!moving.includes(j)),i=rest.indexOf(target);
+ rest.splice(after?i+1:i,0,...moving);cfg.jobs=rest;
+ if(hasGroups())moving.forEach(j=>{j.group=toGroup});
+ let name=moving.length>1?`${moving.length}件`:`「${moving[0].name}」`;
+ await commitGroups(hasGroups()&&moved.length?`${name}を「${groupLabel(toGroup)}」へ移しました`:'問い合わせ順を更新しました');
+}
+async function reorderJobs(srcId,targetId,after){return moveJobsTo([srcId],targetId,after)}
 async function deleteJob(j){
  if(!confirm(`管理単位「${j.name}」を削除します。よろしいですか？\n登録内容と自動実行ルールが削除されます（この操作は元に戻せません）。`))return;
  let i=cfg.jobs.findIndex(x=>x.id===j.id);if(i<0)return;
@@ -923,7 +1074,7 @@ if($('#job-context-menu')){$('#job-context-menu').onclick=e=>{
  else if(act==='inspect'){openEditor(j);setEditorTab('inspect');inspGo('read')}
  else if(act==='inspect-now')inspectNow(j);
  else if(act==='run')runJobs(ids);
- else if(act==='group')askGroup({title:ids.length>1?`選んだ ${ids.length}件をグループへ移す`:`「${j.name}」をグループへ移す`,note:'あるグループを選ぶか、新しい名前を入れてください',value:ids.length>1?'':groupOf(j),ok:'移す',clear:ids.some(id=>groupOf(cfg.jobs.find(x=>x.id===id))),onOk:v=>setJobsGroup(ids,v)});
+ else if(act==='group')askGroup({title:ids.length>1?`選んだ ${ids.length}件をグループへ移す`:`「${j.name}」をグループへ移す`,note:GROUP_NOTE,value:ids.length>1?'':groupOf(j),ok:'移す',clear:ids.some(id=>groupOf(cfg.jobs.find(x=>x.id===id))),onOk:v=>setJobsGroup(ids,v)});
  else if(act==='open-output')openJobOutput(j);
  else if(act==='open-rne'){
   // 開く先は入力の種類しだい。結合は複数のファイルを読むので、繋ぎ方の画面へ送る。
@@ -1014,7 +1165,7 @@ function collectJob(){
   table:$('#m-table').value.trim(),sheet:$('#m-sheet').value.trim(),type:$('#m-type').value,
   naming_mode:currentNamingMode(),output_pattern:$('#m-output-pattern').value.trim(),
   comment:($('#m-comment')?.value||'').trim(),
-  group:($('#m-group')?.value||'').replace(/\s+/g,' ').trim().slice(0,40),
+  group:normGroup($('#m-group')?.value||''),
   split_mode:($('#m-split-mode')?.value||'auto'),split_shape:($('#m-split-shape')?.value||'auto'),
   row_axis_mode:($('#m-axis-mode')?.value||'first'),row_axis_index:Number($('#m-axis-index')?.value||1)||1,
   row_axis_name:($('#m-axis-name')?.value||''),period:currentPeriod(),

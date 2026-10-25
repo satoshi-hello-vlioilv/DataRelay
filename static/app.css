@@ -884,9 +884,6 @@ tr:has(.rowprogress.is-running) td{background:#f6fcfd}tr:has(.rowprogress.is-err
 .jobs-table tr.reorderable{cursor:default}
 .jobs-table tr.reorderable .drag-handle:hover{color:#0d8191}
 .jobs-table tr.reorderable:active .drag-handle{cursor:grabbing}
-.jobs-table tr.dragging{opacity:.5;background:#eaf6f8}
-.jobs-table tr.drop-before td{box-shadow:inset 0 3px 0 -1px #0d8191}
-.jobs-table tr.drop-after td{box-shadow:inset 0 -3px 0 -1px #0d8191}
 /* --- 一覧の削除ボタン（破壊操作は警告系で抑制的に） --- */
 .rowactions .delete{background:#fff0ee;color:#b93b32;border:1px solid #efc7bf}
 .rowactions .delete:hover{background:#f9dcd8;filter:none}
@@ -918,21 +915,17 @@ body > main{max-width:1620px;padding-left:12px;padding-right:12px}
 .jobs-table td.c-check{vertical-align:middle;padding-top:0;padding-bottom:0}
 .jobs-table tr.reorderable .drag-handle{display:inline-flex;align-items:center;justify-content:center;width:12px;height:16px;margin-right:4px;vertical-align:middle;line-height:16px;transform:translateY(-1px)}
 .jobs-table td.c-check .rowcheck{display:inline-block;margin:0;vertical-align:middle}
-/* Drag animation and insertion ghost */
-.jobs-table tbody tr.reorderable{transition:background-color .16s ease,opacity .16s ease,transform .16s ease,box-shadow .16s ease}
-.jobs-table tbody tr.dragging{opacity:.24;background:#e7f4f6;transform:scale(.992)}
-.jobs-table tbody tr.dragging-active td{box-shadow:inset 0 0 0 1px #8bcbd2}
-.jobs-table tbody tr.drag-near{background:#f7fcfd}
-.jobs-table tbody tr.drop-before td,.jobs-table tbody tr.drop-after td{box-shadow:none}
-.drop-ghost{height:42px;pointer-events:none;animation:dropGhostIn .16s ease-out both}
-.drop-ghost td{height:42px!important;padding:4px 8px!important;background:#f2fafb!important;border-top:2px solid #1499a4!important;border-bottom:2px solid #1499a4!important}
-.drop-ghost-inner{height:30px;display:flex;align-items:center;justify-content:center;gap:8px;border:1px dashed #70bfca;border-radius:7px;background:#e9f7f9;color:#176879;font-size:11px;font-weight:700;white-space:nowrap;overflow:hidden}
-.drop-ghost-inner i{width:7px;height:7px;border-radius:50%;background:#1499a4;box-shadow:0 0 0 4px #cdebef;flex:none}
-.drop-ghost-inner b{color:#0b6072}
-.row-drag-image{position:fixed;left:-20000px;top:-20000px;z-index:99999;display:table;table-layout:fixed;background:#fff;border:1px solid #8bcbd2;border-radius:8px;box-shadow:0 14px 34px #17384e42;opacity:.92;transform:rotate(.35deg) scale(.985);pointer-events:none}
-.row-drag-image td{background:#fff!important}
-@keyframes dropGhostIn{from{opacity:0;transform:scaleY(.45)}to{opacity:1;transform:scaleY(1)}}
-@media (prefers-reduced-motion:reduce){.jobs-table tbody tr.reorderable,.drop-ghost{transition:none!important;animation:none!important}.jobs-table tbody tr.dragging{transform:none}}
+/* ドラッグ（2.12.0）: つかんだ行は薄く、落とす位置は線（前・後ろ）と枠（グループの中へ）で示す。行を差し込まないので、落とす場所が動かない */
+.jobs-table tbody tr.reorderable{transition:background-color .16s ease,opacity .16s ease}
+.jobs-table tbody tr.dragging{opacity:.35}
+.jobs-table tbody tr.drop-before td{box-shadow:inset 0 3px 0 #0d8191}
+.jobs-table tbody tr.drop-after td{box-shadow:inset 0 -3px 0 #0d8191}
+.jobs-table tbody tr.grp-head.drop-before td{box-shadow:inset 0 3px 0 #0d8191,inset 0 -2px 0 var(--gc)}
+.jobs-table tbody tr.grp-head.drop-after td{box-shadow:inset 0 -3px 0 #0d8191}
+.jobs-table tbody tr.grp-head.drop-into td{background:#e3f4f6;box-shadow:inset 0 0 0 2px #0d8191}
+.jobs-table tbody tr.grp-head[draggable="true"] .grp-name{cursor:grab}
+.drag-label{position:fixed;left:-2000px;top:-2000px;padding:6px 12px;border-radius:8px;background:#0f4d5e;color:#fff;font-size:12px;font-weight:700;white-space:nowrap}
+@media (prefers-reduced-motion:reduce){.jobs-table tbody tr.reorderable{transition:none!important}}
 
 /* v1.10.0 Navigator API DLL settings and diagnosis */
 .api-dll-block{max-width:660px!important}.api-dll-guide{margin:0!important;padding:8px 10px;background:#f2f8fa;border-left:3px solid #0d8191;border-radius:6px;color:#526b76!important;line-height:1.55}.api-dll-path{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:6px}.api-dll-path button{height:35px;min-width:58px;padding:6px 10px}.api-attempts{display:grid;gap:5px;padding:9px;background:#f6f9fa;border:1px solid #dbe5e9;border-radius:8px}.api-attempt-head{display:flex;justify-content:space-between;gap:8px;color:#425d68;font-size:11px}.api-attempt-head span{color:#71838c}.api-attempt{display:grid;grid-template-columns:42px minmax(0,1fr) auto;align-items:center;gap:7px;padding:6px 7px;background:#fff;border:1px solid #e0e8eb;border-radius:6px;font-size:10.5px}.api-attempt i{font-style:normal;text-align:center;border-radius:999px;padding:2px 4px;background:#eef2f4;color:#63747c;font-weight:800}.api-attempt code{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#284d5c}.api-attempt span{color:#71838c;white-space:nowrap}.api-attempt.chosen{border-color:#9fd8c4;background:#f0faf5}.api-attempt.chosen i{background:#dff2e9;color:#08704f}.api-attempt.found i{background:#e6f3f6;color:#0b6d86}.api-attempt.failed i{background:#fdecea;color:#a43a32}@media(max-width:700px){.api-dll-path{grid-template-columns:1fr 1fr}.api-dll-path input{grid-column:1/-1}.api-attempt{grid-template-columns:42px 1fr}.api-attempt span{grid-column:2;white-space:normal}}
@@ -3477,3 +3470,34 @@ main:has(#layouts.on,#joins.on,#mqueries.on)>.subnav{margin-bottom:0}
 .grp-stop:hover{background:#fdf1ef;filter:none}
 .grp-stop[hidden],.grp-run[hidden]{display:none}
 .grp-names{flex:1 1 auto;min-width:0;margin-left:6px;font-size:11.5px;color:#4f6873;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* 階層（2.12.0）: 子のグループは段の深さぶん字下げし、見出しを一段控えめにする。上の段の名前は小さく前に添える */
+.grp-indent{flex:none;width:calc(var(--depth,0) * 22px)}
+.grp-indent:empty{display:block}
+.jobs-table tr.grp-head.is-sub td{height:38px;background:#fbfcfd}
+.jobs-table tr.grp-head.is-sub .grp-bar{height:38px}
+.jobs-table tr.grp-head.is-sub .grp-name{font-size:13px}
+.jobs-table tr.grp-head.is-sub td{box-shadow:inset 0 1px 0 var(--line),inset 0 -1px 0 color-mix(in srgb,var(--gc) 55%,#fff)}
+.grp-crumb{font-size:11.5px;color:#7a8d96;white-space:nowrap;max-width:260px;overflow:hidden;text-overflow:ellipsis;flex:0 1 auto;min-width:0}
+.grp-pick small{font-size:10.5px;color:#7f929a;font-weight:600;margin-left:2px}
+/* 「共通: 出力先」は列が狭いとき、フォルダーの区切り（\）で3行まで折り返す（切って隠さない。2.12.0） */
+.jobs-table th .th-sub{white-space:normal;word-break:normal;overflow-wrap:anywhere;line-height:1.3;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical}
+.jobs-table th .th-sub .output-link{white-space:normal}
+/* 選んだ行（2.12.0。案の比べ方は tests/ui-proposals/2026-10-job-groups2 の B）: 地色と濃い名前だけ。行ごとの枠を重ねない。
+   行の左の線（確認待ちの印）はそのまま残す */
+.jobs-table tbody tr.selected{outline:0;background:#e6f4f7}
+.jobs-table tbody tr.selected .col-name .primarytext{color:#0b4f5c}
+.jb-sel .sel-groups{font-size:12px;color:#cfe3ea;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:360px;margin-right:4px}
+.jb-sel .sel-groups:empty{display:none}
+/* 落とす先の言葉（グループの中へ・グループの並べ替え）と、動かしているグループの見出し */
+.jobs-table tbody tr.grp-head.drop-into td{background:#eef8fa;outline:2px dashed #0d8191;outline-offset:-4px;box-shadow:none}
+.drop-say-into{margin-left:8px;font-size:11.5px;font-weight:800;color:#0b6577;white-space:nowrap}
+.grp-bar{position:relative}
+.drop-say-move{position:absolute;left:50%;transform:translateX(-50%);font-size:11px;font-weight:800;color:#fff;background:#0d8191;border-radius:999px;padding:1px 10px;white-space:nowrap;z-index:5;pointer-events:none}
+.drop-say-move.before{top:-9px}.drop-say-move.after{bottom:-9px}
+.jobs-table tbody tr.grp-head.drop-before td{box-shadow:inset 0 4px 0 #0d8191}
+.jobs-table tbody tr.grp-head.drop-after td{box-shadow:inset 0 -4px 0 #0d8191}
+.jobs-table tbody tr.grp-head.dragging{opacity:1}
+.jobs-table tbody tr.grp-head.dragging td{background:repeating-linear-gradient(135deg,#f3f6f8 0 8px,#e9eff2 8px 16px)}
+.jobs-table tbody tr.grp-head.dragging .grp-bar{opacity:.55}
+.grp-names b{font-weight:800;color:#35505b}
+.jobs-table tr[data-id] td.col-name{padding-left:calc(8px + var(--rd,0) * 22px)}
