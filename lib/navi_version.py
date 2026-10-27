@@ -4,5 +4,5 @@
 navi_changelog.py にある ―― 800行の読みものなので、それを必要としない経路
 （抽出ワーカー）が読み込まずに済むように分けてある。
 """
-APP_VERSION='2.12.0'; APP_VERSION_TITLE='グループを5階層まで作れるようにし、ドラッグでの付け替え・グループの並べ替え・SHIFT での範囲選択に対応した'; APP_RELEASED_AT='2026-10-25'
+APP_VERSION='2.13.0'; APP_VERSION_TITLE='保守のあいだ、登録した自動実行をまとめて一時停止できるようにした'; APP_RELEASED_AT='2026-10-27'
 BUILD_VERSION=f'{APP_VERSION}-web'

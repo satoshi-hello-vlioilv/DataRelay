@@ -58,7 +58,7 @@ from app import (
     enqueue_command, expand_rule_occurrences, find_nearby_file, freshness_view,
     has_template_variables, inspect_task_blank,
     inspect_task_lock, inspect_task_percent, inspect_task_seconds, inspect_tasks,
-    job_extra_formats, job_output_plan, job_schedule_preview, json, jsonify, last_run_info, load, sqlite3,
+    job_extra_formats, job_output_plan, job_schedule_preview, schedule_pause, set_schedule_pause, json, jsonify, last_run_info, load, sqlite3,
     load_column_cache, load_job_runs, load_rne_timing, load_split_trials, log, log_files,
     machine_path_view, normalize_output_format, normalize_split_mode, normalize_split_shape,
     split_trial_options,
@@ -202,7 +202,23 @@ def set_columns():
 @app.get('/api/schedule-preview')
 def schedule_preview():
  c=load(); now=datetime.now(); runs=load_job_runs()
- return jsonify(items=[{**job_schedule_preview(j,now),**last_run_info(runs.get(j['id']))} for j in c['jobs']])
+ return jsonify(items=[{**job_schedule_preview(j,now),**last_run_info(runs.get(j['id']))} for j in c['jobs']],
+                pause=schedule_pause_view(c,now))
+
+def schedule_pause_view(c,now):
+ """一時停止の状態と、止まっている物の数（有効な対象の有効なルール）。"""
+ p=schedule_pause(now=now)
+ live=[j for j in c['jobs'] if j.get('enabled') and any(r.get('enabled') for r in j.get('schedules',[]))]
+ return {**p,'jobs':len(live),'rules':sum(1 for j in live for r in j.get('schedules',[]) if r.get('enabled'))}
+
+@app.post('/api/schedule-pause')
+def schedule_pause_set():
+ """自動実行をまとめて一時停止する・戻す。ルールごとの入・切は変えない。"""
+ d=request.get_json(silent=True) or {}
+ try:p=set_schedule_pause(bool(d.get('paused')),d.get('until') or '')
+ except ValueError as e:return jsonify(error=str(e)),400
+ log.info('SCHEDULE_PAUSE %s until=%s',('ON since='+p['since']) if p['paused'] else 'OFF',p.get('until') or '-')
+ return jsonify(pause=schedule_pause_view(load(),datetime.now()))
 
 @app.get('/api/freshness')
 def freshness():

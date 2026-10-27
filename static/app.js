@@ -1797,7 +1797,7 @@ function laneColumns(n){return n<=4?n:n<=12?4:6}function updateProgress(s){if(ac
 async function openProgressModal(){try{let s=await fetch('/api/status',{cache:'no-store'}).then(r=>r.json());if(s.run_id){activeRunId=s.run_id;activeExecutionMode=s.execution_mode||'serial';updateProgress(s);showProgress()}}catch{toast('進捗情報を取得できませんでした')}}$('.runtime').onclick=openProgressModal;async function poll(){if(appExiting)return;try{let s=await fetch('/api/status',{cache:'no-store'}).then(r=>r.json());statusFailCount=0;hideServerLost();latestStatus=s;lastRunning=s.running;/* activeRunId を空のときにしか入れ替えていなかったため、1回目の実行が終わっても
     その run_id を握ったままになり、2回目以降は進捗が1回目の最終状態で止まっていた。
     新しい実行を見たら必ず張り替える。 */
- if(s.running&&s.run_id&&s.run_id!==activeRunId){activeRunId=s.run_id;activeExecutionMode=s.execution_mode||'serial'}if(!$('#st'))return;$('#st').textContent=s.running?'処理中':s.step==='error'?'処理失敗':s.step==='cancelled'?'中断済み':'待機中';$('#sub').textContent=s.running?s.step_label:(s.last_finished_at||'実行待ち');$('#dot').style.background=s.running?'#f0b429':s.step==='error'?'#e45b50':s.step==='cancelled'?'#8a94a0':'#3ed1a0';$('.runtime').classList.toggle('processing',s.running);$('#run-all').disabled=false;updateSelCount();loadCommandQueue();applyRowLiveProgress(s);if(activeRunId&&s.run_id===activeRunId&&(s.running||s.step==='complete'||s.step==='error'||s.step==='cancelled'))updateProgress(s)}catch{if(!$('#st'))return;$('#st').textContent='接続エラー';statusFailCount++;if(statusFailCount>=3)showServerLost()}}
+ if(s.running&&s.run_id&&s.run_id!==activeRunId){activeRunId=s.run_id;activeExecutionMode=s.execution_mode||'serial'}if(!$('#st'))return;$('#st').textContent=s.running?'処理中':s.step==='error'?'処理失敗':s.step==='cancelled'?'中断済み':'待機中';$('#sub').textContent=s.running?s.step_label:(schedPause&&schedPause.paused?'手動の実行だけ':(s.last_finished_at||'実行待ち'));$('#dot').style.background=s.running?'#f0b429':s.step==='error'?'#e45b50':s.step==='cancelled'?'#8a94a0':'#3ed1a0';$('.runtime').classList.toggle('processing',s.running);$('#run-all').disabled=false;updateSelCount();loadCommandQueue();applyRowLiveProgress(s);if(activeRunId&&s.run_id===activeRunId&&(s.running||s.step==='complete'||s.step==='error'||s.step==='cancelled'))updateProgress(s)}catch{if(!$('#st'))return;$('#st').textContent='接続エラー';statusFailCount++;if(statusFailCount>=3)showServerLost()}}
 
 /* ==== SymNaviA.dll の探索 ==================================================
    別のPCで環境を作るとき、いちばん詰まるのがこのDLL。必要な条件（bit数）、探す範囲、
@@ -2380,6 +2380,89 @@ function freshTone(f){
 }
 // 2行目の頭。予定を持たない対象に毎行「予定なし」と出しても何も足さないので、
 // その対象が何で動くのか（手動のみ／次はいつ）だけを言う。
+/* 自動実行の一時停止（2.13.0）。止めている間に来る予定は「止めています」と出し、時刻は線で消す。
+   再開の時刻を決めていれば、それより後の予定はふだんどおり（止まらない）。 */
+var schedPause={paused:false};   // var: 状態の巡回（poll）が先に読むことがあるため
+function pauseSkips(when){
+ if(!schedPause.paused||!when)return false;
+ let t=when instanceof Date?when:new Date(when);if(isNaN(t))return false;
+ return !schedPause.until||t<new Date(schedPause.until);
+}
+function setSchedPause(p){
+ let was=JSON.stringify(schedPause);schedPause=p&&typeof p==='object'?p:{paused:false};
+ if(was!==JSON.stringify(schedPause)){paintSchedPause();if(calData)renderCalendar()}
+}
+const localIso=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}T${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+const hhmm=d=>`${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+const PAUSE_IC='<i class="pause-ic" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><rect x="6.5" y="5" width="3.6" height="14" rx="1"/><rect x="13.9" y="5" width="3.6" height="14" rx="1"/></svg></i>';
+// 再開の言い方は1つの形にそろえる:「17:34 に再開（残り 60分）」。残りは1時間半を切ってから添える（減っていくのが見える）
+function pauseWhenText(p){
+ if(!p.until)return '手で再開するまで';
+ let u=new Date(p.until),mins=Math.ceil((u-new Date())/60000);
+ let at=`${nextRunLabel(u.toISOString()).replace(/^本日 /,'')} に再開`;
+ return mins<=90?`${at}<span class="pc-left">（残り ${Math.max(1,mins)}分）</span>`:at;
+}
+const pauseWhenPlain=p=>pauseWhenText(p).replace(/<[^>]+>/g,'');
+function paintSchedPause(){
+ let chip=$('#pause-chip'),quick=$('#pause-quick');if(!chip||!quick)return;
+ let p=schedPause,on=!!p.paused;
+ if(on&&p.until&&new Date(p.until)<=new Date()){on=false;setTimeout(loadSchedulePreview,1500)}   // 再開の時刻が来た。中身が戻すのを待って読み直す
+ chip.hidden=!on;quick.hidden=on||!(p.rules>0);
+ if(!on)openPauseMenu(false);
+ if(on){
+  $('#pause-text').innerHTML=pauseWhenText(p);
+  chip.title=`${p.since?String(p.since).slice(11,16)+' から':''}止めています（${p.jobs}件の対象・${p.rules}ルール）。\n`
+   +`止めている間に来る予定は実行しません（一覧は「止めています」、カレンダーは斜線）。ルールごとの設定は変えていません。手動の実行はできます。`;
+ }
+ let st=latestStatus;if(st&&!st.running&&$('#sub'))$('#sub').textContent=on?'手動の実行だけ':(st.last_finished_at||'実行待ち');
+ if($('#leg-paused'))$('#leg-paused').hidden=!on;
+ let note=$('#exit-tray-note');if(note)note.textContent=on?`窓を通知領域に隠します。自動実行は止めたままです（${pauseWhenPlain(p)}）`:'窓を通知領域に隠します。予定した自動実行はそのまま動きます';
+}
+async function postSchedPause(body,msg){
+ try{let r=await fetch('/api/schedule-pause',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}),d=await r.json().catch(()=>({}));
+  if(!r.ok){toast(d.error||'自動実行の一時停止を変えられませんでした');return}
+  setSchedPause(d.pause);applyScheduleCells();toast(msg(d.pause));
+ }catch{toast('自動実行の一時停止を変えられませんでした')}
+}
+function pauseUntil(kind){
+ let now=new Date();
+ if(kind==='hour'){let base=schedPause.paused&&schedPause.until?new Date(Math.max(now,new Date(schedPause.until))):now;return localIso(new Date(+base+3600000))}
+ if(kind==='today'){let d=new Date(now);d.setHours(23,59,0,0);return localIso(d)}
+ if(kind==='at'){
+  let m=String($('#pause-at').value||'').trim().replace('：',':').match(/^(\d{1,2}):?(\d{2})$/);if(!m||+m[1]>23||+m[2]>59)return null;
+  let d=new Date(now);d.setHours(+m[1],+m[2],0,0);if(d<=now)d.setDate(d.getDate()+1);return localIso(d);   // 過ぎた時刻は翌日のその時刻
+ }
+ return '';
+}
+// 浮き窓は押した物がそのまま新しい長さになるボタンの並び。いまの長さに当たる物には「いま」を付ける
+function openPauseMenu(open){
+ let m=$('#pause-menu'),b=$('#pause-extend');if(!m)return;m.hidden=!open;b.setAttribute('aria-expanded',String(open));if(!open)return;
+ let u=schedPause.until?new Date(schedPause.until):null,cur=!u?'manual':(hhmm(u)==='23:59'&&u.toDateString()===new Date().toDateString()?'today':'');
+ $('#pause-now').textContent=`いま: ${pauseWhenPlain(schedPause)}`;
+ $$('#pause-menu button[data-len]').forEach(x=>{
+  let k=x.dataset.len,v=pauseUntil(k);x.classList.toggle('now',k===cur);
+  x.querySelector('small').textContent=k===cur?'':k==='manual'?'時刻を決めない':`${hhmm(new Date(v))} に再開`;
+ });
+ $('#pause-at').value='';
+}
+function applyPauseLen(kind){
+ let until=pauseUntil(kind);
+ if(until===null){toast('時刻は 18:00 のように入れてください');$('#pause-at').focus();return}
+ openPauseMenu(false);
+ postSchedPause({paused:true,until},p=>`自動実行を止めています（${pauseWhenPlain(p)}）`);
+}
+if($('#pause-quick')){
+ $('#pause-quick').onclick=()=>postSchedPause({paused:true,until:pauseUntil('hour')},p=>`自動実行を止めました（${hhmm(new Date(p.until))} に自動で再開します）`);
+ $('#pause-resume').onclick=()=>postSchedPause({paused:false},()=>'自動実行を再開しました');
+ $('#pause-extend').onclick=e=>{e.stopPropagation();openPauseMenu($('#pause-menu').hidden)};
+ $('#pause-menu').onclick=e=>e.stopPropagation();
+ $$('#pause-menu button[data-len]').forEach(x=>x.onclick=()=>applyPauseLen(x.dataset.len));
+ $('#pause-at-go').onclick=()=>applyPauseLen('at');
+ $('#pause-at').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();applyPauseLen('at')}};
+ document.addEventListener('click',()=>openPauseMenu(false));
+ document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!$('#pause-menu').hidden)openPauseMenu(false)});
+ setInterval(paintSchedPause,20000);   // 残りの分を減らしていく
+}
 function nextRunText(j,info){
  if(!j.enabled)return '対象が無効';
  if(info&&info.next_run)return `次は ${nextRunLabel(info.next_run)}`;
@@ -2431,7 +2514,9 @@ function lastMetricsRow(info,jobId,job){
  // （毎日 06:00 など）は、これまでどおりマウスを乗せれば読める。
  let nextHtml='';
  if(job){let nt=nextRunText(job,info),nh=(info&&info.hint)||'';
-  nextHtml=`<em class="rp-next-bit" title="${E(nh||nt)}">${E(nt)}</em>`;}
+  nextHtml=pauseSkips(info&&info.next_run)
+   ?`<em class="rp-next-bit is-paused" title="自動実行を一時停止しているため、この予定は実行しません">${PAUSE_IC}止めています<s>${E(nextRunLabel(info.next_run))}</s></em>`
+   :`<em class="rp-next-bit" title="${E(nh||nt)}">${E(nt)}</em>`;}
  if(!bits.length&&!mode&&!nextHtml)return '';
  return `<div class="rp-metrics" title="${E(title)}">`
   +(mode?`<span class="rp-mode ${mode[0]}">${E(mode[1])}</span>`:'')
@@ -2455,7 +2540,7 @@ function rowProgressCell(j){
  let info=scheduleInfo[j.id];
  return `<div class="rowprogress" data-jobid="${E(j.id)}"><div class="rp-schedule"><div class="rp-plan">${scheduleRowHtml(j,info)}</div>${lastMetricsRow(info,j.id,j)}</div><div class="rp-live"><div class="rp-live-top"><span class="rp-state"></span><span class="rp-dots"></span><time class="rp-elapsed"></time></div><div class="rp-track"><i class="rp-bar"></i></div><div class="rp-vseg" hidden></div><div class="rp-detail"></div></div></div>`;
 }
-async function loadSchedulePreview(){if(appExiting)return;try{let d=await fetch('/api/schedule-preview').then(r=>r.json());scheduleInfo=Object.fromEntries((d.items||[]).map(x=>[x.id,x]));applyScheduleCells()}catch{}}
+async function loadSchedulePreview(){if(appExiting)return;try{let d=await fetch('/api/schedule-preview').then(r=>r.json());scheduleInfo=Object.fromEntries((d.items||[]).map(x=>[x.id,x]));setSchedPause(d.pause);applyScheduleCells()}catch{}}
 function applyScheduleCells(){markFreshRows();$$('.rowprogress').forEach(el=>{if(el.classList.contains('is-running')||el.classList.contains('is-wait')||el.classList.contains('is-done')||el.classList.contains('is-error'))return;let j=cfg?.jobs?.find(x=>x.id===el.dataset.jobid);if(!j)return;let info=scheduleInfo[j.id];
  let pl=el.querySelector('.rp-plan');if(pl)pl.innerHTML=scheduleRowHtml(j,info);
  let sc=el.querySelector('.rp-schedule'),mt=el.querySelector('.rp-metrics');if(sc){let html=lastMetricsRow(info,j.id,j);if(mt)mt.remove();if(html)sc.insertAdjacentHTML('beforeend',html)}})}
@@ -2657,26 +2742,36 @@ async function loadCalendar(){
  catch{if($('#cal-grid'))$('#cal-grid').innerHTML='<div class="empty">カレンダー情報を取得できませんでした。</div>'}
 }
 function calStatusClass(s){return s==='ok'?'ok':s==='failed'?'ng':'warn'}
+// カレンダーの予定が一時停止で止まるか。時刻の無い物（定期）は、その日のうちに止まる時間があれば止まるとみなす
+function calPaused(iso,tm){
+ if(!schedPause.paused)return false;
+ let now=new Date(),day=new Date(`${iso}T00:00`);
+ if(tm){let t=new Date(`${iso}T${tm}`);return t>=now&&pauseSkips(t)}
+ let end=new Date(day);end.setDate(day.getDate()+1);
+ return end>now&&pauseSkips(day<now?now:day);
+}
 function renderCalendar(){
  if(!calData)return;let {y,m}=calYM;
  if($('#cal-title'))$('#cal-title').textContent=`${y}年 ${m}月`;
  let filt=x=>calJobFilter==='all'||x.job_id===calJobFilter;
  let sched=(calData.scheduled||[]).filter(filt),exec=(calData.executed||[]).filter(filt),intervals=(calData.interval||[]);
  let intFilt=intervals.map(d=>({date:d.date,items:(d.items||[]).filter(it=>calJobFilter==='all'||it.job_id===calJobFilter)})).filter(d=>d.items.length);
- if($('#cal-summary')){let okN=exec.filter(x=>x.status==='ok').length,ngN=exec.filter(x=>x.status==='failed').length;$('#cal-summary').innerHTML=`この月: 予定 <b>${sched.length}</b>件 / 定期(間隔) <b>${intFilt.length?'あり':'なし'}</b> / 実績 完了 <b>${okN}</b>・失敗 <b>${ngN}</b>`}
+ if($('#cal-summary')){let okN=exec.filter(x=>x.status==='ok').length,ngN=exec.filter(x=>x.status==='failed').length;let offN=sched.filter(x=>calPaused(x.date,x.time)).length;$('#cal-summary').innerHTML=`この月: 予定 <b>${sched.length}</b>件${offN?`（うち <b class="cal-off">${offN}</b>件は止めている）`:''} / 定期(間隔) <b>${intFilt.length?'あり':'なし'}</b> / 実績 完了 <b>${okN}</b>・失敗 <b>${ngN}</b>`}
  let byS={},byE={},byI={};
  sched.forEach(x=>{(byS[x.date]=byS[x.date]||[]).push(x)});
  exec.forEach(x=>{(byE[x.date]=byE[x.date]||[]).push(x)});
  intFilt.forEach(d=>{byI[d.date]=d.items});
  let start=new Date(y,m-1,1).getDay(),days=new Date(y,m,0).getDate(),today=calData.today;
+ // 1日に並べる予定の数。高さの足りない画面（フル HD）で4件並べると、札が縦に押しつぶされて文字の下が切れる
+ let calShow=innerHeight<900?3:4;
  let cells='';
  for(let i=0;i<start;i++)cells+='<div class="cal-cell cal-empty"></div>';
  for(let dn=1;dn<=days;dn++){
   let iso=`${y}-${String(m).padStart(2,'0')}-${String(dn).padStart(2,'0')}`,dow=new Date(y,m-1,dn).getDay(),ev='';
   if(calView!=='executed'){
-   (byS[iso]||[]).slice(0,4).forEach(x=>{ev+=`<button type="button" class="cal-ev ev-sched" data-jobid="${E(x.job_id)}" title="${E(x.job_name)} ${E(x.time)}（${E(x.rule_name)}）">${x.time} ${E(x.job_name)}</button>`});
-   if(byI[iso])ev+=`<span class="cal-ev ev-interval" title="一定間隔の定期実行">定期 ${byI[iso].length}件</span>`;
-   let ms=(byS[iso]||[]).length-4;if(ms>0)ev+=`<span class="cal-more">予定＋${ms}件</span>`;
+   (byS[iso]||[]).slice(0,calShow).forEach(x=>{let off=calPaused(iso,x.time);ev+=`<button type="button" class="cal-ev ev-sched${off?' is-paused':''}" data-jobid="${E(x.job_id)}" title="${E(x.job_name)} ${E(x.time)}（${E(x.rule_name)}）${off?'\n自動実行を止めているため、実行しません':''}">${off?PAUSE_IC:''}${x.time} ${E(x.job_name)}</button>`});
+   if(byI[iso]){let off=calPaused(iso,'');ev+=`<span class="cal-ev ev-interval${off?' is-paused':''}" title="一定間隔の定期実行${off?'（止めている間は実行しません）':''}">${off?PAUSE_IC:''}定期 ${byI[iso].length}件</span>`}
+   let ms=(byS[iso]||[]).length-calShow;if(ms>0){let mp=(byS[iso]||[]).slice(calShow).filter(x=>calPaused(iso,x.time)).length;ev+=`<span class="cal-more">予定＋${ms}件${mp?`<span class="pc-n" title="このうち ${mp}件は、自動実行を止めているため実行しません">${PAUSE_IC}${mp}</span>`:''}</span>`}
   }
   if(calView!=='scheduled'){
    (byE[iso]||[]).slice(0,3).forEach(x=>{ev+=`<span class="cal-ev ev-exec ${calStatusClass(x.status)}" title="${E(x.job_name)} ${E(x.time)} ${x.status}">${x.time} ${E(x.job_name)}</span>`});
