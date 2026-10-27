@@ -105,5 +105,17 @@ class PauseTest(unittest.TestCase):
   self.assertNotIn('pause',self.v['export'])
 
 
+class ScreenTest(unittest.TestCase):
+ """画面: 入口・止めている間の札・長さの浮き窓が揃い、同じ受け口を呼ぶ（中身の決まりと食い違わない）。"""
+ def test_parts(self):
+  html=(ROOT/'templates'/'index.html').read_text(encoding='utf-8');js=(ROOT/'static'/'app.js').read_text(encoding='utf-8')
+  for i in ('pause-quick','pause-chip','pause-extend','pause-resume','pause-menu','pause-at','leg-paused'):
+   self.assertIn(f'id="{i}"',html,i)
+  for k in ('hour','today','manual'):self.assertIn(f'data-len="{k}"',html)
+  self.assertIn("'/api/schedule-pause'",js)
+  self.assertIn('setSchedPause(d.pause)',js,'予定の一覧の読み直しで、止めているかも受け取る')
+  self.assertLess(html.index('id="pause-quick"'),html.index('class="runtime ctl"'),'入口は状態の札の左（全件実行から離す）')
+
+
 if __name__=='__main__':
  unittest.main()

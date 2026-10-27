@@ -556,6 +556,11 @@
    "to": "python",
    "note": ""
   },
+  "POST /api/schedule-pause": {
+   "area": "実行・キュー・予定",
+   "to": "python",
+   "note": "自動実行の一時停止（2.13.0）。止めているかはスケジューラー（中身）が持つ"
+  },
   "POST /api/schedule/quick-add": {
    "area": "実行・キュー・予定",
    "to": "python",
