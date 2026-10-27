@@ -421,6 +421,11 @@
    "to": "python",
    "note": ""
   },
+  "POST /api/period-targets": {
+   "area": "設定・対象の登録",
+   "to": "python",
+   "note": "抽出期間を当てられる条件欄の日付の項目（2.14.0）。RNE を読むだけ"
+  },
   "POST /api/period-preview": {
    "area": "設定・対象の登録",
    "to": "python",

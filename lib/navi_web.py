@@ -27,6 +27,7 @@ import navi_bundle   # 登録内容の持ち出し・持ち込みの決まり（
 import navi_join     # キーの見当を付けるところだけ、直接呼ぶ（本体を経由する用が無い）
 import navi_order    # 結合の順番と待ち合わせの判断
 import navi_book     # マスタをEXCELで出し入れする
+import navi_period   # 抽出期間の決まり（管理ポイント・条件欄の日付）
 import navi_crosstab # RNEの配置（表側・表頭・データ項目）を読む。ファイルを読むだけでAPIは使わない
 import navi_variants # 条件の値ごとに分けて出す（2.1.0）の決まり
 import navi_release  # 配布の置き場（版を置く・配る版・各PCの版）
@@ -428,12 +429,28 @@ def preview_filename():
 
 @app.post('/api/period-preview')
 def period_preview():
- # 相対期間設定から、処理日時基準で実際に抽出される期間を試算して返す。
+ # 相対期間設定から、処理日時基準で実際に抽出される期間を試算して返す。条件欄の日付は sample（RNE に入っている日付）の書き方で並べる。
  d=request.get_json(force=True) or {}
- period={'enabled':True,'unit':(d.get('unit') if d.get('unit') in ('month','day') else 'month'),'from_offset':d.get('from_offset',0),'to_offset':d.get('to_offset',0),'control_point':d.get('control_point') or ''}
- spec=compute_period(period,datetime.now())
+ period=navi_period.normalize({**d,'enabled':True})
+ spec=compute_period(period,datetime.now(),str(d.get('sample') or ''))
  if not spec:return jsonify(ok=False,error='期間を計算できません'),400
  return jsonify(ok=True,now=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),control_point=period['control_point'],**spec)
+
+@app.post('/api/period-targets')
+def period_targets():
+ """抽出期間を当てられる、条件欄の日付の項目（2.14.0）。RNE を読むだけで、Navigator にもサーバーにも触らない。
+ → conditions=[{name, value（RNE に入っている日付）, range（1=以前・2=期間・4=以降）, date（日付の項目と見たか）}]"""
+ data=request.get_json(force=True) or {};c=load()
+ job=next((x for x in c['jobs'] if x['id']==data.get('job_id')),None) if data.get('job_id') else None
+ rne_value=str(data.get('rne_path') or (job.get('rne_path') if job else '') or '').strip()
+ if not rne_value:return jsonify(ok=False,error='RNEファイルを指定してください')
+ tmp={'rne_path':rne_value,'rne':Path(rne_value).name}
+ try:rp=resolve_rne_path(tmp,c)
+ except Exception as e:return jsonify(ok=False,error=f'RNEパスの解決に失敗しました: {e}')
+ if not Path(rp).is_file():return jsonify(ok=False,error=rne_missing_message(tmp,c))
+ conds=navi_crosstab.read_conditions(rp)
+ if conds is None:return jsonify(ok=False,error='RNEの条件欄を読めませんでした')
+ return jsonify(ok=True,conditions=[{k:x.get(k) for k in ('name','value','range','date')} for x in conds])
 
 @app.post('/api/rne-shape')
 def rne_shape():

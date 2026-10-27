@@ -460,15 +460,10 @@ def _encode_setting(value):
  return (str(value),'text')
 
 def _decode_period(raw):
- # ジョブごとの相対期間（動的日付）設定を後方互換で読み出す。未設定は無効扱い。
+ # ジョブごとの相対期間（動的日付）設定を後方互換で読み出す。未設定は無効扱い。決まりは navi_period.normalize。
  try:d=json.loads(raw) if raw else {}
  except Exception:d={}
- if not isinstance(d,dict):d={}
- unit=d.get('unit'); unit=unit if unit in ('month','day') else 'month'
- def _int(v,default=0):
-  try:return int(v)
-  except Exception:return default
- return {'enabled':bool(d.get('enabled',False)),'control_point':str(d.get('control_point') or '').strip(),'unit':unit,'from_offset':_int(d.get('from_offset',0)),'to_offset':_int(d.get('to_offset',0))}
+ return navi_period.normalize(d)
 
 # 出力形式の読み替え・拡張子・同時出力の絞り込み・食い違い検査は navi_output.py。
 from navi_output import (OUTPUT_FORMAT_LABEL,normalize_output_format,output_extension,
@@ -494,6 +489,7 @@ import navi_viewer
 import navi_post
 # 対象のグループ（2.11.0。グループ名の整え方と、グループの決まり）は navi_groups.py。
 import navi_groups
+import navi_period   # 抽出期間（相対の期間）の決まり。管理ポイントと条件欄の日付
 from navi_join import (JOIN_TYPES,JOIN_TYPE_LABEL,JOIN_TYPE_NOTE,SOURCE_FORMATS,SOURCE_FORMAT_LABEL,
                        suggest_keys as suggest_join_keys,
                        MAX_SOURCES as JOIN_MAX_SOURCES,RECIPE_EXPORT_KIND,
@@ -2587,26 +2583,9 @@ def progress(step,label,percent,**extra):
 # ---- 相対期間（動的日付）------------------------------------------------------
 # RNEに定義済みの時間型管理ポイントへ、処理日時を基準にした相対期間を実行直前に適用する。
 # 単位=month: 月度指定 (YYYYMM00 / NAVI_MONTH=0) / 単位=day: 年月日指定 (YYYYMMDD / NAVI_YMD=1)。
-def _add_months(year,month,delta):
- idx=(year*12+(month-1))+int(delta); return idx//12, idx%12+1
-
-def compute_period(period,now=None):
- now=now or datetime.now()
- if not period or not period.get('enabled'):return None
- unit=period.get('unit') if period.get('unit') in ('month','day') else 'month'
- try:fo=int(period.get('from_offset',0) or 0)
- except Exception:fo=0
- try:to=int(period.get('to_offset',0) or 0)
- except Exception:to=0
- if unit=='month':
-  fy,fm=_add_months(now.year,now.month,fo); ty,tm=_add_months(now.year,now.month,to)
-  from_time=f'{fy:04d}{fm:02d}00'; to_time=f'{ty:04d}{tm:02d}00'; condition=0
-  summary=f'{fy}年{fm}月度 ～ {ty}年{tm}月度'
- else:
-  fd=(now.date()+timedelta(days=fo)); td=(now.date()+timedelta(days=to))
-  from_time=fd.strftime('%Y%m%d'); to_time=td.strftime('%Y%m%d'); condition=1
-  summary=f'{fd:%Y-%m-%d} ～ {td:%Y-%m-%d}'
- return {'condition':condition,'from_time':from_time,'to_time':to_time,'summary':summary,'unit':unit,'from_offset':fo,'to_offset':to}
+def compute_period(period,now=None,sample=''):
+ """相対期間を計算する（navi_period.compute）。管理ポイントは NaviChangePeriod の形、条件欄の日付は sample の書き方。"""
+ return navi_period.compute(period,now or datetime.now(),sample)
 
 # 読み戻した期間が頼んだ期間と合わないとき、止めるか（2.2.5 は止めていた）。読み戻しは 2.5.1 まで必ず化けていて（get_period が
 # 文字列のありかを文字として読んでいた）、止める判定は実機で一度も働いていない。NaviGetPeriod が変えたあとの期間を返すのか
@@ -2622,8 +2601,9 @@ def _period_not_confirmed(spec,got,job,line):
 def apply_dynamic_period(api_client,handle,job,now=None,line=''):
  # ジョブに相対期間が設定されていれば、開いたカタログの時間型管理ポイントを差し替える。
  # 期間が有効なのに適用に失敗した場合（管理ポイントが無い・変更が断られた）は、誤った期間での公開を避けるため例外を送出して失敗させる。
- period=job.get('period') or {}
- if not period.get('enabled'):return None
+ period=navi_period.normalize(job.get('period'))
+ if not period['enabled']:return None
+ if period['target']=='cond':return apply_cond_period(api_client,handle,job,period,now,line)
  spec=compute_period(period,now or datetime.now())
  if not spec:return None
  label=str(period.get('control_point') or '').strip()
@@ -2659,13 +2639,58 @@ def _period_readback(spec,stage,got,job,line):
  return verdict
 
 def period_not_applied_message(spec,got):
+ if spec.get('kind')=='cond':
+  return (f"抽出期間を {spec['summary']} に変えられませんでした（条件欄の「{spec.get('target')}」を読み戻すと "
+          f"{(got or {}).get('lvalue') or '-'}～{(got or {}).get('rvalue') or '-'} でした）。")
  return (f"抽出期間を {spec['summary']} に変えられませんでした（Navigator は受け付けましたが、読み戻すと RNE に保存した期間 "
          f"{(got or {}).get('from','?')}～{(got or {}).get('to','?')} のままです）。誤った期間のまま公開しないよう止めました。"
          f"対象の管理ポイント: {spec.get('target') or '(時間フィールド)'}")
 
+def apply_cond_period(api_client,handle,job,period,now=None,line=''):
+ """条件欄の日付の項目へ、相対の期間を当てる（2.14.0）。時間型の管理ポイントが無い RNE（条件欄に日付を直接入れた形）向け。
+
+ 1) いまの条件を読み出し（NaviGetConditionDI）、日付の書き方をそろえる 2) 範囲で差し替える（NaviChangeConditionDI）
+ 3) 読み戻して比べる。読み戻しが頼んだ値と違えば _period_not_confirmed（管理ポイントの期間と同じ扱い）。RNE ファイルは変えない。"""
+ item=period['cond_item']
+ if not item:raise RuntimeError('抽出期間: 条件欄の日付の項目が決まっていません（対象の設定の「抽出期間」で選んでください）')
+ t=phase_log('api_change_cond_period',job=job.get('name'),line=line,item=item,range=period['range'])
+ fallback=_rne_cond_sample(job,item)   # DLL が今の条件を読めないときは、RNE に入っている日付の書き方を使う
+ info=api_client.apply_cond_period(handle,item,lambda sample:compute_period(period,now or datetime.now(),sample or fallback))
+ spec=info['spec']
+ phase_log('api_change_cond_period',t,job=job.get('name'),line=line,summary=spec['summary'],form=info.get('form'))
+ log.info('DYNAMIC_PERIOD job=%s line=%s enabled=1 target=cond item=%s range=%s unit=%s l=%s r=%s summary=%s',job.get('name'),line or '-',
+          item,spec['range'],spec['unit'],spec['lvalue'] or '-',spec['rvalue'] or '-',spec['summary'])
+ out={**spec,'target':item,'h_item':info.get('handle'),'label':item}
+ _cond_readback(out,'before',info.get('before'),job,line)
+ if _cond_readback(out,'after',info.get('after'),job,line)=='differs':
+  _period_not_confirmed(out,info.get('after'),job,line)
+ return out
+
+def _rne_cond_sample(job,item):
+ """RNE の条件欄で item に入っている日付（例: 2026/1/1）。読めなければ空。日付の書き方をそろえる手本にする。"""
+ try:
+  rp=resolve_rne_path(job,load())
+  return next((x.get('value') or '' for x in (navi_crosstab.read_conditions(rp) or []) if x.get('name')==item),'')
+ except Exception:
+  return ''
+
+def _cond_readback(spec,stage,got,job,line):
+ """条件欄の日付を読み戻して記録し、頼んだ期間と比べる。→ 'match'／'differs'／'unknown'（読めない・DLL に読み出しが無い）。"""
+ verdict='-' if stage=='before' else navi_period.cond_readback(spec,got)
+ log.log(logging.WARNING if verdict=='differs' else logging.INFO,
+         'PERIOD_READBACK job=%s line=%s stage=%s target=cond condition=%s range=%s l=%s r=%s want=%s verdict=%s',job.get('name'),line or '-',stage,
+         (got or {}).get('condition','-'),(got or {}).get('range','-'),(got or {}).get('lvalue','-'),(got or {}).get('rvalue','-'),spec['summary'],verdict)
+ return verdict
+
 def ensure_period_before_execute(api_client,spec,job,line=''):
  """実行の直前に、期間がまだ頼んだとおりかを読み戻して確かめる（2.2.5）。値ごとの条件の付け替え（条件欄のキーを外す・表側の
  カテゴリを読み直す）のあとで期間が元に戻っていたら、もう一度当てて読み直す。それでも違えば _period_not_confirmed。"""
+ if spec and spec.get('kind')=='cond' and spec.get('h_item'):
+  if _cond_readback(spec,'pre_execute',api_client.get_condition_di(spec['h_item']),job,line)!='differs':return
+  api_client.change_cond_period(spec['h_item'],spec)
+  got=api_client.get_condition_di(spec['h_item'])
+  if _cond_readback(spec,'reapplied',got,job,line)=='differs':_period_not_confirmed(spec,got,job,line)
+  return
  if not spec or not spec.get('h_cp'):return
  v=_period_readback(spec,'pre_execute',api_client.get_period(spec['h_cp']),job,line)
  if v in ('match','unknown'):return
