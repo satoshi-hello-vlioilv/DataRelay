@@ -2308,6 +2308,38 @@ def save_scheduler_state(key,value):
  with settings_sync_lock, settings_connection() as c:c.execute('INSERT OR REPLACE INTO scheduler_state VALUES(?,?,?)',(key,value,datetime.now().isoformat(timespec='seconds')))
  _mark_settings_dirty()
 
+# 自動実行の一時停止（2.13.0）。保守のあいだ、登録した予定を1つも変えずにまとめて止める。
+# ルールごとの入・切には触らない ―― 戻したとき、止める前とまったく同じに動く。
+# 運転の状態なので設定（持ち出しの ZIP）には入れず、scheduler_state に置く。
+# 止めている間に来た予定は「飛ばした」として鍵を進める。戻した直前の予定が猶予の内でも、まとめて走り出さない。
+SCHEDULE_PAUSE_KEY='__pause__'
+def schedule_pause(st=None,now=None):
+ """いまの一時停止。{'paused','since','until','expired'}。until を過ぎていれば paused=False・expired=True。"""
+ st=load_scheduler_state() if st is None else st;now=now or datetime.now()
+ try:p=json.loads(st.get(SCHEDULE_PAUSE_KEY) or '{}')
+ except ValueError:p={}
+ if not isinstance(p,dict) or not p.get('since'):return {'paused':False,'since':'','until':'','expired':False}
+ until=str(p.get('until') or '')
+ try:over=bool(until) and datetime.fromisoformat(until)<=now
+ except ValueError:until='';over=False
+ return {'paused':not over,'since':str(p['since']),'until':until,'expired':over}
+
+def set_schedule_pause(paused,until=''):
+ """一時停止を入・切する。until は再開する時刻（ISO・空なら手で戻すまで）。過去の時刻は断る。"""
+ now=datetime.now()
+ if not paused:
+  save_scheduler_state(SCHEDULE_PAUSE_KEY,'{}');return schedule_pause()
+ until=str(until or '').strip()
+ if until:
+  try:at=datetime.fromisoformat(until)
+  except ValueError as e:raise ValueError('再開する時刻を読めません') from e
+  if at<=now:raise ValueError('再開する時刻が過ぎています')
+  until=at.isoformat(timespec='minutes')
+ cur=schedule_pause(now=now)
+ since=cur['since'] if cur['paused'] else now.isoformat(timespec='seconds')
+ save_scheduler_state(SCHEDULE_PAUSE_KEY,json.dumps({'since':since,'until':until}))
+ return schedule_pause(now=now)
+
 def set_status(**v):
  with status_lock: status.update(v)
 
@@ -4949,6 +4981,56 @@ def missed_schedules(cfg,st,since,now,catchup):
     out.append((j['name'],r.get('name',r['type']),pt.strftime('%Y-%m-%d %H:%M')))
  return out
 
+def schedule_tick(cfg,st,now):
+ """予定の判定を1回まわす。時刻の来たルールの鍵を進め、実行キューへ入れる（一時停止中は飛ばす）。
+
+ 戻り値は {'paused','enqueued','skipped','retries'}（試験と記録のため）。
+ """
+ pause=schedule_pause(st,now)
+ if pause['expired']:
+  set_schedule_pause(False);log.info('SCHEDULE_PAUSE_ENDED reason=再開の時刻 until=%s',pause['until'])
+  add_alert('info','自動実行を再開しました',f'{pause["until"].replace("T"," ")} に再開する設定でした')
+ out={'paused':pause['paused'],'enqueued':[],'skipped':[],'retries':0}
+ # 取り直しは予定より先に流す。待たせるほどデータが古いままになる。
+ for r in due_retries():
+  if pause['paused']:
+   out['retries']+=1;log.info('RETRY_SKIPPED jobs=%s attempt=%s reason=自動実行の一時停止中',r['names'],r['attempt']);continue
+  try:
+   enqueue_command(r['job_ids'],f'schedule-retry:{r["attempt"]}',r['lines'],attempt=r['attempt'])
+   log.info('RETRY_ENQUEUED jobs=%s attempt=%s',r['names'],r['attempt'])
+  except Exception as re:log.warning('RETRY_ENQUEUE_FAILED jobs=%s error=%s',r['names'],re)
+ catchup=int(cfg['settings'].get('schedule_catchup_minutes',30) or 0)
+ due_ids=[]; due_rules=[]
+ for j in cfg['jobs']:
+  if not j.get('enabled'):continue
+  for r in j.get('schedules',[]):
+   if not r.get('enabled'):continue
+   key=schedule_key(j,r,now,catchup); state_key=f'{j["id"]}:{r["id"]}'
+   if key and st.get(state_key)!=key:
+    first_seen=state_key not in st
+    st[state_key]=key; save_scheduler_state(state_key,key)
+    if first_seen and r.get('type')=='interval':
+     # 一定間隔は「区切り番号」を鍵にしている。初めて見る規則は、いまの区切りを
+     # 済んだことにして次の境界から動かす ―― でないと登録した直後や、区切りを
+     # またいだ起動の直後に、画面が予告している時刻を待たずに走り出す。
+     log.info('SCHEDULE_INTERVAL_ARMED job=%s rule=%s（次の区切りから動きます）',j['name'],r.get('name',r['type']));continue
+    # ここで break すると、同じ対象の残りの規則は鍵が保存されないまま残る。
+    # 実行が終わった次の巡回で「まだ実行していない」と判定され、もう一度走ってしまう
+    # （「毎日06:00」と「1時間ごと」を併用すると毎朝かならず二重実行になっていた）。
+    # 対象を入れるのは1回だけにして、鍵は当たった規則ぶん全部を保存する。
+    if j['id'] not in due_ids:due_ids.append(j['id']); due_rules.append(r.get('name',r['type']))
+ if due_ids and pause['paused']:
+  out['skipped']=due_ids;log.info('SCHEDULE_PAUSED_SKIP jobs=%s rules=%s since=%s（一時停止中のため飛ばしました）',due_ids,due_rules,pause['since'])
+ elif due_ids:
+  # 自動実行も手動実行と同じ並列ライン設定で動かす。ここを1固定にすると、
+  # 対象がまとまって走る夜間バッチほど並列化の効果を受けられない。
+  lines=clamp_parallel_lines(cfg['settings'].get('api_parallel_lines',1),cfg)
+  log.info('SCHEDULE_BATCH_READY jobs=%s count=%s rules=%s parallel_lines=%s',due_ids,len(due_ids),due_rules,lines)
+  # 投入後もスケジューラーは常駐し続ける。ここでreturnするとスレッドが終了し、
+  # 以降の自動実行がアプリ再起動まで一切発火しなくなる。
+  out['enqueued']=due_ids;enqueue_command(due_ids,f'schedule-batch:{len(due_ids)}',lines)
+ return out
+
 def scheduler():
  time.sleep(3)
  busy_since=None
@@ -4968,40 +5050,7 @@ def scheduler():
                +'（別の処理が実行中のまま猶予時間を過ぎました。必要なら手で実行してください）',
                [n for n,_r,_w in gone])
    rotate_log_if_needed(cfg)
-   # 取り直しは予定より先に流す。待たせるほどデータが古いままになる。
-   for r in due_retries():
-    try:
-     enqueue_command(r['job_ids'],f'schedule-retry:{r["attempt"]}',r['lines'],attempt=r['attempt'])
-     log.info('RETRY_ENQUEUED jobs=%s attempt=%s',r['names'],r['attempt'])
-    except Exception as re:log.warning('RETRY_ENQUEUE_FAILED jobs=%s error=%s',r['names'],re)
-   catchup=int(cfg['settings'].get('schedule_catchup_minutes',30) or 0)
-   due_ids=[]; due_rules=[]
-   for j in cfg['jobs']:
-    if not j.get('enabled'):continue
-    for r in j.get('schedules',[]):
-     if not r.get('enabled'):continue
-     key=schedule_key(j,r,now,catchup); state_key=f'{j["id"]}:{r["id"]}'
-     if key and st.get(state_key)!=key:
-      first_seen=state_key not in st
-      st[state_key]=key; save_scheduler_state(state_key,key)
-      if first_seen and r.get('type')=='interval':
-       # 一定間隔は「区切り番号」を鍵にしている。初めて見る規則は、いまの区切りを
-       # 済んだことにして次の境界から動かす ―― でないと登録した直後や、区切りを
-       # またいだ起動の直後に、画面が予告している時刻を待たずに走り出す。
-       log.info('SCHEDULE_INTERVAL_ARMED job=%s rule=%s（次の区切りから動きます）',j['name'],r.get('name',r['type']));continue
-      # ここで break すると、同じ対象の残りの規則は鍵が保存されないまま残る。
-      # 実行が終わった次の巡回で「まだ実行していない」と判定され、もう一度走ってしまう
-      # （「毎日06:00」と「1時間ごと」を併用すると毎朝かならず二重実行になっていた）。
-      # 対象を入れるのは1回だけにして、鍵は当たった規則ぶん全部を保存する。
-      if j['id'] not in due_ids:due_ids.append(j['id']); due_rules.append(r.get('name',r['type']))
-   if due_ids:
-    # 自動実行も手動実行と同じ並列ライン設定で動かす。ここを1固定にすると、
-    # 対象がまとまって走る夜間バッチほど並列化の効果を受けられない。
-    lines=clamp_parallel_lines(cfg['settings'].get('api_parallel_lines',1),cfg)
-    log.info('SCHEDULE_BATCH_READY jobs=%s count=%s rules=%s parallel_lines=%s',due_ids,len(due_ids),due_rules,lines)
-    # 投入後もスケジューラーは常駐し続ける。ここでreturnするとスレッドが終了し、
-    # 以降の自動実行がアプリ再起動まで一切発火しなくなる。
-    enqueue_command(due_ids,f'schedule-batch:{len(due_ids)}',lines)
+   schedule_tick(cfg,st,now)
   except:log.exception('スケジュール判定エラー')
  log.info('SCHEDULER_STOPPED reason=stop_event')
 

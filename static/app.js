@@ -2380,6 +2380,18 @@ function freshTone(f){
 }
 // 2行目の頭。予定を持たない対象に毎行「予定なし」と出しても何も足さないので、
 // その対象が何で動くのか（手動のみ／次はいつ）だけを言う。
+/* 自動実行の一時停止（2.13.0）。止めている間に来る予定は「止めています」と出し、時刻は線で消す。
+   再開の時刻を決めていれば、それより後の予定はふだんどおり（止まらない）。 */
+let schedPause={paused:false};
+function pauseSkips(when){
+ if(!schedPause.paused||!when)return false;
+ let t=when instanceof Date?when:new Date(when);if(isNaN(t))return false;
+ return !schedPause.until||t<new Date(schedPause.until);
+}
+function setSchedPause(p){
+ let was=JSON.stringify(schedPause);schedPause=p&&typeof p==='object'?p:{paused:false};
+ if(was!==JSON.stringify(schedPause)){paintSchedPause();if(calData)renderCalendar()}
+}
 function nextRunText(j,info){
  if(!j.enabled)return '対象が無効';
  if(info&&info.next_run)return `次は ${nextRunLabel(info.next_run)}`;
@@ -2431,7 +2443,9 @@ function lastMetricsRow(info,jobId,job){
  // （毎日 06:00 など）は、これまでどおりマウスを乗せれば読める。
  let nextHtml='';
  if(job){let nt=nextRunText(job,info),nh=(info&&info.hint)||'';
-  nextHtml=`<em class="rp-next-bit" title="${E(nh||nt)}">${E(nt)}</em>`;}
+  nextHtml=pauseSkips(info&&info.next_run)
+   ?`<em class="rp-next-bit is-paused" title="自動実行を一時停止しているため、この予定は実行しません">止めています<s>${E(nextRunLabel(info.next_run))}</s></em>`
+   :`<em class="rp-next-bit" title="${E(nh||nt)}">${E(nt)}</em>`;}
  if(!bits.length&&!mode&&!nextHtml)return '';
  return `<div class="rp-metrics" title="${E(title)}">`
   +(mode?`<span class="rp-mode ${mode[0]}">${E(mode[1])}</span>`:'')
@@ -2455,7 +2469,7 @@ function rowProgressCell(j){
  let info=scheduleInfo[j.id];
  return `<div class="rowprogress" data-jobid="${E(j.id)}"><div class="rp-schedule"><div class="rp-plan">${scheduleRowHtml(j,info)}</div>${lastMetricsRow(info,j.id,j)}</div><div class="rp-live"><div class="rp-live-top"><span class="rp-state"></span><span class="rp-dots"></span><time class="rp-elapsed"></time></div><div class="rp-track"><i class="rp-bar"></i></div><div class="rp-vseg" hidden></div><div class="rp-detail"></div></div></div>`;
 }
-async function loadSchedulePreview(){if(appExiting)return;try{let d=await fetch('/api/schedule-preview').then(r=>r.json());scheduleInfo=Object.fromEntries((d.items||[]).map(x=>[x.id,x]));applyScheduleCells()}catch{}}
+async function loadSchedulePreview(){if(appExiting)return;try{let d=await fetch('/api/schedule-preview').then(r=>r.json());scheduleInfo=Object.fromEntries((d.items||[]).map(x=>[x.id,x]));setSchedPause(d.pause);applyScheduleCells()}catch{}}
 function applyScheduleCells(){markFreshRows();$$('.rowprogress').forEach(el=>{if(el.classList.contains('is-running')||el.classList.contains('is-wait')||el.classList.contains('is-done')||el.classList.contains('is-error'))return;let j=cfg?.jobs?.find(x=>x.id===el.dataset.jobid);if(!j)return;let info=scheduleInfo[j.id];
  let pl=el.querySelector('.rp-plan');if(pl)pl.innerHTML=scheduleRowHtml(j,info);
  let sc=el.querySelector('.rp-schedule'),mt=el.querySelector('.rp-metrics');if(sc){let html=lastMetricsRow(info,j.id,j);if(mt)mt.remove();if(html)sc.insertAdjacentHTML('beforeend',html)}})}
@@ -2657,6 +2671,14 @@ async function loadCalendar(){
  catch{if($('#cal-grid'))$('#cal-grid').innerHTML='<div class="empty">カレンダー情報を取得できませんでした。</div>'}
 }
 function calStatusClass(s){return s==='ok'?'ok':s==='failed'?'ng':'warn'}
+// カレンダーの予定が一時停止で止まるか。時刻の無い物（定期）は、その日のうちに止まる時間があれば止まるとみなす
+function calPaused(iso,tm){
+ if(!schedPause.paused)return false;
+ let now=new Date(),day=new Date(`${iso}T00:00`);
+ if(tm){let t=new Date(`${iso}T${tm}`);return t>=now&&pauseSkips(t)}
+ let end=new Date(day);end.setDate(day.getDate()+1);
+ return end>now&&pauseSkips(day<now?now:day);
+}
 function renderCalendar(){
  if(!calData)return;let {y,m}=calYM;
  if($('#cal-title'))$('#cal-title').textContent=`${y}年 ${m}月`;
@@ -2674,8 +2696,8 @@ function renderCalendar(){
  for(let dn=1;dn<=days;dn++){
   let iso=`${y}-${String(m).padStart(2,'0')}-${String(dn).padStart(2,'0')}`,dow=new Date(y,m-1,dn).getDay(),ev='';
   if(calView!=='executed'){
-   (byS[iso]||[]).slice(0,4).forEach(x=>{ev+=`<button type="button" class="cal-ev ev-sched" data-jobid="${E(x.job_id)}" title="${E(x.job_name)} ${E(x.time)}（${E(x.rule_name)}）">${x.time} ${E(x.job_name)}</button>`});
-   if(byI[iso])ev+=`<span class="cal-ev ev-interval" title="一定間隔の定期実行">定期 ${byI[iso].length}件</span>`;
+   (byS[iso]||[]).slice(0,4).forEach(x=>{let off=calPaused(iso,x.time);ev+=`<button type="button" class="cal-ev ev-sched${off?' is-paused':''}" data-jobid="${E(x.job_id)}" title="${E(x.job_name)} ${E(x.time)}（${E(x.rule_name)}）${off?'\n自動実行を一時停止しているため、実行しません':''}">${x.time} ${E(x.job_name)}</button>`});
+   if(byI[iso]){let off=calPaused(iso,'');ev+=`<span class="cal-ev ev-interval${off?' is-paused':''}" title="一定間隔の定期実行${off?'（一時停止の間は実行しません）':''}">定期 ${byI[iso].length}件</span>`}
    let ms=(byS[iso]||[]).length-4;if(ms>0)ev+=`<span class="cal-more">予定＋${ms}件</span>`;
   }
   if(calView!=='scheduled'){
