@@ -1,6 +1,7 @@
 // 2.14.0 抽出期間の見せ方の案（CLAUDE.md §3）。条件欄の日付（時間型の管理ポイントが無い RNE）と、範囲の形（期間・以降・以前）を足す。
 // 中身（計算・当て方・読み戻し）は本物にできている。ここで比べるのは、対象の設定の「2 抽出期間」の組み方だけ。
 // 撮り方: 本物の画面で対象の設定を開き、window.TPD.show(k, s) で #period-body を案の形に差し替える。
+// 2回目（組合せ）: H〜K。番号の丸はタブの番号と紛れるので、線の見出しにした。
 //  s=1 条件欄の日付（払出日）・期間 3ヶ月前〜1ヶ月前  s=2 同じ RNE で「以降」  s=3 時間管理ポイント（月度）の RNE
 (() => {
  const $ = s => document.querySelector(s);
@@ -50,7 +51,32 @@
  .tpd .found b{font-size:13px}
  .tpd .ln{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:14px;color:#20404a;line-height:2.2}
  .tpd .ln select,.tpd .ln input{font-size:13px}
- `;
+
+ .tpd .flow{display:grid;gap:0;background:#fff;border:1px solid #cddce2;border-radius:10px;padding:2px 14px}
+ .tpd .fl{display:grid;grid-template-columns:132px minmax(0,1fr);gap:12px;align-items:center;padding:10px 0;border-bottom:1px solid #edf2f4}
+ .tpd .fl:last-child{border-bottom:0}
+ .tpd .fl>b{font-size:12px;color:#43616b;font-weight:800;border-left:3px solid #22a6b0;padding-left:8px;line-height:1.3}
+ .tpd .why{font-size:11px;color:#7d9098}
+ .tpd .pre{display:flex;flex-wrap:wrap;gap:6px}
+ .tpd .pre button{display:inline-flex;flex-direction:column;align-items:flex-start;gap:1px;padding:5px 10px;border-radius:8px;background:#fff;border:1px solid #cbe4e8;color:#0b6570;font-size:12px;font-weight:800}
+ .tpd .pre button small{font-size:10.5px;color:#6b8089;font-weight:600}
+ .tpd .pre button.on{border:2px solid #14979e;background:#effafa;padding:4px 9px}
+ .tpd .tl2{position:relative;height:50px;margin:2px 4px 0}
+ .tpd .tl2 .axis{position:absolute;left:0;right:0;top:18px;height:6px;border-radius:3px;background:#e3ecef}
+ .tpd .tl2 .rng{position:absolute;top:14px;height:14px;border-radius:7px;background:#22a6b0}
+ .tpd .tl2 .rng.open{border-top-right-radius:0;border-bottom-right-radius:0;background:linear-gradient(90deg,#22a6b0 80%,#22a6b000)}
+ .tpd .tl2 .rng.openl{border-top-left-radius:0;border-bottom-left-radius:0;background:linear-gradient(270deg,#22a6b0 80%,#22a6b000)}
+ .tpd .tl2 .tick{position:absolute;top:32px;font-size:10.5px;color:#8a9ba3;transform:translateX(-50%);white-space:nowrap}
+ .tpd .tl2 .now{position:absolute;top:13px;height:19px;width:2px;background:#d04a3a}
+ .tpd .tl2 .nowl{position:absolute;top:32px;font-size:10.5px;font-weight:800;color:#d04a3a;transform:translateX(-50%);white-space:nowrap;background:#fafdfd;padding:0 3px}
+ .tpd .tl2 .lab{position:absolute;top:-2px;font-size:11px;font-weight:800;color:#0b6570;white-space:nowrap}
+ .tpd .tl2 .lab.l{transform:translateX(0)}.tpd .tl2 .lab.r{transform:translateX(-100%)}
+ .tpd .found2{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12.5px;color:#20404a}
+ .tpd .found2 .arrow{color:#22a6b0;font-weight:900}
+ .tpd .pv b.big{font-size:18px}
+ .tpd .cards2{display:grid;grid-template-columns:repeat(2,minmax(0,260px));gap:8px}
+ .tpd .cards2 .card{padding:7px 11px}.tpd .cards2 .card.on{padding:6px 10px}
+  `;
  const seg = (opts, on, dis = []) => `<span class="seg">${opts.map(([v, l]) => `<button type="button" class="${v === on ? 'on' : ''}" ${dis.includes(v) ? 'disabled' : ''}>${l}</button>`).join('')}</span>`;
  const unitSeg = s => seg([['month', '月'], ['day', '日']], s.unit);
  const rangeSeg = s => seg([['between', '期間'], ['from', '以降'], ['to', '以前']], s.range, s.t === 'point' ? ['from', 'to'] : []);
@@ -59,6 +85,20 @@
  const endTxt = s => s.t === 'cond' ? (s.unit === 'month' ? 'ヶ月前の末日' : '日前') : 'ヶ月前（月度）';
  const pv = s => `<div class="pv"><span>抽出範囲プレビュー</span><b>${s.prev}</b><small>${s.t === 'cond' ? `条件欄「${s.item}」をこの範囲に差し替えます（RNE では ${s.rne}）` : `時間管理ポイント「${s.cp}」の期間を差し替えます`} ／ 処理日時 2026-10-27 基準</small></div>`;
  const target = s => s.t === 'cond' ? `<span class="chip2">条件欄の日付 ・ ${s.item}</span><span class="note">RNE では ${s.rne}</span>` : `<span class="chip2">時間管理ポイント ・ ${s.cp}</span>`;
+
+ const rangeSeg2 = s => `${rangeSeg(s)}<span class="why">${s.t === 'point' ? '時間管理ポイントは「期間」だけです（以降・以前は条件欄の日付で使えます）' : { between: '始まりと終わりの両方を決めます', from: '始まりだけ決め、それ以降をすべて取ります', to: '終わりだけ決め、それ以前をすべて取ります' }[s.range]}</span>`;
+ const when = s => `${unitSeg(s)} ${s.range !== 'to' ? `<span class="row">開始 ${off(s.fo, startTxt(s))}</span>` : ''} ${s.range !== 'from' ? `<span class="row">終了 ${off(s.to, endTxt(s))}</span>` : ''}`;
+ const found = s => `<div class="found2">${s.t === 'cond' ? `<span class="chip2">条件欄の日付 ・ ${s.item}</span><span>RNE のいま: <b>${s.rne}</b></span><span class="arrow">→</span><span>実行のたびに下の範囲へ差し替えます</span>` : `<span class="chip2">時間管理ポイント ・ ${s.cp}</span><span class="arrow">→</span><span>実行のたびに下の期間へ差し替えます</span>`}</div>`;
+ const PRE = { cond: [['今月以降', '2026/10/1 以降', 'from'], ['先月', '2026/9/1 ～ 2026/9/30', ''], ['3ヶ月前の1日 ～ 先月末', '2026/7/1 ～ 2026/9/30', 'between'], ['3ヶ月前の1日 以降', '2026/7/1 以降', 'from3'], ['6ヶ月前の1日 以降', '2026/4/1 以降', '']],
+  point: [['今月度', '2026年10月度', ''], ['前月度', '2026年9月度', ''], ['前月度 ～ 今月度', '2026年9月度 ～ 2026年10月度', 'between'], ['3ヶ月前 ～ 今月度', '2026年7月度 ～ 2026年10月度', ''], ['6ヶ月前 ～ 今月度', '2026年4月度 ～ 2026年10月度', '']] };
+ const pre = s => `<div class="pre">${PRE[s.t].map(([t, d, k]) => `<button type="button" class="${(k === 'between' && s.range === 'between') || (k === 'from3' && s.range === 'from') ? 'on' : ''}">${t}<small>${d}</small></button>`).join('')}</div>`;
+ const tl = s => { const c = i => 13 + 14 * i, st = i => 6 + 14 * i, today = 62 + 14 * 26 / 31;
+  const L = s.t === 'point' ? st(3) : st(1), R = s.range === 'from' ? 100 : (s.t === 'point' ? st(5) : st(4));
+  return `<div class="tl2"><div class="axis"></div><div class="rng ${s.range === 'from' ? 'open' : ''}" style="left:${L}%;right:${100 - R}%"></div>
+   ${['6月', '7月', '8月', '9月', '10月', '11月'].map((m, i) => `<span class="tick" style="left:${c(i)}%">${m}</span>`).join('')}
+   <span class="now" style="left:${today}%"></span><span class="nowl" style="left:${today}%">今日</span>
+   <span class="lab l" style="left:${L}%">${s.lo}</span>${s.hi ? `<span class="lab r" style="left:${R}%">${s.hi}</span>` : ''}</div>`; };
+ const pv2 = s => `<div class="pv"><span>抽出範囲プレビュー</span><b class="big">${s.prev}</b><small>処理日時 2026-10-27 基準</small></div>`;
  const V = {
   // A: 上から「当てる先」2枚のカード →「範囲の形」→「いつから・いつまで」→ プレビュー
   A: s => `<h4>当てる先 <small>RNE から見つけた日付の絞り込み</small></h4>
@@ -114,6 +154,28 @@
    <div class="step"><b><i>2</i>どんな形で</b><div class="row">${rangeSeg(s)} <span class="note">${{ between: '始まりと終わりの両方を決めます', from: '始まりだけ決め、それ以降をすべて取ります', to: '終わりだけ決め、それ以前をすべて取ります' }[s.range]}</span></div></div>
    <div class="step"><b><i>3</i>いつから・いつまで</b><div class="row">${unitSeg(s)} ${s.range !== 'to' ? `開始 ${off(s.fo, startTxt(s))}` : ''} ${s.range !== 'from' ? `終了 ${off(s.to, endTxt(s))}` : ''}</div></div></div>
    ${pv(s)}`,
+  // H（G＋F＋C）: 3段の流れ（番号でなく線の見出し）。1段目に RNE のいまと差し替えの関係、3段目の下に時間の線
+  H: s => `<div class="flow"><div class="fl"><b>どの日付で</b><div>${found(s)}</div></div>
+   <div class="fl"><b>どんな形で</b><div class="row">${rangeSeg2(s)}</div></div>
+   <div class="fl"><b>いつから・いつまで</b><div class="row">${when(s)}</div></div></div>
+   ${tl(s)}${pv2(s)}`,
+  // I（G＋F＋E＋A）: 3段の流れ。3段目は結果の日付つきの「よく使う範囲」を先に、細かい数はその下
+  I: s => `<div class="flow"><div class="fl"><b>どの日付で</b><div>${found(s)}</div></div>
+   <div class="fl"><b>どんな形で</b><div class="row">${rangeSeg2(s)}</div></div>
+   <div class="fl"><b>いつから・いつまで</b><div style="display:grid;gap:8px">${pre(s)}<div class="row">${when(s)}</div></div></div></div>
+   ${pv2(s)}`,
+  // J（F＋G＋C）: 上に RNE のいまと差し替えの関係を帯で、下に「形」と「いつ」の2段、結果は時間の線とプレビュー
+  J: s => `<div class="found" style="justify-content:flex-start">${found(s)}</div>
+   <div class="flow"><div class="fl"><b>どんな形で</b><div class="row">${rangeSeg2(s)}</div></div>
+   <div class="fl"><b>いつから・いつまで</b><div class="row">${when(s)}</div></div></div>
+   ${tl(s)}${pv2(s)}`,
+  // K（A＋G＋E＋C）: 当てる先を2枚のカード（使えない方は理由つきの灰色）、形・いつを流れで、よく使う範囲と時間の線
+  K: s => `<div class="flow"><div class="fl"><b>どの日付で</b><div class="cards2">
+    <button type="button" class="card ${s.t === 'point' ? 'on' : ''}" ${s.t === 'cond' ? 'disabled' : ''}><b>時間管理ポイント</b><small>${s.t === 'point' ? '月度' : 'この RNE にはありません'}</small></button>
+    <button type="button" class="card ${s.t === 'cond' ? 'on' : ''}" ${s.t === 'point' ? 'disabled' : ''}><b>条件欄の日付</b><small>${s.t === 'cond' ? `${s.item}（RNE のいま: ${s.rne}）` : 'この RNE にはありません'}</small></button></div></div>
+   <div class="fl"><b>どんな形で</b><div class="row">${rangeSeg2(s)}</div></div>
+   <div class="fl"><b>いつから・いつまで</b><div style="display:grid;gap:8px">${pre(s)}<div class="row">${when(s)}</div></div></div></div>
+   ${tl(s)}${pv2(s)}`,
  };
  window.TPD = { keys: Object.keys(V), show(k, s) {
   if (!$('#tpd-css')) { const e = document.createElement('style'); e.id = 'tpd-css'; e.textContent = css; document.head.append(e); }
