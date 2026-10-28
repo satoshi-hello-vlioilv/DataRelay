@@ -3601,3 +3601,5 @@ main:has(#layouts.on,#joins.on,#mqueries.on)>.subnav{margin-bottom:0}
 .pl-lab.r{transform:translateX(-100%)}
 #m-period-preview{font:18px "Yu Gothic UI",Meiryo,sans-serif;font-weight:800}
 #m-period-preview-meta{flex:0 1 auto}
+.pd-chip.is-ng{border-color:#e3a39c;color:#a8352c;background:#fff6f5}
+.pd-ng{color:#a8352c}
