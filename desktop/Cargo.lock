@@ -649,7 +649,7 @@ dependencies = [
 
 [[package]]
 name = "datarelay-desktop"
-version = "2.14.1"
+version = "2.14.2"
 dependencies = [
  "serde",
  "serde_json",

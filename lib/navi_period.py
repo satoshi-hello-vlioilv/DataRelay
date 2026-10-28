@@ -37,6 +37,23 @@ def normalize(d):
          'from_offset':_int(d.get('from_offset')),'to_offset':_int(d.get('to_offset'))}
 
 
+def resolve_cond_item(saved,conds):
+ """当てる先の条件欄の項目を、実行する RNE の条件欄から決める（2.14.2）。→ (項目名, 理由)。決められなければ (None, 理由)。
+
+ 保存した名前は「前回選んだ物」として扱い、RNE を正とする。RNE を読めない（conds が None）ときだけ保存した名前をそのまま使う。
+ 1) 保存した名前が条件欄にある → それ（'saved'）
+ 2) 日付の項目が1つだけ → それ（保存が空なら 'auto'、別の名前なら 'replaced'）
+ 3) 日付の項目が複数で、値か範囲が入っている物が1つだけ → それ（同上）
+ 4) それ以外 → None（'none'＝日付の項目が無い／'ambiguous'＝絞れない）"""
+ saved=str(saved or '').strip()
+ if conds is None:return (saved or None,'saved' if saved else 'none')
+ if saved and saved in [c.get('name') for c in conds]:return (saved,'saved')
+ dates=[c for c in conds if c.get('date')]
+ if len(dates)>1:dates=[c for c in dates if str(c.get('value') or '').strip() or c.get('range')] or dates
+ if len(dates)!=1:return (None,'ambiguous' if dates else 'none')
+ return (dates[0]['name'],'replaced' if saved else 'auto')
+
+
 def add_months(year,month,delta):
  idx=year*12+(month-1)+int(delta);return idx//12,idx%12+1
 

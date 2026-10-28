@@ -2651,17 +2651,17 @@ def apply_cond_period(api_client,handle,job,period,now=None,line=''):
 
  1) いまの条件を読み出し（NaviGetConditionDI）、日付の書き方をそろえる 2) 範囲で差し替える（NaviChangeConditionDI）
  3) 読み戻して比べる。読み戻しが頼んだ値と違えば _period_not_confirmed（管理ポイントの期間と同じ扱い）。RNE ファイルは変えない。"""
- item=period['cond_item']
- if not item:raise RuntimeError('抽出期間: 条件欄の日付の項目が決まっていません（対象の設定の「抽出期間」で選んでください）')
- t=phase_log('api_change_cond_period',job=job.get('name'),line=line,item=item,range=period['range'])
  conds=_rne_conditions(job)
- if conds is not None and item not in [x.get('name') for x in conds]:
-  # RNE を読んで無いと分かる項目は、Navigator に頼む前に止める（実機 2026-10-28: 別の RNE に前の項目が残っていた）
-  have='・'.join(f"{x['name']}{'（日付）' if x.get('date') else ''}" for x in conds) or '（項目なし）'
-  raise RuntimeError(f'抽出期間: この RNE（{job.get("rne") or Path(str(job.get("rne_path") or "")).name}）の条件欄に「{item}」がありません。'
-                     f'条件欄にある項目: {have}。対象の設定の「2 抽出期間」で当てる先を選び直してください')
+ item,why=navi_period.resolve_cond_item(period['cond_item'],conds)   # 実行する RNE を正とする（実機 2026-10-28: 別の RNE の項目名が残っていた）
+ if not item:
+  rne=job.get("rne") or Path(str(job.get("rne_path") or "")).name
+  have='・'.join(f"{x['name']}{'（日付）' if x.get('date') else ''}" for x in (conds or [])) or '（項目なし）'
+  head=(f'条件欄に「{period["cond_item"]}」がなく、' if period['cond_item'] else '')+('日付の項目を1つに絞れません' if why=='ambiguous' else '日付の項目がありません')
+  raise RuntimeError(f'抽出期間: この RNE（{rne}）の{head}。条件欄にある項目: {have}。対象の設定の「2 抽出期間」で当てる先を選んでください')
+ if why!='saved':log.info('COND_PERIOD_ITEM job=%s line=%s saved=%s used=%s reason=%s',job.get('name'),line or '-',period['cond_item'] or '-',item,why)
+ t=phase_log('api_change_cond_period',job=job.get('name'),line=line,item=item,range=period['range'])
  fallback=next((x.get('value') or '' for x in (conds or []) if x.get('name')==item),'')   # DLL が今の条件を読めないときは、RNE に入っている日付の書き方を使う
- info=api_client.apply_cond_period(handle,item,lambda sample:compute_period(period,now or datetime.now(),sample or fallback))
+ info=api_client.apply_cond_period(handle,item,lambda sample:compute_period(dict(period,cond_item=item),now or datetime.now(),sample or fallback))
  spec=info['spec']
  phase_log('api_change_cond_period',t,job=job.get('name'),line=line,summary=spec['summary'],form=info.get('form'))
  for x in info.get('tried') or []:log.info('COND_PERIOD_FORM_REJECTED job=%s line=%s %s',job.get('name'),line or '-',x)

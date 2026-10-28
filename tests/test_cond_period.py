@@ -16,6 +16,7 @@ from pathlib import Path
 
 ROOT=Path(__file__).resolve().parent.parent
 FIXTURE=ROOT/'tests'/'fixtures'/'cond_date.RNE'
+CAST=ROOT/'tests'/'fixtures'/'cast_date.RNE'   # 鋳造分析値（実機 2026-10-28）: 条件欄は 登録日付 だけ
 sys.path.insert(0,str(ROOT/'lib'))
 import navi_crosstab as NC  # noqa: E402
 import navi_period as NP  # noqa: E402
@@ -57,6 +58,18 @@ class RuleTest(unittest.TestCase):
   s=NP.compute({'enabled':True,'unit':'month','from_offset':-3,'to_offset':0},datetime(2026,10,13))
   self.assertEqual((s['kind'],s['condition'],s['from_time'],s['to_time']),('point',0,'20260700','20261000'))
 
+ def test_resolve_item(self):
+  one=[{'name':'登録設備','date':False},{'name':'登録日付','date':True,'value':'2026/1/1','range':4}]
+  self.assertEqual(NP.resolve_cond_item('登録日付',one),('登録日付','saved'))
+  self.assertEqual(NP.resolve_cond_item('払出日',one),('登録日付','replaced'),'別の RNE の名前が残っていても、日付の項目が1つなら使う')
+  self.assertEqual(NP.resolve_cond_item('',one),('登録日付','auto'),'空は自動')
+  self.assertEqual(NP.resolve_cond_item('払出日',None),('払出日','saved'),'RNE を読めなければ保存のまま')
+  two=[{'name':'受入日','date':True,'value':'','range':0},{'name':'出荷日','date':True,'value':'2026/1/1','range':4}]
+  self.assertEqual(NP.resolve_cond_item('',two),('出荷日','auto'),'複数なら、値の入っている物')
+  both=[dict(x,value='2026/1/1',range=4) for x in two]
+  self.assertEqual(NP.resolve_cond_item('払出日',both),(None,'ambiguous'),'絞れなければ決めない（黙って違う項目に当てない）')
+  self.assertEqual(NP.resolve_cond_item('払出日',[{'name':'登録設備','date':False}]),(None,'none'))
+
  def test_readback(self):
   spec={'range':'between','lvalue':'2026/7/1','rvalue':'2026/9/30'}
   self.assertEqual(NP.cond_readback(spec,{'lvalue':'2026/07/01','rvalue':'2026/09/30'}),'match','書き方の違いは同じ')
@@ -73,6 +86,10 @@ class RneTest(unittest.TestCase):
                    '払出日: 2026/1/1 -->（以降 = NAVI_OVER の 4）')
   self.assertFalse(NC.read_rne_layout(FIXTURE)['crosstab'])
 
+ def test_cast_rne(self):
+  got=NC.read_conditions(CAST)
+  self.assertEqual([(x['name'],x['value'],x['range'],x['date']) for x in got],[('登録日付','2026/1/1',4,True)],'登録日付: 2026/1/1 -->')
+
  def test_date_by_name_when_empty(self):
   got={x['name']:x for x in NC.read_conditions(ROOT/'samples'/'defaults'/'rne'/'SIKALOTDEF.RNE')}
   self.assertTrue(got['倉入完了_年月日']['date']);self.assertFalse(got['登録設備']['date'])
@@ -87,7 +104,7 @@ lines=[]
 class H(logging.Handler):
  def emit(self,r):
   m=r.getMessage()
-  if m.startswith(('PERIOD_READBACK','PERIOD_NOT_CONFIRMED','DYNAMIC_PERIOD')):lines.append(m)
+  if m.startswith(('PERIOD_READBACK','PERIOD_NOT_CONFIRMED','DYNAMIC_PERIOD','COND_PERIOD_ITEM')):lines.append(m)
 app.log.addHandler(H())
 class Fake:
  '''mode: ok（変わる）／blind（読み出せない）／ignored（rc=OK でも変わらない）／reset（値ごとの付け替えで戻る）'''
@@ -106,9 +123,9 @@ class Fake:
   if self.mode=='reset':self.now={'condition':2,'range':4,'lvalue':'2026/1/1','rvalue':''}
 job={'name':'返り材','rne_path':sys.argv[2],'period':{'enabled':True,'target':'cond','cond_item':'払出日','range':'between','unit':'month','from_offset':-3,'to_offset':-1}}
 out={}
-for mode in ('ok','blind','ignored','reset','missing'):
+for mode in ('ok','blind','ignored','reset','missing','auto'):
  api=Fake(mode);lines.clear();err=''
- j=dict(job,period=dict(job['period'],cond_item='受入日' if mode=='missing' else '払出日'))
+ j=dict(job,period=dict(job['period'],cond_item={'missing':'受入日','auto':''}.get(mode,'払出日')))
  try:
   spec=app.apply_dynamic_period(api,1,j,datetime(2026,10,27),line='L1')
   api.variant_conditions()
@@ -156,8 +173,14 @@ class ApplyTest(unittest.TestCase):
   self.assertEqual(len(v['changes']),2,'実行の直前に戻っていれば当て直す')
   self.assertEqual((v['now']['lvalue'],v['now']['rvalue']),('2026/7/1','2026/9/30'))
 
- def test_missing_item_fails(self):
-  self.assertIn('受入日',self.v['missing']['error'],'条件欄に無い項目は止める（黙って全件を取らない）')
+ def test_missing_item_is_replaced(self):
+  v=self.v['missing']
+  self.assertEqual(v['error'],'','保存した名前が RNE に無くても、日付の項目が1つならそれに当てる')
+  self.assertEqual(v['changes'],[['between','2026/7/1','2026/9/30']])
+  self.assertTrue(any(x.startswith('COND_PERIOD_ITEM') and 'saved=受入日' in x and 'used=払出日' in x for x in v['log']),v['log'])
+
+ def test_empty_item_is_auto(self):
+  v=self.v['auto'];self.assertEqual(v['error'],'');self.assertEqual(len(v['changes']),1)
 
  def test_routes_and_store(self):
   t=self.v['targets'];self.assertTrue(t['ok']);self.assertEqual(t['conditions'][0]['name'],'払出日')
@@ -224,22 +247,34 @@ class RealFormTest(unittest.TestCase):
   self.assertIn("いまの条件: condition=0x2 range=0x4 l='2026/1/1'",m,'次の報告で正しい形が分かるように')
   self.assertIn('2026/07/01',m);self.assertIn('20260701',m)
 
- def test_missing_item_lists_rne_items(self):
-  import importlib,os
+ def test_item_follows_rne(self):
+  import os
   code=r'''
 import sys,json
 sys.path[:0]=[sys.argv[1],sys.argv[1]+'/lib']
 import app
+from datetime import datetime
 class Api:
- called=False
- def apply_cond_period(self,*a,**k):Api.called=True;raise RuntimeError('API まで来た')
-job={'name':'鋳造分析値','rne_path':sys.argv[2],'period':{'enabled':True,'target':'cond','cond_item':'受入日','range':'from','unit':'month','from_offset':-3}}
-try:app.apply_dynamic_period(Api(),1,job,None,'L1');print(json.dumps({'err':''}))
-except Exception as e:print(json.dumps({'err':str(e),'called':Api.called},ensure_ascii=False))
+ item=None
+ def apply_cond_period(self,h,item,compute):
+  Api.item=item;spec=compute('2026/1/1');assert spec['item']==item,spec;return {'handle':7,'spec':spec,'before':None,'after':None,'form':'x'}
+out={}
+real=app._rne_conditions
+two=[{'name':n,'date':True,'value':'2026/1/1','range':4} for n in ('受入日','出荷日')]
+for name,rne,item in (('cast',sys.argv[2],'払出日'),('ambiguous',sys.argv[2],'払出日')):
+ Api.item=None
+ app._rne_conditions=real if name=='cast' else (lambda j:two)   # 日付の項目が2つとも入っている RNE
+ job={'name':'鋳造分析値','rne_path':rne,'period':{'enabled':True,'target':'cond','cond_item':item,'range':'from','unit':'month','from_offset':-3}}
+ try:s=app.apply_dynamic_period(Api(),1,job,datetime(2026,10,28),'L1');out[name]={'err':'','item':Api.item,'lvalue':s['lvalue']}
+ except Exception as e:out[name]={'err':str(e),'item':Api.item}
+print(json.dumps(out,ensure_ascii=False))
 '''
   with tempfile.TemporaryDirectory() as d:
    d=Path(d);env=dict(os.environ,NAVI_LOCAL_ROOT=str(d/'l'),NAVI_DATA_ROOT=str(d/'d'),NAVI_CONFIG_DIR=str(d/'d'/'C'),NAVI_SECRET_FILE=str(d/'l'/'s.json'),DATARELAY_NO_BOOT='1',PYTHONIOENCODING='utf-8')
-   r=subprocess.run([sys.executable,'-c',code,str(ROOT),str(FIXTURE)],env=env,capture_output=True,text=True,encoding='utf-8',timeout=120)
+   r=subprocess.run([sys.executable,'-c',code,str(ROOT),str(CAST)],env=env,capture_output=True,text=True,encoding='utf-8',timeout=120)
+  if r.returncode:raise AssertionError(r.stderr[-3000:])
   v=json.loads(r.stdout.strip().splitlines()[-1])
-  self.assertFalse(v.get('called'),'RNE で無いと分かる項目は、Navigator に頼む前に止める')
-  self.assertIn('受入日',v['err']);self.assertIn('払出日',v['err'],'RNE の条件欄にある項目を添える')
+  self.assertEqual(v['cast'],{'err':'','item':'登録日付','lvalue':'2026/7/1'},'実機 2026-10-28: 払出日が残っていても、RNE の 登録日付 に当てる')
+  a=v['ambiguous']
+  self.assertIsNone(a['item'],'日付の項目を絞れなければ、Navigator に頼む前に止める')
+  self.assertIn('払出日',a['err']);self.assertIn('受入日（日付）',a['err']);self.assertIn('出荷日（日付）',a['err'])
