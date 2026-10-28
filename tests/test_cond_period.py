@@ -165,5 +165,18 @@ class ApplyTest(unittest.TestCase):
   s=self.v['saved'];self.assertEqual((s['target'],s['cond_item'],s['range']),('cond','払出日','between'),'保存して読み直しても同じ')
 
 
+class ScreenTest(unittest.TestCase):
+ """画面（§3 の J 案）: 上の帯（当てる先・RNE のいま）・形・いつ・時間の線・プレビューが揃い、中身と同じ受け口を呼ぶ。"""
+ def test_parts(self):
+  html=(ROOT/'templates'/'index.html').read_text(encoding='utf-8');js=(ROOT/'static'/'app.js').read_text(encoding='utf-8')
+  for i in ('pd-target-chip','pd-now','pd-target-change','pd-target-pick','pd-target-seg','pd-cond-list','pd-range-seg','period-unit-seg',
+            'm-period-from','m-period-to','period-from-dir','period-to-dir','m-period-cp','m-period-detect','pd-line','m-period-preview'):
+   self.assertIn(f'id="{i}"',html,i)
+  for r in ('between','from','to'):self.assertIn(f'data-range="{r}"',html)
+  for t in ('cond','point'):self.assertIn(f'data-target="{t}"',html)
+  self.assertIn("'/api/period-targets'",js);self.assertIn("'/api/period-preview'",js)
+  self.assertIn('target,cond_item:periodState.cond_item,range',js,'保存する形（target・cond_item・range）を画面が作る')
+
+
 if __name__=='__main__':
  unittest.main()

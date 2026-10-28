@@ -22,6 +22,8 @@ RNEファイルは書き換えない（開いたカタログの条件と表側�
 import csv
 from pathlib import Path
 
+import navi_period
+
 # ファイル名・置き場に書く「その回の値」。{値} と {value} のどちらでも書ける
 TOKENS = ('値', 'value')
 MAX_VALUES = 50          # 1つの対象で分ける数の上限（打ち間違いで数百回問い合わせないように）
@@ -272,7 +274,8 @@ def count_state(rec, item, signature, period):
         return 'none'
     same_rne = str(rec.get('rne_mtime_ns') or '') == str((signature or ('', ''))[0] or '') and \
         int(rec.get('rne_size') or 0) == int((signature or ('', 0))[1] or 0)
-    same_period = (rec.get('period') or {}) == (period if isinstance(period, dict) else {})
+    # 期間は保存の形にそろえて比べる（2.14.0 で当てる先・範囲の形が増えた。形の違いだけで「数え直して」と出さない）
+    same_period = navi_period.normalize(rec.get('period')) == navi_period.normalize(period)
     return 'fresh' if same_rne and same_period else 'stale'
 
 

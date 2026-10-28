@@ -32,6 +32,7 @@ import uuid
 from pathlib import Path
 
 import navi_bundle
+import navi_period
 
 DIR = 'defaults'
 MANIFEST = 'manifest.json'
@@ -236,7 +237,10 @@ def _strip(v):
 
 
 def _canon(item):
-    """比べるための形（鍵の順・id・書き出した時刻に左右されない）。対象・マスタは辞書、予定は規則の並び。"""
+    """比べるための形（鍵の順・id・書き出した時刻に左右されない）。対象・マスタは辞書、予定は規則の並び。
+    対象の抽出期間は保存の形にそろえてから比べる（2.14.0 で当てる先・範囲の形が増えた。昔の既定と手元が「違う」にならないように）。"""
+    if isinstance(item, dict) and 'period' in item:
+        item = {**item, 'period': navi_period.normalize(item.get('period'))}
     return json.dumps(_strip(item), ensure_ascii=False, sort_keys=True)
 
 
