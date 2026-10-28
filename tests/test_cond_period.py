@@ -180,3 +180,66 @@ class ScreenTest(unittest.TestCase):
 
 if __name__=='__main__':
  unittest.main()
+
+
+class RealFormTest(unittest.TestCase):
+ """2.14.1: 実機（2026-10-28）で NaviChangeConditionDI が NAVI_ERROR_VALUE（0x18）を返した（range=OVER l='2026/7/1'）。
+ 渡し方を1つに決め打ちせず、確からしい順に試して通った形を使う。どれも通らなければ、いまの条件と試した形を添えて止める。
+ navigator_api.NavigatorApi.apply_cond_period を、DLL を偽物にして動かす。"""
+ def api(self,accept,before={'condition':2,'range':4,'lvalue':'2026/1/1','rvalue':''}):
+  import navigator_api as NA
+  a=NA.NavigatorApi.__new__(NA.NavigatorApi);a.calls=[]
+  a.supports_row_split=lambda:True
+  a.get_data_item=lambda h,name,locate=None,order=0:7 if name=='払出日' else 0
+  a.get_condition_di=lambda h:dict(before) if before is not None else None
+  def change(h,condition,key='',search=0,nonmatch=0,rng=0,lcheck=0,lvalue='',rcheck=0,rvalue='',reserve=''):
+   a.calls.append((rng,lvalue,rvalue))
+   if not accept(rng,lvalue,rvalue):raise NA.NavigatorApiError('NaviChangeConditionDI',0x18,f'range=0x{rng:x} l={lvalue!r} r={rvalue!r}')
+  a.change_condition_di=change
+  return a
+
+ def compute(self,rng='from'):
+  return lambda sample:NP.compute({'enabled':True,'target':'cond','cond_item':'払出日','range':rng,'unit':'month','from_offset':-3,'to_offset':-1},NOW,sample)
+
+ def test_tries_other_date_forms(self):
+  a=self.api(lambda r,l,rv:l=='2026/07/01')
+  info=a.apply_cond_period(1,'払出日',self.compute())
+  self.assertEqual(a.calls[0],(4,'2026/7/1',''),'まず RNE と同じ書き方')
+  self.assertEqual(a.calls[-1],(4,'2026/07/01',''),'通らなければ0埋めの形')
+  self.assertEqual(info['spec']['lvalue'],'2026/07/01','通った形で読み戻しと当て直しをする')
+  self.assertIn('2026/07/01',info['form'])
+
+ def test_falls_back_to_between(self):
+  a=self.api(lambda r,l,rv:r==2)
+  info=a.apply_cond_period(1,'払出日',self.compute())
+  self.assertEqual(a.calls[-1][0],2,'以降が断られたら、終わりを遠い先にした期間で渡す')
+  self.assertTrue(a.calls[-1][2].startswith('9999'),a.calls[-1])
+  a.calls.clear();a.change_cond_period(7,info['spec'])
+  self.assertEqual(a.calls,[info['spec']['_form']],'当て直しも通った形で渡す')
+
+ def test_all_fail_reports_current_and_tried(self):
+  a=self.api(lambda r,l,rv:False)
+  with self.assertRaises(Exception) as cm:a.apply_cond_period(1,'払出日',self.compute())
+  m=str(cm.exception)
+  self.assertIn("いまの条件: condition=0x2 range=0x4 l='2026/1/1'",m,'次の報告で正しい形が分かるように')
+  self.assertIn('2026/07/01',m);self.assertIn('20260701',m)
+
+ def test_missing_item_lists_rne_items(self):
+  import importlib,os
+  code=r'''
+import sys,json
+sys.path[:0]=[sys.argv[1],sys.argv[1]+'/lib']
+import app
+class Api:
+ called=False
+ def apply_cond_period(self,*a,**k):Api.called=True;raise RuntimeError('API まで来た')
+job={'name':'鋳造分析値','rne_path':sys.argv[2],'period':{'enabled':True,'target':'cond','cond_item':'受入日','range':'from','unit':'month','from_offset':-3}}
+try:app.apply_dynamic_period(Api(),1,job,None,'L1');print(json.dumps({'err':''}))
+except Exception as e:print(json.dumps({'err':str(e),'called':Api.called},ensure_ascii=False))
+'''
+  with tempfile.TemporaryDirectory() as d:
+   d=Path(d);env=dict(os.environ,NAVI_LOCAL_ROOT=str(d/'l'),NAVI_DATA_ROOT=str(d/'d'),NAVI_CONFIG_DIR=str(d/'d'/'C'),NAVI_SECRET_FILE=str(d/'l'/'s.json'),DATARELAY_NO_BOOT='1',PYTHONIOENCODING='utf-8')
+   r=subprocess.run([sys.executable,'-c',code,str(ROOT),str(FIXTURE)],env=env,capture_output=True,text=True,encoding='utf-8',timeout=120)
+  v=json.loads(r.stdout.strip().splitlines()[-1])
+  self.assertFalse(v.get('called'),'RNE で無いと分かる項目は、Navigator に頼む前に止める')
+  self.assertIn('受入日',v['err']);self.assertIn('払出日',v['err'],'RNE の条件欄にある項目を添える')

@@ -1,6 +1,9 @@
 from __future__ import annotations
 import ctypes, ntpath, os, re, shutil, struct, time
+from datetime import date
 from pathlib import Path,PureWindowsPath
+
+import navi_period
 
 NAVI_OK=0
 NAVI_ERROR=0x1
@@ -1263,18 +1266,45 @@ class NavigatorApi:
     COND_RANGE={'between':NAVI_BETWEEN,'from':NAVI_OVER,'to':NAVI_UNDER}
 
     def change_cond_period(self,h_item,spec):
-        """条件欄の日付の項目を、範囲で差し替える。以降は NAVI_OVER（lvalue 以上）、以前は NAVI_UNDER（rvalue 以下）、期間は両端。
+        """条件欄の日付の項目を、範囲で差し替える。spec['_form']（通った渡し方: 範囲の形・l・r）があればその形で渡す
+        （実行の直前の当て直し）。無ければ基本の形: 以降は NAVI_OVER（lvalue 以上）、以前は NAVI_UNDER（rvalue 以下）、期間は両端。
         境目の日はどちらも含める（NAVI_INCLUDE）。RNE ファイルは変えない。"""
+        rng,lo,hi=spec.get('_form') or (self.COND_RANGE[spec['range']],spec.get('lvalue') or '',spec.get('rvalue') or '')
         self.change_condition_di(h_item,condition=NAVI_RANGE,key='',search=NAVI_COMPLETE,nonmatch=0,
-                                 rng=self.COND_RANGE[spec['range']],lcheck=NAVI_INCLUDE,lvalue=spec.get('lvalue') or '',
-                                 rcheck=NAVI_INCLUDE,rvalue=spec.get('rvalue') or '')
+                                 rng=int(rng),lcheck=NAVI_INCLUDE,lvalue=lo,rcheck=NAVI_INCLUDE,rvalue=hi)
         return True
 
+    COND_DATE_FORMS=(('RNE と同じ書き方',None),('0埋め',lambda d:f'{d.year}/{d.month:02d}/{d.day:02d}'),
+                     ('区切りなし',lambda d:f'{d.year}{d.month:02d}{d.day:02d}'),('ハイフン',lambda d:f'{d.year}-{d.month:02d}-{d.day:02d}'),
+                     ('0埋めなし',lambda d:f'{d.year}/{d.month}/{d.day}'))
+    COND_FAR=(date(1900,1,1),date(9999,12,31))   # 以降・以前を「期間」で渡すときの、遠い端
+
+    def cond_period_forms(self,spec):
+        """条件欄の日付を差し替える渡し方の候補（確からしい順）。→ [(説明, 範囲の形, l, r)]
+
+        実機（2026-10-28）で range=OVER l='2026/7/1'（RNE と同じ書き方）が NAVI_ERROR_VALUE（0x18）で断られた。
+        日付の書き方（RNE と同じ・0埋め・区切りなし・ハイフン）と、以降・以前を「期間」で渡す形（遠い端と挟む）を順に試す。
+        どの形も意味は同じ（頼んだ範囲を取る）。通ったかどうかは読み戻しで確かめる。"""
+        lo=navi_period.parse_date(spec.get('from_date'));hi=navi_period.parse_date(spec.get('to_date'))
+        r=spec['range'];out=[];seen=set()
+        if r=='from':places=[('以上',NAVI_OVER,lo,None),('期間（終わりを遠い先に）',NAVI_BETWEEN,lo,self.COND_FAR[1])]
+        elif r=='to':places=[('以下',NAVI_UNDER,None,hi),('期間（始まりを遠い昔に）',NAVI_BETWEEN,self.COND_FAR[0],hi)]
+        else:places=[('期間',NAVI_BETWEEN,lo,hi)]
+        for pname,rng,a,b in places:
+            for fname,fmt in self.COND_DATE_FORMS:
+                f=(lambda d:navi_period.format_like(spec.get('sample') or spec.get('lvalue') or spec.get('rvalue') or '',d)) if fmt is None else fmt
+                l=f(a) if a else '';rv=f(b) if b else ''
+                if (rng,l,rv) in seen:continue
+                seen.add((rng,l,rv));out.append((f'{pname}・{fname}',rng,l,rv))
+        return out
+
     def apply_cond_period(self,h_catalog,item,compute):
-        """条件欄の日付の項目 item に、相対の期間を当てる（2.14.0）。compute(sample) は日付を sample の書き方で並べた期間を返す。
+        """条件欄の日付の項目 item に、相対の期間を当てる（2.14.0。2.14.1 で渡し方を順に試すようにした）。
+        compute(sample) は日付を sample の書き方で並べた期間を返す。
 
         項目は条件欄（NAVI_COND）からだけ引く（データ欄に条件を付けても1行も絞られない: 2026-08-10 の実測）。
-        いまの条件を読んで日付の書き方を決め、差し替えたあと読み戻して返す（比べるのは呼ぶ側）。"""
+        いまの条件を読んで日付の書き方を決め、cond_period_forms の順に差し替えを試し、通った形を spec['_form'] に持たせる
+        （実行の直前の当て直しも同じ形で渡すため）。どれも通らなければ、いまの条件と試した形を添えて止める。"""
         if not self.supports_row_split():
             raise RuntimeError('このDLLは NaviChangeConditionDI を公開していません')
         try:h=self.get_data_item(h_catalog,str(item),locate=NAVI_COND)
@@ -1283,9 +1313,24 @@ class NavigatorApi:
         if not h:
             raise NavigatorApiError('抽出期間:条件の項目',NAVI_ERROR,f'条件欄に「{item}」がありません（ハンドルが0）。RNE の条件欄に置いた日付の項目名を選んでください')
         before=self.get_condition_di(h)
-        spec=compute((before or {}).get('lvalue') or (before or {}).get('rvalue') or '')
-        self.change_cond_period(h,spec)
-        return {'handle':h,'spec':spec,'before':before,'after':self.get_condition_di(h),'form':f"range=0x{self.COND_RANGE[spec['range']]:x}"}
+        sample=(before or {}).get('lvalue') or (before or {}).get('rvalue') or ''
+        spec=compute(sample)
+        spec['sample']=spec.get('sample') or sample
+        tried=[]
+        for label,rng,lo,hi in self.cond_period_forms(spec):
+            try:
+                self.change_condition_di(h,condition=NAVI_RANGE,key='',search=NAVI_COMPLETE,nonmatch=0,
+                                         rng=rng,lcheck=NAVI_INCLUDE,lvalue=lo,rcheck=NAVI_INCLUDE,rvalue=hi)
+            except Exception as e:
+                tried.append(f'{label}（range=0x{rng:x} l={lo!r} r={hi!r}）: {getattr(e,"name","") or str(e)[:60]}');continue
+            spec['_form']=(rng,lo,hi)
+            if rng==self.COND_RANGE[spec['range']]:spec['lvalue'],spec['rvalue']=lo,hi   # 読み戻しと比べるのも、通った書き方で
+            return {'handle':h,'spec':spec,'before':before,'after':self.get_condition_di(h),'tried':tried,
+                    'form':f'{label}（range=0x{rng:x} l={lo!r} r={hi!r}）'}
+        now=(f"condition=0x{before['condition']:x} range=0x{before['range']:x} l={before.get('lvalue','')!r} r={before.get('rvalue','')!r}"
+             if before else '読み出せませんでした')
+        raise NavigatorApiError('抽出期間:条件の差し替え',NAVI_ERROR,
+                                f'条件欄の「{item}」に {spec["summary"]} を当てられませんでした。いまの条件: {now}。試した形: '+' / '.join(tried))
 
     def row_condition_forms(self,spec):
         """条件の渡し方の候補を、確からしい順に並べる。

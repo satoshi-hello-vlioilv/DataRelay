@@ -2864,13 +2864,18 @@ function paintPeriodForm(){
 function paintPeriodFound(){
  let chip=$('#pd-target-chip'),now=$('#pd-now');if(!chip)return;
  if(periodState.target==='cond'){
-  let c=periodCond();
+  let c=periodCond(),missing=!!periodState.cond_item&&periodTargets.rne===($('#m-rne-path')?.value||'')&&!c;
   chip.textContent=`条件欄の日付 ・ ${periodState.cond_item||'（項目を選んでください）'}`;
+  chip.classList.toggle('is-ng',missing);$$('.pd-arrow,#pd-then').forEach(e=>e.hidden=missing);
+  if(missing){now.innerHTML=`<b class="pd-ng">この RNE の条件欄にありません。「当てる先を変える」で選び直してください</b>`;return paintPeriodCondList()}
   now.innerHTML=c&&c.value?`RNE のいま: <b>${E(c.value)} ${E({1:'以前',2:'',4:'以降'}[c.range]??'')}</b>`:(c?'RNE のいま: 日付の指定なし':'');
  }else{
   let cp=($('#m-period-cp')?.value||'').trim();
-  chip.textContent=`時間管理ポイント ・ ${cp||'時間フィールドの時間型（自動）'}`;now.textContent='';
+  chip.textContent=`時間管理ポイント ・ ${cp||'時間フィールドの時間型（自動）'}`;now.textContent='';chip.classList.remove('is-ng');$$('.pd-arrow,#pd-then').forEach(e=>e.hidden=false);
  }
+ paintPeriodCondList();
+}
+function paintPeriodCondList(){
  let list=$('#pd-cond-list');
  if(list)list.innerHTML=periodTargets.conds.length?periodTargets.conds.map(c=>`<button type="button" class="chip pd-cond${c.name===periodState.cond_item?' on':''}" data-name="${E(c.name)}">${E(c.name)}${c.value?`<em>${E(c.value)}${c.range===4?' 以降':c.range===1?' 以前':''}</em>`:''}${c.date?'':'<em>日付でない項目</em>'}</button>`).join('')
   :'<span class="pd-why">この RNE の条件欄に項目がありません（時間管理ポイントを使ってください）</span>';
@@ -2906,6 +2911,11 @@ async function loadPeriodTargets(){
  if(!$('#m-period-enabled')?.checked&&periodState.target==='point'&&!($('#m-period-cp')?.value||'').trim()&&dates.length){
   periodState={target:'cond',cond_item:dates[0].name,range:PD_RANGE_OF_RNE[dates[0].range]||'between'};
  }else if(periodState.target==='cond'&&!periodState.cond_item&&dates.length)periodState.cond_item=dates[0].name;
+ else if(periodState.target==='cond'&&periodState.cond_item&&!periodTargets.conds.some(c=>c.name===periodState.cond_item)&&dates.length){
+  // この RNE の条件欄に、選んでいた項目が無い（別の RNE の設定が残っていた: 実機 2026-10-28）。あれば日付の項目に替えて知らせる
+  let old=periodState.cond_item;periodState.cond_item=dates[0].name;dirty();
+  toast(`この RNE の条件欄に「${old}」が無いため、当てる先を「${dates[0].name}」に替えました`);
+ }
  paintPeriodForm();refreshPeriodPreview();
 }
 function openPeriodPick(open){let p=$('#pd-target-pick'),b=$('#pd-target-change');if(!p)return;p.hidden=!open;b?.setAttribute('aria-expanded',String(open));if(b)b.textContent=open?'閉じる':'当てる先を変える'}

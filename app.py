@@ -2654,10 +2654,19 @@ def apply_cond_period(api_client,handle,job,period,now=None,line=''):
  item=period['cond_item']
  if not item:raise RuntimeError('抽出期間: 条件欄の日付の項目が決まっていません（対象の設定の「抽出期間」で選んでください）')
  t=phase_log('api_change_cond_period',job=job.get('name'),line=line,item=item,range=period['range'])
- fallback=_rne_cond_sample(job,item)   # DLL が今の条件を読めないときは、RNE に入っている日付の書き方を使う
+ conds=_rne_conditions(job)
+ if conds is not None and item not in [x.get('name') for x in conds]:
+  # RNE を読んで無いと分かる項目は、Navigator に頼む前に止める（実機 2026-10-28: 別の RNE に前の項目が残っていた）
+  have='・'.join(f"{x['name']}{'（日付）' if x.get('date') else ''}" for x in conds) or '（項目なし）'
+  raise RuntimeError(f'抽出期間: この RNE（{job.get("rne") or Path(str(job.get("rne_path") or "")).name}）の条件欄に「{item}」がありません。'
+                     f'条件欄にある項目: {have}。対象の設定の「2 抽出期間」で当てる先を選び直してください')
+ fallback=next((x.get('value') or '' for x in (conds or []) if x.get('name')==item),'')   # DLL が今の条件を読めないときは、RNE に入っている日付の書き方を使う
  info=api_client.apply_cond_period(handle,item,lambda sample:compute_period(period,now or datetime.now(),sample or fallback))
  spec=info['spec']
  phase_log('api_change_cond_period',t,job=job.get('name'),line=line,summary=spec['summary'],form=info.get('form'))
+ for x in info.get('tried') or []:log.info('COND_PERIOD_FORM_REJECTED job=%s line=%s %s',job.get('name'),line or '-',x)
+ if info.get('before') is not None:
+  b=info['before'];log.info('COND_PERIOD_BEFORE job=%s line=%s condition=0x%x range=0x%x l=%r r=%r',job.get('name'),line or '-',b['condition'],b['range'],b.get('lvalue',''),b.get('rvalue',''))
  log.info('DYNAMIC_PERIOD job=%s line=%s enabled=1 target=cond item=%s range=%s unit=%s l=%s r=%s summary=%s',job.get('name'),line or '-',
           item,spec['range'],spec['unit'],spec['lvalue'] or '-',spec['rvalue'] or '-',spec['summary'])
  out={**spec,'target':item,'h_item':info.get('handle'),'label':item}
@@ -2666,13 +2675,10 @@ def apply_cond_period(api_client,handle,job,period,now=None,line=''):
   _period_not_confirmed(out,info.get('after'),job,line)
  return out
 
-def _rne_cond_sample(job,item):
- """RNE の条件欄で item に入っている日付（例: 2026/1/1）。読めなければ空。日付の書き方をそろえる手本にする。"""
- try:
-  rp=resolve_rne_path(job,load())
-  return next((x.get('value') or '' for x in (navi_crosstab.read_conditions(rp) or []) if x.get('name')==item),'')
- except Exception:
-  return ''
+def _rne_conditions(job):
+ """RNE の条件欄の項目（navi_crosstab.read_conditions）。RNE を読めなければ None（そのときは Navigator の答えに任せる）。"""
+ try:return navi_crosstab.read_conditions(resolve_rne_path(job,load()))
+ except Exception:return None
 
 def _cond_readback(spec,stage,got,job,line):
  """条件欄の日付を読み戻して記録し、頼んだ期間と比べる。→ 'match'／'differs'／'unknown'（読めない・DLL に読み出しが無い）。"""
