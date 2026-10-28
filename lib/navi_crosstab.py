@@ -18,7 +18,10 @@ RNEは実行のたびに同じものを開くので、推測ではなく、そ�
 
 DBも画面もAPIも触らない。ファイルと行を受け取って答えるだけなので、実機なしで確かめられる。
 """
+import re
 from pathlib import Path
+
+import navi_period
 
 # 付帯情報（集計しないデータ項目）の物の種類。
 DETAIL_CLASS='CRNELDataDetailObjectNew'
@@ -86,6 +89,7 @@ def read_rne_layout(path):
 # 条件の項目は「名前…（設定値）… 4294967295 → 条件の種類 → キーの並び（個数|値|値…）」と続く。
 COND_ITEM_TAG='LDDO'
 COND_MARK='4294967295'
+DATE_NAME=re.compile(r'(日|日付|年月日|日時|date)$',re.I)   # 値が空でも、名前で日付の項目と見る（例: 倉入完了_年月日）
 
 def read_conditions(path):
  """RNEの条件欄にあるデータ項目と、いま入っているキー（例: BOX実績_設備名 = LS4）を返す。読めなければ None。
@@ -114,7 +118,10 @@ def read_conditions(path):
   if mark is None or mark+2>=end or not _is_number(lines[mark+1]):continue
   parts=[x for x in lines[mark+2].split('|') if x.strip()!='']
   if not parts or not parts[0].isdigit() or len(parts)-1!=int(parts[0]):continue
-  out.append({'name':name,'keys':[x.strip() for x in parts[1:]],'code':int(lines[mark+1]),'id':k})
+  # 範囲の条件（2.14.0）: 印の2つ前が値（例: 2026/1/1）、1つ前が範囲の形（API の NAVI_UNDER=1・BETWEEN=2・OVER=4 と同じ数と見ている）。
+  value=lines[mark-2].strip() if mark-2>i else '';rng=int(lines[mark-1]) if _is_number(lines[mark-1]) else 0
+  out.append({'name':name,'keys':[x.strip() for x in parts[1:]],'code':int(lines[mark+1]),'id':k,'value':value,'range':rng,
+              'date':bool(navi_period.parse_date(value)) or bool(DATE_NAME.search(name))})
  return out
 
 def describe(layout):

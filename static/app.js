@@ -2821,28 +2821,66 @@ if($('#cal-day-dialog'))$('#cal-day-dialog').addEventListener('close',()=>{if($(
    認知心理学(近接・即時フィードバック) / 情報アーキテクチャ(単位→開始→終了の順序) / 色彩調和(入力系の系統色)。
    ============================================================ */
 let periodPreviewTimer=null;
+/* 2.14.0: 当てる先（時間管理ポイント／条件欄の日付）と範囲の形（期間・以降・以前）を足した。
+   決まっている当てる先は上の帯に「RNE のいま → 差し替え」で示し、選ぶ物（形・いつ）だけを下の枠に置く（§3 の J 案）。
+   条件欄の日付の項目は RNE を読むだけで見つける（/api/period-targets。Navigator に触らない）。 */
+let periodFuture=false,periodTargets={rne:'',conds:[]},periodState={target:'point',cond_item:'',range:'between'};
+const PD_RANGE_WHY={between:'始まりと終わりの両方を決めます',from:'始まりだけ決め、それ以降をすべて取ります',to:'終わりだけ決め、それ以前をすべて取ります'};
+const PD_RANGE_OF_RNE={1:'to',2:'between',4:'from'};   // RNE に入っている範囲の形（NAVI_UNDER/BETWEEN/OVER）
 function currentPeriodUnit(){return document.querySelector('#period-unit-seg .period-unitbtn.on')?.dataset.unit||'month'}
 function periodDir(id){return Number(document.querySelector('#'+id+' .po-dirbtn.on')?.dataset.dir||-1)}
 function setPeriodDir(id,dir){$$('#'+id+' .po-dirbtn').forEach(b=>b.classList.toggle('on',Number(b.dataset.dir)===Number(dir)))}
+function periodCond(){return periodTargets.conds.find(x=>x.name===periodState.cond_item)||null}
 function currentPeriod(){
- let enabled=$('#m-period-enabled')?.checked||false;
- let unit=currentPeriodUnit();
- let fromMag=Math.abs(Math.trunc(Number($('#m-period-from')?.value)||0));
- let toMag=Math.abs(Math.trunc(Number($('#m-period-to')?.value)||0));
- return {enabled,unit,control_point:($('#m-period-cp')?.value||'').trim(),from_offset:fromMag*periodDir('period-from-dir'),to_offset:toMag*periodDir('period-to-dir')};
+ let enabled=$('#m-period-enabled')?.checked||false,unit=currentPeriodUnit();
+ let fromMag=Math.abs(Math.trunc(Number($('#m-period-from')?.value)||0)),toMag=Math.abs(Math.trunc(Number($('#m-period-to')?.value)||0));
+ let target=periodState.target,range=target==='point'?'between':periodState.range;
+ return {enabled,target,cond_item:periodState.cond_item,range,unit,control_point:($('#m-period-cp')?.value||'').trim(),
+  from_offset:fromMag*periodDir('period-from-dir'),to_offset:toMag*periodDir('period-to-dir')};
 }
 function setPeriodUnit(unit){
  unit=(unit==='day')?'day':'month';
  $$('#period-unit-seg .period-unitbtn').forEach(b=>b.classList.toggle('on',b.dataset.unit===unit));
- let baseText=unit==='month'?'当月':'当日',unitText=unit==='month'?'ヶ月':'日';
- $$('#period-body .po-base').forEach(el=>el.textContent=baseText);
- $$('#period-body .po-unit').forEach(el=>el.textContent=unitText);
+ paintPeriodForm();
+}
+// 形・単位・当てる先に合わせて、入力の並びと言葉をそろえる（以降は終了を、以前は開始を隠す）
+function paintPeriodForm(){
+ let p=currentPeriod(),cond=p.target==='cond';
+ $$('#pd-range-seg .period-unitbtn').forEach(b=>{b.classList.toggle('on',b.dataset.range===p.range);b.disabled=!cond&&b.dataset.range!=='between'});
+ if($('#pd-range-why'))$('#pd-range-why').textContent=cond?PD_RANGE_WHY[p.range]:'時間管理ポイントは「期間」だけです（以降・以前は条件欄の日付で使えます）';
+ if($('#pd-from-wrap'))$('#pd-from-wrap').hidden=p.range==='to';
+ if($('#pd-to-wrap'))$('#pd-to-wrap').hidden=p.range==='from';
+ $$('#period-body .po-unit').forEach(el=>el.textContent=p.unit==='month'?'ヶ月':'日');
+ $$('#period-body .po-suf').forEach(el=>el.textContent=p.unit!=='month'?'':cond?(el.dataset.end==='from'?'の1日':'の末日'):'（月度）');
+ // 前／後はふだん隠し「3 ヶ月前の1日」と文のまま見せる。未来を指したいとき（または既に後を選んでいるとき）だけ切り替えを出す
+ let future=periodFuture||p.from_offset>0||p.to_offset>0;$('#period-body')?.classList.toggle('pd-future-on',future);
+ if($('#pd-future')){$('#pd-future').setAttribute('aria-pressed',String(future));$('#pd-future').textContent=future?'前・後を隠す':'未来の日付も使う';$('#pd-future').hidden=future&&(p.from_offset>0||p.to_offset>0)}
+ $$('#period-body .po-dirtxt').forEach(el=>el.textContent=periodDir(`period-${el.dataset.end}-dir`)>0?'後':'前');
+ $$('#pd-target-seg .period-unitbtn').forEach(b=>b.classList.toggle('on',b.dataset.target===p.target));
+ if($('#pd-cond-pick'))$('#pd-cond-pick').hidden=!cond;
+ if($('#pd-point-pick'))$('#pd-point-pick').hidden=cond;
+ paintPeriodFound();
+}
+function paintPeriodFound(){
+ let chip=$('#pd-target-chip'),now=$('#pd-now');if(!chip)return;
+ if(periodState.target==='cond'){
+  let c=periodCond();
+  chip.textContent=`条件欄の日付 ・ ${periodState.cond_item||'（項目を選んでください）'}`;
+  now.innerHTML=c&&c.value?`RNE のいま: <b>${E(c.value)} ${E({1:'以前',2:'',4:'以降'}[c.range]??'')}</b>`:(c?'RNE のいま: 日付の指定なし':'');
+ }else{
+  let cp=($('#m-period-cp')?.value||'').trim();
+  chip.textContent=`時間管理ポイント ・ ${cp||'時間フィールドの時間型（自動）'}`;now.textContent='';
+ }
+ let list=$('#pd-cond-list');
+ if(list)list.innerHTML=periodTargets.conds.length?periodTargets.conds.map(c=>`<button type="button" class="chip pd-cond${c.name===periodState.cond_item?' on':''}" data-name="${E(c.name)}">${E(c.name)}${c.value?`<em>${E(c.value)}${c.range===4?' 以降':c.range===1?' 以前':''}</em>`:''}${c.date?'':'<em>日付でない項目</em>'}</button>`).join('')
+  :'<span class="pd-why">この RNE の条件欄に項目がありません（時間管理ポイントを使ってください）</span>';
+ list?.querySelectorAll('.pd-cond').forEach(b=>b.onclick=()=>{periodState.cond_item=b.dataset.name;paintPeriodForm();refreshPeriodPreview();dirty()});
 }
 function togglePeriodBody(){let on=$('#m-period-enabled')?.checked;let b=$('#period-body');if(b)b.hidden=!on;updatePeriodBadge()}
 function setPeriodUI(p){
  p=p||{};
  if($('#m-period-enabled'))$('#m-period-enabled').checked=!!p.enabled;
- setPeriodUnit(p.unit==='day'?'day':'month');
+ periodState={target:p.target==='cond'?'cond':'point',cond_item:p.cond_item||'',range:['between','from','to'].includes(p.range)?p.range:'between'};
  let fo=Math.trunc(Number(p.from_offset)||0),to=Math.trunc(Number(p.to_offset)||0);
  if($('#m-period-from'))$('#m-period-from').value=Math.abs(fo);
  if($('#m-period-to'))$('#m-period-to').value=Math.abs(to);
@@ -2850,39 +2888,80 @@ function setPeriodUI(p){
  setPeriodDir('period-to-dir',to>0?1:-1);
  if($('#m-period-cp'))$('#m-period-cp').value=p.control_point||'';
  let rb=$('#m-period-cp-result');if(rb){rb.hidden=true;rb.innerHTML=''}
+ openPeriodPick(false);periodFuture=false;
+ setPeriodUnit(p.unit==='day'?'day':'month');
  togglePeriodBody();
+ loadPeriodTargets();
  refreshPeriodPreview();
 }
+/* RNE の条件欄の項目を読む。まだ期間を使っていない対象で、条件欄に日付の項目があれば、それを既定の当てる先にする
+   （RNE に入っている範囲の形もそのまま既定にする: 2026/1/1 --> なら「以降」）。使っている対象の当てる先は勝手に変えない */
+async function loadPeriodTargets(){
+ let rne=$('#m-rne-path')?.value||'';if(!rne)return;
+ try{
+  let d=await fetch('/api/period-targets',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_id:editing?.id,rne_path:rne})}).then(r=>r.json());
+  periodTargets={rne,conds:d.ok?(d.conditions||[]):[]};
+ }catch{periodTargets={rne,conds:[]}}
+ let dates=periodTargets.conds.filter(c=>c.date);
+ if(!$('#m-period-enabled')?.checked&&periodState.target==='point'&&!($('#m-period-cp')?.value||'').trim()&&dates.length){
+  periodState={target:'cond',cond_item:dates[0].name,range:PD_RANGE_OF_RNE[dates[0].range]||'between'};
+ }else if(periodState.target==='cond'&&!periodState.cond_item&&dates.length)periodState.cond_item=dates[0].name;
+ paintPeriodForm();refreshPeriodPreview();
+}
+function openPeriodPick(open){let p=$('#pd-target-pick'),b=$('#pd-target-change');if(!p)return;p.hidden=!open;b?.setAttribute('aria-expanded',String(open));if(b)b.textContent=open?'閉じる':'当てる先を変える'}
 function refreshPeriodPreview(){
  let el=$('#m-period-preview'),meta=$('#m-period-preview-meta');if(!el)return;
- if(!$('#m-period-enabled')?.checked){el.textContent='—';if(meta)meta.textContent='抽出期間の自動指定は無効です（RNEの設定のまま実行します）';return}
- let body=currentPeriod();
+ if(!$('#m-period-enabled')?.checked){el.textContent='—';if(meta)meta.textContent='抽出期間の自動指定は無効です（RNEの設定のまま実行します）';paintPeriodLine(null);return}
+ let body={...currentPeriod(),sample:periodCond()?.value||''};
  clearTimeout(periodPreviewTimer);
  periodPreviewTimer=setTimeout(async()=>{
   try{
    let r=await fetch('/api/period-preview',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}),d=await r.json();
-   if(!d.ok){el.textContent='(期間エラー)';if(meta)meta.textContent=d.error||'';return}
+   if(!d.ok){el.textContent='(期間エラー)';if(meta)meta.textContent=d.error||'';paintPeriodLine(null);return}
    el.textContent=d.summary;
-   let cp=body.control_point?`対象: ${body.control_point}`:'対象: 時間フィールドの時間型を自動選択';
-   if(meta)meta.textContent=`${cp} / 内部指定 ${d.from_time}〜${d.to_time} / 処理日時 ${d.now} 基準`;
-  }catch{el.textContent='(プレビュー取得失敗)';if(meta)meta.textContent=''}
+   if(meta){meta.textContent=`処理日時 ${d.now.slice(0,10)} 基準`;
+    meta.title=d.kind==='cond'?`条件欄「${d.item}」へ ${d.range==='from'?'以上 '+d.lvalue:d.range==='to'?'以下 '+d.rvalue:d.lvalue+' ～ '+d.rvalue} を渡します`:`内部指定 ${d.from_time}〜${d.to_time}`}
+   paintPeriodLine(d);
+  }catch{el.textContent='(プレビュー取得失敗)';if(meta)meta.textContent='';paintPeriodLine(null)}
  },200);
 }
-function onPeriodChange(){togglePeriodBody();refreshPeriodPreview();dirty()}
+/* 時間の線。今日の印は目盛りの下に置き、範囲の両端の日付は線の上に置く（重ならない）。以降・以前は帯の端を薄くして「終わりなし」を示す */
+const pdDay=s=>{let m=String(s||'').match(/^(\d{4})-?(\d{2})-?(\d{2})/);return m?new Date(+m[1],+m[2]-1,+m[3]):null};
+function periodEnds(d){
+ if(d.kind==='cond')return [pdDay(d.from_date),pdDay(d.to_date)];
+ let f=String(d.from_time),t=String(d.to_time);
+ if(d.condition===0)return [new Date(+f.slice(0,4),+f.slice(4,6)-1,1),new Date(+t.slice(0,4),+t.slice(4,6),0)];
+ return [pdDay(f),pdDay(t)];
+}
+function paintPeriodLine(d){
+ let box=$('#pd-line');if(!box)return;
+ if(!d){box.innerHTML='';return}
+ let [lo,hi]=periodEnds(d),today=new Date();today.setHours(0,0,0,0);
+ if(!lo||!hi){box.innerHTML='';return}
+ let open=d.range==='from'?'r':d.range==='to'?'l':'';
+ let a=new Date(Math.min(lo,today)),b=new Date(Math.max(hi,today)),span=(b-a)/864e5,byMonth=span>45;
+ let s0=byMonth?new Date(a.getFullYear(),a.getMonth()-1,1):new Date(+a-3*864e5),s1=byMonth?new Date(b.getFullYear(),b.getMonth()+2,1):new Date(+b+4*864e5);
+ let pos=t=>((t-s0)/(s1-s0)*100).toFixed(2),ticks=[];
+ if(byMonth){for(let m=new Date(s0);m<s1;m=new Date(m.getFullYear(),m.getMonth()+1,1)){let n=new Date(m.getFullYear(),m.getMonth()+1,1);ticks.push([(+pos(m)+ +pos(n))/2,`${m.getMonth()+1}月`])}}
+ else{let step=Math.max(1,Math.round((s1-s0)/864e5/8));for(let t=new Date(s0);t<s1;t=new Date(+t+step*864e5))ticks.push([pos(t),`${t.getMonth()+1}/${t.getDate()}`])}
+ let L=open==='l'?0:pos(lo),R=open==='r'?100:pos(new Date(+hi+864e5)),txt=s=>E(s||'');
+ let loTxt=d.kind==='cond'?d.lvalue:(d.summary.split(' ～ ')[0]),hiTxt=d.kind==='cond'?d.rvalue:(d.summary.split(' ～ ')[1]||'');
+ box.innerHTML=`<i class="pl-axis"></i><i class="pl-rng${open?' open-'+open:''}" style="left:${L}%;right:${100-R}%"></i>`
+  +ticks.map(([x,t])=>`<span class="pl-tick" style="left:${x}%">${t}</span>`).join('')
+  +`<i class="pl-now" style="left:${pos(today)}%"></i><span class="pl-nowl" style="left:${pos(today)}%">今日</span>`
+  +(open!=='l'&&loTxt?`<span class="pl-lab l" style="left:${L}%">${txt(loTxt)}</span>`:'')+(open!=='r'&&hiTxt?`<span class="pl-lab r" style="left:${R}%">${txt(hiTxt)}</span>`:'');
+}
+function onPeriodChange(){togglePeriodBody();paintPeriodForm();refreshPeriodPreview();dirty()}
 if($('#m-period-enabled'))$('#m-period-enabled').addEventListener('change',onPeriodChange);
 $$('#period-unit-seg .period-unitbtn').forEach(b=>b.onclick=()=>{setPeriodUnit(b.dataset.unit);refreshPeriodPreview();dirty()});
-$$('#period-from-dir .po-dirbtn').forEach(b=>b.onclick=()=>{setPeriodDir('period-from-dir',b.dataset.dir);refreshPeriodPreview();dirty()});
-$$('#period-to-dir .po-dirbtn').forEach(b=>b.onclick=()=>{setPeriodDir('period-to-dir',b.dataset.dir);refreshPeriodPreview();dirty()});
-['m-period-from','m-period-to','m-period-cp'].forEach(id=>{let e=$('#'+id);if(e)e.addEventListener('input',()=>{refreshPeriodPreview();dirty()})});
-$$('#period-body .period-preset').forEach(b=>b.onclick=()=>{
- setPeriodUnit(b.dataset.unit);
- let fo=Number(b.dataset.from||0),to=Number(b.dataset.to||0);
- if($('#m-period-from'))$('#m-period-from').value=Math.abs(fo);
- if($('#m-period-to'))$('#m-period-to').value=Math.abs(to);
- setPeriodDir('period-from-dir',fo>0?1:-1);
- setPeriodDir('period-to-dir',to>0?1:-1);
- refreshPeriodPreview();dirty();
-});
+$$('#pd-range-seg .period-unitbtn').forEach(b=>b.onclick=()=>{if(periodState.target!=='cond')return;periodState.range=b.dataset.range;paintPeriodForm();refreshPeriodPreview();dirty()});
+$$('#pd-target-seg .period-unitbtn').forEach(b=>b.onclick=()=>{periodState.target=b.dataset.target;if(b.dataset.target==='cond'&&!periodState.cond_item)periodState.cond_item=(periodTargets.conds.find(c=>c.date)||{}).name||'';paintPeriodForm();refreshPeriodPreview();dirty()});
+if($('#pd-target-change'))$('#pd-target-change').onclick=()=>openPeriodPick($('#pd-target-pick').hidden);
+if($('#pd-future'))$('#pd-future').onclick=()=>{periodFuture=!periodFuture;paintPeriodForm()};
+$$('#period-from-dir .po-dirbtn').forEach(b=>b.onclick=()=>{setPeriodDir('period-from-dir',b.dataset.dir);paintPeriodForm();refreshPeriodPreview();dirty()});
+$$('#period-to-dir .po-dirbtn').forEach(b=>b.onclick=()=>{setPeriodDir('period-to-dir',b.dataset.dir);paintPeriodForm();refreshPeriodPreview();dirty()});
+['m-period-from','m-period-to','m-period-cp'].forEach(id=>{let e=$('#'+id);if(e)e.addEventListener('input',()=>{paintPeriodFound();refreshPeriodPreview();dirty()})});
+if($('#m-rne-path'))$('#m-rne-path').addEventListener('change',()=>{if(periodTargets.rne!==$('#m-rne-path').value)loadPeriodTargets()});
 if($('#m-period-detect'))$('#m-period-detect').onclick=async()=>{
  let rb=$('#m-period-cp-result');
  showWaiting('管理ポイントを検出中','RNEを開いて時間型管理ポイントを取得しています...','api');
@@ -2892,9 +2971,9 @@ if($('#m-period-detect'))$('#m-period-detect').onclick=async()=>{
   if(!d.ok){if(rb)rb.innerHTML=`<p class="period-cp-ng">自動検出できませんでした。管理ポイント名を手入力するか、空欄（自動）でお試しください。</p><p class="period-cp-note">${E(d.error||'')}</p>`;return}
   let tps=d.time_points||[];
   let dl=$('#suggest-period-cp');if(dl&&tps.length)dl.innerHTML=tps.map(p=>`<option value="${E(p.name)}">`).join('');
-  if(!tps.length){if(rb)rb.innerHTML=`<p class="period-cp-ng">このRNEには時間型の管理ポイントがありません（管理ポイント ${d.count||0} 件を調べて0件）。</p><p class="period-cp-note">日付で絞り込む条件がRNE側に定義されていないため、抽出期間の自動指定は使えません。このチェックは外したままで問題ありません（RNEの設定どおりに実行されます）。RNEに何が入っているかは「入力データ」の<b>「RNEの中身を調べる」</b>で確認できます。</p>`;return}
+  if(!tps.length){if(rb)rb.innerHTML=`<p class="period-cp-ng">このRNEには時間型の管理ポイントがありません（管理ポイント ${d.count||0} 件を調べて0件）。</p><p class="period-cp-note">${periodTargets.conds.some(c=>c.date)?'条件欄に日付の項目があります。当てる先を<b>「条件欄の日付」</b>にしてください。':'日付で絞り込む条件がRNE側に定義されていないため、抽出期間の自動指定は使えません。このチェックは外したままで問題ありません（RNEの設定どおりに実行されます）。'}</p>`;return}
   if(rb)rb.innerHTML=`<p class="period-cp-ok">時間型管理ポイントを ${tps.length} 件検出しました。クリックで設定します。</p><div class="period-cp-list">${tps.map(p=>`<button type="button" class="chip period-cp-pick" data-name="${E(p.name)}">${E(p.name)}<em>${E(p.location)}・${E(p.type_name)}</em></button>`).join('')}</div>`;
-  rb.querySelectorAll('.period-cp-pick').forEach(x=>x.onclick=()=>{if($('#m-period-cp'))$('#m-period-cp').value=x.dataset.name;refreshPeriodPreview();dirty();toast(`対象を「${x.dataset.name}」に設定しました`)});
+  rb.querySelectorAll('.period-cp-pick').forEach(x=>x.onclick=()=>{if($('#m-period-cp'))$('#m-period-cp').value=x.dataset.name;paintPeriodFound();refreshPeriodPreview();dirty();toast(`対象を「${x.dataset.name}」に設定しました`)});
  }catch(x){if(rb){rb.hidden=false;rb.innerHTML=`<p class="period-cp-ng">検出処理でエラーが発生しました。</p>`}}
  finally{hideWaiting()}
 };

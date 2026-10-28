@@ -4,5 +4,5 @@
 navi_changelog.py にある ―― 800行の読みものなので、それを必要としない経路
 （抽出ワーカー）が読み込まずに済むように分けてある。
 """
-APP_VERSION='2.13.0'; APP_VERSION_TITLE='保守のあいだ、登録した自動実行をまとめて一時停止できるようにした'; APP_RELEASED_AT='2026-10-27'
+APP_VERSION='2.14.0'; APP_VERSION_TITLE='抽出期間を、条件欄に直接入れた日付にも当てられるようにし、「以降」「以前」も選べるようにした'; APP_RELEASED_AT='2026-10-28'
 BUILD_VERSION=f'{APP_VERSION}-web'

@@ -3549,3 +3549,55 @@ main:has(#layouts.on,#joins.on,#mqueries.on)>.subnav{margin-bottom:0}
 @media(max-width:1600px){.pc-text small .pc-left{display:none}}
 .cal-summary .cal-off,#cal-summary .cal-off{color:#5c3f96}
 @media(max-height:900px){.cal-ev{line-height:1.35;padding:1px 6px}.cal-events{gap:2px}}
+
+/* 2.14.0 抽出期間（§3 の J 案）: 決まっている当てる先は上の帯（いま → 差し替え）、選ぶ物（形・いつ）は下の枠の2行、
+   結果は時間の線とプレビュー。行の見出しは細い色の線にし、上のタブの番号（1 基本と入出力…）と紛れないようにする。 */
+.pd-found{display:flex;align-items:center;gap:9px;flex-wrap:wrap;background:#effafa;border:1px solid #bfe1e6;border-radius:10px;padding:9px 12px;font-size:12.5px;color:#20404a}
+.pd-chip{display:inline-flex;align-items:center;padding:3px 10px;border-radius:999px;background:#fff;border:1px solid #9fd2d9;color:#0b6570;font-weight:800;font-size:12px}
+.pd-now b{color:#20404a}
+.pd-arrow{color:#22a6b0;font-weight:900}
+.pd-then{color:#3e5d68}
+.pd-change{margin-left:auto;font-size:12px}
+.pd-target-pick{display:grid;gap:9px;background:#fff;border:1px dashed #bfd6dc;border-radius:10px;padding:10px 12px}
+.pd-target-pick[hidden],.pd-off[hidden]{display:none}
+.pd-pick-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.pd-pick-row[hidden],#pd-point-pick[hidden]{display:none}
+.pd-pick-label{font-size:11.5px;font-weight:800;color:#43616b;min-width:84px}
+.pd-cond-list{display:flex;flex-wrap:wrap;gap:6px}
+.pd-cond{display:inline-flex;align-items:center;gap:6px;background:#fff;border-color:#cbe4e8;color:#0b6570}
+.pd-cond.on{background:#effafa;border:2px solid #14979e}
+.pd-cond em{font-style:normal;font-size:10.5px;color:#6b8089;font-weight:600}
+.pd-flow{display:grid;background:#fff;border:1px solid #cddce2;border-radius:10px;padding:2px 14px}
+.pd-fl{display:grid;grid-template-columns:132px minmax(0,1fr);gap:12px;align-items:center;padding:10px 0;border-bottom:1px solid #edf2f4}
+.pd-fl:last-child{border-bottom:0}
+.pd-fl>b{font-size:12px;color:#43616b;font-weight:800;border-left:3px solid #22a6b0;padding-left:8px;line-height:1.3}
+.pd-row{display:flex;align-items:center;gap:10px 14px;flex-wrap:wrap;min-width:0}
+.pd-row .period-unitbtn:disabled{opacity:.42;cursor:not-allowed}
+.pd-why{font-size:11px;color:#7d9098}
+.pd-off{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:#2c4d58;white-space:nowrap}
+.pd-off-label{font-size:11.5px;font-weight:800;color:#43616b}
+.pd-off input{width:58px;height:32px;text-align:center;font-weight:700}
+.pd-off .po-unit,.pd-off .po-suf{font-style:normal;color:#5b727a}
+.pd-off .po-dir{display:none;margin-left:0;background:#eaf1f3;border:1px solid #d3e0e4;border-radius:8px;padding:3px;gap:3px}
+.pd-off .po-dirbtn{color:#456;font-size:12px;padding:5px 11px;border-radius:6px}
+.pd-off .po-dirbtn.on{background:#fff;color:#08727f;box-shadow:0 1px 3px #15384d1f}
+.pd-future-on .pd-off .po-dir{display:inline-flex}
+.pd-future-on .pd-off .po-dirtxt{display:none}
+.pd-off .po-dirtxt{font-style:normal;color:#5b727a;margin-left:-6px}
+.pd-off .po-suf{margin-left:-6px}
+.pd-future-on .pd-off .po-suf{margin-left:0}
+.pd-future{margin-left:auto;font-size:11.5px}
+.pd-future[hidden]{display:none}
+.pd-line{position:relative;height:50px;margin:0 6px}
+.pd-line:empty{display:none}
+.pl-axis{position:absolute;left:0;right:0;top:18px;height:6px;border-radius:3px;background:#e3ecef}
+.pl-rng{position:absolute;top:14px;height:14px;border-radius:7px;background:#22a6b0}
+.pl-rng.open-r{border-top-right-radius:0;border-bottom-right-radius:0;background:linear-gradient(90deg,#22a6b0 75%,#22a6b000)}
+.pl-rng.open-l{border-top-left-radius:0;border-bottom-left-radius:0;background:linear-gradient(270deg,#22a6b0 75%,#22a6b000)}
+.pl-tick{position:absolute;top:32px;font-size:10.5px;color:#8a9ba3;transform:translateX(-50%);white-space:nowrap}
+.pl-now{position:absolute;top:13px;height:19px;width:2px;background:#d04a3a}
+.pl-nowl{position:absolute;top:32px;font-size:10.5px;font-weight:800;color:#d04a3a;transform:translateX(-50%);white-space:nowrap;background:#fafdfd;padding:0 3px}
+.pl-lab{position:absolute;top:-3px;font-size:11px;font-weight:800;color:#0b6570;white-space:nowrap}
+.pl-lab.r{transform:translateX(-100%)}
+#m-period-preview{font:18px "Yu Gothic UI",Meiryo,sans-serif;font-weight:800}
+#m-period-preview-meta{flex:0 1 auto}

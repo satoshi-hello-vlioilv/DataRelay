@@ -300,26 +300,23 @@
 <div class="editor-pane" data-etab="period">
 <div class="period-section">
 <div class="sectiontitle sect-period"><i class="sect-badge sb-period">期</i>抽出期間（動的日付）<span class="period-optional">任意</span></div>
-<label class="period-enable"><input id="m-period-enabled" type="checkbox"><span class="period-enable-text"><b>処理日時を基準に抽出期間を自動指定する</b><small>RNEに定義済みの時間管理ポイントへ、実行のたびに相対的な期間を適用します。RNEやカラム指定は変更しません（定期実行での日付更新に最適）。</small></span></label>
+<label class="period-enable"><input id="m-period-enabled" type="checkbox"><span class="period-enable-text"><b>処理日時を基準に抽出期間を自動指定する</b><small>RNE の日付の絞り込み（時間管理ポイント、または条件欄の日付）を、実行のたびに相対の日付へ差し替えます。RNE ファイルは変えません（定期実行での日付の更新に）。</small></span></label>
 <div id="period-body" class="period-body" hidden>
-<div class="period-presets"><span class="period-presets-label">よく使う組み合わせ<small>クリックで単位と前後を一括設定</small></span><div class="period-preset-row">
-<button type="button" class="chip period-preset" data-unit="month" data-from="0" data-to="0">今月度</button>
-<button type="button" class="chip period-preset" data-unit="month" data-from="-1" data-to="-1">前月度</button>
-<button type="button" class="chip period-preset" data-unit="month" data-from="-1" data-to="0">前月〜今月</button>
-<button type="button" class="chip period-preset" data-unit="day" data-from="0" data-to="0">当日</button>
-<button type="button" class="chip period-preset" data-unit="day" data-from="-1" data-to="-1">前日</button>
-<button type="button" class="chip period-preset" data-unit="day" data-from="-6" data-to="0">過去7日</button>
-<button type="button" class="chip period-preset" data-unit="day" data-from="-1" data-to="0">前日〜当日</button>
-</div></div>
-<div class="period-grid">
-<div class="period-field period-field-unit"><span class="period-flabel">期間の単位</span><div id="period-unit-seg" class="period-unit-seg" role="tablist"><button type="button" class="period-unitbtn on" data-unit="month">月度</button><button type="button" class="period-unitbtn" data-unit="day">年月日</button></div></div>
-<div class="period-field"><span class="period-flabel">開始期（S）</span><div class="period-offset"><span class="po-base">当月</span>より<input id="m-period-from" type="number" min="0" step="1" value="1"><em class="po-unit">ヶ月</em><div id="period-from-dir" class="po-dir" role="tablist"><button type="button" class="po-dirbtn on" data-dir="-1">前</button><button type="button" class="po-dirbtn" data-dir="1">後</button></div></div></div>
-<div class="period-field"><span class="period-flabel">終了期（E）</span><div class="period-offset"><span class="po-base">当月</span>より<input id="m-period-to" type="number" min="0" step="1" value="0"><em class="po-unit">ヶ月</em><div id="period-to-dir" class="po-dir" role="tablist"><button type="button" class="po-dirbtn on" data-dir="-1">前</button><button type="button" class="po-dirbtn" data-dir="1">後</button></div></div></div>
+<div class="pd-found"><span id="pd-target-chip" class="pd-chip">—</span><span id="pd-now" class="pd-now"></span><span class="pd-arrow" aria-hidden="true">→</span><span id="pd-then" class="pd-then">実行のたびに下の範囲へ差し替えます</span><button id="pd-target-change" type="button" class="textbtn pd-change" aria-expanded="false" aria-controls="pd-target-pick">当てる先を変える</button></div>
+<div id="pd-target-pick" class="pd-target-pick" hidden>
+<div class="pd-pick-row"><span class="pd-pick-label">当てる先</span><div id="pd-target-seg" class="period-unit-seg"><button type="button" class="period-unitbtn" data-target="cond">条件欄の日付</button><button type="button" class="period-unitbtn" data-target="point">時間管理ポイント</button></div></div>
+<div id="pd-cond-pick" class="pd-pick-row"><span class="pd-pick-label">条件欄の項目</span><div id="pd-cond-list" class="pd-cond-list"></div></div>
+<div id="pd-point-pick" class="period-cp"><label class="period-cpfield"><span class="period-cplabel">時間管理ポイント<small>空欄なら「時間フィールドの時間型」を自動選択します</small></span><div class="period-cprow"><input id="m-period-cp" list="suggest-period-cp" placeholder="例: 月度 / 日（空欄=自動）"><button id="m-period-detect" type="button" class="secondary">時間管理ポイントを探す</button></div></label><div id="m-period-cp-result" class="period-cpresult" hidden></div></div>
 </div>
-<div class="period-cp"><label class="period-cpfield"><span class="period-cplabel">対象の時間管理ポイント<small>空欄なら「時間フィールドの時間型」を自動選択します</small></span><div class="period-cprow"><input id="m-period-cp" list="suggest-period-cp" placeholder="例: 月度 / 日（空欄=自動）"><button id="m-period-detect" type="button" class="secondary">時間管理ポイントを探す</button></div></label><div id="m-period-cp-result" class="period-cpresult" hidden></div></div>
+<div class="pd-flow">
+<div class="pd-fl"><b>どんな形で</b><div class="pd-row"><div id="pd-range-seg" class="period-unit-seg"><button type="button" class="period-unitbtn on" data-range="between">期間</button><button type="button" class="period-unitbtn" data-range="from">以降</button><button type="button" class="period-unitbtn" data-range="to">以前</button></div><span id="pd-range-why" class="pd-why"></span></div></div>
+<div class="pd-fl"><b>いつから・いつまで</b><div class="pd-row"><div id="period-unit-seg" class="period-unit-seg"><button type="button" class="period-unitbtn on" data-unit="month">月</button><button type="button" class="period-unitbtn" data-unit="day">日</button></div>
+<span id="pd-from-wrap" class="pd-off"><span class="pd-off-label">開始</span><input id="m-period-from" type="number" min="0" step="1" value="1" aria-label="開始（いくつ前か）"><em class="po-unit">ヶ月</em><em class="po-dirtxt" data-end="from">前</em><span id="period-from-dir" class="po-dir"><button type="button" class="po-dirbtn on" data-dir="-1">前</button><button type="button" class="po-dirbtn" data-dir="1">後</button></span><em class="po-suf" data-end="from"></em></span>
+<span id="pd-to-wrap" class="pd-off"><span class="pd-off-label">終了</span><input id="m-period-to" type="number" min="0" step="1" value="0" aria-label="終了（いくつ前か）"><em class="po-unit">ヶ月</em><em class="po-dirtxt" data-end="to">前</em><span id="period-to-dir" class="po-dir"><button type="button" class="po-dirbtn on" data-dir="-1">前</button><button type="button" class="po-dirbtn" data-dir="1">後</button></span><em class="po-suf" data-end="to"></em></span><button id="pd-future" type="button" class="textbtn pd-future" aria-pressed="false">未来の日付も使う</button></div></div>
+</div>
+<div id="pd-line" class="pd-line" aria-hidden="true"></div>
 <div class="period-preview"><span class="pp-label">抽出範囲プレビュー</span><b id="m-period-preview">—</b><small id="m-period-preview-meta">処理日時を基準に試算します</small></div>
-</div>
-</div></div>
+</div></div></div>
 <div class="editor-pane" data-etab="schedule">
 <div class="sectiontitle schedule-title"><div><span>自動実行ルール</span><small>複数条件を組み合わせて登録できます。実行時刻・曜日・間隔などを個別に設定できます。</small></div><button id="add-rule" type="button" class="secondary">ルール追加</button></div><div id="m-rules" class="rules"></div></div>
 <div class="editor-pane" data-etab="variant">

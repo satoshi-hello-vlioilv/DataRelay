@@ -1242,6 +1242,51 @@ class NavigatorApi:
         self._check('NaviChangeConditionDI',rc,f'condition=0x{int(condition):x} range=0x{int(rng):x} l={lvalue!r} r={rvalue!r}')
         return True
 
+    def get_condition_di(self,h_item):
+        """データ項目に、いま設定されている集計条件を読む（NaviGetConditionDI。2.14.0）。読めなければ None。
+
+        条件欄の日付へ相対の期間を当てるとき、日付の書き方（2026/1/1 か 2026/01/01 か）をそろえるのと、変えられたかの読み戻しに使う。
+        文字列は ByRef String で、期間の読み戻し（get_period）と同じく _decode_out で読む。"""
+        if not hasattr(self.dll,'NaviGetConditionDI'):return None
+        rc=ctypes.c_long();cond=ctypes.c_long();search=ctypes.c_long();nonmatch=ctypes.c_long()
+        rng=ctypes.c_long();lchk=ctypes.c_long();rchk=ctypes.c_long()
+        key=ctypes.create_string_buffer(256);lv=ctypes.create_string_buffer(64);rv=ctypes.create_string_buffer(64);res=ctypes.create_string_buffer(64)
+        try:
+            self.dll.NaviGetConditionDI(int(h_item),ctypes.byref(rc),ctypes.byref(cond),key,ctypes.byref(search),ctypes.byref(nonmatch),
+                                        ctypes.byref(rng),ctypes.byref(lchk),lv,ctypes.byref(rchk),rv,res)
+        except Exception:
+            return None
+        if int(rc.value)!=NAVI_OK:return None
+        return {'condition':int(cond.value),'range':int(rng.value),'lcheck':int(lchk.value),'rcheck':int(rchk.value),
+                'lvalue':self._decode_out(bytes(lv.raw))[0],'rvalue':self._decode_out(bytes(rv.raw))[0]}
+
+    COND_RANGE={'between':NAVI_BETWEEN,'from':NAVI_OVER,'to':NAVI_UNDER}
+
+    def change_cond_period(self,h_item,spec):
+        """条件欄の日付の項目を、範囲で差し替える。以降は NAVI_OVER（lvalue 以上）、以前は NAVI_UNDER（rvalue 以下）、期間は両端。
+        境目の日はどちらも含める（NAVI_INCLUDE）。RNE ファイルは変えない。"""
+        self.change_condition_di(h_item,condition=NAVI_RANGE,key='',search=NAVI_COMPLETE,nonmatch=0,
+                                 rng=self.COND_RANGE[spec['range']],lcheck=NAVI_INCLUDE,lvalue=spec.get('lvalue') or '',
+                                 rcheck=NAVI_INCLUDE,rvalue=spec.get('rvalue') or '')
+        return True
+
+    def apply_cond_period(self,h_catalog,item,compute):
+        """条件欄の日付の項目 item に、相対の期間を当てる（2.14.0）。compute(sample) は日付を sample の書き方で並べた期間を返す。
+
+        項目は条件欄（NAVI_COND）からだけ引く（データ欄に条件を付けても1行も絞られない: 2026-08-10 の実測）。
+        いまの条件を読んで日付の書き方を決め、差し替えたあと読み戻して返す（比べるのは呼ぶ側）。"""
+        if not self.supports_row_split():
+            raise RuntimeError('このDLLは NaviChangeConditionDI を公開していません')
+        try:h=self.get_data_item(h_catalog,str(item),locate=NAVI_COND)
+        except Exception as e:
+            raise NavigatorApiError('抽出期間:条件の項目',NAVI_ERROR,f'条件欄に「{item}」がありません（{e}）。RNE の条件欄に置いた日付の項目名を選んでください') from e
+        if not h:
+            raise NavigatorApiError('抽出期間:条件の項目',NAVI_ERROR,f'条件欄に「{item}」がありません（ハンドルが0）。RNE の条件欄に置いた日付の項目名を選んでください')
+        before=self.get_condition_di(h)
+        spec=compute((before or {}).get('lvalue') or (before or {}).get('rvalue') or '')
+        self.change_cond_period(h,spec)
+        return {'handle':h,'spec':spec,'before':before,'after':self.get_condition_di(h),'form':f"range=0x{self.COND_RANGE[spec['range']]:x}"}
+
     def row_condition_forms(self,spec):
         """条件の渡し方の候補を、確からしい順に並べる。
 
