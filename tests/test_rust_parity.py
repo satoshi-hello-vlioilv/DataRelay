@@ -56,21 +56,24 @@ for c in json.loads(sys.stdin.read()):
 print(json.dumps(out,ensure_ascii=False))
 """
 
-def ask_python(cases):
- with tempfile.TemporaryDirectory() as d:
-  d=Path(d)
-  env=dict(os.environ,NAVI_LOCAL_ROOT=str(d/'local'),NAVI_DATA_ROOT=str(d/'data'),NAVI_CONFIG_DIR=str(d/'data'/'Config'),
-           NAVI_SECRET_FILE=str(d/'local'/'s.json'),DATARELAY_NO_BOOT='1',PYTHONIOENCODING='utf-8')
-  r=subprocess.run([sys.executable,'-c',PY,str(ROOT)],input=json.dumps(cases,ensure_ascii=False),env=env,capture_output=True,text=True,encoding='utf-8',timeout=300)
+def test_env(d):
+ """Python と Rust に渡す同じ環境（確かめる用の置き場。本物の設定には触らない）。"""
+ env=dict(os.environ,NAVI_LOCAL_ROOT=str(d/'local'),NAVI_DATA_ROOT=str(d/'data'),NAVI_CONFIG_DIR=str(d/'data'/'Config'),
+          NAVI_SECRET_FILE=str(d/'local'/'s.json'),DATARELAY_NO_BOOT='1',PYTHONIOENCODING='utf-8',USERNAME='parity')
+ env.pop('USER',None)
+ return env
+
+def ask_python(cases,env):
+ r=subprocess.run([sys.executable,'-c',PY,str(ROOT)],input=json.dumps(cases,ensure_ascii=False),env=env,cwd=str(ROOT),capture_output=True,text=True,encoding='utf-8',timeout=300)
  if r.returncode:raise AssertionError(r.stderr[-3000:])
  return json.loads(r.stdout.strip().splitlines()[-1])
 
-def ask_rust(exe,cases):
+def ask_rust(exe,cases,env):
  lines=[]
  for c in cases:
   body=c['raw'] if 'raw' in c else (json.dumps(c['body'],ensure_ascii=False) if 'body' in c else '')
   lines.append(json.dumps({'method':c['method'],'path':c['path'],'query':'','body':body},ensure_ascii=False))
- r=subprocess.run([str(exe),'answer'],input='\n'.join(lines)+'\n',capture_output=True,text=True,encoding='utf-8',timeout=120)
+ r=subprocess.run([str(exe),'answer','--base',str(ROOT)],input='\n'.join(lines)+'\n',env=env,cwd=str(ROOT),capture_output=True,text=True,encoding='utf-8',timeout=120)
  if r.returncode:raise AssertionError(r.stderr[-3000:])
  return [json.loads(x) for x in r.stdout.splitlines() if x.strip()]
 
@@ -87,7 +90,14 @@ class RustParityTest(unittest.TestCase):
   exe=core_exe()
   if not exe:raise AssertionError(f'Rust の答え口（desktop/target/debug/{EXE}）がありません。先に `cd desktop && cargo build --locked` を流してください')
   cls.cases=json.loads(CASES.read_text(encoding='utf-8'))['cases']+period_sweep()
-  cls.py=ask_python(cls.cases);cls.rs=ask_rust(exe,cls.cases)
+  cls.tmp=tempfile.TemporaryDirectory();env=test_env(Path(cls.tmp.name).resolve())
+  # 仕様書の置き場（<設定の置き場>\docs）に、改行の違う見本を置く（Windows の CRLF・古い CR を Python と同じく \n にそろえるか）
+  docs=Path(cls.tmp.name).resolve()/'data'/'Config'/'docs';docs.mkdir(parents=True)
+  (docs/'Navigator_API.md').write_bytes('# 見本\r\n一行目\r二行目\n'.encode('utf-8'))
+  cls.py=ask_python(cls.cases,env);cls.rs=ask_rust(exe,cls.cases,env)
+
+ @classmethod
+ def tearDownClass(cls):cls.tmp.cleanup()
 
  def test_same_answers(self):
   self.assertEqual(len(self.py),len(self.cases));self.assertEqual(len(self.rs),len(self.cases))

@@ -128,13 +128,13 @@
   },
   "GET /api/docs": {
    "area": "ログ・仕様書・版",
-   "to": "python",
-   "note": ""
+   "to": "core",
+   "note": "2.16.0 で Rust へ。仕様書の一覧は lib/changelog.toml の [[doc]]、置き場は paths.rs（設定の置き場・アプリの config の順）"
   },
   "GET /api/docs/<doc_id>": {
    "area": "ログ・仕様書・版",
-   "to": "python",
-   "note": ""
+   "to": "core",
+   "note": "2.16.0 で Rust へ。改行は Python の読み方と同じく \\n にそろえる。読んだ記録（DOC_READ）は残さない"
   },
   "GET /api/execution-queue": {
    "area": "実行・キュー・予定",
@@ -413,8 +413,8 @@
   },
   "POST /api/path-convert": {
    "area": "設定・対象の登録",
-   "to": "python",
-   "note": ""
+   "to": "core",
+   "note": "2.16.0 で Rust へ。相対⇔絶対と在りか（navi_paths.resolve_path・to_relative・locate と同じ決まり。tests/test_rust_paths.py で関数ごとにも比べる）。窓のファイル選択・フォルダーを開くの初期の場所も、ここに聞く"
   },
   "POST /api/period-control-points": {
    "area": "設定・対象の登録",
@@ -668,8 +668,8 @@
   },
   "GET /api/users-root": {
    "area": "配布と更新",
-   "to": "python",
-   "note": "ユーザーごとのデータの置き場とこのユーザーのフォルダーを見せる（2.3.0）"
+   "to": "core",
+   "note": "2.16.0 で Rust へ。変える側（POST）は写しと設定の書き換えがあるので Python のまま"
   },
   "POST /api/users-root": {
    "area": "配布と更新",
