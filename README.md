@@ -420,7 +420,7 @@ DataRelay/
 | `navi_shortcut.py` | 起動アイコンをこのPCの写しへ向ける（1.98.0） |
 | `navi_book.py` | マスタを EXCEL で出し入れする |
 | `navi_bundle.py` | 登録内容の持ち出し・持ち込み（ZIP／部分） |
-| `navi_paths.py` | PC ごとに変わる場所を設定に固定しない |
+| `navi_paths.py` | PC ごとに変わる場所を設定に固定しない（同じ決まりを Rust の `desktop/core/src/paths.rs` も持つ。2.16.0） |
 | `navi_secret.py` | Navigator への接続情報を各PCの資格情報マネージャーに置く・symnavim.conf の読み方（1.99.0） |
 | `navi_log.py` | ログの機構（出す・省略する・末尾だけ読む・世代を押し出す） |
 | `navi_diag.py` | 事前診断（読むだけ。実行中の状態を書き換えません） |
@@ -430,7 +430,7 @@ DataRelay/
 
 ```
 DataRelay.exe（窓・Rust）  … 画面・静的ファイル・ダイアログ・通知領域・常駐・通知・中身の監督
-  ├─ datarelay-core（中身の Rust の側。プロセスの中で直接呼ぶ）… Rust へ移した問い合わせ（2.15.0〜。版と更新履歴・期間の試算）
+  ├─ datarelay-core（中身の Rust の側。プロセスの中で直接呼ぶ）… Rust へ移した問い合わせ（2.15.0〜。版と更新履歴・期間の試算・仕様書・パスの変換・ユーザーの置き場）と、置き場の決め方（窓も使う）
   └─ sidecar.py（標準入出力の窓口）… まだ移していない問い合わせ
        └─ app.py（boot_app でスケジューラーなどを起こす）
             ├─ navi_web.py（受け口）

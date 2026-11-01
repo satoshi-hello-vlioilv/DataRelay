@@ -4,20 +4,34 @@
 //! （tests/test_route_plan.py と tests/test_rust_parity.py が、どれかを忘れると止める）。
 
 use crate::http::{Ask, Reply};
-use crate::{period, version};
+use crate::paths::{self, Bases};
+use crate::{period, places, version};
 use chrono::{Datelike, Local, NaiveDateTime};
 use serde_json::{json, Value};
+use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
-type Handler = fn(&Core, &Ask, &[&str]) -> Reply;
+type Handler = fn(&Core, &Ask, &[String]) -> Reply;
 
 /// (メソッド, 道筋の型, 答える係)。型の `<名前>` は1段ぶんの値に当たる（Flask の書き方と同じ）。
-pub const ROUTES: &[(&str, &str, Handler)] = &[("GET", "/api/version", get_version), ("POST", "/api/period-preview", post_period_preview)];
+pub const ROUTES: &[(&str, &str, Handler)] = &[
+    ("GET", "/api/version", get_version),
+    ("POST", "/api/period-preview", post_period_preview),
+    ("GET", "/api/docs", version::get_docs),
+    ("GET", "/api/docs/<doc_id>", version::get_doc),
+    ("POST", "/api/path-convert", places::post_path_convert),
+    ("GET", "/api/users-root", places::get_users_root),
+];
 
-/// 中身（Rust の側）。いまは持ち物が無い。設定の置き場などを移すときに、ここへ足す。
+/// 中身（Rust の側）。アプリの場所から、置き場・データの基準を Python と同じ決まりで知る。
 #[derive(Default)]
 pub struct Core {
     /// いまの日時を決め打ちにする（試験用）。None なら PC の時刻
     pub fixed_now: Option<NaiveDateTime>,
+    /// アプリの場所（Python の BASE。app.py のあるフォルダー）。None なら場所を使うルートは答えない（Python へ回す）
+    program_root: Option<PathBuf>,
+    /// データの基準と出どころ。Python と同じく、はじめて要ったとき（中身の起動のあと）に1度だけ決める
+    data: OnceLock<(String, String)>,
 }
 
 impl Core {
@@ -25,7 +39,48 @@ impl Core {
         Self::default()
     }
 
+    /// アプリの場所を知っている中身。
+    pub fn with_program(program_root: &Path) -> Self {
+        Core { program_root: Some(PathBuf::from(paths::resolve(&program_root.to_string_lossy()))), ..Self::default() }
+    }
+
+    pub fn program_root(&self) -> Option<&Path> {
+        self.program_root.as_deref()
+    }
+
+    /// 基準になる場所（navi_paths の DATA_ROOT・LOCAL_ROOT・PROGRAM_ROOT・DATA_SOURCE・PLACE_ROOT）。
+    /// 置き場は毎回、控え（config\update.json）から読む（Python は置き場を変えると控えを書き直してから決め直す）。
+    pub fn bases(&self) -> Option<Bases> {
+        let prog = self.program_root.as_deref()?;
+        let (place, _) = paths::update_dir(prog);
+        let (data_root, source) = self
+            .data
+            .get_or_init(|| {
+                let (d, s) = paths::data_root(prog, &paths::real_env, Some(&place));
+                (d.to_string_lossy().into_owned(), s.to_string())
+            })
+            .clone();
+        Some(Bases {
+            data_root,
+            data_source: source,
+            local_root: paths::py_path(&paths::local_root().to_string_lossy()),
+            program_root: paths::py_path(&prog.to_string_lossy()),
+            place: Some(paths::py_path(&place.to_string_lossy())),
+        })
+    }
+
+    /// 設定のマスターの置き場（NAVI_CONFIG_DIR、無ければ <データの基準>\Config）。
+    pub fn config_dir(&self) -> Option<String> {
+        if let Ok(v) = std::env::var("NAVI_CONFIG_DIR") {
+            if !v.is_empty() {
+                return Some(paths::py_path(&v));
+            }
+        }
+        Some(paths::join(&self.bases()?.data_root, "Config"))
+    }
+
     /// 答えられる問い合わせなら答える。None は Python へ回す。HEAD は GET と同じ係が答える。
+    /// アプリの場所を知らない中身（試験）は、場所を使うルートを答えない。
     pub fn handle(&self, ask: &Ask) -> Option<Reply> {
         let method = if ask.method == "HEAD" { "GET" } else { ask.method };
         ROUTES.iter().find_map(|(m, pattern, f)| {
@@ -33,35 +88,56 @@ impl Core {
                 return None;
             }
             let params = match_path(pattern, ask.path)?;
+            if self.program_root.is_none() && !matches!(*pattern, "/api/version" | "/api/period-preview") {
+                return None;
+            }
             Some(f(self, ask, &params))
         })
     }
 
-    fn now(&self) -> NaiveDateTime {
+    pub(crate) fn now(&self) -> NaiveDateTime {
         self.fixed_now.unwrap_or_else(|| Local::now().naive_local())
     }
 }
 
-/// 道筋が型に当たれば、`<名前>` に当たった値を順に返す。
-pub fn match_path<'a>(pattern: &str, path: &'a str) -> Option<Vec<&'a str>> {
+/// 道筋が型に当たれば、`<名前>` に当たった値を順に返す（%XX は戻す。Flask と同じ）。
+pub fn match_path(pattern: &str, path: &str) -> Option<Vec<String>> {
     let (mut p, mut q) = (pattern.split('/'), path.split('/'));
     let mut params = Vec::new();
     loop {
         match (p.next(), q.next()) {
             (None, None) => return Some(params),
-            (Some(a), Some(b)) if a.starts_with('<') && a.ends_with('>') && !b.is_empty() => params.push(b),
+            (Some(a), Some(b)) if a.starts_with('<') && a.ends_with('>') && !b.is_empty() => params.push(percent_decode(b)),
             (Some(a), Some(b)) if a == b => {}
             _ => return None,
         }
     }
 }
 
-fn get_version(_: &Core, _: &Ask, _: &[&str]) -> Reply {
+/// %XX を戻す（UTF-8 として読めなければ元の字のまま）。
+fn percent_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' && i + 2 < b.len() && b[i + 1].is_ascii_hexdigit() && b[i + 2].is_ascii_hexdigit() {
+            let hex = |c: u8| (c as char).to_digit(16).unwrap_or(0) as u8;
+            out.push(hex(b[i + 1]) * 16 + hex(b[i + 2]));
+            i += 3;
+            continue;
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    String::from_utf8(out).unwrap_or_else(|_| s.to_string())
+}
+
+fn get_version(_: &Core, _: &Ask, _: &[String]) -> Reply {
     Reply::json(200, &version::info())
 }
 
 /// 相対期間の設定から、処理日時を基準に、実際に抽出される期間を試算して返す。条件欄の日付は sample（RNE に入っている日付）の書き方で並べる。
-fn post_period_preview(core: &Core, ask: &Ask, _: &[&str]) -> Reply {
+fn post_period_preview(core: &Core, ask: &Ask, _: &[String]) -> Reply {
     let d = match ask.json_or_empty() {
         Ok(d) => d,
         Err(r) => return r,
@@ -100,10 +176,11 @@ mod tests {
 
     #[test]
     fn paths_match_like_flask() {
-        assert_eq!(match_path("/api/docs/<doc_id>", "/api/docs/abc"), Some(vec!["abc"]));
+        assert_eq!(match_path("/api/docs/<doc_id>", "/api/docs/abc"), Some(vec!["abc".to_string()]));
+        assert_eq!(match_path("/api/docs/<doc_id>", "/api/docs/%E4%BB%95%2F"), Some(vec!["仕/".to_string()]));
         assert_eq!(match_path("/api/docs/<doc_id>", "/api/docs/"), None);
         assert_eq!(match_path("/api/docs/<doc_id>", "/api/docs/a/b"), None);
-        assert_eq!(match_path("/api/version", "/api/version"), Some(vec![]));
+        assert_eq!(match_path("/api/version", "/api/version"), Some(Vec::<String>::new()));
         assert_eq!(match_path("/api/version", "/api/version/"), None);
     }
 
@@ -117,7 +194,7 @@ mod tests {
 
     #[test]
     fn period_preview() {
-        let c = Core { fixed_now: NaiveDate::from_ymd_opt(2026, 10, 27).and_then(|d| d.and_hms_opt(9, 5, 0)) };
+        let c = Core { fixed_now: NaiveDate::from_ymd_opt(2026, 10, 27).and_then(|d| d.and_hms_opt(9, 5, 0)), ..Core::default() };
         let r = c
             .handle(&ask(
                 "POST",

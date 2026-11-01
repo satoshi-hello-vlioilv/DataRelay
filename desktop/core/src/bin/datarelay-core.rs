@@ -2,8 +2,10 @@
 //! （tests/test_route_plan.py）が使う。配る exe には入れない（窓は同じ部品をプロセスの中で直接呼ぶ）。
 //!
 //!   datarelay-core routes   … Rust が答えるルートを JSON の並び（"GET /api/version" など）で出す
-//!   datarelay-core answer   … 標準入力の1行1件の問い合わせ {"method","path","query","body"} に、
+//!   datarelay-core answer [--base <アプリの場所>]
+//!                           … 標準入力の1行1件の問い合わせ {"method","path","query","body"} に、
 //!                             1行1件の答え {"status","headers","body"} で返す（本文は UTF-8 の文字。Rust が答えないルートは status 0）
+//!   datarelay-core call     … 標準入力の1行1件の問い {"fn","args"} に、{"ok","result"|"error"} で返す（関数ごとの突き合わせ。probe.rs）
 
 use datarelay_core::{Ask, Core, ROUTES};
 use serde_json::{json, Value};
@@ -18,15 +20,20 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Some("answer") => answer(),
+        Some("call") => call(),
         _ => {
-            eprintln!("使い方: datarelay-core routes | answer");
+            eprintln!("使い方: datarelay-core routes | answer | call");
             ExitCode::from(2)
         }
     }
 }
 
 fn answer() -> ExitCode {
-    let core = Core::new();
+    let args: Vec<String> = std::env::args().collect();
+    let core = match args.iter().position(|a| a == "--base").and_then(|i| args.get(i + 1)) {
+        Some(base) => Core::with_program(std::path::Path::new(base)),
+        None => Core::new(),
+    };
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
     for line in std::io::stdin().lock().lines() {
@@ -47,6 +54,32 @@ fn answer() -> ExitCode {
         let reply = match core.handle(&ask) {
             Some(r) => json!({"status": r.status, "headers": r.headers, "body": String::from_utf8_lossy(&r.body)}),
             None => json!({"status": 0, "headers": [], "body": ""}),
+        };
+        if writeln!(out, "{reply}").and_then(|_| out.flush()).is_err() {
+            return ExitCode::FAILURE;
+        }
+    }
+    ExitCode::SUCCESS
+}
+
+fn call() -> ExitCode {
+    let stdout = std::io::stdout();
+    let mut out = stdout.lock();
+    for line in std::io::stdin().lock().lines() {
+        let Ok(line) = line else { return ExitCode::FAILURE };
+        if line.trim().is_empty() {
+            continue;
+        }
+        let q: Value = match serde_json::from_str(&line) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("問いを読めません: {e}");
+                return ExitCode::FAILURE;
+            }
+        };
+        let reply = match datarelay_core::probe::call(q["fn"].as_str().unwrap_or(""), &q["args"]) {
+            Ok(v) => json!({"ok": true, "result": v}),
+            Err(e) => json!({"ok": false, "error": e}),
         };
         if writeln!(out, "{reply}").and_then(|_| out.flush()).is_err() {
             return ExitCode::FAILURE;

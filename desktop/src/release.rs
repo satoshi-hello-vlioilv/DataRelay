@@ -17,24 +17,15 @@
 //! フォルダーにあり、写しは `config\install.json` の `data_root` でそこを指す）。前の版へ戻すのも同じ道
 //! （配る版を選び直すだけ）。開発の作業ツリー（`.git` が在る）は入れ替えない。
 
+// 置き場・写しの見分け・設定ファイルの読み方は、中身の Rust の側（datarelay-core の paths）と同じ物を使う（2.16.0。2か所で持たない）
+pub use datarelay_core::paths::{installed, read_json, safe_version, update_dir, DATA_DIR, DATA_KEY, FROM_KEY, SEED, VERSIONS};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::Duration;
 
-/// 置き場を変える鍵（Python の navi_release と同じ字）。`config\local.json`（この PC だけ）と `config\update.json`（共有の設定の控え）が持つ。
-pub const CONFIG_KEY: &str = "update_dir";
-/// この PC だけの上書き（書くのは人）。
-pub const LOCAL: &str = "local.json";
-/// 共有の設定の控え。窓は Python を起こす前に置き場を知る必要があり、マスター（SQLite）は読まないので、Python が写しておく。
-pub const MIRROR: &str = "update.json";
-/// 写しの印と、入れた元・データの基準（書くのは窓だけ・`mirror_seed()`）。置き場の同じ名前のファイルは新しい PC へ渡す設定。
-pub const SEED: &str = "install.json";
-pub const DATA_KEY: &str = "data_root";
-pub const FROM_KEY: &str = "from";
 pub const RELEASE: &str = "release.json";
-pub const VERSIONS: &str = "versions";
 pub const MANIFEST: &str = "manifest.json";
 /// 共有に届くのを待つ長さ。届かない UNC は OS が数十秒待たせることがある（起動を待たせない）。
 pub const REACH: Duration = Duration::from_secs(3);
@@ -44,9 +35,6 @@ pub const WORK: &str = ".update";
 const APPLIED: &str = "applied.json";
 /// データと配る物が同居するフォルダー。項目は1段下で数える（Python の `MIXED` と同じ）。
 const MIXED: &str = "config";
-/// 入れ替えの項目にしてはいけない名前。
-/// 写しの中の、この PC のデータ（2.0.0・lib/navi_paths.py の `DATA_DIR`）。版の項目にはならない（入れ替えで消さない）。
-pub const DATA_DIR: &str = "data";
 const FORBIDDEN: [&str; 4] = [WORK, ".git", "__pycache__", DATA_DIR];
 
 /// 何が起きたか（起動画面と記録が言う）。
@@ -71,95 +59,9 @@ pub enum Peek {
     Differs { have: String, want: String, dir: PathBuf },
 }
 
-/// JSON の辞書を読む（BOM は外す・無い／読めない／辞書でないなら Null）。
-pub fn read_json(path: &Path) -> Value {
-    std::fs::read(path)
-        .ok()
-        .and_then(|b| serde_json::from_slice::<Value>(b.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(&b)).ok())
-        .filter(Value::is_object)
-        .unwrap_or(Value::Null)
-}
-
-/// JSON ファイルの `key`（前後の空白を除き `%VAR%` を展開・無ければ空文字）。
-fn config_value(path: &Path, key: &str) -> String {
-    read_json(path)[key].as_str().map(|s| expand_vars(s.trim())).unwrap_or_default()
-}
-
-/// `%NAME%` を環境変数で展開する（無ければそのまま残す・Python の navi_paths.expand と同じ扱い）。
-pub fn expand_vars(s: &str) -> String {
-    let mut out = String::new();
-    let mut rest = s;
-    while let Some(i) = rest.find('%') {
-        out.push_str(&rest[..i]);
-        let tail = &rest[i + 1..];
-        match tail.find('%') {
-            Some(j) => {
-                let name = &tail[..j];
-                match std::env::var(name) {
-                    Ok(v) if !name.is_empty() => out.push_str(&v),
-                    _ => out.push_str(&rest[i..i + j + 2]),
-                }
-                rest = &tail[j + 1..];
-            }
-            None => {
-                out.push_str(&rest[i..]);
-                rest = "";
-            }
-        }
-    }
-    out.push_str(rest);
-    out
-}
-
-/// 配布の置き場から写したアプリか（窓が `config\install.json` を書く）。
-pub fn installed(app_root: &Path) -> bool {
-    app_root.join("config").join(SEED).is_file()
-}
-
-/// 置き場と出どころ。`config\local.json`（この PC だけの上書き）→ `config\update.json`（共有の設定の控え）→
-/// `config\install.json` の `from`（この PC を入れた元）→ アプリのフォルダー。順は Python の `navi_release.dir_choice()` と同じ。
-/// どれも `release_root()` を通す（版のフォルダーから直に動かしても、`versions` の中に `versions` を作らない・1.99.1）。
-pub fn update_dir(app_root: &Path) -> (PathBuf, &'static str) {
-    let conf = app_root.join("config");
-    for (file, key, source) in [(LOCAL, CONFIG_KEY, "local"), (MIRROR, CONFIG_KEY, "shared"), (SEED, FROM_KEY, "install")] {
-        let v = config_value(&conf.join(file), key);
-        if !v.is_empty() {
-            return (release_root(&PathBuf::from(v)), source);
-        }
-    }
-    (release_root(app_root), "app")
-}
-
-/// 置き場として渡された場所を、`versions` が直下に並ぶ置き場の根へ直す（Python の `navi_release.release_root()` と同じ）。
-/// `…\versions` → その親、`…\versions\<版>` → 2つ上。それ以外はそのまま。
-pub fn release_root(p: &Path) -> PathBuf {
-    let named = |q: &Path, s: &str| q.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.eq_ignore_ascii_case(s));
-    if named(p, VERSIONS) {
-        if let Some(up) = p.parent() {
-            return up.to_path_buf();
-        }
-    }
-    if let (Some(name), Some(up)) = (p.file_name().and_then(|n| n.to_str()), p.parent()) {
-        if safe_version(name) && named(up, VERSIONS) {
-            if let Some(root) = up.parent() {
-                return root.to_path_buf();
-            }
-        }
-    }
-    p.to_path_buf()
-}
-
 /// 手元の版（`lib\navi_version.py` の `APP_VERSION`）。読めなければ空文字（まだ写していない）。
 pub fn local_version(app_root: &Path) -> String {
     crate::update::program_version(app_root).unwrap_or_default()
-}
-
-/// 版の字として使えるか（数字で始まり、英数字・点・ハイフンだけ・Python と同じ）。道に混ぜる前に確かめる。
-pub fn safe_version(v: &str) -> bool {
-    !v.is_empty()
-        && v.len() <= 41
-        && v.starts_with(|c: char| c.is_ascii_digit())
-        && v.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
 }
 
 /// `f` を別の糸で動かし、`wait` で打ち切る（届かない共有で起動を止めない）。
@@ -428,6 +330,7 @@ pub fn apply(app_root: &Path, dir: &Path, have: &str, want: &str, log: &dyn Fn(&
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use datarelay_core::paths::{expand_percent, LOCAL, MIRROR};
     use std::fs;
 
     pub(crate) fn tmp(name: &str) -> PathBuf {
@@ -521,7 +424,7 @@ pub(crate) mod tests {
         fs::write(v.join("config").join(LOCAL), r#"{"update_dir":"/rel/old/1.99.0"}"#).unwrap();
         assert_eq!(update_dir(&v).0, PathBuf::from("/rel/old/1.99.0"), "versions の下でなければそのまま");
         std::env::set_var("DR_RELEASE_TEST", "/srv");
-        assert_eq!(expand_vars("%DR_RELEASE_TEST%/a %NOPE_X%"), "/srv/a %NOPE_X%");
+        assert_eq!(expand_percent("%DR_RELEASE_TEST%/a %NOPE_X%"), "/srv/a %NOPE_X%");
         fs::remove_dir_all(&t).ok();
     }
 

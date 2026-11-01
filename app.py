@@ -5822,7 +5822,12 @@ def boot_app(_spawn_at=0.0):
   faulthandler.enable(file=_crash_file,all_threads=True)
   log.info('APP_START_FAULTHANDLER path=%s',LOCAL_LOGS/'crash.log')
  except Exception:log.exception('FAULTHANDLER_UNAVAILABLE')
- navi_paths.set_place(navi_release.place_root(BASE,release_shared()))   # 設定を読めたら、共有の設定の置き場で決め直す
+ # 設定を読めたら、共有の設定の置き場で決め直す。窓（と Rust の中身）が読む控え（config\update.json）も、同じ値へそろえる（2.16.0。
+ # これまでは画面で置き場を変えたときだけ書いていたので、設定が別の PC から来たときなどに控えと食い違うことがあった。変わったときだけ書く）
+ # 設定を読めなかったときは控えを書き換えない（読めないのを「置き場の指定なし」と取り違えて、控えを消さない）
+ try:_shared=str(load().get('update_dir') or '').strip();navi_release.remember(BASE,_shared)
+ except Exception as _e:_shared='';log.warning('RELEASE_MIRROR_SKIPPED error=%s note=設定を読めないので、置き場の控えはそのままにしました',_e)
+ navi_paths.set_place(navi_release.place_root(BASE,_shared or None))
  log.info('APP_START_PLACE place=%s data_root=%s source=%s config=%s rel_root=%s',release_place(),DATA_ROOT,DATA_ROOT_SOURCE,CONFIG_DIR,navi_paths.rel_root())
  if ADOPTED_USER:log.info('USER_DATA_ADOPTED to=%s note=このPCの写しの data を、共有のユーザーのフォルダーへ写しました（写しの data は控えとして残します）',ADOPTED_USER)
  if ADOPT_ERROR:log.warning('USER_DATA_ADOPT_FAILED error=%s note=写しの data のまま使います',ADOPT_ERROR)

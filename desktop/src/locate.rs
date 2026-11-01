@@ -104,18 +104,8 @@ pub fn find_program_from(start: &Path) -> Option<PathBuf> {
     start.ancestors().skip(1).take(6).find(|d| is_program(d)).map(Path::to_path_buf)
 }
 
-/// この PC の作業場所（start_app.py と同じ決まり: NAVI_LOCAL_ROOT、無ければ %LOCALAPPDATA%\DataRelay）。
-pub fn local_root() -> PathBuf {
-    if let Some(p) = env::var_os("NAVI_LOCAL_ROOT") {
-        return PathBuf::from(p);
-    }
-    let base = env::var_os("LOCALAPPDATA").or_else(|| env::var_os("TEMP")).map(PathBuf::from).unwrap_or_else(home);
-    base.join("DataRelay")
-}
-
-fn home() -> PathBuf {
-    env::var_os("USERPROFILE").or_else(|| env::var_os("HOME")).map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."))
-}
+/// この PC の作業場所（NAVI_LOCAL_ROOT、無ければ %LOCALAPPDATA%\DataRelay）。決まりは中身の Rust の側と同じ物（2.16.0）。
+pub use datarelay_core::paths::local_root;
 
 /// Python の起こし方（exe と、前に付ける引数）。
 #[derive(Clone, Debug, PartialEq)]

@@ -376,6 +376,7 @@ DataRelay だけで足したもの:
 - `tests/test_rust_parity.py`: 同じ問い合わせを Python（Flask の受け口）と Rust（`datarelay-core answer`）へ送り、番号と本文の JSON を比べる。
   場合は `tests/parity/cases.json` と、試験の中で作る組み合わせ（2.15.0 は抽出期間の 400 余り）。移したルートが1件も比べられていなければ止める。
   わざと Rust の答えを崩すと違いを捕まえること（2.15.0 で 121 件）を確かめてある。
+- `tests/test_rust_paths.py`（2.16.0）: フォルダーの状態で答えが変わる決まり（データの基準の決める順・置き場の直し方・相対パスの基準に無い物をほかの基準から使う）を、いろいろな状態を作って Python の関数と Rust の関数（`datarelay-core call`）の両方へ問い、600 件余りで比べる。
 - `tests/test_route_plan.py`: `route_plan.json` の `core` と Rust の表（`ROUTES`）が食い違わないこと。
 - 自己診断（`selftest.js`）: 本物の WebView の中で、移したルートを `core` が答えること。
 - CI は Rust を作ってから Python の試験を流す（突き合わせが `datarelay-core.exe` を使う）。
@@ -391,7 +392,8 @@ Python の振る舞いに合わせるもの（`desktop/core/src/pyish.rs`）: `i
 | 段 | 中身 | 状態 |
 |---|---|---|
 | 1 | 土台（core・突き合わせ・振り分け）と最初のルート（版と更新履歴・期間の試算） | 2.15.0 |
-| 2 | 設定の保存・置き場・記録・認証情報（DPAPI） | これから |
+| 2 | 置き場とデータの基準の決め方（paths.rs。窓の release.rs・locate.rs も同じ物を使う）・仕様書・パスの変換・ユーザーの置き場の表示。関数ごとの突き合わせ（tests/test_rust_paths.py） | 2.16.0 |
+| 2b | 設定の保存（SQLite・共有のマスターとの同期）・記録（ログの書き手と読み出し）・認証情報（DPAPI） | これから（記録は書き手ごと移す。Python が溜めて書く省略の行と食い違わないように） |
 | 3 | 画面の読み書き（対象・設定・カレンダー）とスケジューラー | これから |
 | 4 | テキスト読取・結合・並べ替え・出力（xlsx・SQLite・ACCDB） | これから |
 | 5 | Navigator API（DLL・ワーカー） | これから（実機で確かめる） |

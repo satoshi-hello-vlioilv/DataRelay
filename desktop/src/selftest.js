@@ -143,6 +143,12 @@
     r = await fetch('/api/period-preview', json({ target: 'cond', range: 'from', unit: 'day', from_offset: -90, sample: '2026/1/1' }));
     const pv = await r.json();
     ok('移した API（期間の試算）は Rust の中身が答える', r.status === 200 && by(r) === 'core' && pv.ok && pv.kind === 'cond' && /^\d{4}\/\d{1,2}\/\d{1,2}$/.test(pv.lvalue), `${r.status} ${by(r)} ${pv.summary}`);
+    r = await fetch('/api/docs');
+    const dl = await r.json();
+    ok('移した API（仕様書の一覧）は Rust の中身が答える', r.status === 200 && by(r) === 'core' && dl.ok && dl.docs.length >= 1 && dl.docs[0].available, `${r.status} ${by(r)} ${dl.docs && dl.docs.map((d) => d.path).join(',')}`);
+    r = await fetch('/api/path-convert', json({ value: '.\\static', mode: 'absolute' }));
+    const pc = await r.json();
+    ok('移した API（パスの変換）は Rust の中身が答える', r.status === 200 && by(r) === 'core' && /^(?:\/|[A-Za-z]:[\\/]|\\\\)/.test(pc.resolved || '') && /static$/.test(pc.resolved) && pc.where && pc.where.exists, `${r.status} ${by(r)} ${pc.resolved}`);
 
     r = await fetch('/api/rne-shape', json({ rne_path: `${program}/samples/rne/集計表形式サンプル.RNE` }));
     const shape = await r.json();

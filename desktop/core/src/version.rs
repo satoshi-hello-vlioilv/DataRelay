@@ -3,8 +3,13 @@
 //! exe を作るときに取り込む（配る版と更新履歴がいつも同じになる）。版・題名・日付は先頭の1件
 //! （tests/test_changelog.py が lib/navi_version.py と同じであることを見張る）。
 
+use crate::http::{Ask, Reply};
+use crate::paths;
+use crate::routes::Core;
 use serde_json::{json, Map, Value};
+use std::path::Path;
 use std::sync::OnceLock;
+use std::time::SystemTime;
 
 const SOURCE: &str = include_str!("../../../lib/changelog.toml");
 
@@ -52,6 +57,73 @@ pub fn info() -> Value {
         "released_at": latest("date"),
         "changelog": changelog(),
     })
+}
+
+/// 仕様書の一覧（[[doc]]）。画面からはこの id しか受け取らないので、任意のパスは読ませない。
+pub fn docs() -> &'static [Value] {
+    data().get("doc").and_then(Value::as_array).map(Vec::as_slice).unwrap_or(&[])
+}
+
+/// 仕様書の置き場（app.docs_dir）。Windows では Config と config は同じ場所。Linux での確かめのときだけ綴りが分かれるので両方見る。
+fn docs_dir(core: &Core) -> Option<String> {
+    let conf = core.config_dir()?;
+    let prog = core.program_root()?.to_string_lossy().into_owned();
+    let first = paths::join(&conf, "docs");
+    for d in [first.clone(), paths::join(&paths::join(&prog, "config"), "docs")] {
+        if Path::new(&d).is_dir() {
+            return Some(d);
+        }
+    }
+    Some(first)
+}
+
+/// ファイルの時刻を PC の時刻帯で（Python の datetime.fromtimestamp(...).strftime(fmt)）。
+pub(crate) fn local_time(t: SystemTime, fmt: &str) -> String {
+    chrono::DateTime::<chrono::Local>::from(t).format(fmt).to_string()
+}
+
+fn text(d: &Value, k: &str) -> String {
+    d.get(k).and_then(Value::as_str).unwrap_or("").to_string()
+}
+
+/// GET /api/docs … 同梱の仕様書の一覧（置き場・大きさ・更新日時）。
+pub(crate) fn get_docs(core: &Core, _: &Ask, _: &[String]) -> Reply {
+    let Some(dir) = docs_dir(core) else { return Reply::error(500, "アプリの場所が分かりません") };
+    let out: Vec<Value> = docs()
+        .iter()
+        .map(|d| {
+            let path = paths::join(&dir, &text(d, "file"));
+            let st = std::fs::metadata(&path).ok();
+            json!({
+                "id": text(d, "id"), "title": text(d, "title"), "summary": text(d, "summary"), "source": text(d, "source"),
+                "file": text(d, "file"), "path": path, "available": st.is_some(),
+                "bytes": st.as_ref().map(|m| m.len()).unwrap_or(0),
+                "updated_at": st.and_then(|m| m.modified().ok()).map(|t| local_time(t, "%Y-%m-%d %H:%M")).unwrap_or_default(),
+            })
+        })
+        .collect();
+    Reply::json(200, &json!({"ok": true, "docs": out}))
+}
+
+/// GET /api/docs/<doc_id> … 仕様書の中身（改行は Python の読み方と同じく \n にそろえる）。
+pub(crate) fn get_doc(core: &Core, _: &Ask, params: &[String]) -> Reply {
+    let id = params.first().map(String::as_str).unwrap_or("");
+    let Some(d) = docs().iter().find(|d| d.get("id").and_then(Value::as_str) == Some(id)) else {
+        return Reply::error(404, "登録されていない仕様書です");
+    };
+    let Some(dir) = docs_dir(core) else { return Reply::error(500, "アプリの場所が分かりません") };
+    let path = paths::join(&dir, &text(d, "file"));
+    if !Path::new(&path).is_file() {
+        return Reply::error(404, &format!("{path} が見つかりません。配布物に含まれているか確認してください。"));
+    }
+    let body = match std::fs::read(&path).map_err(|e| e.to_string()).and_then(|b| String::from_utf8(b).map_err(|e| e.to_string())) {
+        Ok(t) => t.replace("\r\n", "\n").replace('\r', "\n"),
+        Err(e) => return Reply::error(500, &e),
+    };
+    Reply::json(
+        200,
+        &json!({"ok": true, "id": text(d, "id"), "title": text(d, "title"), "summary": text(d, "summary"), "source": text(d, "source"), "path": path, "text": body}),
+    )
 }
 
 #[cfg(test)]

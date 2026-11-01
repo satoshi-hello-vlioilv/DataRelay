@@ -117,10 +117,12 @@ impl Shell {
         self.router.get().map(|r| &r.backend)
     }
 
+    /// 窓から中身へ聞く。画面と同じく、Rust へ移した問い合わせは中身の Rust の側が答え、ほかは Python が答える。
     fn ask_json(&self, method: &str, path: &str, body: &[u8]) -> Result<Value, String> {
-        let b = self.backend().ok_or("起動中です")?;
+        let router = self.router.get().ok_or("起動中です")?;
         let headers = if body.is_empty() { vec![] } else { vec![("Content-Type".into(), "application/json".into())] };
-        let r = b.ask(&Ask { method, path, query: "", headers, body });
+        let ask = Ask { method, path, query: "", headers, body };
+        let r = router.core.handle(&ask).unwrap_or_else(|| router.backend.ask(&ask));
         if r.status != 200 {
             return Err(format!("{path} が {} を返しました", r.status));
         }
@@ -128,7 +130,7 @@ impl Shell {
     }
 
     /// 設定に書かれたパス（アプリフォルダー基準の相対・<PC>・環境変数）を実際の場所へ直す。
-    /// 直し方の決まりは Python の resolve_path だけが持つ（/api/path-convert）。窓が別に真似ると食い違う。
+    /// 直し方の決まりは中身の resolve_path だけが持つ（/api/path-convert。2.16.0 から Rust の側・datarelay-core の paths）。
     /// 中身がまだ答えられないときは、書かれたまま使う。
     fn resolve_path(&self, raw: &str) -> PathBuf {
         let body = json!({"value": raw, "mode": "absolute"}).to_string();
@@ -670,7 +672,8 @@ fn start(app: AppHandle, shell: Arc<Shell>) {
         static_dir: program.join("static"),
         index_file,
         backend: sup,
-        core: datarelay_core::Core::new(),
+        // アプリの場所から、置き場・データの基準を Python と同じ決まりで知る（中身の起動のあとに作るので、写しの data の引っ越しも済んでいる）
+        core: datarelay_core::Core::with_program(&program),
         native: native(app.clone(), shell.clone(), info),
         saver: saver(app.clone(), shell.clone()),
     };
