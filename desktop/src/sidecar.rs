@@ -21,22 +21,8 @@ use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-/// 答え（HTTP の答えと同じ中身）。
-#[derive(Debug, Clone)]
-pub struct Reply {
-    pub status: u16,
-    pub headers: Vec<(String, String)>,
-    pub body: Vec<u8>,
-}
-
-/// 問い合わせ（窓が受けた HTTP の問い合わせを、そのまま渡す形）。
-pub struct Ask<'a> {
-    pub method: &'a str,
-    pub path: &'a str,
-    pub query: &'a str,
-    pub headers: Vec<(String, String)>,
-    pub body: &'a [u8],
-}
+/// 答えと問い合わせの形は、中身（Rust の側・datarelay-core）と同じ物を使う（Rust が答えても Python が答えても同じ形）。
+pub use datarelay_core::{Ask, Reply};
 
 pub struct Sidecar {
     /// 書き口。終わるときに先に閉じる（閉じれば Python は入力の終わりを見て自分で終わる）

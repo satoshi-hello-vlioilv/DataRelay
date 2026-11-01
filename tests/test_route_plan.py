@@ -9,7 +9,9 @@ from pathlib import Path
 
 ROOT=Path(__file__).resolve().parent.parent
 PLAN=ROOT/'migration'/'route_plan.json'
-DESTINATIONS={'python','rust','python+rust','remove'}
+DESTINATIONS={'python','rust','python+rust','remove','core'}
+sys.path.insert(0,str(ROOT/'tests'))
+from test_rust_parity import core_routes  # noqa: E402  Rust の中身が答えるルート（desktop/core/src/routes.rs）
 
 def shell_routes():
  """窓（desktop/src）が自分で答えるルート。main.rs の native の ("POST", "/api/…") と、router.rs の / と /static/。"""
@@ -38,7 +40,7 @@ class RoutePlanTest(unittest.TestCase):
   self.assertEqual(sorted(self.routes-set(self.plan)),[],'URL表にあって割り当てに無いルート')
 
  def test_python_routes_are_served_by_python(self):
-  bad=[k for k,v in self.plan.items() if v['to'] in ('python','python+rust') and k not in self.routes]
+  bad=[k for k,v in self.plan.items() if v['to'] in ('python','python+rust','core') and k not in self.routes]
   self.assertEqual(bad,[],'中身が答えるはずなのに URL表に無いルート')
 
  def test_rust_routes_are_served_by_the_window_only(self):
@@ -46,6 +48,14 @@ class RoutePlanTest(unittest.TestCase):
   rust=[k for k,v in self.plan.items() if v['to'] in ('rust','python+rust')]
   self.assertEqual([k for k in rust if k not in self.shell],[],'窓へ移したはずなのに窓の振り分けに無いルート')
   self.assertEqual([k for k,v in self.plan.items() if v['to']=='rust' and k in self.routes],[],'窓へ移したのに中身にも残っているルート')
+
+ def test_core_routes_match_the_plan(self):
+  """Rust の中身へ移したルート（core）は、Rust の表にあり、表にあるものは core と記録してある（2.15.0〜）。
+  Python の受け口は振る舞いの基準として残す（上の test_python_routes_are_served_by_python が見る）。"""
+  core=set(core_routes())
+  self.assertEqual(sorted(k for k,v in self.plan.items() if v['to']=='core' and k not in core),[],'core と記録したのに Rust の表に無い')
+  self.assertEqual(sorted(k for k in core if self.plan.get(k,{}).get('to')!='core'),[],'Rust の表にあるのに core と記録していない')
+  self.assertEqual(sorted(core&self.shell),[],'窓の操作と中身の Rust の側の両方が答えるルート')
 
  def test_removed_routes_are_gone(self):
   gone=[k for k,v in self.plan.items() if v['to']=='remove' and (k in self.routes or k in self.shell)]

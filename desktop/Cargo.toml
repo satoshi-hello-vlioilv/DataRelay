@@ -1,10 +1,16 @@
 [package]
 name = "datarelay-desktop"
-version = "2.14.2"
+version = "2.15.0"
 description = "DataRelay デスクトップ版（Tauri の窓＋Python の中身・ポートなし）"
 edition = "2021"
 rust-version = "1.90"
 publish = false
+
+# 窓（この package）と中身（core: Tauri に依らない業務の処理）を同じ置き場で作る。
+# default-members に core も入れて、cargo build・test・clippy が両方を見るようにする（Rust を主にする移行・2.15.0）
+[workspace]
+members = ["core"]
+default-members = [".", "core"]
 
 [[bin]]
 name = "DataRelay"
@@ -28,6 +34,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # 配る版の中身を確かめる（manifest.json の sha256）
 sha2 = "0.10"
+# 中身（業務の処理）のうち Rust へ移したもの。答えられない問い合わせは Python へ回す
+datarelay-core = { path = "core" }
 
 [profile.release]
 opt-level = 3

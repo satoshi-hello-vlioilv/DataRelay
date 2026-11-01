@@ -1,5 +1,7 @@
 # デスクトップ版（Tauri / Rust / Python）への移行の検証
 
+> 2.15.0 から、業務の処理も Rust へ移している（§14）。§2 の「業務の処理は Python のまま」はそこで改めた。
+
 いまの形（Flask が 127.0.0.1:5031 で待ち受け、ブラウザで開く）から、Defect-Pitch-Analyzer（DPA）の版 2.0.0 と同じ形
 （Tauri の窓＋Python を標準入出力でつなぐ・ポートなし）へ移せるかを、**実装に入る前に**確かめた記録。
 この文書は「何を移せるか・どこへ移すか・何で確かめたか・何が分からないか・どう進めるか」を残す。
@@ -349,6 +351,54 @@ DataRelay だけで足したもの:
 - 社内の PC で `%USERPROFILE%\DataRelay\DataRelay.exe`（利用者のフォルダーの exe）が AppLocker に止められないか（§12 と同じ問い）。
 - BOX Drive の上の置き場で、別の PC が入口を開いている最中に「この版を配る」を押したとき、入口の置き換えが断られるか（断られたら画面が理由を出し、もう一度押せばよい作り）。
 - Windows の CI では `release` の型を流すが、本物の BOX Drive・UNC の遅さでは確かめていない。
+
+## 14. Rust を主にする移行（2.15.0〜）
+
+§2 では「業務の処理は Python のまま」と決めた。2.15.0 から、利用者の判断で **Rust を主にして作り直す**。
+動く版を保ったまま、画面の問い合わせ（ルート）を1本ずつ Rust へ移し、全部を移し終えたら Python を外す。
+
+移す理由（Python が残っていることで利用者の PC に起きていること）:
+
+- PC に Python を入れておく要がある（実機の報告では Microsoft Store 版の Python 3.12）
+- 初回の起動で `pip install` により Flask・openpyxl・pywin32 を入れている（社内のプロキシ・権限で失敗しうる）
+- 処理が「窓（Rust）→ 中身（Python）→ ワーカー（Python）」の3段になっている
+
+形:
+
+| 置き場 | 受け持つもの |
+|---|---|
+| `desktop/`（窓・Tauri） | 窓・通知領域・常駐・配布と更新・ファイル選択。問い合わせは まず中身の Rust の側に聞き、答えられなければ Python へ回す（`router.rs`。答えた側を `X-DR-By: core／python` で名乗る） |
+| `desktop/core/`（中身の Rust の側・`datarelay-core`） | Rust へ移した業務の処理。Tauri に依らない（窓なしで試験できる）。ルートの表は `src/routes.rs` の `ROUTES` |
+| `app.py`・`lib/`（Python） | まだ移していない業務の処理。**移したルートの受け口も、振る舞いの基準として最後の段まで残す** |
+
+確かめ方（評価関数）:
+
+- `tests/test_rust_parity.py`: 同じ問い合わせを Python（Flask の受け口）と Rust（`datarelay-core answer`）へ送り、番号と本文の JSON を比べる。
+  場合は `tests/parity/cases.json` と、試験の中で作る組み合わせ（2.15.0 は抽出期間の 400 余り）。移したルートが1件も比べられていなければ止める。
+  わざと Rust の答えを崩すと違いを捕まえること（2.15.0 で 121 件）を確かめてある。
+- `tests/test_route_plan.py`: `route_plan.json` の `core` と Rust の表（`ROUTES`）が食い違わないこと。
+- 自己診断（`selftest.js`）: 本物の WebView の中で、移したルートを `core` が答えること。
+- CI は Rust を作ってから Python の試験を流す（突き合わせが `datarelay-core.exe` を使う）。
+
+Python の振る舞いに合わせるもの（`desktop/core/src/pyish.rs`）: `int()`（前後の空白・全角の数字・数字の間の `_`・小数の切り捨て）、
+`str(v or '')`、`bool()`、`str.strip()`、正規表現の `\d`・`\s`（Python 3.12 と同じ Unicode 15.0）。日付は Python の date と同じく 1〜9999 年で、
+範囲を出る計算は Python と同じく失敗（500）にする。Flask の失敗の本文は HTML なので、失敗の場合は番号だけを比べる。
+
+データを言語に依らない形へ: Python のコードに書いていた読みもの（更新履歴・仕様書の一覧）は `lib/changelog.toml` へ移し、Python と Rust が同じ物を読む（Rust は exe を作るときに取り込む）。
+
+進め方（段）:
+
+| 段 | 中身 | 状態 |
+|---|---|---|
+| 1 | 土台（core・突き合わせ・振り分け）と最初のルート（版と更新履歴・期間の試算） | 2.15.0 |
+| 2 | 設定の保存・置き場・記録・認証情報（DPAPI） | これから |
+| 3 | 画面の読み書き（対象・設定・カレンダー）とスケジューラー | これから |
+| 4 | テキスト読取・結合・並べ替え・出力（xlsx・SQLite・ACCDB） | これから |
+| 5 | Navigator API（DLL・ワーカー） | これから（実機で確かめる） |
+| 6 | Power Query（M 言語） | これから |
+| 7 | Python を外す（サイドカー・pip・Python の検出） | これから |
+
+分からないこと（実機で確かめる）: Navigator の DLL と Access（COM）は、この開発の環境では動かせない。Windows 向けのコンパイルと静的な試験までは手元で確かめ、動くかは段ごとに実機で確かめる。
 
 ## 付録: 実装の中身
 

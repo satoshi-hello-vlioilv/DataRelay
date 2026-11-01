@@ -3,7 +3,8 @@
 //! 役割の分け方（migration/FEASIBILITY.md）:
 //!   - Rust（この exe）: 窓・通知領域のアイコン・常駐（隠す・出す）・1つだけ起動・起動と終了・画面のひな形と静的ファイル・
 //!     ファイル/フォルダーの選択・保存ダイアログ・エクスプローラーで開く・中身（Python）の監督と起こし直し
-//!   - Python（sidecar.py → app.py）: 業務の処理のすべて（いまの Flask のまま。WSGI を標準入出力で呼ぶ）
+//!   - 中身の Rust の側（desktop/core・datarelay-core）: Rust へ移した業務の処理（2.15.0 から1本ずつ。§14）
+//!   - Python（sidecar.py → app.py）: まだ移していない業務の処理（いまの Flask のまま。WSGI を標準入出力で呼ぶ）
 //!   - 画面（WebView2）: いまの HTML/JS/CSS。問い合わせは自前の仕組み（datarelay）で Rust が受ける
 //!
 //! × を押すと、Python に「常駐を続ける理由」（実行中・キュー・自動実行の予定・影実行）を聞き、
@@ -669,6 +670,7 @@ fn start(app: AppHandle, shell: Arc<Shell>) {
         static_dir: program.join("static"),
         index_file,
         backend: sup,
+        core: datarelay_core::Core::new(),
         native: native(app.clone(), shell.clone(), info),
         saver: saver(app.clone(), shell.clone()),
     };

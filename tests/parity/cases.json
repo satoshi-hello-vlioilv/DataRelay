@@ -1,0 +1,14 @@
+{
+  "_about": "Rust へ移したルートの突き合わせの場合（tests/test_rust_parity.py が Python と Rust の両方へ送って比べる）。compare: json＝本文の JSON（ignore の鍵を除く）と番号／status＝番号だけ（Flask の失敗の本文は HTML のため）。抽出期間の組み合わせは試験の中で作って足す",
+  "cases": [
+    {"name": "版と更新履歴", "method": "GET", "path": "/api/version"},
+    {"name": "期間の試算（条件欄・以降・日）", "method": "POST", "path": "/api/period-preview", "body": {"target": "cond", "range": "from", "unit": "day", "from_offset": -90, "sample": "2026/1/1"}, "ignore": ["now"]},
+    {"name": "期間の試算（管理ポイント・月）", "method": "POST", "path": "/api/period-preview", "body": {"target": "point", "control_point": " 月度 ", "unit": "month", "from_offset": -3, "to_offset": -1}, "ignore": ["now"]},
+    {"name": "期間の試算（文字の数・全角の数字）", "method": "POST", "path": "/api/period-preview", "body": {"target": "cond", "range": "between", "unit": "month", "from_offset": " -2 ", "to_offset": "０", "sample": "２０２６-０１-０１"}, "ignore": ["now"]},
+    {"name": "期間の試算（読めない値は既定）", "method": "POST", "path": "/api/period-preview", "body": {"target": "x", "range": 3, "unit": null, "from_offset": "3.5", "to_offset": [1], "control_point": 12, "cond_item": true, "sample": 20260101}, "ignore": ["now"]},
+    {"name": "期間の試算（空の本文 null）", "method": "POST", "path": "/api/period-preview", "body": null, "ignore": ["now"]},
+    {"name": "期間の試算（JSON でない）", "method": "POST", "path": "/api/period-preview", "raw": "{", "compare": "status"},
+    {"name": "期間の試算（辞書でない）", "method": "POST", "path": "/api/period-preview", "body": [1], "compare": "status"},
+    {"name": "期間の試算（年が範囲を出る）", "method": "POST", "path": "/api/period-preview", "body": {"target": "cond", "unit": "day", "from_offset": -2000000}, "compare": "status"}
+  ]
+}
