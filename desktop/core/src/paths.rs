@@ -96,27 +96,69 @@ pub fn expand_percent(s: &str) -> String {
     out
 }
 
-/// os.path.expanduser（先頭の `~` と、その直後が区切りか終わりのときだけ。`~名前` は変えない）。
+/// os.path.expanduser。先頭の `~` と、その直後が区切りか終わりのとき。`~名前` は Windows だけ（ホームの隣の名前のフォルダー）。
 fn expand_user(s: &str) -> String {
-    let Some(rest) = s.strip_prefix('~') else { return s.to_string() };
-    let sep_next = rest.is_empty() || rest.starts_with('/') || (WINDOWS && rest.starts_with('\\'));
-    if !sep_next {
-        return s.to_string();
+    if WINDOWS {
+        return expand_user_nt(s, &real_env);
     }
-    let h = if WINDOWS {
-        home().to_string_lossy().into_owned()
-    } else {
-        match env("HOME") {
-            Some(h) => h,
-            None => return s.to_string(),
-        }
-    };
-    let h = if !WINDOWS && h != "/" { h.trim_end_matches('/').to_string() } else { h };
+    let Some(rest) = s.strip_prefix('~') else { return s.to_string() };
+    if !(rest.is_empty() || rest.starts_with('/')) {
+        return s.to_string(); // ~名前（posix は利用者の一覧を引く。ここでは使わないので変えない）
+    }
+    let Some(h) = env("HOME") else { return s.to_string() };
+    let h = if h != "/" { h.trim_end_matches('/').to_string() } else { h };
     let joined = format!("{h}{rest}");
     if joined.is_empty() {
         "/".into()
     } else {
         joined
+    }
+}
+
+/// ntpath.expanduser（Python 3.12）。ホームは USERPROFILE、無ければ HOMEDRIVE＋HOMEPATH。
+/// `~名前` は、名前がいまの利用者（USERNAME）と違えば、ホームの最後の段をその名前に替える（ホームの最後の段がいまの利用者のときだけ）。
+/// OS によらずコンパイルする（Linux の試験でも Python の ntpath と比べられるように）。
+pub fn expand_user_nt(s: &str, env: Env) -> String {
+    let Some(rest) = s.strip_prefix('~') else { return s.to_string() };
+    let n = rest.find(['\\', '/']).unwrap_or(rest.len());
+    let home = match env("USERPROFILE") {
+        Some(h) => h,
+        None => match (env("HOMEPATH"), env("HOMEDRIVE")) {
+            (Some(p), d) => format!("{}{p}", d.unwrap_or_default()),
+            (None, _) => return s.to_string(),
+        },
+    };
+    let mut home = home;
+    if n != 0 {
+        let target = &rest[..n];
+        let current = env("USERNAME");
+        if current.as_deref() != Some(target) {
+            let (head, base) = split_nt(&home);
+            if current.as_deref() != Some(base.as_str()) {
+                return s.to_string();
+            }
+            home = join_nt(&head, target);
+        }
+    }
+    format!("{home}{}", &rest[n..])
+}
+
+/// ntpath.split（最後の段と、その前）。前は末尾の区切りを外す（根は残す）。
+fn split_nt(p: &str) -> (String, String) {
+    let p = p.replace('/', "\\");
+    let (root, tail) = split_root_nt(&p);
+    let tail = tail.to_string();
+    let i = tail.rfind('\\').map(|i| i + 1).unwrap_or(0);
+    let (head, base) = (tail[..i].trim_end_matches('\\').to_string(), tail[i..].to_string());
+    (format!("{root}{head}"), base)
+}
+
+/// ntpath.join（2つ）。
+fn join_nt(a: &str, b: &str) -> String {
+    if a.is_empty() || a.ends_with(['\\', '/']) || a.ends_with(':') {
+        format!("{a}{b}")
+    } else {
+        format!("{a}\\{b}")
     }
 }
 
@@ -242,63 +284,84 @@ fn expand_vars_nt(s: &str) -> String {
 
 // ==== Python の Path と同じ字 ===========================================
 
-/// `str(Path(s))`。区切りをそろえ（Windows は \）、重なった区切り・`.` の段・末尾の区切りを落とす。`..` は残す。
+/// `str(Path(s))`。区切りをそろえ（Windows は \\）、重なった区切り・`.` の段・末尾の区切りを落とす。`..` は残す。
 pub fn py_path(s: &str) -> String {
-    if s.is_empty() {
-        return ".".into();
-    }
     if WINDOWS {
-        let s = s.replace('/', "\\");
-        let (prefix, rest) = split_root_nt(&s);
-        let parts: Vec<&str> = rest.split('\\').filter(|x| !x.is_empty() && *x != ".").collect();
-        let body = parts.join("\\");
-        if prefix.is_empty() && body.is_empty() {
-            ".".into()
-        } else {
-            format!("{prefix}{body}")
-        }
+        py_path_nt(s)
     } else {
-        let lead = if s.starts_with("//") && !s.starts_with("///") {
-            "//"
-        } else if s.starts_with('/') {
-            "/"
-        } else {
-            ""
-        };
-        let parts: Vec<&str> = s.split('/').filter(|x| !x.is_empty() && *x != ".").collect();
-        let body = parts.join("/");
-        if lead.is_empty() && body.is_empty() {
-            ".".into()
-        } else {
-            format!("{lead}{body}")
-        }
+        py_path_posix(s)
     }
 }
 
-/// Windows の道を（ドライブか UNC の根, 残り）に分ける。根は区切りで終わる（`C:\`・`\\srv\share\`・`\`）。`C:x` の根は `C:`。
+fn py_path_posix(s: &str) -> String {
+    if s.is_empty() {
+        return ".".into();
+    }
+    let lead = if s.starts_with("//") && !s.starts_with("///") {
+        "//"
+    } else if s.starts_with('/') {
+        "/"
+    } else {
+        ""
+    };
+    let body = s.split('/').filter(|x| !x.is_empty() && *x != ".").collect::<Vec<_>>().join("/");
+    if lead.is_empty() && body.is_empty() {
+        ".".into()
+    } else {
+        format!("{lead}{body}")
+    }
+}
+
+/// `str(PureWindowsPath(s))`。OS によらずコンパイルする（Linux の試験でも Python の PureWindowsPath と比べられるように）。
+pub fn py_path_nt(s: &str) -> String {
+    if s.is_empty() {
+        return ".".into();
+    }
+    let s = s.replace('/', "\\");
+    let (prefix, rest) = split_root_nt(&s);
+    let body = rest.split('\\').filter(|x| !x.is_empty() && *x != ".").collect::<Vec<_>>().join("\\");
+    if prefix.is_empty() && body.is_empty() {
+        ".".into()
+    } else {
+        format!("{prefix}{body}")
+    }
+}
+
+/// Windows の道を（ドライブ＋根, 残り）に分ける（Python 3.12 の ntpath.splitroot と、pathlib が UNC の共有に根を足す決まり）。
+/// 例: `C:\\x` → (`C:\\`, x)・`C:x` → (`C:`, x)・`\\\\srv\\share\\x` → (`\\\\srv\\share\\`, x)・`\\x` → (`\\`, x)・`\\\\\\a` → (`\\\\\\a`, "")
 fn split_root_nt(s: &str) -> (String, &str) {
-    if let Some(rest) = s.strip_prefix("\\\\") {
-        // \\server\share\…
-        let mut it = rest.splitn(3, '\\');
-        let server = it.next().unwrap_or("");
-        let share = it.next().unwrap_or("");
-        let tail = it.next().unwrap_or("");
-        if !server.is_empty() && !share.is_empty() {
-            return (format!("\\\\{server}\\{share}\\"), tail);
-        }
-        return ("\\\\".into(), rest);
-    }
     let b = s.as_bytes();
-    if b.len() >= 2 && b[1] == b':' && b[0].is_ascii_alphabetic() {
-        if b.get(2) == Some(&b'\\') {
-            return (format!("{}\\", &s[..2]), &s[3..]);
+    let (drive, root, tail): (&str, &str, &str) = if b.first() == Some(&b'\\') {
+        if b.get(1) == Some(&b'\\') {
+            let start = if s.len() >= 8 && s.is_char_boundary(8) && s[..8].eq_ignore_ascii_case("\\\\?\\UNC\\") { 8 } else { 2 };
+            match s[start..].find('\\').map(|i| i + start) {
+                None => (s, "", ""),
+                Some(i) => match s[i + 1..].find('\\').map(|j| j + i + 1) {
+                    None => (s, "", ""),
+                    Some(j) => (&s[..j], &s[j..j + 1], &s[j + 1..]),
+                },
+            }
+        } else {
+            ("", &s[..1], &s[1..])
         }
-        return (s[..2].to_string(), &s[2..]);
+    } else if b.len() >= 2 && b[1] == b':' && s.is_char_boundary(2) {
+        if b.get(2) == Some(&b'\\') {
+            (&s[..2], &s[2..3], &s[3..])
+        } else {
+            (&s[..2], "", &s[2..])
+        }
+    } else {
+        ("", "", s)
+    };
+    // pathlib: 根の無い UNC の共有（\\\\srv\\share）には根を足す（\\\\?\\UNC\\srv\\share も）
+    let mut root = root.to_string();
+    if root.is_empty() && drive.starts_with('\\') && !drive.ends_with('\\') {
+        let parts: Vec<&str> = drive.split('\\').collect();
+        if (parts.len() == 4 && !"?.".contains(parts[2])) || parts.len() == 6 {
+            root = "\\".into();
+        }
     }
-    if let Some(rest) = s.strip_prefix('\\') {
-        return ("\\".into(), rest);
-    }
-    (String::new(), s)
+    (format!("{drive}{root}"), tail)
 }
 
 fn sep() -> char {

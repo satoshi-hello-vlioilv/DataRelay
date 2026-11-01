@@ -51,6 +51,9 @@ pub fn call(name: &str, a: &Value) -> Result<Value, String> {
         "user_dir" => json!(paths::user_dir(opt(a, "place").map(Path::new), &env).map(p2s)),
         "logon_name" => json!(paths::logon_name(&env)),
         "py_path" => json!(paths::py_path(s(a, "value"))),
+        // Windows の流儀（OS によらず）: Linux の試験でも Python の PureWindowsPath・ntpath と比べる
+        "py_path_nt" => json!(paths::py_path_nt(s(a, "value"))),
+        "expand_user_nt" => json!(paths::expand_user_nt(s(a, "value"), &env)),
         "resolve" => json!(paths::resolve(s(a, "value"))),
         "rel_bases" => json!(bases(a).rel_bases()),
         "resolve_path" => json!(bases(a).resolve_path(opt(a, "value"), opt(a, "base"))),

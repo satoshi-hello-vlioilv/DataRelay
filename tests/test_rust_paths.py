@@ -5,17 +5,27 @@
 同じ問いを Python の関数と Rust の関数（datarelay-core call）へ出して、答えを比べる。
 実行: python -m unittest tests.test_rust_paths -v
 """
-import json,os,subprocess,sys,tempfile,unittest
+import json,os,shutil,subprocess,sys,tempfile,unittest
 from pathlib import Path
 
 ROOT=Path(__file__).resolve().parent.parent
 sys.path.insert(0,str(ROOT/'tests'))
 from test_rust_parity import core_exe,EXE  # noqa: E402
 
+def ref_python():
+ """答えの基準にする Python。利用者の PC と CI と同じ 3.12 以上（3.11 の pathlib は Windows の道 ///a・\\\\srv の読み方が違う）。
+ 手元の既定が古ければ python3.12・python3.13 を探す。無ければ止める（古い Python の答えに合わせてしまわないように）。"""
+ if sys.version_info>=(3,12):return sys.executable
+ for name in ('python3.12','python3.13'):
+  p=shutil.which(name)
+  if p:return p
+ raise AssertionError('答えの基準にする Python 3.12 以上が見つかりません（利用者の PC・CI と同じ版で比べるため）')
+
 PY=r"""
 import json,sys
 sys.path[:0]=[sys.argv[1]+'/lib']
-from pathlib import Path
+import ntpath,os
+from pathlib import Path,PureWindowsPath
 import navi_paths as P,navi_release as R
 def setup(b):
  P.setup(b['data_root'],b['local_root'],b['program_root'],b['data_source']);P.set_place(b.get('place'))
@@ -34,6 +44,11 @@ for q in json.loads(sys.stdin.read()):
   elif f=='user_dir':r=s(P.user_dir(a.get('place'),a.get('env',{})))
   elif f=='logon_name':r=P.logon_name(a.get('env',{}))
   elif f=='py_path':r=str(Path(a['value']))
+  elif f=='py_path_nt':r=str(PureWindowsPath(a['value']))
+  elif f=='expand_user_nt':
+   saved=dict(os.environ);os.environ.clear();os.environ.update(a.get('env',{}))
+   try:r=ntpath.expanduser(a['value'])
+   finally:os.environ.clear();os.environ.update(saved)
   elif f=='resolve':r=str(Path(a['value']).resolve())
   else:
    setup(a['bases'])
@@ -65,7 +80,7 @@ class RustPathsTest(unittest.TestCase):
    r=subprocess.run(cmd,input=stdin,env=env,cwd=str(t),capture_output=True,text=True,encoding='utf-8',timeout=120)
    if r.returncode:raise AssertionError(r.stderr[-3000:])
    return r.stdout
-  cls.py=json.loads(run([sys.executable,'-c',PY,str(ROOT)],json.dumps(cls.calls,ensure_ascii=False)).strip().splitlines()[-1])
+  cls.py=json.loads(run([ref_python(),'-c',PY,str(ROOT)],json.dumps(cls.calls,ensure_ascii=False)).strip().splitlines()[-1])
   rs=run([str(exe),'call'],'\n'.join(json.dumps({'fn':c['fn'],'args':c['args']},ensure_ascii=False) for c in cls.calls)+'\n')
   cls.rs=[json.loads(x) for x in rs.splitlines() if x.strip()]
 
@@ -134,6 +149,14 @@ class RustPathsTest(unittest.TestCase):
    cls.add('user_dir',place=str(pl) if pl else None,env=env)
   for env in [me,{'USERNAME':'a/b\\c'},{'USER':'x'},{}]:cls.add('logon_name',env=env)
   for v in ['a//b/./c/','./','','a/../b','//a/b','///a','C:/a/b/','x\\y']:cls.add('py_path',value=v)
+  # Windows の流儀（Linux でも Python の PureWindowsPath・ntpath.expanduser と比べる。2.16.0 の CI で ///a・~x の違いを捕まえた）
+  for v in ['///a','//a','//a/b','//a/b/','//a/b/c/','\\\\srv\\share','\\\\srv','\\\\?\\UNC\\srv\\share','\\\\?\\C:\\x','\\\\.\\dev\\x',
+            'C:','C:x','c:/a//b/./','\\x','x/./y/','', '.', 'a\\..\\b','C:\\','////a/b']:cls.add('py_path_nt',value=v)
+  home={'USERPROFILE':'C:\\Users\\me','USERNAME':'me'}
+  for v,env in [('~',home),('~\\x',home),('~/x',home),('~x',home),('~x\\y',home),('~me\\y',home),('a~',home),
+                ('~x',{'USERPROFILE':'C:\\Users\\me','USERNAME':'other'}),('~x',{'USERPROFILE':'C:\\Users\\me'}),
+                ('~\\x',{'HOMEDRIVE':'D:','HOMEPATH':'\\home\\u'}),('~\\x',{'HOMEPATH':'\\home\\u'}),('~\\x',{})]:
+   cls.add('expand_user_nt',value=v,env=env)
   # ---- 相対パスの基準と道の読み方 ----
   pl=t/'B'/'place';data=t/'B'/'data';prog=t/'B'/'prog';local=t/'B'/'local'
   write(pl/'rne'/'A.RNE','a');write(data/'rne'/'D.RNE','d');write(prog/'assets'/'empty.accdb','x');(local/'backup').mkdir(parents=True)
