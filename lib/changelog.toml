@@ -15,6 +15,22 @@ summary = "SymNaviA.dll が公開する関数・定数・呼び出し順序の�
 source = "Navigator Visual Basic Interface API 9.6.0 / FUJITSU Interstage Navigator Server V9.4.1"
 
 [[release]]
+version = "2.18.0"
+date = "2026-11-02"
+title = "記録（ログ）の読み出しを Rust の中身が受け持ち、Rust の中身の記録も同じ app.log へ書くようにした"
+notes = [
+  """\
+    【Rust への作り直し・段 2c】「ログ・診断」の <b>記録の表示</b>（絞り込み・検索・行数・前の世代の一覧）を Rust へ移しました。見た目と操作は変わりません。\
+    記録の付け替え・削除は、実行中かどうかを見るので、まだ Python が受け持ちます。""",
+  """\
+    【Rust の中身の記録も、同じ app.log に出ます】2.17.0 では接続情報の保存・削除の記録が窓の desktop.log に出ていました。\
+    いまは Python と同じ形（時刻・[INFO]・[pid]）で <code>app.log</code> に書くので、これまでどおり画面の「ログ」で見られます。""",
+  """\
+    【1つだけ違いがあります】Python は記録を読む前に、「同じ内容が続く行の省略」で溜めている最後の1行を書き出していました。\
+    Rust はそこに触れないので、省略が続いている最中の最後の1行は、その区間が閉じたとき（別の行が来る・30 秒たつ）に出ます。""",
+]
+
+[[release]]
 version = "2.17.0"
 date = "2026-11-01"
 title = "Navigator の接続情報の登録・取り込み・削除を Rust の中身が受け持つようにした"

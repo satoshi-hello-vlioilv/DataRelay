@@ -5,7 +5,7 @@
 
 use crate::http::{Ask, Reply};
 use crate::paths::{self, Bases};
-use crate::{login, period, places, version};
+use crate::{applog, login, period, places, version};
 use chrono::{Datelike, Local, NaiveDateTime};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
@@ -26,10 +26,8 @@ pub const ROUTES: &[(&str, &str, Handler)] = &[
     ("POST", "/api/login/import", login::post_import),
     ("POST", "/api/login/delete", login::post_delete),
     ("POST", "/api/login/decline", login::post_decline),
+    ("GET", "/api/log", applog::get_log),
 ];
-
-/// 記録の書き口（窓は desktop.log へ。答え口・試験は書かない）。
-pub type LogSink = Box<dyn Fn(&str) + Send + Sync>;
 
 /// 中身（Rust の側）。アプリの場所から、置き場・データの基準を Python と同じ決まりで知る。
 #[derive(Default)]
@@ -40,8 +38,6 @@ pub struct Core {
     program_root: Option<PathBuf>,
     /// データの基準と出どころ。Python と同じく、はじめて要ったとき（中身の起動のあと）に1度だけ決める
     data: OnceLock<(String, String)>,
-    /// 記録の書き口（接続情報を保存した・消したなど。Python が app.log に残していた行と同じ字）
-    log: Option<LogSink>,
 }
 
 impl Core {
@@ -54,16 +50,9 @@ impl Core {
         Core { program_root: Some(PathBuf::from(paths::resolve(&program_root.to_string_lossy()))), ..Self::default() }
     }
 
-    /// 記録の書き口を付ける。
-    pub fn with_log(mut self, sink: LogSink) -> Self {
-        self.log = Some(sink);
-        self
-    }
-
+    /// 記録へ1行（このPCの app.log。Python が残していた行と同じ字・同じ形。画面の「ログ」に出る）。
     pub(crate) fn log(&self, line: &str) {
-        if let Some(f) = &self.log {
-            f(line);
-        }
+        applog::write(&paths::local_root(), "INFO", line);
     }
 
     pub fn program_root(&self) -> Option<&Path> {

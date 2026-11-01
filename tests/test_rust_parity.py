@@ -114,7 +114,11 @@ class RustParityTest(unittest.TestCase):
 
  def test_every_core_route_is_compared(self):
   """Rust へ移したルートは、どれも1件以上の場合で比べている（移したのに比べ忘れることを防ぐ）。"""
-  missing=[x for x in core_routes() if not any(matches(x,c['method'],c['path']) for c in self.cases)]
+  elsewhere=json.loads(CASES.read_text(encoding='utf-8')).get('covered_elsewhere',{})
+  for route,where in elsewhere.items():
+   f=ROOT/where.split('（')[0]
+   self.assertTrue(f.is_file() and route.split(' ',1)[1] in f.read_text(encoding='utf-8'),f'{route} を比べているはずの {f} に、そのルートが無い')
+  missing=[x for x in core_routes() if x not in elsewhere and not any(matches(x,c['method'],c['path']) for c in self.cases)]
   self.assertEqual(missing,[])
 
  def test_sweep_is_wide(self):

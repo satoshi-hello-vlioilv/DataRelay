@@ -24,6 +24,8 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 rusqlite = { version = "0.37", features = ["bundled"] }
 # symnavim.conf（CP932 のことがある）を読む
 encoding_rs = "0.8"
+# 記録の検索（画面で書く正規表現。Python の re と同じく先読み・後方参照も受ける。戻りすぎは上限で止まる）
+fancy-regex = "0.14"
 
 [target.'cfg(windows)'.dependencies]
 # Navigator の接続情報の置き場（Windows の資格情報マネージャー・汎用資格情報）
