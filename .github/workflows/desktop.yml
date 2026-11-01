@@ -34,6 +34,10 @@ jobs:
         with:
           python-version: "3.12"
 
+      # Rust の試験より前に入れる（窓の試験 locate::tests が、Flask の入った Python を探すため）
+      - name: Python の部品（config/requirements.txt と同じ）
+        run: python -m pip install -r config/requirements.txt
+
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
@@ -47,9 +51,6 @@ jobs:
       - name: exe を作る
         working-directory: desktop
         run: cargo build --release --locked
-
-      - name: Python の部品（config/requirements.txt と同じ）
-        run: python -m pip install -r config/requirements.txt
 
       # Rust を作ったあとに流す: Rust へ移したルートを Python と突き合わせる試験（tests/test_rust_parity.py）が、
       # いま作った desktop/target/release/datarelay-core.exe を使う
