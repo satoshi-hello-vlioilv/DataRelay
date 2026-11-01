@@ -20,3 +20,11 @@ serde_json = "1"
 toml = "0.8"
 # いまの日時（PC の時刻帯）。日付の計算そのものは period.rs が自分で持つ
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+# 設定の手元の写し（app_settings.sqlite3）を読む。SQLite は exe に組み込む（PC に入れなくてよい）
+rusqlite = { version = "0.37", features = ["bundled"] }
+# symnavim.conf（CP932 のことがある）を読む
+encoding_rs = "0.8"
+
+[target.'cfg(windows)'.dependencies]
+# Navigator の接続情報の置き場（Windows の資格情報マネージャー・汎用資格情報）
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security_Credentials", "Win32_System_Diagnostics_Debug"] }

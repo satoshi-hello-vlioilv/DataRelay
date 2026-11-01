@@ -26,7 +26,8 @@ CI（Windows の `desktop.yml`）は確かめ直す場所で、手元の確認�
 | 自己診断 | `python desktop/selftest_runner.py desktop/target/debug/DataRelay --wrap "dbus-run-session -- xvfb-run -a" --modes full,close,restart,local` | `desktop/`・`static/`・`templates/`・`app.py`・`sidecar.py`・`lib/` を変えたとき。本物の WebView の中から確かめる |
 
 - 窓の Windows 向けの部分（`#[cfg(windows)]`）を変えたときは、`rustup target add x86_64-pc-windows-msvc` のうえで
-  `cd desktop && cargo clippy --locked --target x86_64-pc-windows-msvc --all-targets -- -D warnings` も通す（Linux の確かめでは、その部分をコンパイルしない）。
+  `cd desktop && sh tools/clippy-windows.sh` も通す（Linux の確かめでは、その部分をコンパイルしない）。中身は `cargo clippy --locked --target x86_64-pc-windows-msvc --all-targets -- -D warnings` で、
+  組み込みの SQLite（C）の組み立てだけを代役に任せる（Windows SDK のヘッダーが Linux に無いため。clippy はつながないので中身は使わない）。
   `GNU compiler is not supported for this target` は build script が資源（アイコン）を組めないという cargo の知らせで、clippy の警告ではない。
 - 窓（`desktop/`。Tauri）を Linux で作るには WebKitGTK などが要る（`libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev`、自己診断には `xvfb dbus-x11`）。
 - 自己診断の `update` の型は、入れ替えて起こし直した exe が画面を失わないよう、`xvfb-run` ではなく別に立てた Xvfb（`DISPLAY` を渡す）の上で流す。

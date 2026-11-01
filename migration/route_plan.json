@@ -273,28 +273,28 @@
   },
   "GET /api/login": {
    "area": "接続情報",
-   "to": "python",
-   "note": "1.99.0 で足した。Navigator の接続情報の状態（出どころ・要るか・断ったか）。パスワードは返さない"
+   "to": "core",
+   "note": "2.17.0 で Rust へ（login.rs）。置き場（資格情報マネージャー・ファイル）と symnavim.conf の読み方は secret.rs、設定の手元の写しは settings.rs（読むだけ）"
   },
   "POST /api/login": {
    "area": "接続情報",
-   "to": "python",
-   "note": "1.99.0 で足した。接続情報をこのPCの置き場（資格情報マネージャー）へ登録・変更する"
+   "to": "core",
+   "note": "2.17.0 で Rust へ。置き場に入れる形（JSON・UTF-8）は Python と同じ ―― 抽出のワーカー（Python）が同じ置き場を読む"
   },
   "POST /api/login/decline": {
    "area": "接続情報",
-   "to": "python",
-   "note": "1.99.0 で足した。初めて開いたときの登録の問いに「Navigator は使わない」と答えたことを覚える"
+   "to": "core",
+   "note": "2.17.0 で Rust へ"
   },
   "POST /api/login/delete": {
    "area": "接続情報",
-   "to": "python",
-   "note": "1.99.0 で足した。このPCの置き場から接続情報を消す"
+   "to": "core",
+   "note": "2.17.0 で Rust へ。消したことは窓の記録（desktop.log）に LOGIN_DELETED で残す"
   },
   "POST /api/login/import": {
    "area": "接続情報",
-   "to": "python",
-   "note": "1.99.0 で足した。symnavim.conf の中身をこのPCの置き場へ取り込む"
+   "to": "core",
+   "note": "2.17.0 で Rust へ。symnavim.conf（UTF-8・CP932）を configparser と同じ決まりで読む。相対の道はアプリのフォルダーから"
   },
   "GET /api/m-queries": {
    "area": "クエリ（Power Query）",

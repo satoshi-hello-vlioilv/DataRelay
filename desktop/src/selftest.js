@@ -149,6 +149,9 @@
     r = await fetch('/api/path-convert', json({ value: '.\\static', mode: 'absolute' }));
     const pc = await r.json();
     ok('移した API（パスの変換）は Rust の中身が答える', r.status === 200 && by(r) === 'core' && /^(?:\/|[A-Za-z]:[\\/]|\\\\)/.test(pc.resolved || '') && /static$/.test(pc.resolved) && pc.where && pc.where.exists, `${r.status} ${by(r)} ${pc.resolved}`);
+    r = await fetch('/api/login');
+    const lg = await r.json();
+    ok('移した API（Navigator の接続情報）は Rust の中身が答える', r.status === 200 && by(r) === 'core' && lg.ok && typeof lg.saved === 'boolean' && typeof lg.where === 'string' && !('password' in lg), `${r.status} ${by(r)} ${lg.vault} saved=${lg.saved}`);
 
     r = await fetch('/api/rne-shape', json({ rne_path: `${program}/samples/rne/集計表形式サンプル.RNE` }));
     const shape = await r.json();

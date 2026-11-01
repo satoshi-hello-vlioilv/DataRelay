@@ -243,6 +243,38 @@
    "body": {
     "value": 5
    }
+  },
+  {
+   "name": "接続情報（状態を変えない問い。保存・削除の手順は tests/test_rust_login.py）",
+   "method": "GET",
+   "path": "/api/login"
+  },
+  {
+   "name": "接続情報（足りない）",
+   "method": "POST",
+   "path": "/api/login",
+   "body": {}
+  },
+  {
+   "name": "接続情報の取り込み（無いファイル）",
+   "method": "POST",
+   "path": "/api/login/import",
+   "body": {
+    "path": "none.conf"
+   }
+  },
+  {
+   "name": "接続情報を消す（入っていない）",
+   "method": "POST",
+   "path": "/api/login/delete"
+  },
+  {
+   "name": "「使わない」を取り消す（答えていない）",
+   "method": "POST",
+   "path": "/api/login/decline",
+   "body": {
+    "yes": false
+   }
   }
  ]
 }

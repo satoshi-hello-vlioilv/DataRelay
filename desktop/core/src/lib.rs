@@ -9,12 +9,15 @@
 //! 画面の JS は fetch('/api/...') のまま変えない。答えの形（JSON の鍵と値）も Python と同じにする。
 
 pub mod http;
+mod login;
 pub mod paths;
 pub mod period;
 mod places;
 pub mod probe;
 mod pyish;
 pub mod routes;
+pub mod secret;
+pub mod settings;
 pub mod version;
 
 pub use http::{Ask, Reply};
