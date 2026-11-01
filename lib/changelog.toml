@@ -15,6 +15,23 @@ summary = "SymNaviA.dll が公開する関数・定数・呼び出し順序の�
 source = "Navigator Visual Basic Interface API 9.6.0 / FUJITSU Interstage Navigator Server V9.4.1"
 
 [[release]]
+version = "2.17.0"
+date = "2026-11-01"
+title = "Navigator の接続情報の登録・取り込み・削除を Rust の中身が受け持つようにした"
+notes = [
+  """\
+    【Rust への作り直し・段 2b】共通設定「接続」の <b>Navigator の接続情報</b>（登録・変更・symnavim.conf の取り込み・削除・「使わない」）を Rust へ移しました。見た目と操作は変わりません。\
+    置き場（Windows の資格情報マネージャー）に入れる形は、これまでと同じです。抽出（Python のワーカー）は、Rust が入れた接続情報をそのまま読みます。""",
+  """\
+    【設定の手元の写しを Rust も読みます】接続情報が要るか（有効な RNE の対象があるか）と、設定の symnavim.conf を、設定の手元の写し（<code>cache\\app_settings.sqlite3</code>）から読みます。\
+    書くのはまだ Python だけです（書き戻しと同期の決まりは、設定の保存を移す段で一緒に移します）。""",
+  """\
+    【答えが同じかを、手順ごとに確かめます】接続情報は状態を持つので、Python と Rust に別々の置き場を同じ状態から用意し、同じ手順（登録→変更→削除→取り込み…）を流して1手ずつ比べます。\
+    Rust が入れた物を Python が読めること、Windows では本物の資格情報マネージャーで互いに読み書きできることも確かめます。\
+    この比べ方で、CP932 の一部の字（0xA0・0xFD〜0xFF）の読み方と、辞書でない本文の扱いの違いを見つけ、Python に合わせました。""",
+]
+
+[[release]]
 version = "2.16.0"
 date = "2026-11-01"
 title = "置き場とデータの基準の決め方を Rust へ移し、仕様書・パスの変換・ユーザーの置き場を Rust の中身が答えるようにした"

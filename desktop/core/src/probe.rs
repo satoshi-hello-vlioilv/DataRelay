@@ -60,6 +60,29 @@ pub fn call(name: &str, a: &Value) -> Result<Value, String> {
         "resolve_in" => json!(bases(a).resolve_in(s(a, "value"), opt(a, "folder"))),
         "locate" => Value::Object(bases(a).locate(s(a, "value"), opt(a, "folder"))),
         "to_relative" => json!(bases(a).to_relative(s(a, "path"), a["inside_only"].as_bool().unwrap_or(false))),
+        // symnavim.conf の読み方（configparser と同じ決まり）。書き方の誤りは種類だけ（Python の例外の文言は同じにならない）
+        "parse_conf" => match crate::secret::parse_conf(s(a, "text")) {
+            Ok(d) => json!({"ok": d}),
+            Err(Ok(_)) => json!({"syntax": true}),
+            Err(Err(m)) => json!({"error": m}),
+        },
+        "read_conf_text" => match crate::secret::read_conf_text(
+            &a["bytes"].as_array().map(|v| v.iter().filter_map(|x| x.as_u64()).map(|x| x as u8).collect::<Vec<u8>>()).unwrap_or_default(),
+        ) {
+            Ok(t) => json!({"ok": t}),
+            Err(m) => json!({"error": m}),
+        },
+        // Windows の資格情報マネージャー（試験用の名前で）。Rust が書いた物を Python が読めるか、その逆も
+        #[cfg(windows)]
+        "win_vault" => {
+            let v = crate::secret::Vault::Windows(s(a, "target").into());
+            match s(a, "op") {
+                "save" => json!(v.save(a["data"].as_object().ok_or("data が辞書ではありません")?).map_err(|e| e.to_string())?),
+                "load" => v.load()?.unwrap_or(Value::Null),
+                "delete" => json!(v.delete()?),
+                op => return Err(format!("知らない操作: {op}")),
+            }
+        }
         _ => return Err(format!("知らない問い: {name}")),
     })
 }
