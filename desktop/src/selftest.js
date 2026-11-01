@@ -136,6 +136,14 @@
     const cfg = await r.json();
     ok('API（設定の読み出し）', r.status === 200 && by(r) === 'python' && Array.isArray(cfg.jobs), `${cfg.jobs && cfg.jobs.length}件の対象`);
 
+    // Rust を主にする移行（2.15.0〜）: 移した API は中身の Rust の側が答え、Python へは送らない
+    r = await fetch('/api/version');
+    const ver = await r.json();
+    ok('移した API（版と更新履歴）は Rust の中身が答える', r.status === 200 && by(r) === 'core' && ver.version === info.info.shell_version && Array.isArray(ver.changelog) && ver.changelog.length > 100, `${r.status} ${by(r)} ${ver.version} ${ver.changelog && ver.changelog.length}版`);
+    r = await fetch('/api/period-preview', json({ target: 'cond', range: 'from', unit: 'day', from_offset: -90, sample: '2026/1/1' }));
+    const pv = await r.json();
+    ok('移した API（期間の試算）は Rust の中身が答える', r.status === 200 && by(r) === 'core' && pv.ok && pv.kind === 'cond' && /^\d{4}\/\d{1,2}\/\d{1,2}$/.test(pv.lvalue), `${r.status} ${by(r)} ${pv.summary}`);
+
     r = await fetch('/api/rne-shape', json({ rne_path: `${program}/samples/rne/集計表形式サンプル.RNE` }));
     const shape = await r.json();
     ok('日本語のパスを渡す（集計表のRNEの形）', shape.ok && shape.crosstab && (shape.head || [])[0] === 'BOX番号', shape.summary);

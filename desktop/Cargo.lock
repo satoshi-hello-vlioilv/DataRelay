@@ -648,9 +648,19 @@ dependencies = [
 ]
 
 [[package]]
-name = "datarelay-desktop"
-version = "2.14.2"
+name = "datarelay-core"
+version = "0.1.0"
 dependencies = [
+ "chrono",
+ "serde_json",
+ "toml 0.8.2",
+]
+
+[[package]]
+name = "datarelay-desktop"
+version = "2.15.0"
+dependencies = [
+ "datarelay-core",
  "serde",
  "serde_json",
  "sha2",

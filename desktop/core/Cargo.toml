@@ -1,0 +1,22 @@
+[package]
+name = "datarelay-core"
+version = "0.1.0"
+description = "DataRelay の中身（業務の処理）を Rust で受け持つ部品。窓（Tauri）に依らない"
+edition = "2021"
+rust-version = "1.90"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+# 突き合わせの試験（tests/test_rust_parity.py）が、Python と同じ問い合わせをこの答え口へ送って比べる
+[[bin]]
+name = "datarelay-core"
+path = "src/bin/datarelay-core.rs"
+
+[dependencies]
+serde_json = "1"
+# 更新履歴（lib/changelog.toml）を読む
+toml = "0.8"
+# いまの日時（PC の時刻帯）。日付の計算そのものは period.rs が自分で持つ
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }

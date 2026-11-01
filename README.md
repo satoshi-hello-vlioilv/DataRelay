@@ -381,6 +381,7 @@ DataRelay/
 │
 │   ↓ ここから下は作る側・確かめる側だけが使う（配る zip には入らない。.gitattributes）
 ├─ desktop/                  窓（Tauri・Rust）。cargo build --release で DataRelay.exe を作る
+│   └─ core/                 中身の Rust の側（Tauri に依らない業務の処理。2.15.0 から Python の分を1本ずつ移す）
 ├─ samples/                  検証用の見本（RNE・既定の設定の手本 defaults/）。実行では読みません
 ├─ migration/                デスクトップ版への移行の記録（報告書と移行先の割り当て）
 ├─ tests/                    検証（python -m unittest discover -s tests -t .）
@@ -423,13 +424,14 @@ DataRelay/
 | `navi_secret.py` | Navigator への接続情報を各PCの資格情報マネージャーに置く・symnavim.conf の読み方（1.99.0） |
 | `navi_log.py` | ログの機構（出す・省略する・末尾だけ読む・世代を押し出す） |
 | `navi_diag.py` | 事前診断（読むだけ。実行中の状態を書き換えません） |
-| `navi_version.py` / `navi_changelog.py` | 版の定数 ／ 更新履歴と同梱仕様書 |
+| `navi_version.py` / `navi_changelog.py` | 版の定数 ／ 更新履歴と同梱仕様書（中身は `changelog.toml`。Rust の中身も同じ物を読む・2.15.0） |
 
 ### 呼び出し関係
 
 ```
 DataRelay.exe（窓・Rust）  … 画面・静的ファイル・ダイアログ・通知領域・常駐・通知・中身の監督
-  └─ sidecar.py（標準入出力の窓口）
+  ├─ datarelay-core（中身の Rust の側。プロセスの中で直接呼ぶ）… Rust へ移した問い合わせ（2.15.0〜。版と更新履歴・期間の試算）
+  └─ sidecar.py（標準入出力の窓口）… まだ移していない問い合わせ
        └─ app.py（boot_app でスケジューラーなどを起こす）
             ├─ navi_web.py（受け口）
             ├─ navigator_api.py
@@ -497,6 +499,13 @@ DataRelay.exe（窓・Rust）  … 画面・静的ファイル・ダイアログ
 | 出力が更新されない | 公開の保留（`*.pending_*`）が残っていないか。次の実行のはじめに適用されます |
 
 ---
+
+### Rust を主にする作り直し（2.15.0〜）
+
+業務の処理を、動く版を保ったまま1本ずつ Rust（`desktop/core`）へ移しています。窓はまず Rust に聞き、まだ移していない
+問い合わせだけを Python へ回します。移した問い合わせは、試験（`tests/test_rust_parity.py`）で Python と Rust の両方へ送り、
+答えが同じかを毎回確かめます。全部を移し終えたら、Python（と初回の部品の取り込み）は要らなくなります。
+進め方と段は `migration/FEASIBILITY.md` §14。
 
 ## 版
 

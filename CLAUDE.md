@@ -21,7 +21,7 @@ CI（Windows の `desktop.yml`）は確かめ直す場所で、手元の確認�
 | | `node --check static/app.js` ／ `node --check desktop/src/selftest.js` | 画面と自己診断の JS の構文 |
 | lint | `cd desktop && cargo fmt --check` | 整形（`desktop/rustfmt.toml`）。差分があれば `cargo fmt` |
 | | `cd desktop && cargo clippy --locked --all-targets -- -D warnings` | 警告 0 |
-| test | `python -m unittest discover -s tests -t .` | Python の試験（全ルートの突き合わせ・配る zip・install_local.cmd の形を含む） |
+| test | `python -m unittest discover -s tests -t .` | Python の試験（全ルートの突き合わせ・配る zip・install_local.cmd の形を含む。Rust へ移したルートの Python との答えの突き合わせは、上の `cargo build` でできた `datarelay-core` を使う） |
 | | `cd desktop && cargo test --locked` | Rust の試験 |
 | 自己診断 | `python desktop/selftest_runner.py desktop/target/debug/DataRelay --wrap "dbus-run-session -- xvfb-run -a" --modes full,close,restart,local` | `desktop/`・`static/`・`templates/`・`app.py`・`sidecar.py`・`lib/` を変えたとき。本物の WebView の中から確かめる |
 

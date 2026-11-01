@@ -1,6 +1,7 @@
 //! 画面（WebView）からの問い合わせの振り分け。得意なほうが答える:
 //!   - /・/static/…        … Rust がディスクから直接返す（画面のひな形・JS・CSS。Python の起動を待たずに画面が出る）
 //!   - 窓そのものの操作      … Rust（終了・ファイル選択・フォルダーを開く・自己診断。main.rs が native として渡す）
+//!   - Rust へ移した API     … 中身の Rust の側（datarelay-core。Rust を主にする移行で1本ずつ増やす）
 //!   - それ以外（画面・API） … Python（サイドカー）へそのまま渡す。答えはいまと同じ
 //!   - Python の答えが「保存してください」（Content-Disposition: attachment）なら、窓の保存ダイアログで受ける
 //!
@@ -75,6 +76,8 @@ pub struct Router<B: Backend> {
     /// 画面のひな形（templates/index.html）。差し込みが1つも無い静的な HTML なので Rust が返す
     pub index_file: PathBuf,
     pub backend: B,
+    /// 中身の Rust の側。答えられない問い合わせは backend（Python）へ回す
+    pub core: datarelay_core::Core,
     pub native: Native,
     pub saver: Saver,
 }
@@ -93,8 +96,11 @@ impl<B: Backend> Router<B> {
             (static_file(&self.static_dir, rest, query), "shell")
         } else {
             let headers = req.headers().iter().filter_map(|(k, v)| Some((k.as_str().to_string(), v.to_str().ok()?.to_string()))).collect();
-            let reply = self.backend.ask(&Ask { method, path, query, headers, body: req.body() });
-            (self.save_if_attachment(reply), "python")
+            let ask = Ask { method, path, query, headers, body: req.body() };
+            match self.core.handle(&ask) {
+                Some(reply) => (self.save_if_attachment(reply), "core"),
+                None => (self.save_if_attachment(self.backend.ask(&ask)), "python"),
+            }
         };
         to_response(reply, by)
     }
@@ -258,6 +264,7 @@ mod tests {
             static_dir: dir.to_path_buf(),
             index_file: dir.join("index.html"),
             backend: Echo(Mutex::default()),
+            core: datarelay_core::Core::new(),
             native: Box::new(|m, p, _| (m == "POST" && p == "/api/shutdown").then(|| error_reply(200, "stopping", "終了します"))),
             saver: Box::new(|name, body| Ok(Some(PathBuf::from(format!("/saved/{name}/{}", body.len()))))),
         }
@@ -297,7 +304,15 @@ mod tests {
         let top = r.handle(&req("GET", "datarelay://localhost/", b""));
         assert_eq!((top.status().as_u16(), top.headers()["x-dr-by"].to_str().unwrap()), (200, "shell"), "画面のひな形は Rust");
         assert!(top.headers()["cache-control"].to_str().unwrap().contains("no-store"), "毎回読み直させる");
-        assert_eq!(r.handle(&req("GET", "datarelay://localhost/api/config", b"")).headers()["x-dr-by"], "python", "API は Python");
+        assert_eq!(
+            r.handle(&req("GET", "datarelay://localhost/api/config", b"")).headers()["x-dr-by"],
+            "python",
+            "移していない API は Python"
+        );
+        let before = r.backend.0.lock().unwrap().len();
+        let v = r.handle(&req("GET", "datarelay://localhost/api/version", b""));
+        assert_eq!((v.status().as_u16(), v.headers()["x-dr-by"].to_str().unwrap()), (200, "core"), "Rust へ移した API は中身の Rust の側");
+        assert_eq!(r.backend.0.lock().unwrap().len(), before, "Rust が答えたものは Python へ送らない");
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -350,6 +365,7 @@ mod tests {
             static_dir: PathBuf::from("."),
             index_file: PathBuf::from("index.html"),
             backend: Attach,
+            core: datarelay_core::Core::new(),
             native: Box::new(|_, _, _| None),
             saver: Box::new(|name, body| Ok(Some(PathBuf::from(format!("/saved/{name}/{}", body.len()))))),
         };

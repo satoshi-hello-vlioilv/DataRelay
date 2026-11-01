@@ -1,5 +1,5 @@
 {
- "_about": "移行先の割り当て（migration/FEASIBILITY.md）。tests/test_route_plan.py が、中身（Python）の URL 表と窓（Rust）の振り分けの両方と突き合わせる。to: python=中身が答える（WSGIを標準入出力で呼ぶ。URL表にあること） / rust=窓が受け持つ（窓の振り分けにあり、URL表には無いこと） / python+rust=窓が受け持ち、中身にも残る（理由を書く） / remove=外した（どちらにも無いこと）。1.96.0（第2段階）で、窓へ移したルートと外したルートを中身から取り除いた",
+ "_about": "移行先の割り当て（migration/FEASIBILITY.md）。tests/test_route_plan.py が、中身（Python）の URL 表と窓（Rust）の振り分けの両方と突き合わせる。to: python=中身が答える（WSGIを標準入出力で呼ぶ。URL表にあること） / rust=窓が受け持つ（窓の振り分けにあり、URL表には無いこと） / python+rust=窓が受け持ち、中身にも残る（理由を書く） / remove=外した（どちらにも無いこと）。1.96.0（第2段階）で、窓へ移したルートと外したルートを中身から取り除いた / core=中身の Rust の側（desktop/core）が答える（2.15.0〜。Rust を主にする移行）。Python の受け口は振る舞いの基準として最後の段まで残し、tests/test_rust_parity.py が同じ答えかを比べる",
  "routes": {
   "GET /": {
    "area": "画面",
@@ -428,8 +428,8 @@
   },
   "POST /api/period-preview": {
    "area": "設定・対象の登録",
-   "to": "python",
-   "note": ""
+   "to": "core",
+   "note": "2.15.0 で Rust へ（desktop/core/src/period.rs。navi_period と同じ決まり。日付の書き方・全角の数字・Python の int の読み方まで揃える）"
   },
   "POST /api/pick-file": {
    "area": "OS連携",
@@ -693,8 +693,8 @@
   },
   "GET /api/version": {
    "area": "ログ・仕様書・版",
-   "to": "python",
-   "note": ""
+   "to": "core",
+   "note": "2.15.0 で Rust へ（最初の1本）。更新履歴は lib/changelog.toml（Python と Rust が同じ物を読む）"
   },
   "GET /favicon.ico": {
    "area": "画面",
