@@ -673,7 +673,7 @@ fn start(app: AppHandle, shell: Arc<Shell>) {
         index_file,
         backend: sup,
         // アプリの場所から、置き場・データの基準を Python と同じ決まりで知る（中身の起動のあとに作るので、写しの data の引っ越しも済んでいる）
-        core: datarelay_core::Core::with_program(&program).with_log(Box::new(rlog)),
+        core: datarelay_core::Core::with_program(&program),
         native: native(app.clone(), shell.clone(), info),
         saver: saver(app.clone(), shell.clone()),
     };

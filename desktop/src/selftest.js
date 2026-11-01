@@ -152,6 +152,9 @@
     r = await fetch('/api/login');
     const lg = await r.json();
     ok('移した API（Navigator の接続情報）は Rust の中身が答える', r.status === 200 && by(r) === 'core' && lg.ok && typeof lg.saved === 'boolean' && typeof lg.where === 'string' && !('password' in lg), `${r.status} ${by(r)} ${lg.vault} saved=${lg.saved}`);
+    r = await fetch('/api/log?limit=50&filter=all');
+    const lgr = await r.json();
+    ok('移した API（記録の読み出し）は Rust の中身が答える', r.status === 200 && by(r) === 'core' && typeof lgr.text === 'string' && lgr.total > 0 && Array.isArray(lgr.filters) && lgr.filters.length === 3, `${r.status} ${by(r)} ${lgr.total}行 ${lgr.size_mb}MB`);
 
     r = await fetch('/api/rne-shape', json({ rne_path: `${program}/samples/rne/集計表形式サンプル.RNE` }));
     const shape = await r.json();

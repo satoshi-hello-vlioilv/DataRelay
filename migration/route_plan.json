@@ -248,8 +248,8 @@
   },
   "GET /api/log": {
    "area": "ログ・仕様書・版",
-   "to": "python",
-   "note": ""
+   "to": "core",
+   "note": "2.18.0 で Rust へ（applog.rs）。末尾 4MB・行の区切り・絞り込み・検索は read_log_lines と同じ。Python が溜めている「同じ内容の省略」の最後の1行は、区間が閉じたときに出る（Python は読む前に書き出していた）。付け替え・削除（POST）は実行中かを見るので Python のまま"
   },
   "POST /api/log/clear": {
    "area": "ログ・仕様書・版",
