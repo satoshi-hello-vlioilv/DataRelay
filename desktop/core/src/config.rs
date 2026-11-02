@@ -597,6 +597,11 @@ fn decode_period(raw: Option<&Value>) -> R<Value> {
         },
         _ => json!({}),
     };
+    period_value(&d)
+}
+
+/// navi_period.normalize（相対期間の値をそのまま整える。辞書でなければ無効の既定）。
+pub fn period_value(d: &Value) -> R<Value> {
     let empty = Map::new();
     let p = crate::period::normalize(d.as_object().unwrap_or(&empty)).map_err(|_| Pass)?;
     Ok(json!({

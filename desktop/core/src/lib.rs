@@ -24,6 +24,7 @@ pub mod schedule;
 pub mod secret;
 pub mod settings;
 pub mod version;
+pub mod writer;
 
 pub use http::{Ask, Reply};
 pub use routes::{Core, ROUTES};

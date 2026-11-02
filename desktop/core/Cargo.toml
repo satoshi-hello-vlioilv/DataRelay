@@ -22,7 +22,9 @@ toml = "0.8"
 # いまの日時（PC の時刻帯）。日付の計算そのものは period.rs が自分で持つ
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 # 設定の手元の写し（app_settings.sqlite3）を読む。SQLite は exe に組み込む（PC に入れなくてよい）
-rusqlite = { version = "0.37", features = ["bundled"] }
+rusqlite = { version = "0.37", features = ["bundled", "backup"] }
+# 新しい対象・実行ルールの id（Python の uuid.uuid4() と同じ形）
+uuid = { version = "1", features = ["v4"] }
 # symnavim.conf（CP932 のことがある）を読む
 encoding_rs = "0.8"
 # 記録の検索（画面で書く正規表現。Python の re と同じく先読み・後方参照も受ける。戻りすぎは上限で止まる）

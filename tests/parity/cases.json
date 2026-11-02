@@ -10,7 +10,8 @@
   "GET /api/m-queries/export": "tests/test_rust_masters.py（設定の写しの見本で読み比べる。書き出しは中身のバイト列まで）",
   "GET /api/schedule-preview": "tests/test_rust_schedule.py（予定・実行の記録・一時停止の見本を Python 自身に作らせ、決まった日時で読み比べる）",
   "GET /api/calendar": "tests/test_rust_schedule.py（予定・実行の記録・一時停止の見本を Python 自身に作らせ、決まった日時で読み比べる）",
-  "GET /api/job-trend/<job_id>": "tests/test_rust_schedule.py（予定・実行の記録・一時停止の見本を Python 自身に作らせ、決まった日時で読み比べる）"
+  "GET /api/job-trend/<job_id>": "tests/test_rust_schedule.py（予定・実行の記録・一時停止の見本を Python 自身に作らせ、決まった日時で読み比べる）",
+  "PUT /api/config": "tests/test_rust_save.py（同じ写しを2つ用意し、同じ保存の手順を Python と Rust に流して、答え・写しの中身・書き戻したマスターを比べる）"
  },
  "cases": [
   {

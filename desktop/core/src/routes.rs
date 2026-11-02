@@ -5,7 +5,7 @@
 
 use crate::http::{Ask, Reply};
 use crate::paths::{self, Bases};
-use crate::{applog, config, login, masters, period, places, schedule, version};
+use crate::{applog, config, login, masters, period, places, schedule, version, writer};
 use chrono::{Datelike, Local, NaiveDateTime};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
@@ -28,6 +28,7 @@ pub const ROUTES: &[(&str, &str, Handler)] = &[
     ("POST", "/api/login/decline", login::post_decline),
     ("GET", "/api/log", applog::get_log),
     ("GET", "/api/config", config::get_config),
+    ("PUT", "/api/config", writer::put_config),
     ("GET", "/api/text-layouts", masters::get_text_layouts),
     ("GET", "/api/text-layouts/export", masters::get_text_layouts_export),
     ("GET", "/api/join-recipes", masters::get_join_recipes),
@@ -49,6 +50,8 @@ pub struct Core {
     data: OnceLock<(String, String)>,
     /// 設定のマスターの版の控え（道・更新時刻・大きさが同じなら読み直さない。マスターは共有の置き場にあり、開くのが遅いため）
     master_seen: Mutex<Option<(PathBuf, std::time::SystemTime, u64, i64)>>,
+    /// 設定の保存のあとの、裏の書き戻し（終わるときに settle_writes で待つ）
+    pub(crate) writes: writer::Writes,
 }
 
 impl Core {

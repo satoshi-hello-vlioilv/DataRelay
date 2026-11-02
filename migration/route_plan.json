@@ -73,8 +73,8 @@
   },
   "PUT /api/config": {
    "area": "設定・対象の登録",
-   "to": "python",
-   "note": ""
+   "to": "core",
+   "note": "2.22.0（writer.rs）。版の確かめ・書き込み・版の上げを1つの取引で行い、マスターへの書き戻しは SQLite のバックアップの仕組みで写す（Python の書き戻しも同じ写し方にした）。写しを替える場合・Python が落ちる値は Python へ回す"
   },
   "GET /api/data-viewer/<job_id>": {
    "area": "データビュワー",

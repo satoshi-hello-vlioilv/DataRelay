@@ -264,6 +264,10 @@ fn quit_or_restart(app: &AppHandle, shell: &Arc<Shell>, source: &str, restart: b
                 Err(e) => rlog(&format!("CLEANUP failed error={e}")),
             }
         }
+        // Rust の中身が保存した設定の、裏の書き戻しを待つ（残っていれば書き戻す）
+        if let Some(r) = shell.router.get() {
+            r.core.settle_writes(&format!("desktop-{source}"));
+        }
         if restart {
             match install::relaunch(&own_exe(), "") {
                 Ok(()) => rlog("RESTART relaunched"),
@@ -964,6 +968,9 @@ fn main() {
             // 中身の Python を止める（入力を閉じる → 自分で終わる。終わらなければ止める）
             if let Some(b) = shell.backend() {
                 b.stop();
+            }
+            if let Some(r) = shell.router.get() {
+                r.core.settle_writes("desktop-exit");
             }
             rlog("EXIT");
         }

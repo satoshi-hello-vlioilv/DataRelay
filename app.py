@@ -160,6 +160,23 @@ def sqlite_readable(path):
   finally:c.close()
  except Exception:return False
 
+def snapshot_db(src,dst):
+ """SQLite の DB を、ひとそろいの状態で写す（2.22.0。SQLite のバックアップの仕組み）。
+
+ ファイルを丸ごと写す（shutil.copy2）と、ほかのプロセス（Rust の中身）が書いている最中なら、書きかけの写しになりうる。
+ バックアップの仕組みは、写しているあいだに書かれたら最初からやり直すので、いつも誰かが書き終えた状態の写しになる。"""
+ dst=Path(dst)
+ try:dst.unlink()
+ except OSError:pass
+ s=sqlite3.connect(str(src),timeout=30)
+ try:
+  d=sqlite3.connect(str(dst))
+  try:s.backup(d)
+  finally:d.close()
+ finally:s.close()
+ # 更新時刻も写す（shutil.copy2 と同じ）。版が両側とも無いとき、取り込みは更新時刻で新旧を決めるため
+ shutil.copystat(str(src),str(dst))
+
 def replace_retry(src,dst,tries=40,wait=0.05):
  """os.replace を、相手がファイルを開いている間だけ少し待ってやり直す（2.19.0）。
 
@@ -207,7 +224,7 @@ def flush_local_to_master(reason=''):
     log.error('SETTINGS_FLUSH_ABORTED reason=%s detail=手元の控えが壊れているため書き戻しません',reason);return False
    lrev=settings_revision(SETTINGS_DB)
    stage=SETTINGS_DB.with_name(f'{SETTINGS_DB.stem}.flush.{os.getpid()}.{threading.get_ident()}.tmp')
-   shutil.copy2(SETTINGS_DB,stage)
+   snapshot_db(SETTINGS_DB,stage)
   # ---- ここから先は共有の置き場所。設定の錠は持たない。 ----
   with master_write_lock:
    _t=time.perf_counter()
