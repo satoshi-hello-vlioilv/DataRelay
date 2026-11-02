@@ -3,7 +3,7 @@
 //!
 //!   datarelay-core routes   … Rust が答えるルートを JSON の並び（"GET /api/version" など）で出す
 //!   datarelay-core answer [--base <アプリの場所>]
-//!                           … 標準入力の1行1件の問い合わせ {"method","path","query","body"} に、
+//!                           … 標準入力の1行1件の問い合わせ {"method","path","query","body","headers"} に、
 //!                             1行1件の答え {"status","headers","body"} で返す（本文は UTF-8 の文字。Rust が答えないルートは status 0）
 //!   datarelay-core call     … 標準入力の1行1件の問い {"fn","args"} に、{"ok","result"|"error"} で返す（関数ごとの突き合わせ。probe.rs）
 
@@ -54,7 +54,13 @@ fn answer() -> ExitCode {
         };
         let s = |k: &str| q.get(k).and_then(Value::as_str).unwrap_or("").to_string();
         let (method, path, query, body) = (s("method"), s("path"), s("query"), s("body"));
-        let ask = Ask { method: &method, path: &path, query: &query, headers: vec![], body: body.as_bytes() };
+        // headers: {"Content-Type": "application/json"} の形（無ければ空）
+        let headers: Vec<(String, String)> = q
+            .get("headers")
+            .and_then(Value::as_object)
+            .map(|m| m.iter().map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string())).collect())
+            .unwrap_or_default();
+        let ask = Ask { method: &method, path: &path, query: &query, headers, body: body.as_bytes() };
         let reply = match core.handle(&ask) {
             Some(r) => json!({"status": r.status, "headers": r.headers, "body": String::from_utf8_lossy(&r.body)}),
             None => json!({"status": 0, "headers": [], "body": ""}),
@@ -63,6 +69,8 @@ fn answer() -> ExitCode {
             return ExitCode::FAILURE;
         }
     }
+    // 保存のあとの裏の書き戻しを待ってから終わる（試験がマスターを確かめられるように）
+    core.settle_writes("answer-end");
     ExitCode::SUCCESS
 }
 

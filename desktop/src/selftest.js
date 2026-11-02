@@ -137,6 +137,13 @@
     const cfg = await r.json();
     const plans = (cfg.jobs || []).every((j) => Array.isArray(j.output_plan) && typeof j.output_is_variable === 'boolean');
     ok('移した API（設定の読み出し）は Rust の中身が答える', r.status === 200 && by(r) === 'core' && Array.isArray(cfg.jobs) && plans && cfg.settings && cfg.setting_defaults && typeof cfg.settings_revision === 'number' && Array.isArray(cfg.text_layouts), `${r.status} ${by(r)} 対象${(cfg.jobs || []).length}件 版${cfg.settings_revision}`);
+    // 設定の保存（2.22.0〜 Rust の中身）。読んだ設定をそのまま送り返すと保存でき、版が1つ進む。古い版のままなら断る
+    r = await fetch('/api/config', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cfg) });
+    const sv = await r.json();
+    const r2 = await fetch('/api/config', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cfg) });
+    ok('移した API（設定の保存）は Rust の中身が答える（古い版は断る）', r.status === 200 && by(r) === 'core' && sv.ok && sv.settings_revision === cfg.settings_revision + 1 && r2.status === 409 && by(r2) === 'core', `${r.status} ${by(r)} 版${cfg.settings_revision}→${sv.settings_revision} / 古い版 ${r2.status}`);
+    // 版を進めたので、画面にも読み直してもらう（古い版のままだと、画面の次の自動保存が断られて変更を落とす）
+    if (typeof window.init === 'function') await window.init();
     r = await fetch('/api/text-layouts');
     const tl = await r.json();
     ok('移した API（読取マスタの一覧）は Rust の中身が答える', r.status === 200 && by(r) === 'core' && tl.ok && Array.isArray(tl.items) && tl.encodings.length === 7 && tl.types.length === 6, `${r.status} ${by(r)} ${(tl.items || []).length}件`);
