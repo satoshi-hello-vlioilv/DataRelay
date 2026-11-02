@@ -242,12 +242,11 @@ pub struct BadFormat;
 
 /// datetime.strftime（C ロケール）。
 pub fn strftime(dt: NaiveDateTime, fmt: &str) -> Result<String, BadFormat> {
-    // NUL の入った書式: Python 3.12 は Windows では ValueError（字を幅広の文字へ直すところで断る）、
-    // Linux ではバイト列にして C へ渡すので NUL の手前で切れる
+    // NUL の入った書式: Linux の Python 3.12 はバイト列にして C へ渡すので NUL の手前で切れる。
+    // Windows は幅広の文字のまま渡し、NUL もそのまま出る（Windows の CI で確かめた）
     let fmt = match fmt.find('\0') {
-        Some(_) if cfg!(windows) => return Err(BadFormat),
-        Some(i) => &fmt[..i],
-        None => fmt,
+        Some(i) if !cfg!(windows) => &fmt[..i],
+        _ => fmt,
     };
     let chars: Vec<char> = fmt.chars().collect();
     // Windows の Python は、1900 年より前の日付の %y（%#y も）を ValueError にする（time.strftime が % の組を順に見て断る）
@@ -265,6 +264,12 @@ pub fn strftime(dt: NaiveDateTime, fmt: &str) -> Result<String, BadFormat> {
             i = j + 1;
         }
     }
+    format_c(dt, &chars)
+}
+
+/// 書式を字にする（C の strftime に当たる所。Python が先に断る書式は、呼ぶ前に見てある）。
+/// %D・%c などの中で組み立てる %y には、Windows の「1900 年より前の %y」の断りは掛からない（Windows の CI で確かめた）。
+fn format_c(dt: NaiveDateTime, chars: &[char]) -> Result<String, BadFormat> {
     let mut out = String::new();
     let mut i = 0;
     while i < chars.len() {
@@ -361,7 +366,7 @@ fn directive(dt: NaiveDateTime, d: char, flag: Option<char>) -> Option<String> {
         h => h,
     } as i64;
     let year = dt.year() as i64;
-    let sub = |f: &str| strftime(dt, f).unwrap_or_default();
+    let sub = |f: &str| format_c(dt, &f.chars().collect::<Vec<_>>()).unwrap_or_default();
     Some(match d {
         'a' => text(&DAYS[wday as usize][..3]),
         'A' => text(DAYS[wday as usize]),

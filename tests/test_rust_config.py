@@ -236,14 +236,6 @@ def run_both(qs,env=None):
  return py,rs
 
 
-def unsure_on_windows(q):
- """Windows（UCRT）の strftime のうち、手元（Linux）で確かめられない書き方: 1000 年より前の年の桁・末尾の %・NUL 文字・# の印。
- 食い違えば落とさずに記録へ出す（CI の記録を見て naming.rs を直す）。"""
- if os.name!='nt' or q['fn']!='strftime':return False
- f=q['args']['fmt'].replace('%%','')
- return q['args']['dt'].startswith('0') or f.endswith('%') or '\x00' in f or '%#' in f
-
-
 def canon(v):
  return json.dumps(v,sort_keys=True,ensure_ascii=False)
 
@@ -252,10 +244,8 @@ class ConfigFunctionParityTest(unittest.TestCase):
  def test_functions(self):
   qs=cases();py,rs=run_both(qs)
   self.assertEqual(len(py),len(qs));self.assertEqual(len(rs),len(qs))
-  bad=[];passed={};notes=[]
+  bad=[];passed={}
   for q,p,x in zip(qs,py,rs):
-   if unsure_on_windows(q) and x.get('ok') and p['ok'] and canon(p['result'])!=canon(x['result']):
-    notes.append(f'{json.dumps(q["args"],ensure_ascii=False)}: Python={p["result"]!r} Rust={x["result"]!r}');continue
    if not x.get('ok'):bad.append(f'{q["fn"]} {json.dumps(q["args"],ensure_ascii=False)[:300]}: Rust が失敗 {x.get("error")}');continue
    got=x['result']
    if got=={'pass':True}:
@@ -270,7 +260,6 @@ class ConfigFunctionParityTest(unittest.TestCase):
   # Python が答えるのに Rust が回した数（多すぎれば、Rust が答えられる範囲が狭すぎる）
   self.assertLessEqual(sum(passed.values()),len(qs)//100,f'Python が答えるのに Rust が回した数: {passed}')
   print(f'\n  関数ごとの突き合わせ: {len(qs)} 件（Python が答えるのに Rust が回した: {passed or 0}）')
-  if notes:print('  ★まだ確かめていない Windows の strftime の食い違い（naming.rs を直す）:\n   '+'\n   '.join(notes))
 
 
 # ==== ルートの突き合わせ ===================================================

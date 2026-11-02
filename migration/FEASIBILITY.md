@@ -393,11 +393,11 @@ Python の振る舞いに合わせるもの（`desktop/core/src/pyish.rs`）: `i
 設定の読み出しで Python に合わせるもの（2.19.0）: `str()`・`repr()`（並び・辞書の中の字。辞書の鍵は JSON の字の並びを保つ〈serde_json の preserve_order〉）、
 `for x in v`（字は1字ずつ・辞書は鍵）、`dict(v)`、`json.loads`、`Path.name・stem・suffix`、`datetime.strftime`（%f・%z・%Z は Python が置き換え、
 残りは C ロケールの strftime。Windows〈UCRT〉は知らない書き方を ValueError にし、glibc はそのまま出す。%C・%Y の桁と NUL の扱いも OS で違うので、OS ごとに合わせる。
-%c は両方とも `%a %b %e %H:%M:%S %Y`、Windows の Python は 1900 年より前の %y を ValueError にする〈どちらも Windows の CI で確かめた〉）。
+%c は両方とも `%a %b %e %H:%M:%S %Y`〈Windows の CI で確かめた〉）。
 分かっている違い: `repr()` の「印字できる字か」は、制御文字・空白の仲間・書式の字・私用の字で見る（Unicode の未割り当ての字は見分けない）。
 手元の写しの壊れの検査（PRAGMA quick_check）は、起動時に Python が行う（Rust は読めなければ Python へ回す）。
-まだ確かめていないこと: Windows（UCRT）の strftime のうち、1000 年より前の年の桁（%Y・%G・%C）・末尾の %・NUL 文字・# の印は、手元（Linux）で
-動かせないので、Windows の CI で食い違いを記録に出して確かめる（試験は落とさない）。画面の型でふつうに使う日付（いまの日時・RNE の時刻の前後）には当たらない。
+Windows（UCRT）の strftime の、手元（Linux）で動かせない所は Windows の CI で確かめた: 1000 年より前の年は %Y・%G を 4 桁・%C を 2 桁で出す・
+末尾の %・知らない書き方は ValueError・NUL 文字はそのまま出る・書式に書いた %y は 1900 年より前なら ValueError（%D などの中の %y には掛からない）。
 Windows は、ほかのプロセスが開いているファイルを置き換えられない。Rust が設定の写し・マスターを読む数ミリ秒と、Python の取り込み・書き戻し
 （os.replace）が重なっても落とさないよう、Python の置き換えは少し待ってやり直す（app.replace_retry）。
 
