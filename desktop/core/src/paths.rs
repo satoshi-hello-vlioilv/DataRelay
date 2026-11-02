@@ -65,6 +65,16 @@ pub fn expand(value: &str) -> String {
     }
 }
 
+/// `os.path.expandvars(os.path.expanduser(s))`（この OS の流儀。%NAME% を先に読む navi_paths.expand とは順が違う）。
+pub fn expand_user_vars(s: &str) -> String {
+    let raw = expand_user(s);
+    if WINDOWS {
+        expand_vars_nt(&raw)
+    } else {
+        expand_vars_posix(&raw)
+    }
+}
+
 /// `%NAME%` だけを展開する（正規表現 `%([^%]+)%` と同じ当て方）。
 pub fn expand_percent(s: &str) -> String {
     let mut out = String::new();
@@ -97,7 +107,8 @@ pub fn expand_percent(s: &str) -> String {
 }
 
 /// os.path.expanduser。先頭の `~` と、その直後が区切りか終わりのとき。`~名前` は Windows だけ（ホームの隣の名前のフォルダー）。
-fn expand_user(s: &str) -> String {
+/// `os.path.expanduser`（この OS の流儀）。
+pub fn expand_user(s: &str) -> String {
     if WINDOWS {
         return expand_user_nt(s, &real_env);
     }
@@ -362,6 +373,53 @@ fn split_root_nt(s: &str) -> (String, &str) {
         }
     }
     (format!("{drive}{root}"), tail)
+}
+
+/// `Path(s).name`（根・ドライブは名前に入らない。`.` だけなら空）。
+pub fn py_name(s: &str) -> String {
+    if WINDOWS {
+        py_name_nt(s)
+    } else {
+        let p = py_path_posix(s);
+        let tail = p.trim_start_matches('/');
+        if tail.is_empty() || tail == "." {
+            return String::new();
+        }
+        tail.rsplit('/').next().unwrap_or("").to_string()
+    }
+}
+
+/// `PureWindowsPath(s).name`（OS によらずコンパイルする）。
+pub fn py_name_nt(s: &str) -> String {
+    let p = py_path_nt(s);
+    let (root, rest) = split_root_nt(&p);
+    if rest.is_empty() || (root.is_empty() && rest == ".") {
+        return String::new();
+    }
+    rest.rsplit('\\').next().unwrap_or("").to_string()
+}
+
+/// 名前の拡張子（`Path.suffix`。最後の . から。先頭の . と末尾の . は拡張子にしない）。
+pub fn name_suffix(name: &str) -> &str {
+    match name.rfind('.') {
+        Some(i) if i > 0 && i + 1 < name.len() => &name[i..],
+        _ => "",
+    }
+}
+
+/// 名前から拡張子を除いた物（`Path.stem`）。
+pub fn name_stem(name: &str) -> &str {
+    &name[..name.len() - name_suffix(name).len()]
+}
+
+/// `Path(s).stem`。
+pub fn py_stem(s: &str) -> String {
+    name_stem(&py_name(s)).to_string()
+}
+
+/// `Path(s).suffix`。
+pub fn py_suffix(s: &str) -> String {
+    name_suffix(&py_name(s)).to_string()
 }
 
 fn sep() -> char {

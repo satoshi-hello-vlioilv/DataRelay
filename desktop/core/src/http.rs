@@ -25,6 +25,11 @@ impl Reply {
         Reply { status, headers: vec![("Content-Type".into(), "application/json".into())], body: serde_json::to_vec(v).unwrap_or_default() }
     }
 
+    /// Rust では答えない（Python へ回す）。`Core::handle` が None に直す。
+    pub fn pass() -> Reply {
+        Reply { status: 0, headers: vec![], body: vec![] }
+    }
+
     /// 失敗の答え。Flask が組み立てる失敗（400 本文が JSON でない・500 処理の失敗）と同じ番号で返す。
     pub fn error(status: u16, message: &str) -> Reply {
         Reply::json(status, &serde_json::json!({"ok": false, "error": message}))

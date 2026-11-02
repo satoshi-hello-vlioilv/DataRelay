@@ -30,10 +30,14 @@ fn main() -> ExitCode {
 
 fn answer() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
-    let core = match args.iter().position(|a| a == "--base").and_then(|i| args.get(i + 1)) {
+    let mut core = match args.iter().position(|a| a == "--base").and_then(|i| args.get(i + 1)) {
         Some(base) => Core::with_program(std::path::Path::new(base)),
         None => Core::new(),
     };
+    // 試験だけ: いまの日時を決め打ちにする（2026-11-01T09:05:07.123456 の形。Python の側も同じ日時にして比べる）
+    if let Ok(t) = std::env::var("DATARELAY_FIXED_NOW") {
+        core.fixed_now = chrono::NaiveDateTime::parse_from_str(&t, "%Y-%m-%dT%H:%M:%S%.f").ok();
+    }
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
     for line in std::io::stdin().lock().lines() {

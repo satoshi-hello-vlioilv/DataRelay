@@ -15,7 +15,7 @@ name = "datarelay-core"
 path = "src/bin/datarelay-core.rs"
 
 [dependencies]
-serde_json = "1"
+serde_json = { version = "1", features = ["preserve_order"] }
 # 更新履歴（lib/changelog.toml）を読む
 toml = "0.8"
 # いまの日時（PC の時刻帯）。日付の計算そのものは period.rs が自分で持つ
