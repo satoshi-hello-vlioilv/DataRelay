@@ -43,22 +43,131 @@ pub fn truthy(v: &Value) -> bool {
     }
 }
 
-/// `str(v or '')`（画面から来る値を文字にする書き方）。文字・数・真偽は Python と同じ字にする。
-/// 並び・辞書は画面から来ない値なので Python と同じ字は保証しない（JSON の字にする）。
+/// `str(v or '')`（画面から来る値を文字にする書き方）。偽の値は空、それ以外は `str(v)`。
 pub fn text_or_empty(v: Option<&Value>) -> String {
     match v {
-        Some(v) if truthy(v) => match v {
-            Value::String(s) => s.clone(),
-            Value::Bool(_) => "True".into(),
-            Value::Number(n) => n
-                .as_i64()
-                .map(|i| i.to_string())
-                .or_else(|| n.as_u64().map(|u| u.to_string()))
-                .unwrap_or_else(|| float_repr(n.as_f64().unwrap_or(0.0))),
-            other => other.to_string(),
-        },
+        Some(v) if truthy(v) => py_str(v),
         _ => String::new(),
     }
+}
+
+/// `str(v)`。JSON の値を Python の値（None・True・数・字・並び・辞書）として字にする。
+/// 辞書の鍵の並びは JSON の字の並び（serde_json の Map）で、Python の入れた順とは違うことがある（画面から来ない形）。
+pub fn py_str(v: &Value) -> String {
+    match v {
+        Value::Null => "None".into(),
+        Value::Bool(b) => if *b { "True" } else { "False" }.into(),
+        Value::Number(n) => n
+            .as_i64()
+            .map(|i| i.to_string())
+            .or_else(|| n.as_u64().map(|u| u.to_string()))
+            .unwrap_or_else(|| float_repr(n.as_f64().unwrap_or(0.0))),
+        Value::String(s) => s.clone(),
+        Value::Array(a) => format!("[{}]", a.iter().map(py_repr).collect::<Vec<_>>().join(", ")),
+        Value::Object(o) => {
+            format!("{{{}}}", o.iter().map(|(k, v)| format!("{}: {}", repr_str(k), py_repr(v))).collect::<Vec<_>>().join(", "))
+        }
+    }
+}
+
+/// `repr(v)`（並び・辞書の中の値の書き方）。
+pub fn py_repr(v: &Value) -> String {
+    match v {
+        Value::String(s) => repr_str(s),
+        other => py_str(other),
+    }
+}
+
+/// `repr(str)`。' で囲み、' だけを含むなら " で囲む。印字できない字は \x・\u・\U で書く。
+/// 印字できるか（str.isprintable）は、制御文字・空白の仲間（空白そのものを除く）・書式の字・私用の字・サロゲートで見る
+/// （Unicode の未割り当ての字は見分けない）。
+pub fn repr_str(s: &str) -> String {
+    let q = if s.contains('\'') && !s.contains('"') { '"' } else { '\'' };
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push(q);
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '\t' => out.push_str("\\t"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            c if c == q => {
+                out.push('\\');
+                out.push(c);
+            }
+            c if !printable(c) => {
+                let n = c as u32;
+                out.push_str(&if n < 0x100 {
+                    format!("\\x{n:02x}")
+                } else if n < 0x10000 {
+                    format!("\\u{n:04x}")
+                } else {
+                    format!("\\U{n:08x}")
+                })
+            }
+            c => out.push(c),
+        }
+    }
+    out.push(q);
+    out
+}
+
+fn printable(c: char) -> bool {
+    let n = c as u32;
+    if c == ' ' {
+        return true;
+    }
+    !(n < 0x20
+        || (0x7f..=0xa0).contains(&n)
+        || n == 0xad
+        || c.is_whitespace()
+        || matches!(n, 0x600..=0x605 | 0x61c | 0x6dd | 0x70f | 0x180e | 0x200b..=0x200f | 0x202a..=0x202e | 0x2060..=0x2064 | 0x2066..=0x206f)
+        || matches!(n, 0xfeff | 0xfff9..=0xfffb | 0x110bd | 0x110cd | 0x1bca0..=0x1bca3 | 0x1d173..=0x1d17a | 0xe0001 | 0xe0020..=0xe007f)
+        || matches!(n, 0xe000..=0xf8ff | 0xf0000..=0xffffd | 0x100000..=0x10fffd))
+}
+
+/// `for x in (v or [])` の並べ方。字は1字ずつ、辞書は鍵。数・真は並べられない（Python の TypeError）→ None。
+pub fn py_iter(v: Option<&Value>) -> Option<Vec<Value>> {
+    match v {
+        None => Some(vec![]),
+        Some(v) if !truthy(v) => Some(vec![]),
+        Some(Value::Array(a)) => Some(a.clone()),
+        Some(Value::String(s)) => Some(s.chars().map(|c| Value::String(c.to_string())).collect()),
+        Some(Value::Object(o)) => Some(o.keys().map(|k| Value::String(k.clone())).collect()),
+        Some(_) => None,
+    }
+}
+
+/// `s[:n]`（字の数で切る）。
+pub fn head(s: &str, n: usize) -> String {
+    s.chars().take(n).collect()
+}
+
+/// Python の切り出し `s[start:stop]`（負の位置は後ろから。範囲の外は詰める）。
+pub fn slice(s: &str, start: Option<i64>, stop: Option<i64>) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    let len = chars.len() as i64;
+    let fix = |i: i64| if i < 0 { (len + i).max(0) } else { i.min(len) };
+    let a = start.map(fix).unwrap_or(0);
+    let b = stop.map(fix).unwrap_or(len);
+    if a >= b {
+        return String::new();
+    }
+    chars[a as usize..b as usize].iter().collect()
+}
+
+/// `int(v)`。読めない（Python の TypeError・ValueError）なら Ok(None)。
+pub fn int_opt(v: &Value) -> Result<Option<i64>, TooLarge> {
+    match v {
+        Value::String(s) => parse_int(s),
+        Value::Null | Value::Array(_) | Value::Object(_) => Ok(None),
+        other => int_or(Some(other), 0).map(Some),
+    }
+}
+
+/// `int(s)`（字だけ）。読めないなら Ok(None)。
+pub fn int_text(s: &str) -> Result<Option<i64>, TooLarge> {
+    parse_int(s)
 }
 
 /// `repr(float)`。最短で元に戻る桁を、10^-4 以上 10^16 未満は小数で、それ以外は指数（e-05・e+16）で書く。

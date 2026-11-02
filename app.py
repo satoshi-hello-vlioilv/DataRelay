@@ -160,6 +160,17 @@ def sqlite_readable(path):
   finally:c.close()
  except Exception:return False
 
+def replace_retry(src,dst,tries=40,wait=0.05):
+ """os.replace を、相手がファイルを開いている間だけ少し待ってやり直す（2.19.0）。
+
+ Windows は、ほかのプロセスが開いているファイルを置き換えられない（PermissionError）。2.19.0 から Rust の中身も
+ 設定の写しとマスターを読む（読むのは数ミリ秒）ので、取り込み・書き戻しと重なったときに、置き換えを落とさず待つ。"""
+ for i in range(tries):
+  try:os.replace(src,dst);return
+  except PermissionError:
+   if i==tries-1:raise
+   time.sleep(wait)
+
 def settings_revision(path):
  """設定の版。設定を保存したときだけ上がる。
 
@@ -212,7 +223,7 @@ def flush_local_to_master(reason=''):
    # 両方が書き、先に置き換えた側が成功扱いになるのに中身は相手のもの、という状態になる。
    tmp=MASTER_SETTINGS_DB.with_name(f'{MASTER_SETTINGS_DB.stem}.{socket.gethostname()}.{os.getpid()}.wb.tmp')
    try:
-    shutil.copy2(stage,tmp); os.replace(tmp,MASTER_SETTINGS_DB)
+    shutil.copy2(stage,tmp); replace_retry(tmp,MASTER_SETTINGS_DB)
    finally:
     try:tmp.unlink()
     except OSError:pass
@@ -311,7 +322,7 @@ def init_settings_db():
     if SETTINGS_DB.is_file():
      try:shutil.copy2(SETTINGS_DB,SETTINGS_DB.with_suffix('.bak'))
      except Exception:pass
-    tmp=SETTINGS_DB.with_suffix('.pull.tmp'); shutil.copy2(MASTER_SETTINGS_DB,tmp); os.replace(tmp,SETTINGS_DB)
+    tmp=SETTINGS_DB.with_suffix('.pull.tmp'); shutil.copy2(MASTER_SETTINGS_DB,tmp); replace_retry(tmp,SETTINGS_DB)
     log.info('SETTINGS_PULL master->local elapsed=%.2fs size=%s rev=%s',time.perf_counter()-_t,SETTINGS_DB.stat().st_size,settings_revision(SETTINGS_DB))
    else:
     log.info('SETTINGS_PULL skip(local up-to-date) elapsed=%.2fs',time.perf_counter()-_t)

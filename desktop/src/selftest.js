@@ -132,9 +132,11 @@
     r = await fetch('/static/app.js');
     ok('静的ファイルは Rust が返す', r.status === 200 && by(r) === 'shell', `${r.status} ${by(r)}`);
 
+    // 設定の読み出し（2.19.0〜 Rust の中身）。画面が起きたときの読み出しで Python が写しを整え終えているので、ここでは Rust が答える
     r = await fetch('/api/config');
     const cfg = await r.json();
-    ok('API（設定の読み出し）', r.status === 200 && by(r) === 'python' && Array.isArray(cfg.jobs), `${cfg.jobs && cfg.jobs.length}件の対象`);
+    const plans = (cfg.jobs || []).every((j) => Array.isArray(j.output_plan) && typeof j.output_is_variable === 'boolean');
+    ok('移した API（設定の読み出し）は Rust の中身が答える', r.status === 200 && by(r) === 'core' && Array.isArray(cfg.jobs) && plans && cfg.settings && cfg.setting_defaults && typeof cfg.settings_revision === 'number' && Array.isArray(cfg.text_layouts), `${r.status} ${by(r)} 対象${(cfg.jobs || []).length}件 版${cfg.settings_revision}`);
 
     // Rust を主にする移行（2.15.0〜）: 移した API は中身の Rust の側が答え、Python へは送らない
     r = await fetch('/api/version');

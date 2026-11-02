@@ -5,11 +5,11 @@
 
 use crate::http::{Ask, Reply};
 use crate::paths::{self, Bases};
-use crate::{applog, login, period, places, version};
+use crate::{applog, config, login, period, places, version};
 use chrono::{Datelike, Local, NaiveDateTime};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 type Handler = fn(&Core, &Ask, &[String]) -> Reply;
 
@@ -27,6 +27,7 @@ pub const ROUTES: &[(&str, &str, Handler)] = &[
     ("POST", "/api/login/delete", login::post_delete),
     ("POST", "/api/login/decline", login::post_decline),
     ("GET", "/api/log", applog::get_log),
+    ("GET", "/api/config", config::get_config),
 ];
 
 /// 中身（Rust の側）。アプリの場所から、置き場・データの基準を Python と同じ決まりで知る。
@@ -38,6 +39,8 @@ pub struct Core {
     program_root: Option<PathBuf>,
     /// データの基準と出どころ。Python と同じく、はじめて要ったとき（中身の起動のあと）に1度だけ決める
     data: OnceLock<(String, String)>,
+    /// 設定のマスターの版の控え（道・更新時刻・大きさが同じなら読み直さない。マスターは共有の置き場にあり、開くのが遅いため）
+    master_seen: Mutex<Option<(PathBuf, std::time::SystemTime, u64, i64)>>,
 }
 
 impl Core {
@@ -102,8 +105,22 @@ impl Core {
             if self.program_root.is_none() && !matches!(*pattern, "/api/version" | "/api/period-preview") {
                 return None;
             }
-            Some(f(self, ask, &params))
+            Some(f(self, ask, &params)).filter(|r| r.status != 0)
         })
+    }
+
+    /// 設定のマスターの版。前に読んだときから更新時刻も大きさも変わっていなければ、控えを返す。
+    pub(crate) fn master_revision(&self, path: &Path, meta: &std::fs::Metadata, read: fn(&Path) -> i64) -> i64 {
+        let Ok(mtime) = meta.modified() else { return read(path) };
+        let mut seen = self.master_seen.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((p, t, len, rev)) = seen.as_ref() {
+            if p == path && *t == mtime && *len == meta.len() {
+                return *rev;
+            }
+        }
+        let rev = read(path);
+        *seen = Some((path.to_path_buf(), mtime, meta.len(), rev));
+        rev
     }
 
     pub(crate) fn now(&self) -> NaiveDateTime {
@@ -198,7 +215,8 @@ mod tests {
     #[test]
     fn unknown_routes_go_to_python() {
         let c = Core::new();
-        assert!(c.handle(&ask("GET", "/api/config", b"")).is_none());
+        assert!(c.handle(&ask("GET", "/api/jobs", b"")).is_none());
+        assert!(c.handle(&ask("GET", "/api/config", b"")).is_none(), "アプリの場所を知らない中身は設定を答えない");
         assert!(c.handle(&ask("POST", "/api/version", b"")).is_none(), "メソッドが違えば答えない");
         assert!(c.handle(&ask("HEAD", "/api/version", b"")).is_some());
     }

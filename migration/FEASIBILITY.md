@@ -379,6 +379,9 @@ DataRelay だけで足したもの:
 - `tests/test_rust_paths.py`（2.16.0）: フォルダーの状態で答えが変わる決まり（データの基準の決める順・置き場の直し方・相対パスの基準に無い物をほかの基準から使う）を、いろいろな状態を作って Python の関数と Rust の関数（`datarelay-core call`）の両方へ問い、600 件余りで比べる。
 - `tests/test_rust_login.py`（2.17.0）: 状態のあるルート（接続情報の登録・変更・削除）は、Python と Rust に別々の置き場を同じ状態から用意し、同じ手順を流して1手ずつ比べる。Rust が書いた置き場を Python が読めること、Windows では本物の資格情報マネージャーで互いに読み書きできることも確かめる。
 - `tests/test_rust_log.py`（2.18.0）: 記録の読み出しは、Python が動いている間も記録を書くので同じ置き場では比べられない。見本の置き場を別に作り、Python には読む場所だけをそこへ向けさせて読み比べる（`cases.json` の `covered_elsewhere` に書き、ルートの見張りが数える）。
+- `tests/test_rust_config.py`（2.19.0）: 設定の読み出しは、関数ごと（欄の整え方・ファイル名の型・strftime）に決まった種で作った 5,000 件余りの値で比べ、
+  ルートは設定の写しの見本を Python 自身に作らせて決まった日時で読み比べる。Python が落ちる値・いま Python が読めば写しを替える場合は、
+  Rust が答えない（Python へ回す）ことも確かめる。わざと崩すと捕まえること（既定値1つ・書式1つ）を確かめてある。
 - `tests/test_route_plan.py`: `route_plan.json` の `core` と Rust の表（`ROUTES`）が食い違わないこと。
 - 自己診断（`selftest.js`）: 本物の WebView の中で、移したルートを `core` が答えること。
 - CI は Rust を作ってから Python の試験を流す（突き合わせが `datarelay-core.exe` を使う）。
@@ -386,6 +389,17 @@ DataRelay だけで足したもの:
 Python の振る舞いに合わせるもの（`desktop/core/src/pyish.rs`）: `int()`（前後の空白・全角の数字・数字の間の `_`・小数の切り捨て）、
 `str(v or '')`、`bool()`、`str.strip()`、正規表現の `\d`・`\s`（Python 3.12 と同じ Unicode 15.0）。日付は Python の date と同じく 1〜9999 年で、
 範囲を出る計算は Python と同じく失敗（500）にする。Flask の失敗の本文は HTML なので、失敗の場合は番号だけを比べる。
+
+設定の読み出しで Python に合わせるもの（2.19.0）: `str()`・`repr()`（並び・辞書の中の字。辞書の鍵は JSON の字の並びを保つ〈serde_json の preserve_order〉）、
+`for x in v`（字は1字ずつ・辞書は鍵）、`dict(v)`、`json.loads`、`Path.name・stem・suffix`、`datetime.strftime`（%f・%z・%Z は Python が置き換え、
+残りは C ロケールの strftime。Windows〈UCRT〉は知らない書き方を ValueError にし、glibc はそのまま出す。%C・%Y の桁と NUL の扱いも OS で違うので、OS ごとに合わせる。
+%c は両方とも `%a %b %e %H:%M:%S %Y`〈Windows の CI で確かめた〉）。
+分かっている違い: `repr()` の「印字できる字か」は、制御文字・空白の仲間・書式の字・私用の字で見る（Unicode の未割り当ての字は見分けない）。
+手元の写しの壊れの検査（PRAGMA quick_check）は、起動時に Python が行う（Rust は読めなければ Python へ回す）。
+Windows（UCRT）の strftime の、手元（Linux）で動かせない所は Windows の CI で確かめた: 1000 年より前の年は %Y・%G を 4 桁・%C を 2 桁で出す・
+末尾の %・知らない書き方は ValueError・NUL 文字はそのまま出る・書式に書いた %y は 1900 年より前なら ValueError（%D などの中の %y には掛からない）。
+Windows は、ほかのプロセスが開いているファイルを置き換えられない。Rust が設定の写し・マスターを読む数ミリ秒と、Python の取り込み・書き戻し
+（os.replace）が重なっても落とさないよう、Python の置き換えは少し待ってやり直す（app.replace_retry）。
 
 データを言語に依らない形へ: Python のコードに書いていた読みもの（更新履歴・仕様書の一覧）は `lib/changelog.toml` へ移し、Python と Rust が同じ物を読む（Rust は exe を作るときに取り込む）。
 
@@ -397,6 +411,7 @@ Python の振る舞いに合わせるもの（`desktop/core/src/pyish.rs`）: `i
 | 2 | 置き場とデータの基準の決め方（paths.rs。窓の release.rs・locate.rs も同じ物を使う）・仕様書・パスの変換・ユーザーの置き場の表示。関数ごとの突き合わせ（tests/test_rust_paths.py） | 2.16.0 |
 | 2b | 認証情報（Navigator の接続情報。secret.rs・login.rs）と、設定の手元の写しを読む（settings.rs・読むだけ）。状態のある手順の突き合わせ（tests/test_rust_login.py） | 2.17.0 |
 | 2c | 記録の読み出し（applog.rs。GET /api/log）と、Rust の中身の行を同じ app.log へ同じ形で書く。見本の置き場で読み比べる（tests/test_rust_log.py） | 2.18.0 |
+| 3a | 設定の読み出し（config.rs・naming.rs。GET /api/config）。いま Python が読めば写しを替える場合（マスターのほうが新しい・別のマスターの写し・表の形が古い・移行がまだ）と、Python でしか同じに読めない値（壊れた JSON・NaN・64 ビットを超える数・バイナリ）は Python へ回す（`Reply::pass`） | 2.19.0 |
 | 3 の前半 | 設定の保存（SQLite・共有のマスターとの同期・版）。実行の記録・予定の状態と同じ設定 DB を同じ錠で書くので、スケジューラーと一緒に移す | これから |
 | 3 | 画面の読み書き（対象・設定・カレンダー）とスケジューラー | これから |
 | 4 | テキスト読取・結合・並べ替え・出力（xlsx・SQLite・ACCDB） | これから |

@@ -1,7 +1,8 @@
 {
  "_about": "Rust へ移したルートの突き合わせの場合（tests/test_rust_parity.py が Python と Rust の両方へ送って比べる）。compare: json＝本文の JSON（ignore の鍵を除く）と番号／status＝番号だけ（Flask の失敗の本文は HTML のため）。抽出期間の組み合わせは試験の中で作って足す",
  "covered_elsewhere": {
-  "GET /api/log": "tests/test_rust_log.py（Python は動いている間も記録を書くので、同じ置き場では比べられない。見本の置き場を別に作って読み比べる）"
+  "GET /api/log": "tests/test_rust_log.py（Python は動いている間も記録を書くので、同じ置き場では比べられない。見本の置き場を別に作って読み比べる）",
+  "GET /api/config": "tests/test_rust_config.py（設定の写しの見本を Python 自身に作らせ、決まった日時で読み比べる。写しを替える場合は Python へ回すことも確かめる）"
  },
  "cases": [
   {
