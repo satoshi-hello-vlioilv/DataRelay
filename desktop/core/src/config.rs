@@ -1105,6 +1105,14 @@ pub(crate) fn get_config(core: &Core, _: &crate::http::Ask, _: &[String]) -> Rep
 }
 
 fn answer(core: &Core) -> R<Reply> {
+    let mut cfg = read(core)?;
+    add_previews(core, &mut cfg, core.now());
+    Ok(Reply::json(200, &Value::Object(cfg)))
+}
+
+/// 設定の写しを、app.load と同じ形で読む（読み出し・マスタの一覧・書き出しが共通に使う口）。
+/// いま Python が読めば写しを替える場合と、Python でしか同じに読めない値のときは Pass。
+pub fn read(core: &Core) -> R<Map<String, Value>> {
     let local = settings::local_db(Path::new(&paths::py_path(&paths::local_root().to_string_lossy())));
     if !local.is_file() {
         return Err(Pass);
@@ -1116,10 +1124,9 @@ fn answer(core: &Core) -> R<Reply> {
     if !settled(core, &local, &c) {
         return Err(Pass);
     }
-    let mut cfg = load(core, &c)?;
+    let cfg = load(core, &c)?;
     let _ = c.execute_batch("COMMIT");
-    add_previews(core, &mut cfg, core.now());
-    Ok(Reply::json(200, &Value::Object(cfg)))
+    Ok(cfg)
 }
 
 #[cfg(test)]

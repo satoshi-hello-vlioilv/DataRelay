@@ -12,6 +12,7 @@ pub mod applog;
 pub mod config;
 pub mod http;
 mod login;
+pub mod masters;
 pub mod naming;
 pub mod paths;
 pub mod period;
