@@ -20,6 +20,7 @@ mod places;
 pub mod probe;
 mod pyish;
 pub mod routes;
+pub mod schedule;
 pub mod secret;
 pub mod settings;
 pub mod version;

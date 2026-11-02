@@ -616,7 +616,7 @@ fn json_list(v: Option<&Value>) -> R<Value> {
 }
 
 /// _json_or_empty（読めなければ・偽の値なら {}）。
-fn json_or_empty(v: Option<&Value>) -> R<Value> {
+pub(crate) fn json_or_empty(v: Option<&Value>) -> R<Value> {
     let x = loads_or(v, "{}", json!({}))?;
     Ok(if pyish::truthy(&x) { x } else { json!({}) })
 }
@@ -654,7 +654,7 @@ fn to_sql(v: &Value) -> rusqlite::types::Value {
     }
 }
 
-fn rows(c: &Connection, sql: &str, params: &[rusqlite::types::Value]) -> R<Vec<Row>> {
+pub(crate) fn rows(c: &Connection, sql: &str, params: &[rusqlite::types::Value]) -> R<Vec<Row>> {
     let mut st = c.prepare(sql).map_err(|_| Pass)?;
     let names: Vec<String> = st.column_names().iter().map(|s| s.to_string()).collect();
     let mut q = st.query(rusqlite::params_from_iter(params.iter())).map_err(|_| Pass)?;
@@ -1113,6 +1113,14 @@ fn answer(core: &Core) -> R<Reply> {
 /// 設定の写しを、app.load と同じ形で読む（読み出し・マスタの一覧・書き出しが共通に使う口）。
 /// いま Python が読めば写しを替える場合と、Python でしか同じに読めない値のときは Pass。
 pub fn read(core: &Core) -> R<Map<String, Value>> {
+    read_with(core, |_, _| Ok(())).map(|(cfg, ())| cfg)
+}
+
+/// read と同じ読み方で設定を読み、同じひとそろいの写しから、ほかの表（実行の記録・予定の状態など）も読む。
+pub fn read_with<T>(core: &Core, more: impl FnOnce(&Map<String, Value>, &Connection) -> R<T>) -> R<(Map<String, Value>, T)>
+where
+    T: Sized,
+{
     let local = settings::local_db(Path::new(&paths::py_path(&paths::local_root().to_string_lossy())));
     if !local.is_file() {
         return Err(Pass);
@@ -1125,8 +1133,9 @@ pub fn read(core: &Core) -> R<Map<String, Value>> {
         return Err(Pass);
     }
     let cfg = load(core, &c)?;
+    let extra = more(&cfg, &c)?;
     let _ = c.execute_batch("COMMIT");
-    Ok(cfg)
+    Ok((cfg, extra))
 }
 
 #[cfg(test)]

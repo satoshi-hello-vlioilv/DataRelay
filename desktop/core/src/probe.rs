@@ -136,6 +136,29 @@ pub fn call(name: &str, a: &Value) -> Result<Value, String> {
         "py_stem" => json!(paths::py_stem(s(a, "value"))),
         "py_suffix" => json!(paths::py_suffix(s(a, "value"))),
         "foreign_profile_path" => json!(crate::config::foreign_profile_path(s(a, "value"))),
+        // 予定の決まり（schedule.rs）。Python が落ちる値は {"pass": true}
+        "next_occurrence" => match crate::schedule::next_occurrence(&a["rule"], when(a)?) {
+            Ok(v) => json!(v.map(|t| t.format("%Y-%m-%dT%H:%M:%S").to_string())),
+            Err(_) => json!({"pass": true}),
+        },
+        "expand_rule_occurrences" => {
+            let at = |k: &str| chrono::NaiveDateTime::parse_from_str(s(a, k), "%Y-%m-%dT%H:%M:%S").map_err(|e| e.to_string());
+            match crate::schedule::expand_rule_occurrences(&a["rule"], at("start")?, at("end")?, 400) {
+                Ok((p, d)) => json!([
+                    p.iter().map(|t| t.format("%Y-%m-%dT%H:%M:%S").to_string()).collect::<Vec<_>>(),
+                    d.iter()
+                        .map(|x| json!({"date": x.date.format("%Y-%m-%d").to_string(), "minutes": x.minutes, "count": x.count}))
+                        .collect::<Vec<_>>()
+                ]),
+                Err(_) => json!({"pass": true}),
+            }
+        }
+        "job_schedule_preview" => passed(crate::schedule::job_schedule_preview(&a["job"], when(a)?).map(Value::Object)),
+        "schedule_pause" => passed(
+            crate::schedule::schedule_pause(a["state"].as_object().ok_or("state が辞書ではありません")?, when(a)?).map(Value::Object),
+        ),
+        "last_run_info" => passed(crate::schedule::last_run_info(a["run"].as_object()).map(Value::Object)),
+        "seconds_in" => json!(crate::schedule::seconds_in(s(a, "detail"))),
         _ => return Err(format!("知らない問い: {name}")),
     })
 }
