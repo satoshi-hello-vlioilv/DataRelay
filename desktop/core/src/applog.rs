@@ -117,7 +117,7 @@ pub fn log_files(dir: &Path) -> Vec<PathBuf> {
 }
 
 /// round(x, 1)（Python の丸め＝表せる値どおりに、ちょうど半分なら偶数へ）。
-fn round1(x: f64) -> f64 {
+pub(crate) fn round1(x: f64) -> f64 {
     format!("{x:.1}").parse().unwrap_or(x)
 }
 

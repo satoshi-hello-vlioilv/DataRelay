@@ -5,7 +5,7 @@
 
 use crate::http::{Ask, Reply};
 use crate::paths::{self, Bases};
-use crate::{applog, config, login, masters, period, places, version};
+use crate::{applog, config, login, masters, period, places, schedule, version};
 use chrono::{Datelike, Local, NaiveDateTime};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
@@ -33,6 +33,9 @@ pub const ROUTES: &[(&str, &str, Handler)] = &[
     ("GET", "/api/join-recipes", masters::get_join_recipes),
     ("GET", "/api/join-recipes/export", masters::get_join_recipes_export),
     ("GET", "/api/m-queries/export", masters::get_m_queries_export),
+    ("GET", "/api/schedule-preview", schedule::get_schedule_preview),
+    ("GET", "/api/calendar", schedule::get_calendar),
+    ("GET", "/api/job-trend/<job_id>", schedule::get_job_trend),
 ];
 
 /// 中身（Rust の側）。アプリの場所から、置き場・データの基準を Python と同じ決まりで知る。

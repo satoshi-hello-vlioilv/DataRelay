@@ -383,6 +383,7 @@ DataRelay だけで足したもの:
   ルートは設定の写しの見本を Python 自身に作らせて決まった日時で読み比べる。Python が落ちる値・いま Python が読めば写しを替える場合は、
   Rust が答えない（Python へ回す）ことも確かめる。わざと崩すと捕まえること（既定値1つ・書式1つ）を確かめてある。
 - `tests/test_rust_masters.py`（2.20.0）: マスタの一覧は値で、持ち出しのファイルは中身のバイト列・Content-Type・Content-Disposition まで比べる。画面の選択肢の言葉（読み方・型・結合の種類）は Python の表を写した物で、1字違えば捕まえることを確かめてある。
+- `tests/test_rust_schedule.py`（2.21.0）: 予定の決まりを、いろいろなルール（型・時刻・曜日・月日・特定日に数・字・真偽・並びが混ざる物）と日時で比べ、予定・実行の記録・一時停止の見本で3本の受け口を読み比べる。曜日の数え方をわざと崩すと捕まえることを確かめてある。
 - `tests/test_route_plan.py`: `route_plan.json` の `core` と Rust の表（`ROUTES`）が食い違わないこと。
 - 自己診断（`selftest.js`）: 本物の WebView の中で、移したルートを `core` が答えること。
 - CI は Rust を作ってから Python の試験を流す（突き合わせが `datarelay-core.exe` を使う）。
@@ -414,6 +415,7 @@ Windows は、ほかのプロセスが開いているファイルを置き換え
 | 2c | 記録の読み出し（applog.rs。GET /api/log）と、Rust の中身の行を同じ app.log へ同じ形で書く。見本の置き場で読み比べる（tests/test_rust_log.py） | 2.18.0 |
 | 3a | 設定の読み出し（config.rs・naming.rs。GET /api/config）。いま Python が読めば写しを替える場合（マスターのほうが新しい・別のマスターの写し・表の形が古い・移行がまだ）と、Python でしか同じに読めない値（壊れた JSON・NaN・64 ビットを超える数・バイナリ）は Python へ回す（`Reply::pass`） | 2.19.0 |
 | 3b | 読むだけの受け口のうち、設定の写しの読み方（config::read）で答えられる物: 読取マスタ・結合マスタの一覧と、マスタの持ち出し（JSON・.pq。masters.rs）。EXCEL の持ち出しは出力の段まで Python へ回す。持ち出しは中身のバイト列まで比べる（tests/test_rust_masters.py） | 2.20.0 |
+| 3c | 予定の決まり（schedule.rs: next_occurrence・expand_rule_occurrences・一時停止・前回の実行）と、予定を読む受け口（予定の一覧・カレンダー・実行の傾向）。曜日・日の値は数として等しければ当たる（1・1.0・True）など Python の読み方に合わせ、関数ごとに 1,400 件余りで比べる（tests/test_rust_schedule.py） | 2.21.0 |
 | 3 の前半 | 設定の保存（SQLite・共有のマスターとの同期・版）。実行の記録・予定の状態と同じ設定 DB を同じ錠で書くので、スケジューラーと一緒に移す | これから |
 | 3 | 画面の読み書き（対象・設定・カレンダー）とスケジューラー | これから |
 | 4 | テキスト読取・結合・並べ替え・出力（xlsx・SQLite・ACCDB） | これから |

@@ -53,8 +53,8 @@
   },
   "GET /api/calendar": {
    "area": "実行・キュー・予定",
-   "to": "python",
-   "note": ""
+   "to": "core",
+   "note": "2.21.0（schedule.rs）。月の予定（expand_rule_occurrences）・一定間隔の要約・実施の記録"
   },
   "POST /api/column-plan": {
    "area": "RNEの調査・分割",
@@ -188,8 +188,8 @@
   },
   "GET /api/job-trend/<job_id>": {
    "area": "実行・キュー・予定",
-   "to": "python",
-   "note": ""
+   "to": "core",
+   "note": "2.21.0（schedule.rs）。直近の実績と、件数・かかった秒の移り変わり"
   },
   "POST /api/join-cache/clear": {
    "area": "読取マスタ・結合マスタ",
@@ -558,8 +558,8 @@
   },
   "GET /api/schedule-preview": {
    "area": "実行・キュー・予定",
-   "to": "python",
-   "note": ""
+   "to": "core",
+   "note": "2.21.0（schedule.rs）。次回の予定（next_occurrence）・前回の実行・一時停止。日時にできない時刻などで Python が落ちる値は Python へ回す"
   },
   "POST /api/schedule-pause": {
    "area": "実行・キュー・予定",

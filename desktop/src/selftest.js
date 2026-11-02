@@ -143,6 +143,12 @@
     r = await fetch('/api/join-recipes');
     const jr = await r.json();
     ok('移した API（結合マスタの一覧）は Rust の中身が答える', r.status === 200 && by(r) === 'core' && jr.ok && Array.isArray(jr.items) && jr.max_sources === 8 && Array.isArray(jr.layouts), `${r.status} ${by(r)} ${(jr.items || []).length}件`);
+    r = await fetch('/api/schedule-preview');
+    const sp = await r.json();
+    ok('移した API（予定の一覧）は Rust の中身が答える', r.status === 200 && by(r) === 'core' && Array.isArray(sp.items) && sp.pause && typeof sp.pause.paused === 'boolean', `${r.status} ${by(r)} ${(sp.items || []).length}件`);
+    r = await fetch('/api/calendar');
+    const cal = await r.json();
+    ok('移した API（カレンダー）は Rust の中身が答える', r.status === 200 && by(r) === 'core' && cal.days_in_month >= 28 && Array.isArray(cal.scheduled) && Array.isArray(cal.executed), `${r.status} ${by(r)} ${cal.year}/${cal.month} 予定${(cal.scheduled || []).length}`);
 
     // Rust を主にする移行（2.15.0〜）: 移した API は中身の Rust の側が答え、Python へは送らない
     r = await fetch('/api/version');
