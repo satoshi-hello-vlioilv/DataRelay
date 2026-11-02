@@ -137,6 +137,12 @@
     const cfg = await r.json();
     const plans = (cfg.jobs || []).every((j) => Array.isArray(j.output_plan) && typeof j.output_is_variable === 'boolean');
     ok('移した API（設定の読み出し）は Rust の中身が答える', r.status === 200 && by(r) === 'core' && Array.isArray(cfg.jobs) && plans && cfg.settings && cfg.setting_defaults && typeof cfg.settings_revision === 'number' && Array.isArray(cfg.text_layouts), `${r.status} ${by(r)} 対象${(cfg.jobs || []).length}件 版${cfg.settings_revision}`);
+    r = await fetch('/api/text-layouts');
+    const tl = await r.json();
+    ok('移した API（読取マスタの一覧）は Rust の中身が答える', r.status === 200 && by(r) === 'core' && tl.ok && Array.isArray(tl.items) && tl.encodings.length === 7 && tl.types.length === 6, `${r.status} ${by(r)} ${(tl.items || []).length}件`);
+    r = await fetch('/api/join-recipes');
+    const jr = await r.json();
+    ok('移した API（結合マスタの一覧）は Rust の中身が答える', r.status === 200 && by(r) === 'core' && jr.ok && Array.isArray(jr.items) && jr.max_sources === 8 && Array.isArray(jr.layouts), `${r.status} ${by(r)} ${(jr.items || []).length}件`);
 
     // Rust を主にする移行（2.15.0〜）: 移した API は中身の Rust の側が答え、Python へは送らない
     r = await fetch('/api/version');

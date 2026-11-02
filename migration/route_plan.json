@@ -218,8 +218,8 @@
   },
   "GET /api/join-recipes": {
    "area": "読取マスタ・結合マスタ",
-   "to": "python",
-   "note": ""
+   "to": "core",
+   "note": "2.20.0（masters.rs）。FULL OUTER JOIN は、結合を走らせる Python の SQLite が 3.39 以降（3.12 の配布物は 3.42 以降）としていつも出す"
   },
   "POST /api/join-recipes": {
    "area": "読取マスタ・結合マスタ",
@@ -233,8 +233,8 @@
   },
   "GET /api/join-recipes/export": {
    "area": "読取マスタ・結合マスタ",
-   "to": "python",
-   "note": ""
+   "to": "core",
+   "note": "2.20.0（masters.rs）。JSON の持ち出しを Rust が答える。EXCEL（format=xlsx）は出力の段まで Python へ回す"
   },
   "POST /api/join-recipes/import": {
    "area": "読取マスタ・結合マスタ",
@@ -313,8 +313,8 @@
   },
   "GET /api/m-queries/export": {
    "area": "クエリ（Power Query）",
-   "to": "python",
-   "note": "2.4.0"
+   "to": "core",
+   "note": "2.20.0（masters.rs）。JSON と、1件の式そのもの（.pq）"
   },
   "POST /api/m-queries/import": {
    "area": "クエリ（Power Query）",
@@ -633,8 +633,8 @@
   },
   "GET /api/text-layouts": {
    "area": "読取マスタ・結合マスタ",
-   "to": "python",
-   "note": ""
+   "to": "core",
+   "note": "2.20.0（masters.rs）。写しを替える場合・Python でしか同じに読めない値は Python へ回す"
   },
   "POST /api/text-layouts": {
    "area": "読取マスタ・結合マスタ",
@@ -648,8 +648,8 @@
   },
   "GET /api/text-layouts/export": {
    "area": "読取マスタ・結合マスタ",
-   "to": "python",
-   "note": ""
+   "to": "core",
+   "note": "2.20.0（masters.rs）。JSON の持ち出しを Rust が答える。EXCEL（format=xlsx）は出力の段まで Python へ回す"
   },
   "POST /api/text-layouts/import": {
    "area": "読取マスタ・結合マスタ",

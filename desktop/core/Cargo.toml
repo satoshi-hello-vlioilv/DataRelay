@@ -15,6 +15,7 @@ name = "datarelay-core"
 path = "src/bin/datarelay-core.rs"
 
 [dependencies]
+serde = "1"
 serde_json = { version = "1", features = ["preserve_order"] }
 # 更新履歴（lib/changelog.toml）を読む
 toml = "0.8"

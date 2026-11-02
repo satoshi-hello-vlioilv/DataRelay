@@ -661,6 +661,7 @@ dependencies = [
  "encoding_rs",
  "fancy-regex",
  "rusqlite",
+ "serde",
  "serde_json",
  "toml 0.8.2",
  "windows-sys 0.61.2",
@@ -668,7 +669,7 @@ dependencies = [
 
 [[package]]
 name = "datarelay-desktop"
-version = "2.19.0"
+version = "2.20.0"
 dependencies = [
  "datarelay-core",
  "serde",
