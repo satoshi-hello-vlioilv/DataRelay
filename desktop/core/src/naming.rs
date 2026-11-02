@@ -250,6 +250,21 @@ pub fn strftime(dt: NaiveDateTime, fmt: &str) -> Result<String, BadFormat> {
         None => fmt,
     };
     let chars: Vec<char> = fmt.chars().collect();
+    // Windows の Python は、1900 年より前の日付の %y（%#y も）を ValueError にする（time.strftime が % の組を順に見て断る）
+    if cfg!(windows) && dt.year() < 1900 {
+        let mut i = 0;
+        while i + 1 < chars.len() {
+            if chars[i] != '%' {
+                i += 1;
+                continue;
+            }
+            let j = if chars[i + 1] == '#' { i + 2 } else { i + 1 };
+            if chars.get(j) == Some(&'y') {
+                return Err(BadFormat);
+            }
+            i = j + 1;
+        }
+    }
     let mut out = String::new();
     let mut i = 0;
     while i < chars.len() {
@@ -380,7 +395,7 @@ fn directive(dt: NaiveDateTime, d: char, flag: Option<char>) -> Option<String> {
         'X' => sub("%H:%M:%S"),
         'y' => num(year % 100, 2, false),
         'Y' => num(year, if cfg!(windows) { 4 } else { 1 }, false),
-        'c' if cfg!(windows) => sub("%m/%d/%y %H:%M:%S"),
+        // C ロケールの %c は、UCRT も glibc も同じ字（Windows の CI で確かめた）
         'c' => sub("%a %b %e %H:%M:%S %Y"),
         '%' => "%".into(),
         // glibc だけが知っている書き方

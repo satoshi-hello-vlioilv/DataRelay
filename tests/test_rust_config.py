@@ -11,6 +11,7 @@
 実行: python -m unittest tests.test_rust_config -v
 """
 import json,os,random,sqlite3,subprocess,sys,tempfile,unittest
+from contextlib import closing   # with sqlite3.connect() は確定するだけで閉じない（Windows では開いたままのファイルを消せない）
 from pathlib import Path
 
 ROOT=Path(__file__).resolve().parent.parent
@@ -446,7 +447,7 @@ class ConfigRouteParityTest(unittest.TestCase):
  def test_not_settled_goes_to_python(self):
   """いま Python が読めば写しを替える場合は、Rust は答えない。"""
   paths=self.make('newer',{'jobs':[{'id':'a','name':'a'}]})
-  with sqlite3.connect(paths['master']) as c:c.execute("INSERT OR REPLACE INTO schema_info(key,value) VALUES('settings_revision','99')")
+  with closing(sqlite3.connect(paths['master'])) as c,c:c.execute("INSERT OR REPLACE INTO schema_info(key,value) VALUES('settings_revision','99')")
   self.assert_passes('newer','マスターの版のほうが新しい（Python が取り込む）')
   # 一度 Python が読めば（取り込めば）、Rust も答える
   self.python('newer');self.assertEqual(self.rust('newer')['status'],200)
@@ -456,7 +457,7 @@ class ConfigRouteParityTest(unittest.TestCase):
   self.assert_passes('owner','写しが別のマスターの物（Python が退けて取り直す）')
 
   paths=self.make('migrate',{'jobs':[]})
-  with sqlite3.connect(paths['local']) as c:c.execute("DELETE FROM schema_info WHERE key='migrated_parallel_max_lines_24'")
+  with closing(sqlite3.connect(paths['local'])) as c,c:c.execute("DELETE FROM schema_info WHERE key='migrated_parallel_max_lines_24'")
   self.assert_passes('migrate','設定の移行がまだ（Python が値を書き換える）')
 
   paths=self.make('nomaster',{'jobs':[]})
@@ -468,7 +469,7 @@ class ConfigRouteParityTest(unittest.TestCase):
  def test_old_schema_goes_to_python(self):
   """表の形が古い写し（列が足りない）は、Python が列を足してから読む。Rust は答えない。"""
   paths=self.make('old',{'jobs':[{'id':'a','name':'a'}]})
-  with sqlite3.connect(paths['local']) as c:c.execute('ALTER TABLE jobs DROP COLUMN group_name')
+  with closing(sqlite3.connect(paths['local'])) as c,c:c.execute('ALTER TABLE jobs DROP COLUMN group_name')
   self.assert_passes('old','jobs に group_name が無い')
 
  def test_broken_values_go_to_python(self):
