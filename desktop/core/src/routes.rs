@@ -5,7 +5,7 @@
 
 use crate::http::{Ask, Reply};
 use crate::paths::{self, Bases};
-use crate::{applog, config, login, masters, period, places, schedule, version, writer};
+use crate::{applog, config, edits, login, masters, period, places, schedule, version, writer};
 use chrono::{Datelike, Local, NaiveDateTime};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
@@ -37,6 +37,14 @@ pub const ROUTES: &[(&str, &str, Handler)] = &[
     ("GET", "/api/schedule-preview", schedule::get_schedule_preview),
     ("GET", "/api/calendar", schedule::get_calendar),
     ("GET", "/api/job-trend/<job_id>", schedule::get_job_trend),
+    ("POST", "/api/settings/columns", edits::post_columns),
+    ("POST", "/api/schedule/quick-add", edits::post_quick_add),
+    ("POST", "/api/schedule-pause", edits::post_schedule_pause),
+    ("POST", "/api/text-layouts", masters::post_text_layout),
+    ("DELETE", "/api/text-layouts/<layout_id>", masters::delete_text_layout),
+    ("POST", "/api/join-recipes", masters::post_join_recipe),
+    ("DELETE", "/api/join-recipes/<recipe_id>", masters::delete_join_recipe),
+    ("DELETE", "/api/m-queries/<query_id>", masters::delete_m_query),
 ];
 
 /// 中身（Rust の側）。アプリの場所から、置き場・データの基準を Python と同じ決まりで知る。

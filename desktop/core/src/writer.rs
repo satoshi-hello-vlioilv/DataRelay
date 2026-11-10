@@ -203,8 +203,10 @@ fn local_db() -> PathBuf {
     settings::local_db(Path::new(&paths::py_path(&paths::local_root().to_string_lossy())))
 }
 
-/// 設定を丸ごと置き換える（app._save_local）。want は画面が持っている版（None なら確かめない）。
-pub fn save(core: &Core, v: &Map<String, Value>, want: Option<i64>, quiet: bool) -> R<Saved> {
+/// 手元の写しを1つの取引（BEGIN IMMEDIATE）で書く。ほかの書き手（Python）は SQLite の錠で待つ。
+/// いま Python が読めば写しを替える場合（config::settled が偽）は書かずに Pass。f が Err なら巻き戻す。
+/// f が積んだ記録の行は、書き終えて（commit して）から記録へ書く（Python も書き終えてから記録する）。
+pub fn transact<T>(core: &Core, f: impl FnOnce(&Connection, &mut Vec<String>) -> R<T>) -> R<T> {
     let local = local_db();
     if !local.is_file() {
         return Err(Pass);
@@ -217,22 +219,40 @@ pub fn save(core: &Core, v: &Map<String, Value>, want: Option<i64>, quiet: bool)
     if !config::settled(core, &local, &tx) {
         return Err(Pass);
     }
-    let now_rev = revision_in(&tx);
-    if let Some(w) = want {
-        if w != now_rev {
-            return Ok(Saved::Conflict(now_rev));
-        }
-    }
-    let now = core.now().format("%Y-%m-%dT%H:%M:%S").to_string();
     let mut lines = Vec::new();
-    write_all(&tx, v, &now, quiet, &mut lines)?;
-    let rev = now_rev + 1;
-    tx.execute("INSERT OR REPLACE INTO schema_info(key,value) VALUES('settings_revision',?)", [rev.to_string()]).map_err(|_| Pass)?;
+    let out = f(&tx, &mut lines)?;
     tx.commit().map_err(|_| Pass)?;
     for l in lines {
         core.log(&l);
     }
-    Ok(Saved::Ok(rev))
+    Ok(out)
+}
+
+/// 設定を丸ごと置き換え、版を1つ進める（app._save_local。取引の中で呼ぶ）。→ 新しい版。
+pub fn save_in(core: &Core, tx: &Connection, v: &Map<String, Value>, quiet: bool, lines: &mut Vec<String>) -> R<i64> {
+    let now = stamp(core);
+    write_all(tx, v, &now, quiet, lines)?;
+    let rev = revision_in(tx) + 1;
+    tx.execute("INSERT OR REPLACE INTO schema_info(key,value) VALUES('settings_revision',?)", [rev.to_string()]).map_err(|_| Pass)?;
+    Ok(rev)
+}
+
+/// いまの時刻を秒まで（datetime.now().isoformat(timespec='seconds')）。
+pub fn stamp(core: &Core) -> String {
+    core.now().format("%Y-%m-%dT%H:%M:%S").to_string()
+}
+
+/// 設定を丸ごと置き換える（app.save）。want は画面が持っている版（None なら確かめない）。
+pub fn save(core: &Core, v: &Map<String, Value>, want: Option<i64>, quiet: bool) -> R<Saved> {
+    transact(core, |tx, lines| {
+        let now_rev = revision_in(tx);
+        if let Some(w) = want {
+            if w != now_rev {
+                return Ok(Saved::Conflict(now_rev));
+            }
+        }
+        Ok(Saved::Ok(save_in(core, tx, v, quiet, lines)?))
+    })
 }
 
 const SKIP_TOP: [&str; 7] =
@@ -503,6 +523,33 @@ fn master_db(core: &Core) -> Option<PathBuf> {
     core.config_dir().map(|d| PathBuf::from(paths::join(&d, "app_settings.sqlite3")))
 }
 
+/// 保存のあと、裏で書き戻す（app._mark_settings_dirty と flush_local_to_master_async）。
+pub fn flush_soon(core: &Core, reason: &'static str) {
+    if let Some(m) = master_db(core) {
+        core.writes.flush_later(local_db(), m, reason);
+    }
+}
+
+/// 書き戻しの済んでいない変更があると印を付けるだけ（app._mark_settings_dirty）。終わるときに書き戻す。
+pub fn mark_dirty(core: &Core) {
+    core.writes.dirty.store(true, Ordering::SeqCst);
+}
+
+/// 本文を JSON として読む（Flask の request.get_json）。force は JSON の印（Content-Type）を見ない。
+/// → Ok(None) は読めない本文（silent では None になる）。force で読めない本文は Flask が 400 の頁を返すので Pass。
+/// Python と同じに読めると言えない本文（NaN・大きすぎる数など）も Pass。
+pub fn body_json(ask: &Ask, force: bool) -> R<Option<Value>> {
+    if !force && !is_json(ask) {
+        return Ok(None);
+    }
+    match std::str::from_utf8(ask.body).map(config::py_json) {
+        Ok(config::Json::Ok(v)) => Ok(Some(v)),
+        Ok(config::Json::Unsure) => Err(Pass),
+        _ if force => Err(Pass),
+        _ => Ok(None),
+    }
+}
+
 impl Writes {
     /// 保存のあと、裏で書き戻す（app.flush_local_to_master_async）。失敗したら、終わるときにもう一度書き戻す。
     pub fn flush_later(&self, local: PathBuf, master: PathBuf, reason: &'static str) {
@@ -558,15 +605,7 @@ fn is_json(ask: &Ask) -> bool {
 fn answer_put(core: &Core, ask: &Ask) -> R<Reply> {
     let shape = || Reply::json(400, &json!({"ok": false, "error": "設定の形が正しくありません（対象の一覧が含まれていません）"}));
     // request.get_json(silent=True): JSON の印が無い・読めない本文は None（→ 400）
-    let data = if is_json(ask) {
-        match std::str::from_utf8(ask.body).map(config::py_json) {
-            Ok(config::Json::Ok(v)) => Some(v),
-            Ok(config::Json::Unsure) => return Err(Pass),
-            _ => None,
-        }
-    } else {
-        None
-    };
+    let data = body_json(ask, false)?;
     let Some(Value::Object(data)) = data else { return Ok(shape()) };
     if !matches!(data.get("jobs"), Some(Value::Array(_))) {
         return Ok(shape());
@@ -591,9 +630,7 @@ fn answer_put(core: &Core, ask: &Ask) -> R<Reply> {
             ))
         }
         Saved::Ok(rev) => {
-            if let Some(m) = master_db(core) {
-                core.writes.flush_later(local_db(), m, "config-save");
-            }
+            flush_soon(core, "config-save");
             Ok(Reply::json(200, &json!({"ok": true, "settings_revision": rev})))
         }
     }

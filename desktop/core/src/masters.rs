@@ -8,7 +8,7 @@
 
 use crate::config::{self, Pass};
 use crate::http::{Ask, Reply};
-use crate::{applog, pyish, routes::Core, settings};
+use crate::{applog, pyish, routes::Core, settings, writer};
 use serde_json::{json, Map, Value};
 
 type R<T> = Result<T, Pass>;
@@ -347,6 +347,400 @@ pub(crate) fn get_m_queries_export(core: &Core, ask: &Ask, _: &[String]) -> Repl
     };
     core.log(&format!("M_QUERY_EXPORT count={} file={name}", items.len()));
     file_reply(body, ctype, format!("attachment; filename*=UTF-8''{}", url_quote(&name)))
+}
+
+// ==== 保存と削除（2.23.0〜） ================================================
+//
+// app の save_text_layout・save_join_recipe・delete_text_layout・delete_join_recipe・delete_m_query と同じに書く。
+// どれも設定の版は進めない（マスタは版の外。Python も _mark_settings_dirty と裏の書き戻しだけ）。
+// クエリの保存は M の式を読んで確かめる（navi_m）ので、Power Query の段まで Python が受け持つ。
+
+/// navi_text._stamp_plan の役割だけ（YYYY/YY/MM/DD/HH/MI(NN)/SS を順に拾う。ほかの字は区切り）。→ (役割, 桁数)。
+fn stamp_plan(pattern: &str) -> Vec<(Option<char>, usize)> {
+    const TOKENS: [(&str, char); 8] =
+        [("YYYY", 'Y'), ("YY", 'y'), ("MM", 'M'), ("DD", 'D'), ("HH", 'h'), ("MI", 'm'), ("NN", 'm'), ("SS", 's')];
+    let p: Vec<char> = pattern.chars().collect();
+    let (mut plan, mut i, mut seen_hour) = (Vec::new(), 0, false);
+    while i < p.len() {
+        let hit = TOKENS.iter().find(|(t, _)| p[i..].starts_with(&t.chars().collect::<Vec<_>>()));
+        match hit {
+            Some((tok, role)) => {
+                // 時より後ろの MM は分（YYYYMMDDHHMMSS をそのまま書けるように）
+                let role = if *tok == "MM" && seen_hour { 'm' } else { *role };
+                if role == 'h' {
+                    seen_hour = true;
+                }
+                plan.push((Some(role), tok.len()));
+                i += tok.len();
+            }
+            None => {
+                plan.push((None, 1));
+                i += 1;
+            }
+        }
+    }
+    plan
+}
+
+/// f'{n:,}'（3 桁ごとのカンマ）。
+fn grouped(n: usize) -> String {
+    let s = n.to_string();
+    let mut out = String::new();
+    for (i, c) in s.chars().enumerate() {
+        if i > 0 && (s.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// 重なっている名前（出てきた順、5 つまで）を「、」でつなぐ。無ければ None。
+fn dupes<'a>(names: impl Iterator<Item = &'a str>) -> Option<String> {
+    let mut seen: Vec<(&str, usize)> = Vec::new();
+    for n in names {
+        match seen.iter_mut().find(|(k, _)| *k == n) {
+            Some((_, c)) => *c += 1,
+            None => seen.push((n, 1)),
+        }
+    }
+    let d: Vec<&str> = seen.iter().filter(|(_, c)| *c > 1).map(|(k, _)| *k).take(5).collect();
+    (!d.is_empty()).then(|| d.join("、"))
+}
+
+fn s(v: &Value) -> &str {
+    v.as_str().unwrap_or("")
+}
+
+/// navi_text.validate_layout（整えた読取マスタを、このままでは使えない理由）。正規表現の区切りは Python の re で確かめるので Pass。
+fn validate_layout(l: &Value) -> R<Vec<String>> {
+    let mut bad = Vec::new();
+    let cols = columns(l);
+    if s(&l["name"]).is_empty() {
+        bad.push("マスタ名を入れてください".to_string());
+    }
+    if cols.is_empty() {
+        bad.push("列を1つ以上決めてください".into());
+    }
+    if cols.len() > 4096 {
+        bad.push(format!("列が多すぎます（{}本）。{}本までにしてください", grouped(cols.len()), grouped(4096)));
+    }
+    if mode(l) == "delimited" {
+        let (delim, text) = (s(&l["delimiter"]), s(&l["delimiter_text"]));
+        if (delim == "custom" || delim == "regex") && text.is_empty() {
+            bad.push(
+                if delim == "custom" {
+                    "区切りの文字を入れてください"
+                } else {
+                    "区切りの決まり（正規表現）を入れてください"
+                }
+                .into(),
+            );
+        } else if delim == "regex" {
+            return Err(Pass);
+        }
+    }
+    for (i, c) in cols.iter().enumerate() {
+        let (i, name) = (i + 1, s(&c["name"]));
+        let length = c["length"].as_i64().unwrap_or(0);
+        if mode(l) == "fixed" && length < 1 {
+            bad.push(format!("{i}番目「{name}」の長さが0です。長さか終了位置を入れてください"));
+        }
+        let t = s(&c["type"]);
+        if t == "date" || t == "datetime" {
+            let fmt = s(&c["format"]);
+            let plan = stamp_plan(fmt);
+            let roles: Vec<char> = plan.iter().filter_map(|(r, _)| *r).collect();
+            if roles.is_empty() {
+                bad.push(format!("{i}番目「{name}」の書式が空です（例 {DATE_FORMAT_DEFAULT}）"));
+            } else if !roles.contains(&'Y') && !roles.contains(&'y') {
+                bad.push(format!("{i}番目「{name}」の書式に年がありません（YYYY か YY を入れてください）: {fmt}"));
+            } else if t == "datetime" && !roles.iter().any(|r| matches!(r, 'h' | 'm' | 's')) {
+                bad.push(format!("{i}番目「{name}」は日時ですが、書式に時刻がありません（HH・MM・SS）: {fmt}"));
+            } else if mode(l) == "fixed" {
+                let need: usize = plan.iter().map(|(_, n)| n).sum();
+                if need as i64 > length {
+                    bad.push(format!("{i}番目「{name}」の書式は{need}桁必要ですが、切り出す長さが{length}しかありません"));
+                }
+            }
+        }
+    }
+    if let Some(d) = dupes(cols.iter().map(|c| s(&c["name"]))) {
+        bad.push(format!("同じ名前の列があります（{d}）。列名は重ならないようにしてください"));
+    }
+    Ok(bad)
+}
+
+/// navi_join.validate_recipe。「どちらも全部残す」は Python の SQLite が書けるかで決まるので Pass。
+fn validate_recipe(r: &Value) -> R<Vec<String>> {
+    let mut bad = Vec::new();
+    let arr = |k: &str| r[k].as_array().map(Vec::as_slice).unwrap_or(&[]);
+    if s(&r["name"]).is_empty() {
+        bad.push("結合マスタ名を入れてください".to_string());
+    }
+    if arr("sources").len() < 2 {
+        bad.push("ファイルを2つ以上選んでください（結合するものが1つでは繋げません）".into());
+    }
+    for (i, x) in arr("sources").iter().enumerate() {
+        if s(&x["path"]).is_empty() {
+            bad.push(format!("{}つ目のファイルの場所を入れてください", i + 1));
+        }
+        if s(&x["format"]) == "fixed" && s(&x["layout_id"]).is_empty() {
+            bad.push(format!("{}つ目は固定長テキストです。読取マスタを選んでください", i + 1));
+        }
+    }
+    for (i, j) in arr("joins").iter().enumerate() {
+        let keys = j["keys"].as_array().map(Vec::as_slice).unwrap_or(&[]);
+        if !keys.iter().any(|k| !s(&k["left"]).is_empty() && !s(&k["right"]).is_empty()) {
+            bad.push(format!("{}つ目のつなぎ目に、突き合わせる列（キー）を1組以上決めてください", i + 1));
+        }
+        if s(&j["type"]) == "full" {
+            return Err(Pass);
+        }
+    }
+    let outs = arr("columns").iter().map(|c| if s(&c["as"]).is_empty() { s(&c["name"]) } else { s(&c["as"]) });
+    if let Some(d) = dupes(outs) {
+        bad.push(format!("出す列の名前が重なっています（{d}）。別名を付けてください"));
+    }
+    Ok(bad)
+}
+
+/// request.get_json(force=True) or {} を辞書として（辞書でない真の値は Python が落ちる）。
+fn body_dict(ask: &Ask) -> R<Map<String, Value>> {
+    match writer::body_json(ask, true)? {
+        Some(Value::Object(m)) => Ok(m),
+        Some(v) if pyish::truthy(&v) => Err(Pass),
+        _ => Ok(Map::new()),
+    }
+}
+
+type Sql = rusqlite::types::Value;
+
+fn text(v: impl Into<String>) -> Sql {
+    Sql::Text(v.into())
+}
+
+/// 1件を登録・更新する（INSERT OR REPLACE。並び順は、あれば元のまま、無ければ末尾）。
+/// row は (id, 並び順, 更新時刻) から列の値を、列の並び（cols）どおりに組む。line は記録の1行（id を受ける）。→ (id, 更新時刻)。
+fn upsert(
+    core: &Core,
+    table: &str,
+    id: &str,
+    cols: &str,
+    row: impl FnOnce(&str, Sql, &str) -> Vec<Sql>,
+    line: impl FnOnce(&str) -> String,
+) -> R<(String, String)> {
+    let id = if id.is_empty() { uuid::Uuid::new_v4().to_string() } else { id.to_string() };
+    let now = writer::stamp(core);
+    writer::transact(core, |tx, log| {
+        let order: Sql =
+            tx.query_row(&format!("SELECT COALESCE(MAX(display_order),-1)+1 n FROM {table}"), [], |r| r.get(0)).map_err(|_| Pass)?;
+        let cur: Option<Sql> = match tx.query_row(&format!("SELECT display_order FROM {table} WHERE id=?"), [&id], |r| r.get(0)) {
+            Ok(v) => Some(v),
+            Err(rusqlite::Error::QueryReturnedNoRows) => None,
+            Err(_) => return Err(Pass),
+        };
+        let params = row(&id, cur.unwrap_or(order), &now);
+        let marks = vec!["?"; params.len()].join(",");
+        tx.execute(&format!("INSERT OR REPLACE INTO {table} ({cols}) VALUES({marks})"), rusqlite::params_from_iter(params))
+            .map_err(|_| Pass)?;
+        log.push(line(&id));
+        Ok(())
+    })?;
+    writer::flush_soon(core, if table == "text_layouts" { "text-layout-save" } else { "join-recipe-save" });
+    Ok((id, now))
+}
+
+fn refused(bad: &[String]) -> Reply {
+    Reply::json(400, &json!({"ok": false, "error": bad.join("／")}))
+}
+
+/// 整えた1件に id と更新時刻を入れる（dict(l, id=…, updated_at=…)）。
+fn stamped(mut v: Value, id: &str, now: &str) -> Value {
+    if let Value::Object(m) = &mut v {
+        m.insert("id".into(), json!(id));
+        m.insert("updated_at".into(), json!(now));
+    }
+    v
+}
+
+/// POST /api/text-layouts … 読取マスタ1件を登録・更新する（id が無ければ新規）。
+pub(crate) fn post_text_layout(core: &Core, ask: &Ask, _: &[String]) -> Reply {
+    answer_save_layout(core, ask).unwrap_or_else(|_| Reply::pass())
+}
+
+fn answer_save_layout(core: &Core, ask: &Ask) -> R<Reply> {
+    let l = config::normalize_layout(&body_dict(ask)?)?;
+    let bad = validate_layout(&l)?;
+    if !bad.is_empty() {
+        return Ok(refused(&bad));
+    }
+    let cols = columns(&l);
+    let parse: Map<String, Value> =
+        ["mode", "delimiter", "delimiter_text", "quote", "collapse"].iter().map(|k| (k.to_string(), l[*k].clone())).collect();
+    let int = |k: &str| Sql::Integer(l[k].as_i64().unwrap_or(0));
+    let flag = |k: &str| Sql::Integer(i64::from(l[k] == json!(true)));
+    let line = |id: &str| {
+        format!(
+            "TEXT_LAYOUT_SAVE id={id} name={} 読み方={} 列={} 単位={} 文字コード={} 幅={}",
+            s(&l["name"]),
+            mode(&l),
+            cols.len(),
+            s(&l["unit"]),
+            s(&l["encoding"]),
+            layout_width(&l)
+        )
+    };
+    let (id, now) = upsert(
+        core,
+        "text_layouts",
+        s(&l["id"]),
+        "id,display_order,name,description,encoding,unit,trim,skip_head,skip_tail,skip_blank,header_row,columns_json,sample_path,updated_at,parse_json",
+        |id, order, now| {
+            vec![
+                text(id),
+                order,
+                text(s(&l["name"])),
+                text(s(&l["description"])),
+                text(s(&l["encoding"])),
+                text(s(&l["unit"])),
+                text(s(&l["trim"])),
+                int("skip_head"),
+                int("skip_tail"),
+                flag("skip_blank"),
+                flag("header_row"),
+                text(writer::py_dumps(&l["columns"])),
+                text(s(&l["sample_path"])),
+                text(now),
+                text(writer::py_dumps(&Value::Object(parse.clone()))),
+            ]
+        },
+        line,
+    )?;
+    let mut saved = stamped(l.clone(), &id, &now);
+    let extra = json!({"width": layout_width(&saved), "shape": layout_shape(&saved)});
+    if let (Value::Object(m), Value::Object(e)) = (&mut saved, extra) {
+        m.extend(e);
+    }
+    Ok(Reply::json(200, &json!({"ok": true, "layout": saved})))
+}
+
+/// POST /api/join-recipes … 結合マスタ1件を登録・更新する（id が無ければ新規）。
+pub(crate) fn post_join_recipe(core: &Core, ask: &Ask, _: &[String]) -> Reply {
+    answer_save_recipe(core, ask).unwrap_or_else(|_| Reply::pass())
+}
+
+fn answer_save_recipe(core: &Core, ask: &Ask) -> R<Reply> {
+    let r = config::normalize_recipe(&body_dict(ask)?)?;
+    let bad = validate_recipe(&r)?;
+    if !bad.is_empty() {
+        return Ok(refused(&bad));
+    }
+    let n = |k: &str| r[k].as_array().map(Vec::len).unwrap_or(0);
+    let line = |id: &str| {
+        let cols = n("columns");
+        format!(
+            "JOIN_RECIPE_SAVE id={id} name={} ファイル={} つなぎ目={} 出す列={}",
+            s(&r["name"]),
+            n("sources"),
+            n("joins"),
+            if cols == 0 { "（自動）".to_string() } else { cols.to_string() }
+        )
+    };
+    let (id, now) = upsert(
+        core,
+        "join_recipes",
+        s(&r["id"]),
+        "id,display_order,name,description,sources_json,joins_json,columns_json,updated_at",
+        |id, order, now| {
+            vec![
+                text(id),
+                order,
+                text(s(&r["name"])),
+                text(s(&r["description"])),
+                text(writer::py_dumps(&r["sources"])),
+                text(writer::py_dumps(&r["joins"])),
+                text(writer::py_dumps(&r["columns"])),
+                text(now),
+            ]
+        },
+        line,
+    )?;
+    Ok(Reply::json(200, &json!({"ok": true, "recipe": stamped(r.clone(), &id, &now)})))
+}
+
+/// navi_mrun.m_query_usage（入力に使う対象と、後処理に使う対象の両方）。
+fn query_usage(cfg: &Map<String, Value>, qid: &str) -> R<Vec<Value>> {
+    if qid.is_empty() {
+        return Ok(vec![]);
+    }
+    let mut out = Vec::new();
+    for j in jobs(cfg) {
+        let as_input =
+            settings::job_source(&pyish::text_or_empty(j.get("source"))) == "mquery" && pyish::text_or_empty(j.get("query_id")) == qid;
+        let post = config::normalize_post(j.get("post").unwrap_or(&Value::Null))?;
+        if as_input || (post["mode"] == json!("query") && post["query_id"] == json!(qid)) {
+            out.push(j.get("name").cloned().unwrap_or(json!("")));
+        }
+    }
+    Ok(out)
+}
+
+/// 削除の共通（使っている対象があるうちは消さない → 409。無ければ ok=false の 200）。
+fn delete_one(core: &Core, raw_id: &str, what: &Kind) -> R<Reply> {
+    let id = pyish::strip(raw_id).to_string();
+    let gone = writer::transact(core, |tx, log| {
+        let cfg = config::load(core, tx)?;
+        let used = match what.table {
+            "text_layouts" => usage(&cfg, "text", "layout_id", &json!(id)),
+            "join_recipes" => usage(&cfg, "join", "recipe_id", &json!(id)),
+            _ => query_usage(&cfg, &id)?,
+        };
+        if !used.is_empty() {
+            let names: Vec<String> = used.iter().take(3).map(pyish::py_str).collect();
+            return Ok(Err(format!(
+                "この{}は{}件の対象が使っています（{}）。先に対象側を切り替えてください",
+                what.label,
+                used.len(),
+                names.join("、")
+            )));
+        }
+        let n = tx.execute(&format!("DELETE FROM {} WHERE id=?", what.table), [&id]).map_err(|_| Pass)?;
+        log.push(format!("{} id={id} deleted={n}", what.log));
+        Ok(Ok(n > 0))
+    })?;
+    let gone = match gone {
+        Err(msg) => return Ok(Reply::json(409, &json!({"ok": false, "error": msg}))),
+        Ok(g) => g,
+    };
+    writer::flush_soon(core, what.reason);
+    Ok(Reply::json(200, &json!({"ok": gone, "error": if gone { String::new() } else { format!("その{}はありません", what.label) }})))
+}
+
+struct Kind {
+    table: &'static str,
+    label: &'static str,
+    log: &'static str,
+    reason: &'static str,
+}
+
+const LAYOUT: Kind = Kind { table: "text_layouts", label: "読取マスタ", log: "TEXT_LAYOUT_DELETE", reason: "text-layout-delete" };
+const RECIPE: Kind = Kind { table: "join_recipes", label: "結合マスタ", log: "JOIN_RECIPE_DELETE", reason: "join-recipe-delete" };
+const QUERY: Kind = Kind { table: "m_queries", label: "クエリ", log: "M_QUERY_DELETE", reason: "m-query-delete" };
+
+/// DELETE /api/text-layouts/<layout_id>
+pub(crate) fn delete_text_layout(core: &Core, _: &Ask, p: &[String]) -> Reply {
+    delete_one(core, &p[0], &LAYOUT).unwrap_or_else(|_| Reply::pass())
+}
+
+/// DELETE /api/join-recipes/<recipe_id>
+pub(crate) fn delete_join_recipe(core: &Core, _: &Ask, p: &[String]) -> Reply {
+    delete_one(core, &p[0], &RECIPE).unwrap_or_else(|_| Reply::pass())
+}
+
+/// DELETE /api/m-queries/<query_id>
+pub(crate) fn delete_m_query(core: &Core, _: &Ask, p: &[String]) -> Reply {
+    delete_one(core, &p[0], &QUERY).unwrap_or_else(|_| Reply::pass())
 }
 
 /// navi_web._safe_file_label（制御文字は空白、ファイル名に使えない字は _、続く空白は1つ、limit 字まで。空なら「登録内容」）。

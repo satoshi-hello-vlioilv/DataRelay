@@ -157,6 +157,14 @@ pub fn call(name: &str, a: &Value) -> Result<Value, String> {
         "schedule_pause" => passed(
             crate::schedule::schedule_pause(a["state"].as_object().ok_or("state が辞書ではありません")?, when(a)?).map(Value::Object),
         ),
+        // datetime.fromisoformat(v).isoformat()。Python も断る形は null、Python へ回す形は "pass"
+        "from_iso" => match crate::schedule::from_iso(s(a, "value")) {
+            Some(Ok(t)) => json!(t
+                .format(if t.and_utc().timestamp_subsec_nanos() == 0 { "%Y-%m-%dT%H:%M:%S" } else { "%Y-%m-%dT%H:%M:%S%.6f" })
+                .to_string()),
+            Some(Err(())) => Value::Null,
+            None => json!("pass"),
+        },
         "last_run_info" => passed(crate::schedule::last_run_info(a["run"].as_object()).map(Value::Object)),
         "seconds_in" => json!(crate::schedule::seconds_in(s(a, "detail"))),
         _ => return Err(format!("知らない問い: {name}")),

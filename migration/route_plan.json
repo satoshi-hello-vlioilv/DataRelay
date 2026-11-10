@@ -223,13 +223,13 @@
   },
   "POST /api/join-recipes": {
    "area": "読取マスタ・結合マスタ",
-   "to": "python",
-   "note": ""
+   "to": "core",
+   "note": "2.23.0（masters.rs）。整える・確かめる・書く。「どちらも全部残す」は Python の SQLite が書けるかで決まるので Python へ回す"
   },
   "DELETE /api/join-recipes/<recipe_id>": {
    "area": "読取マスタ・結合マスタ",
-   "to": "python",
-   "note": ""
+   "to": "core",
+   "note": "2.23.0（masters.rs）。使っている対象があれば 409"
   },
   "GET /api/join-recipes/export": {
    "area": "読取マスタ・結合マスタ",
@@ -308,8 +308,8 @@
   },
   "DELETE /api/m-queries/<query_id>": {
    "area": "クエリ（Power Query）",
-   "to": "python",
-   "note": "2.4.0"
+   "to": "core",
+   "note": "2.23.0（masters.rs）。入力に使う対象と後処理に使う対象があれば 409。クエリの保存は M の式を読むので Power Query の段で移す"
   },
   "GET /api/m-queries/export": {
    "area": "クエリ（Power Query）",
@@ -563,18 +563,18 @@
   },
   "POST /api/schedule-pause": {
    "area": "実行・キュー・予定",
-   "to": "python",
-   "note": "自動実行の一時停止（2.13.0）。止めているかはスケジューラー（中身）が持つ"
+   "to": "core",
+   "note": "2.23.0（edits.rs）。運転の状態（scheduler_state）だけを書き、版は進めない。書き戻しは終わるとき（Python と同じ）。時差付きなど形の判らない時刻は Python へ回す"
   },
   "POST /api/schedule/quick-add": {
    "area": "実行・キュー・予定",
-   "to": "python",
-   "note": ""
+   "to": "core",
+   "note": "2.23.0（edits.rs）。日時は Python の strptime と同じ順でたどって読む。全角の数字など同じに読めると言えない字は Python へ回す"
   },
   "POST /api/settings/columns": {
    "area": "設定・対象の登録",
-   "to": "python",
-   "note": ""
+   "to": "core",
+   "note": "2.23.0（edits.rs）。列の決め方を整え、設定を読む・直す・保存する・版を上げるを1つの取引で行い、裏で書き戻す"
   },
   "POST /api/settings/parallel-lines": {
    "area": "設定・対象の登録",
@@ -638,13 +638,13 @@
   },
   "POST /api/text-layouts": {
    "area": "読取マスタ・結合マスタ",
-   "to": "python",
-   "note": ""
+   "to": "core",
+   "note": "2.23.0（masters.rs）。整える・確かめる・書く。正規表現の区切りは Python の re で確かめるので Python へ回す"
   },
   "DELETE /api/text-layouts/<layout_id>": {
    "area": "読取マスタ・結合マスタ",
-   "to": "python",
-   "note": ""
+   "to": "core",
+   "note": "2.23.0（masters.rs）。使っている対象があれば 409"
   },
   "GET /api/text-layouts/export": {
    "area": "読取マスタ・結合マスタ",
