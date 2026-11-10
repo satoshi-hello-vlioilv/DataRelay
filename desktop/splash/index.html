@@ -3,56 +3,128 @@
 <head>
 <meta charset="utf-8">
 <title>DataRelay</title>
+<!--
+ 起動画面（2.25.0。tests/ui-proposals/2026-11-brand.json の C を作った物）。
+ 窓（desktop/src/main.rs）が splash.step(id, state, detail) と splash.fail(title, detail) を呼ぶ。
+ id は update・python・backend・open、state は now・ok・bad・wait・skip。読み込み前の分は窓がためておき、読み終わったら流す。
+ 4つの駅を線で繋ぎ、済んだ区間を青緑で塗る（アイコンの「表から送り出す」と同じ紺〜青緑）。
+-->
 <style>
-:root{--navy:#17384e;--blue:#087c98;--ok:#087a57;--bad:#b93b32;--muted:#647581;--line:#d7e0e5;--soft:#f3f6f8}
-*{box-sizing:border-box}
-body{margin:0;min-height:100vh;display:grid;place-items:center;background:var(--soft);color:var(--navy);font-family:"Yu Gothic UI",Meiryo,sans-serif}
-.card{width:min(560px,92vw);background:#fff;border:1px solid var(--line);border-radius:14px;box-shadow:0 18px 50px #15384d1f;padding:26px 28px}
-h1{margin:0;font-size:22px;letter-spacing:.02em}
-.sub{margin:4px 0 18px;color:var(--muted);font-size:12px}
-ol{list-style:none;margin:0;padding:0;display:grid;gap:8px}
-li{display:grid;grid-template-columns:22px 1fr;gap:10px;align-items:start;padding:9px 12px;border:1px solid var(--line);border-radius:9px;font-size:13px;color:var(--muted)}
-li b{display:block;font-weight:700}
-li small{display:block;font-size:11px;margin-top:2px;word-break:break-all}
-li i{font-style:normal;font-weight:900;text-align:center}
-li[data-state=now]{color:var(--blue);border-color:#9cd5db;background:#eaf6f8}
-li[data-state=ok]{color:var(--ok);border-color:#cce8db;background:#edf8f3}
-li[data-state=bad]{color:var(--bad);border-color:#efc4bf;background:#fff1ef}
-li[data-state=skip]{color:var(--muted);border-style:dashed;background:#fff}
-#fail{display:none;margin-top:16px;padding:12px 14px;border-left:4px solid var(--bad);background:#fff1ef;border-radius:7px}
-#fail b{display:block;color:var(--bad);margin-bottom:6px}
-#fail pre{margin:0;white-space:pre-wrap;font:12px/1.6 "Yu Gothic UI",Meiryo,sans-serif;color:#5c2a25}
+:root{--navy:#17384e;--blue:#087c98;--blue2:#075f78;--ok:#087a57;--bad:#b93b32;--muted:#5d6f7a;--line:#d7e0e5}
+*{box-sizing:border-box}html,body{height:100%}
+body{margin:0;display:grid;place-items:center;background:linear-gradient(180deg,#eef4f6,#f6f8f9);color:var(--navy);font-family:"Yu Gothic UI",Meiryo,sans-serif}
+.card{width:min(820px,90vw);background:#fff;border:1px solid var(--line);border-radius:18px;box-shadow:0 24px 60px #15384d1c;padding:34px 40px 30px}
+.head{display:flex;align-items:center;gap:16px}.head h1{margin:0;font-size:28px;letter-spacing:.01em}.head p{margin:3px 0 0;color:var(--muted);font-size:13px}
+.state{margin-left:auto;align-self:flex-start;padding:5px 12px;border-radius:14px;background:#e6f4f6;color:var(--blue2);font-size:12px;font-weight:700;white-space:nowrap}
+.state.bad{background:#fff1ef;color:var(--bad)}
+.track{display:grid;grid-template-columns:repeat(4,1fr);margin:34px 0 22px;position:relative}
+.track:before{content:'';position:absolute;left:12.5%;right:12.5%;top:17px;height:4px;background:#e1eaee;border-radius:4px}
+.fill{position:absolute;left:12.5%;top:17px;height:4px;width:0;background:linear-gradient(90deg,#0c839e,#20b5aa);border-radius:4px;transition:width .4s}
+.st{text-align:center;position:relative;color:var(--muted);font-size:13px}
+.st .d{width:38px;height:38px;margin:0 auto 10px;border-radius:50%;display:grid;place-items:center;background:#fff;border:3px solid #cfdbe1}.st svg{width:20px;height:20px}
+.st.ok{color:var(--ok)}.st.ok .d{background:var(--ok);border-color:var(--ok);color:#fff}
+.st.now{color:var(--blue2);font-weight:700}.st.now .d{border-color:var(--blue);color:var(--blue)}
+.st.bad{color:var(--bad);font-weight:700}.st.bad .d{background:var(--bad);border-color:var(--bad);color:#fff}
+.st.skip .d{border-style:dashed}
+.detail{display:flex;gap:12px;align-items:baseline;background:#f3f8fa;border-radius:10px;padding:12px 16px;font-size:13px;color:var(--muted);word-break:break-all}
+.detail b{flex:none;color:var(--blue2)}.detail.bad{background:#fff4f2;color:#7a2f29}.detail.bad b{color:var(--bad)}
+.fail{display:none;margin-top:12px;border:1px solid #efc4bf;border-left:4px solid var(--bad);border-radius:10px;padding:14px 16px;background:#fff8f7}
+.fail .fh{display:flex;justify-content:space-between;align-items:center;gap:10px}.fail .fh b{color:var(--bad);font-size:15px}
+.fail pre{margin:10px 0 6px;white-space:pre-wrap;word-break:break-all;font:12px/1.6 Consolas,"Yu Gothic UI",monospace;color:#5c2a25}
+.fail p{margin:0;font-size:12px;color:var(--muted)}
+.copy{font:inherit;font-size:12px;font-weight:700;border:1px solid #e3b5b0;background:#fff;color:var(--bad);border-radius:7px;padding:6px 12px;cursor:pointer}
+.copy:hover{background:#fff1ef}
+.spin{animation:sp 1s linear infinite;transform-origin:50% 50%}@keyframes sp{to{transform:rotate(360deg)}}
 </style>
 </head>
 <body>
 <div class="card">
-  <h1>DataRelay</h1>
-  <p class="sub">起動しています。ブラウザやポートは使いません。</p>
-  <ol>
-    <li id="update" data-state="now"><i>…</i><div><b>配る版にそろえる</b><small>配布の置き場から写したアプリだけ、起動のたびに確かめます</small></div></li>
-    <li id="python" data-state="wait"><i>○</i><div><b>Python を探す</b><small>ブラウザ版と同じ Python を使います</small></div></li>
-    <li id="backend" data-state="wait"><i>○</i><div><b>中身を読み込む</b><small></small></div></li>
-    <li id="open" data-state="wait"><i>○</i><div><b>画面を開く</b><small></small></div></li>
-  </ol>
-  <div id="fail"><b></b><pre></pre></div>
+  <div class="head">
+    <svg width="64" height="64" viewBox="0 0 256 256" aria-hidden="true"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#143349"/><stop offset="1" stop-color="#0a87a0"/></linearGradient><linearGradient id="hl" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".16"/><stop offset=".5" stop-color="#fff" stop-opacity="0"/></linearGradient></defs><rect x="8" y="8" width="240" height="240" rx="56" fill="url(#g)"/><rect x="8" y="8" width="240" height="240" rx="56" fill="url(#hl)"/><rect x="44" y="60" width="124" height="136" rx="16" fill="#fff"/><path d="M60 60h92a16 16 0 0 1 16 16v16H44V76a16 16 0 0 1 16-16z" fill="#0f6a84"/><path d="M60 120h92M60 146h92M60 172h64" stroke="#b7d3dc" stroke-width="10" stroke-linecap="round"/><path d="M162 90L208 128L162 166" stroke="#0f3a52" stroke-width="40" fill="none" stroke-linecap="round" stroke-linejoin="round"/><path d="M162 90L208 128L162 166" stroke="#5fe3d8" stroke-width="22" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    <div><h1>DataRelay</h1><p>Navigator のデータを、決めた時刻に、決めた形で届けます</p></div>
+    <span class="state" id="state"></span>
+  </div>
+  <div class="track" id="track"><div class="fill" id="fill"></div></div>
+  <div class="detail" id="detail"><b></b><span></span></div>
+  <div class="fail" id="fail"><div class="fh"><b></b><button class="copy" type="button" id="copy">内容を写す</button></div><pre></pre><p>直したら、アプリを開き直してください。</p></div>
 </div>
 <script>
-// 窓（Rust）から呼ばれる。読み込み前の分は窓がためておき、読み終わったら流す。
+const STEPS = [
+  { id: 'update', label: '配る版にそろえる', hint: '配布の置き場から写したアプリだけ、起動のたびに確かめます' },
+  { id: 'python', label: 'Python を探す', hint: 'ブラウザ版と同じ Python を使います' },
+  { id: 'backend', label: '中身を読み込む', hint: '' },
+  { id: 'open', label: '画面を開く', hint: '' },
+];
+const S = {};
+STEPS.forEach((s) => { S[s.id] = { state: 'wait', detail: s.hint }; });
+S.update.state = 'now';
+let FAIL = null;
+const ICON = {
+  ok: '<svg viewBox="0 0 20 20"><path d="M5 10.5l3.2 3.2L15 6.8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  bad: '<svg viewBox="0 0 20 20"><path d="M10 5.5v5.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/><circle cx="10" cy="14.6" r="1.5" fill="currentColor"/></svg>',
+  now: '<svg viewBox="0 0 20 20" class="spin"><circle cx="10" cy="10" r="7" fill="none" stroke="currentColor" stroke-opacity=".25" stroke-width="2.4"/><path d="M10 3a7 7 0 0 1 7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>',
+  wait: '',
+  skip: '<svg viewBox="0 0 20 20"><path d="M6 10h8" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>',
+};
+const track = document.getElementById('track');
+STEPS.forEach((s) => {
+  const el = document.createElement('div');
+  el.className = 'st wait';
+  el.id = s.id;
+  el.innerHTML = '<div class="d"></div><span></span>';
+  el.querySelector('span').textContent = s.label;
+  track.appendChild(el);
+});
+
+function view() {
+  const list = STEPS.map((s, i) => ({ ...s, ...S[s.id], n: i + 1 }));
+  const bad = list.find((s) => s.state === 'bad');
+  const cur = bad || list.find((s) => s.state === 'now') || list.find((s) => s.state === 'wait') || list[list.length - 1];
+  const done = list.filter((s) => s.state === 'ok' || s.state === 'skip').length;
+  const reached = list.reduce((a, s, i) => (s.state !== 'wait' ? i : a), 0);
+  list.forEach((s) => {
+    const el = document.getElementById(s.id);
+    el.className = 'st ' + s.state;
+    el.querySelector('.d').innerHTML = ICON[s.state] || '';
+  });
+  document.getElementById('fill').style.width = (reached / (list.length - 1)) * 75 + '%';
+  const state = document.getElementById('state');
+  state.className = 'state' + (bad ? ' bad' : '');
+  state.textContent = bad ? '起動を止めました' : done === list.length ? '開いています' : '起動しています';
+  // いまの駅の説明。駅の名前は線路に出ているので繰り返さず、何番目かと中身を出す
+  const detail = document.getElementById('detail');
+  detail.className = 'detail' + (bad ? ' bad' : '');
+  detail.querySelector('b').textContent = `${cur.n} / ${list.length}`;
+  detail.querySelector('span').textContent = cur.detail || (bad ? '止まりました' : '進めています…');
+  const f = document.getElementById('fail');
+  if (FAIL) {
+    f.style.display = 'block';
+    f.querySelector('b').textContent = FAIL.title;
+    f.querySelector('pre').textContent = FAIL.detail;
+  }
+}
+
+document.getElementById('copy').addEventListener('click', (e) => {
+  const b = e.currentTarget;
+  Promise.resolve()
+    .then(() => navigator.clipboard.writeText(FAIL.title + '\n' + FAIL.detail))
+    .then(() => { b.textContent = '写しました'; }, () => { b.textContent = '写せませんでした'; });
+});
+
+// 窓（Rust）から呼ばれる
 window.splash = {
   step(id, state, detail) {
-    const li = document.getElementById(id);
-    if (!li) return;
-    li.dataset.state = state;
-    li.querySelector('i').textContent = { now: '…', ok: '✓', bad: '!', wait: '○', skip: '–' }[state] || '○';
-    if (detail !== undefined) li.querySelector('small').textContent = detail;
+    if (!S[id]) return;
+    S[id].state = state;
+    if (detail !== undefined) S[id].detail = detail;
+    view();
   },
   fail(title, detail) {
-    const f = document.getElementById('fail');
-    f.querySelector('b').textContent = title;
-    f.querySelector('pre').textContent = detail;
-    f.style.display = 'block';
+    FAIL = { title, detail };
+    view();
   },
 };
+view();
 </script>
 </body>
 </html>
