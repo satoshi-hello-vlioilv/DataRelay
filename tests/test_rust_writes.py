@@ -1,13 +1,13 @@
 """画面からの書き込み（列の決め方・カレンダーからの1回実行ルール・自動実行の一時停止・読取マスタと結合マスタの保存・
 マスタ3種の削除）が、Python（navi_web・navi_textrun・navi_joinrun・navi_mrun）と Rust（desktop/core の edits.rs・masters.rs）で
-同じ結果になるか（2.23.0）。
+同じ結果になるか（2.23.0。実施記録の削除とファイル名の試し表示は 2.24.0）。
 
 tests/test_rust_save.py と同じく、同じ設定の写しを2つ用意し（片方を Python、片方を Rust が受け持つ）、同じ問い合わせを
 同じ順で流して、答えと、写しの中身（設定・実行ルール・マスタ・運転の状態・版）と、書き戻したマスターの中身を比べる。
 新しく振る id（uuid）は、出てきた順の印に置き換えて比べる。
 Python でしか同じに決められない場合（正規表現の区切り・FULL JOIN・全角の数字・時差付きの時刻など）と、
 いま Python が読めば写しを替える場合は、Rust が書かずに Python へ回すことも確かめる。
-比べるルート: POST /api/settings/columns・POST /api/schedule/quick-add・POST /api/schedule-pause・POST /api/text-layouts・
+比べるルート: POST /api/run-history/delete・POST /api/preview-filename・POST /api/settings/columns・POST /api/schedule/quick-add・POST /api/schedule-pause・POST /api/text-layouts・
 DELETE /api/text-layouts/<layout_id>・POST /api/join-recipes・DELETE /api/join-recipes/<recipe_id>・DELETE /api/m-queries/<query_id>
 実行: python -m unittest tests.test_rust_writes -v
 """
@@ -67,6 +67,7 @@ def dump(db):
           'join_recipes':rows('SELECT * FROM join_recipes ORDER BY display_order,name'),
           'm_queries':rows('SELECT * FROM m_queries ORDER BY display_order,name'),
           'scheduler_state':rows('SELECT * FROM scheduler_state ORDER BY state_key'),
+          'run_history':rows('SELECT * FROM run_history ORDER BY id'),
           'revision':c.execute("SELECT value FROM schema_info WHERE key='settings_revision'").fetchone()[0]}
 
 
@@ -94,13 +95,13 @@ class WritesParityTest(unittest.TestCase):
  tearDownClass=classmethod(test_rust_save.SaveParityTest.tearDownClass.__func__)
  env,paths,py,rust,twin=(getattr(test_rust_save.SaveParityTest,k) for k in ('env','paths','py','rust','twin'))
 
- def make(self,name):
+ def make(self,name,extra=()):
   cfg=full_cfg('')
   cfg['jobs'][4]['post']={'enabled':True,'mode':'query','query_id':'Q3'}   # 後処理で使うクエリも「使っている」
   self.py(MAKE,name,json.dumps({'cfg':cfg,'sql':layout_sql()+[
    ['INSERT INTO m_queries (id,display_order,name,description,code,output_query,updated_at) VALUES(?,?,?,?,?,?,?)',['Q2',1,'使わない','','let a=1 in a','','t']],
    ['INSERT INTO m_queries (id,display_order,name,description,code,output_query,updated_at) VALUES(?,?,?,?,?,?,?)',['Q3',2,'後処理','','let a=1 in a','','t']],
-   ["INSERT INTO scheduler_state VALUES('other','x','t')",[]]]},ensure_ascii=False))
+   ["INSERT INTO scheduler_state VALUES('other','x','t')",[]],*extra]},ensure_ascii=False))
 
  def test_write_sequence(self):
   self.make('wbase');self.twin('wbase','wpy','wrs')
@@ -162,6 +163,45 @@ class WritesParityTest(unittest.TestCase):
   for n,m in (('wpy',mp),('wrs',mr)):
    local,master=self.paths(n)
    self.assertEqual(m(dump(master)),m(dump(local)),f'{n}: マスターが写しと同じでない')
+
+ def test_history_delete_and_filename_preview(self):
+  """実施記録の削除（id・日付・日付と対象）と、ファイル名の試し表示（RNE の在りか・時刻の変数・色分け）。"""
+  hist='INSERT INTO run_history(id,job_id,job_name,finished_at,status,trigger,detail,rows,cols,output_file) VALUES(?,?,?,?,?,?,?,?,?,?)'
+  rows=[[i,j,'名',f,'ok','manual','',1,1,''] for i,(j,f) in enumerate([('j1','2026-11-01T06:00:00'),('j2','2026-11-01T07:00:00'),('j1','2026-11-01T08:00:00'),
+        ('j1','2026-11-02T06:00:00'),('j2','2026-11-02T06:00:00'),('j3','2026-11-03T06:00:00'),('j1','2026-11-04T06:00:00'),('j2','2026-11-05T06:00:00')],start=1)]
+  self.make('hbase',extra=[[hist,r] for r in rows]);self.twin('hbase','hpy','hrs')
+  rne=self.t/'rne'/'受注 一覧.RNE';rne.parent.mkdir(exist_ok=True);rne.write_bytes(b'x');os.utime(rne,(1767225600,1767225600))
+  reqs=[post('/api/run-history/delete',{'ids':[7,'8',' 6 ','x',2.0,True,-1]}),
+        post('/api/run-history/delete',{'ids':'12'}),
+        post('/api/run-history/delete',{'date':' 2026-11-01 ','job_id':'j1'}),
+        post('/api/run-history/delete',{'date':'2026-11-02','job_id':' j2 '}),
+        post('/api/run-history/delete',{'date':'2026-11-03','job_id':'all'}),
+        post('/api/run-history/delete',{'ids':[],'date':''}),
+        post('/api/run-history/delete',{'date':'2026-11-01'},type='text/plain'),
+        post('/api/run-history/delete','null'),
+        post('/api/preview-filename',{'pattern':'{rne}_{now-1D:YYYYMMDD}_{rne_mtime:%Y%m%d%H%M}_{name:left:2}','rne_path':str(rne),'name':'日次の集計','format':'csv'}),
+        post('/api/preview-filename',{'pattern':' 固定の名前 ','rne_path':str(rne),'format':'Excel'}),
+        post('/api/preview-filename',{'pattern':'','output_file':'a.b.txt','format':''},type='text/plain'),
+        post('/api/preview-filename',{'pattern':'{table}_{rne_ctime:YY}','rne':'無い.RNE','table':'仕掛'}),
+        post('/api/preview-filename',{'pattern':'{date}{unknown}','rne_path':str(self.t/'無い'/'x.RNE'),'format':'accdb'}),
+        post('/api/preview-filename','""')]
+  py=self.py(ASK,'hpy',json.dumps(reqs,ensure_ascii=False),NOW)
+  rs=self.rust('hrs',reqs)
+  for q,p,x in zip(reqs,py,rs):
+   what=f'{q["path"]} {q.get("body","")[:100]}'
+   self.assertNotEqual(x['status'],0,f'Rust が答えなかった: {what}')
+   self.assertEqual((x['status'],json.loads(x['body'])),(p['status'],json.loads(p['body'])),what)
+  self.assertEqual([p['status'] for p in py],[200,200,200,200,200,400,400,400,200,200,200,200,200,200])
+  self.assertEqual([json.loads(p['body']).get('removed') for p in py[:5]],[3,2,1,1,0])
+  first=json.loads(py[8]['body'])
+  self.assertTrue(first['rne_found'] and first['rne_mtime'] and first['is_variable'] and len(first['segments'])>3,first)
+  a,b=dump(self.paths('hpy')[0]),dump(self.paths('hrs')[0])
+  for k in a:self.assertEqual(a[k],b[k],f'写しの {k} が違う')
+  self.assertEqual([r['id'] for r in a['run_history']],[4])
+  # Python でしか同じに決められない物は回す（全角・上付きの数字は isdigit が真で int が落ちる・数は並びでない）
+  for body in ({'ids':['²']},{'ids':['１']},{'ids':5},'[1]'):
+   self.assertEqual(self.rust('hrs',[post('/api/run-history/delete',body)])[0]['status'],0,body)
+  self.assertEqual(self.rust('hrs',[post('/api/preview-filename','[1]')])[0]['status'],0)
 
  def test_python_only_cases(self):
   """Python でしか同じに決められない場合は、Rust は書かずに Python へ回す。写しを替える場合（マスターが無い）も同じ。"""

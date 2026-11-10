@@ -289,6 +289,63 @@ fn answer_pause(core: &Core, ask: &Ask) -> R<Reply> {
     Ok(Reply::json(200, &json!({"pause": view})))
 }
 
+// ==== カレンダーの実施記録の削除 ============================================
+
+/// POST /api/run-history/delete … 実施記録（run_history）を消す。id の並び、または日付（＋対象）で指定する。
+/// Python と同じく、書き戻しの印は付けない（実施記録は運転の記録で、次の書き戻しで一緒に運ばれる）。
+pub(crate) fn post_run_history_delete(core: &Core, ask: &Ask, _: &[String]) -> Reply {
+    answer_history_delete(core, ask).unwrap_or_else(|_| Reply::pass())
+}
+
+fn answer_history_delete(core: &Core, ask: &Ask) -> R<Reply> {
+    // request.get_json(silent=True) or {}
+    let d = match writer::body_json(ask, false)? {
+        Some(Value::Object(m)) => m,
+        Some(v) if pyish::truthy(&v) => return Err(Pass),
+        _ => Map::new(),
+    };
+    // [int(x) for x in (d.get('ids') or []) if str(x).strip().isdigit()]
+    let mut ids: Vec<i64> = Vec::new();
+    for x in pyish::py_iter(d.get("ids")).ok_or(Pass)? {
+        let t = pyish::py_str(&x);
+        let t = pyish::strip(&t);
+        if !t.is_ascii() {
+            return Err(Pass); // 全角・上付きの数字は isdigit が真で int が落ちる（Python は 500）
+        }
+        if !t.is_empty() && t.bytes().all(|b| b.is_ascii_digit()) {
+            ids.push(t.parse().map_err(|_| Pass)?);
+        }
+    }
+    if ids.len() > 30_000 {
+        return Err(Pass); // SQLite の ? の数の上限（Python の SQLite とは上限が違う）
+    }
+    let date = pyish::strip(&pyish::text_or_empty(d.get("date"))).to_string();
+    let job_id = pyish::strip(&pyish::text_or_empty(d.get("job_id"))).to_string();
+    if ids.is_empty() && date.is_empty() {
+        return Ok(Reply::json(400, &json!({"error": "削除対象（idまたは日付）を指定してください"})));
+    }
+    let removed = writer::transact(core, |tx, lines| {
+        let n = if !ids.is_empty() {
+            let marks = vec!["?"; ids.len()].join(",");
+            tx.execute(&format!("DELETE FROM run_history WHERE id IN ({marks})"), rusqlite::params_from_iter(ids.iter()))
+        } else if !job_id.is_empty() && job_id != "all" {
+            tx.execute("DELETE FROM run_history WHERE substr(finished_at,1,10)=? AND job_id=?", [&date, &job_id])
+        } else {
+            tx.execute("DELETE FROM run_history WHERE substr(finished_at,1,10)=?", [&date])
+        }
+        .map_err(|_| Pass)?;
+        let shown = |s: &str| if s.is_empty() { "-".to_string() } else { s.to_string() };
+        lines.push(format!(
+            "RUN_HISTORY_DELETE ids=[{}] date={} job_id={} removed={n}",
+            ids.iter().map(i64::to_string).collect::<Vec<_>>().join(", "),
+            shown(&date),
+            shown(&job_id)
+        ));
+        Ok(n)
+    })?;
+    Ok(Reply::json(200, &json!({"ok": true, "removed": removed})))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -443,8 +443,8 @@
   },
   "POST /api/preview-filename": {
    "area": "設定・対象の登録",
-   "to": "python",
-   "note": ""
+   "to": "core",
+   "note": "2.24.0（config.rs）。ファイル名の型を naming.rs で組み、RNE の更新・作成時刻（Windows は作った時刻）を添える。型が作れない（Python は理由の字を返す）ときは Python へ回す"
   },
   "GET /api/release/brief": {
    "area": "配布と更新",
@@ -538,8 +538,8 @@
   },
   "POST /api/run-history/delete": {
    "area": "実行・キュー・予定",
-   "to": "python",
-   "note": ""
+   "to": "core",
+   "note": "2.24.0（edits.rs）。id の並び・日付・日付と対象で消す。全角や上付きの数字（isdigit が真で int が落ちる）は Python へ回す"
   },
   "POST /api/run-split-state": {
    "area": "RNEの調査・分割",
