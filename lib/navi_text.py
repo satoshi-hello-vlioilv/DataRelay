@@ -155,6 +155,8 @@ def _to_number(text,scale,integer_only):
  if not s:return ''
  sign=''
  if s[-1] in '+-':sign='-' if s[-1]=='-' else '';s=s[:-1].strip()
+ # 符号だけ（「-」「+,」など）は数ではない。以前は次の s[0] で落ち、下読みも実行も止まっていた（2.26.0）
+ if not s:return None
  if s[:1] in '+-':
   sign='-' if s[0]=='-' else sign;s=s[1:]
  if not s:return None

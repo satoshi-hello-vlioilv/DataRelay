@@ -165,6 +165,15 @@ pub fn call(name: &str, a: &Value) -> Result<Value, String> {
             Some(Err(())) => Value::Null,
             None => json!("pass"),
         },
+        // bytes.decode(enc, errors='replace')。hex は16進の並び。Python と同じに読めると言えない文字コードは "pass"
+        "decode" => {
+            let hex = s(a, "hex");
+            let b: Vec<u8> = (0..hex.len() / 2).filter_map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).ok()).collect();
+            match crate::textread::enc_of(s(a, "enc")) {
+                Some(e) => json!(crate::textread::decode(e, &b).0),
+                None => json!("pass"),
+            }
+        }
         "last_run_info" => passed(crate::schedule::last_run_info(a["run"].as_object()).map(Value::Object)),
         "seconds_in" => json!(crate::schedule::seconds_in(s(a, "detail"))),
         _ => return Err(format!("知らない問い: {name}")),

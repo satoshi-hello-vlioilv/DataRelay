@@ -170,6 +170,12 @@
     w2 = await post('/api/run-history/delete', { date: '1999-01-01' });
     const rh = await w2.json();
     ok('移した API（ファイル名の試し表示・実施記録の削除）は Rust の中身が答える', r.status === 200 && by(r) === 'core' && /^日次_\d{8}\.csv$/.test(pf.filename) && pf.is_variable && pf.segments.length === 3 && w2.status === 200 && by(w2) === 'core' && rh.ok && rh.removed === 0, `${r.status} ${by(r)} ${pf.filename} / 削除 ${w2.status} ${by(w2)} ${rh.removed}件`);
+    // テキストの読み取り（2.26.0〜 Rust の中身）。アプリに入っている部品の一覧（config\\requirements.txt）を下読みする
+    r = await post('/api/text-preview', { path: '.\\config\\requirements.txt', layout: { encoding: 'utf-8', unit: 'char', columns: [{ name: '名前', start: 1, length: 5 }] }, lines: 3 });
+    const tp = await r.json();
+    w2 = await post('/api/text-sniff', { path: '.\\config\\requirements.txt', layout: { encoding: 'utf-8' } });
+    const ts = await w2.json();
+    ok('移した API（テキストの下読み・区切りの見当付け）は Rust の中身が答える', r.status === 200 && by(r) === 'core' && tp.ok && tp.rows.length >= 1 && tp.headers[0] === '名前' && w2.status === 200 && by(w2) === 'core' && ts.ok && ts.columns.length >= 1, `${r.status} ${by(r)} ${tp.rows && tp.rows.length}行 / 見当付け ${w2.status} ${by(w2)} ${ts.label}`);
     // 版を進めたので、画面にも読み直してもらう（古い版のままだと、画面の次の自動保存が断られて変更を落とす）
     if (typeof window.init === 'function') await window.init();
     r = await fetch('/api/text-layouts');
