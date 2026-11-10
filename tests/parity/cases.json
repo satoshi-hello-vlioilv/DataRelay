@@ -19,7 +19,9 @@
   "DELETE /api/text-layouts/<layout_id>": "tests/test_rust_writes.py（同じ写しを2つ用意し、同じ書き込みの手順を Python と Rust に流して、答え・写しの中身・書き戻したマスターを比べる）",
   "POST /api/join-recipes": "tests/test_rust_writes.py（同じ写しを2つ用意し、同じ書き込みの手順を Python と Rust に流して、答え・写しの中身・書き戻したマスターを比べる）",
   "DELETE /api/join-recipes/<recipe_id>": "tests/test_rust_writes.py（同じ写しを2つ用意し、同じ書き込みの手順を Python と Rust に流して、答え・写しの中身・書き戻したマスターを比べる）",
-  "DELETE /api/m-queries/<query_id>": "tests/test_rust_writes.py（同じ写しを2つ用意し、同じ書き込みの手順を Python と Rust に流して、答え・写しの中身・書き戻したマスターを比べる）"
+  "DELETE /api/m-queries/<query_id>": "tests/test_rust_writes.py（同じ写しを2つ用意し、同じ書き込みの手順を Python と Rust に流して、答え・写しの中身・書き戻したマスターを比べる）",
+  "POST /api/run-history/delete": "tests/test_rust_writes.py（同じ写しを2つ用意し、同じ問い合わせを Python と Rust に流して、答えと写しの中身を比べる）",
+  "POST /api/preview-filename": "tests/test_rust_writes.py（同じ写しを2つ用意し、同じ問い合わせを Python と Rust に流して、答えと写しの中身を比べる）"
  },
  "cases": [
   {

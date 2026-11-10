@@ -998,6 +998,83 @@ pub fn add_previews(core: &Core, cfg: &mut Map<String, Value>, now: NaiveDateTim
     cfg.insert("setting_defaults".into(), Value::Object(setting_defaults()));
 }
 
+/// ファイルの更新時刻・作成時刻（Python の st_mtime・st_ctime。Windows の st_ctime は作った時刻、ほかは属性を変えた時刻）を、
+/// この PC の時刻で '%Y-%m-%d %H:%M' にする（datetime.fromtimestamp）。
+fn file_times(m: &std::fs::Metadata) -> Option<(String, String)> {
+    let local = |t: std::time::SystemTime| chrono::DateTime::<chrono::Local>::from(t).format("%Y-%m-%d %H:%M").to_string();
+    let mtime = m.modified().ok()?;
+    #[cfg(windows)]
+    let ctime = m.created().unwrap_or(mtime);
+    #[cfg(unix)]
+    let ctime = {
+        use std::os::unix::fs::MetadataExt;
+        let secs = u64::try_from(m.ctime()).ok()?;
+        std::time::UNIX_EPOCH + std::time::Duration::new(secs, u32::try_from(m.ctime_nsec()).unwrap_or(0))
+    };
+    #[cfg(not(any(windows, unix)))]
+    let ctime = mtime;
+    Some((local(mtime), local(ctime)))
+}
+
+/// POST /api/preview-filename … 編集中のファイル名の型から、いま作られるファイル名と、変数の部分の色分け（segments）を返す。
+pub(crate) fn post_preview_filename(core: &Core, ask: &crate::http::Ask, _: &[String]) -> Reply {
+    answer_preview_filename(core, ask).unwrap_or_else(|_| Reply::pass())
+}
+
+fn answer_preview_filename(core: &Core, ask: &crate::http::Ask) -> R<Reply> {
+    // request.get_json(force=True) or {}（辞書でない真の値は .get で落ちる）
+    let data = match crate::writer::body_json(ask, true)? {
+        Some(Value::Object(m)) => m,
+        Some(v) if pyish::truthy(&v) => return Err(Pass),
+        _ => Map::new(),
+    };
+    let c = read(core)?;
+    let now = core.now();
+    // data.get(k) or 既定
+    let or = |k: &str, default: &str| data.get(k).filter(|v| pyish::truthy(v)).cloned().unwrap_or_else(|| json!(default));
+    let mut job = Map::new();
+    for (k, from, default) in [
+        ("rne", "rne", ""),
+        ("rne_path", "rne_path", ""),
+        ("name", "name", ""),
+        ("table", "table", ""),
+        ("output_format", "format", "sqlite3"),
+        ("output_file", "output_file", ""),
+    ] {
+        job.insert(k.into(), or(from, default));
+    }
+    job.insert("naming_mode".into(), json!("template"));
+    job.insert("output_pattern".into(), or("pattern", ""));
+    let rp = rne_path(core, &job, &c).ok_or(Pass)?;
+    let (mut found, mut mtime, mut ctime) = (false, Value::Null, Value::Null);
+    if let Ok(m) = std::fs::metadata(&rp) {
+        if m.is_file() {
+            found = true;
+            if let Some((a, b)) = file_times(&m) {
+                (mtime, ctime) = (json!(a), json!(b));
+            }
+        }
+    }
+    // 名前を作れない型（Python は理由の字を返す）は、同じ字を作れないので Python へ回す
+    let filename = naming::resolve_output_filename(&job, Some(&rp), now).map_err(|_| Pass)?;
+    let pattern = txt(job.get("output_pattern"));
+    let is_var = naming::has_template_variables(&pattern);
+    let mut segments = Vec::new();
+    if is_var {
+        segments = naming::render_filename_segments(&pattern, &Tokens::new(&job, Some(&rp), now)).map_err(|_| Pass)?;
+        if !segments.is_empty() {
+            let fmt = naming::normalize_output_format(job.get("output_format"), job.get("output_file"));
+            segments.push((naming::output_extension(fmt).to_string(), false));
+        }
+    }
+    let segments: Vec<Value> = segments.into_iter().map(|(t, v)| json!({"text": t, "var": v})).collect();
+    Ok(Reply::json(
+        200,
+        &json!({"ok": true, "filename": filename, "is_variable": is_var, "segments": segments, "rne_found": found,
+                "rne_mtime": mtime, "rne_ctime": ctime, "now": now.format("%Y-%m-%d %H:%M:%S").to_string()}),
+    ))
+}
+
 // ==== いま Rust が答えてよいか ==============================================
 
 /// 設定の版（app.settings_revision。読めなければ 0）。

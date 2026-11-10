@@ -45,6 +45,8 @@ pub const ROUTES: &[(&str, &str, Handler)] = &[
     ("POST", "/api/join-recipes", masters::post_join_recipe),
     ("DELETE", "/api/join-recipes/<recipe_id>", masters::delete_join_recipe),
     ("DELETE", "/api/m-queries/<query_id>", masters::delete_m_query),
+    ("POST", "/api/run-history/delete", edits::post_run_history_delete),
+    ("POST", "/api/preview-filename", config::post_preview_filename),
 ];
 
 /// 中身（Rust の側）。アプリの場所から、置き場・データの基準を Python と同じ決まりで知る。
