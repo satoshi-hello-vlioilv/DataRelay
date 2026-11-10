@@ -330,29 +330,64 @@ fn jobs(cfg: &Map<String, Value>) -> &[Value] {
 
 // ==== 一時停止と、前回の実行 ================================================
 
-const PAUSE_KEY: &str = "__pause__";
+pub(crate) const PAUSE_KEY: &str = "__pause__";
 
-/// datetime.fromisoformat のうち、一時停止の「再開する時刻」に書く形（YYYY-MM-DD・…THH:MM・…THH:MM:SS(.f)）。
-/// ほかの形（時差付きなど）は Python と同じに読めると言えないので None（呼ぶ側が Pass にする）。
-fn from_iso(s: &str) -> Option<Result<NaiveDateTime, ()>> {
-    // YYYY-MM-DD と、区切りの無い YYYYMMDD（Python 3.11 から読める）
-    for (f, n) in [("%Y-%m-%d", 10), ("%Y%m%d", 8)] {
-        if let Ok(d) = NaiveDate::parse_from_str(s, f) {
-            if s.len() == n {
-                return Some(Ok(d.and_hms_opt(0, 0, 0)?));
+/// datetime.fromisoformat のうち、一時停止の「再開する時刻」に書く形（YYYY-MM-DD・YYYYMMDD・…[T ]HH:MM・…:SS・…:SS.fff(fff)）。
+/// 形は字の並びで確かめる（chrono は 1 桁の月や 60 秒も読むので、形を見ずに任せると Python と食い違う）。
+/// 形が合って値が暦に無い（13 月・25 時など）物は Python も ValueError（Err）。
+/// ほかの形（時差付き・時だけなど）は Python と同じに読めると言えないので None（呼ぶ側が Pass にする）。
+pub(crate) fn from_iso(s: &str) -> Option<Result<NaiveDateTime, ()>> {
+    let b = s.as_bytes();
+    let digits = |r: std::ops::Range<usize>| b.get(r).is_some_and(|x| x.iter().all(u8::is_ascii_digit));
+    let num = |r: std::ops::Range<usize>| s[r].parse::<u32>().unwrap_or(u32::MAX);
+    let date = if b.len() >= 10 && digits(0..4) && b[4] == b'-' && digits(5..7) && b[7] == b'-' && digits(8..10) {
+        Some((num(0..4), num(5..7), num(8..10), 10))
+    } else if b.len() == 8 && digits(0..8) {
+        Some((num(0..4), num(4..6), num(6..8), 8))
+    } else {
+        None
+    };
+    let Some((y, mo, d, rest)) = date else {
+        // 年月日の形ですらない字は、Python も ValueError（読めない）
+        if !s.bytes().take(4).all(|b| b.is_ascii_digit()) || s.len() < 4 {
+            return Some(Err(()));
+        }
+        return None;
+    };
+    let (mut hh, mut mm, mut ss, mut ns) = (0, 0, 0, 0);
+    if b.len() > rest {
+        let t = &b[rest..];
+        let ok = |n: usize| {
+            (t[0] == b'T' || t[0] == b' ')
+                && digits(rest + 1..rest + 3)
+                && t.get(3) == Some(&b':')
+                && digits(rest + 4..rest + 6)
+                && t.len() >= n
+        };
+        if rest != 10 || !ok(6) {
+            return None;
+        }
+        hh = num(rest + 1..rest + 3);
+        mm = num(rest + 4..rest + 6);
+        match t.len() {
+            6 => {}
+            9 | 13 | 16 if t[6] == b':' && digits(rest + 7..rest + 9) => {
+                ss = num(rest + 7..rest + 9);
+                if t.len() > 9 {
+                    if t[9] != b'.' || !digits(rest + 10..b.len()) {
+                        return None;
+                    }
+                    let frac = &s[rest + 10..];
+                    ns = frac.parse::<u32>().ok()? * if frac.len() == 3 { 1_000_000 } else { 1_000 };
+                }
             }
+            _ => return None,
         }
     }
-    for f in ["%Y-%m-%dT%H:%M", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%S%.f", "%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S"] {
-        if let Ok(t) = NaiveDateTime::parse_from_str(s, f) {
-            return Some(Ok(t));
-        }
-    }
-    // 年月日の形ですらない字は、Python も ValueError（読めない）
-    if !s.bytes().take(4).all(|b| b.is_ascii_digit()) || s.len() < 4 {
-        return Some(Err(()));
-    }
-    None
+    let v = NaiveDate::from_ymd_opt(i32::try_from(y).ok()?, mo, d)
+        .filter(|_| y >= 1 && hh < 24 && mm < 60 && ss < 60)
+        .and_then(|d| d.and_hms_nano_opt(hh, mm, ss, ns));
+    Some(v.ok_or(()))
 }
 
 /// schedule_pause（いまの一時停止。再開する時刻を過ぎていれば paused=false・expired=true）。
@@ -449,7 +484,7 @@ fn job_runs(c: &Connection) -> R<Vec<(Value, Map<String, Value>)>> {
     Ok(out)
 }
 
-fn scheduler_state(c: &Connection) -> R<Map<String, Value>> {
+pub(crate) fn scheduler_state(c: &Connection) -> R<Map<String, Value>> {
     let mut m = Map::new();
     for r in config::rows(c, "SELECT * FROM scheduler_state", &[])? {
         let Some(Value::String(k)) = r.get("state_key") else { return Err(Pass) };
@@ -475,11 +510,16 @@ fn answer_preview(core: &Core) -> R<Reply> {
         item.extend(last_run_info(run)?);
         items.push(Value::Object(item));
     }
-    let mut pause = schedule_pause(&state, now)?;
-    let live: Vec<&Value> = jobs(&cfg).iter().filter(|j| enabled(j, false) && schedules(j).iter().any(|r| enabled(r, false))).collect();
+    Ok(Reply::json(200, &json!({"items": items, "pause": pause_view(&cfg, &state, now)?})))
+}
+
+/// schedule_pause_view（一時停止の状態と、止まっている物の数＝有効な対象の有効なルール）。
+pub fn pause_view(cfg: &Map<String, Value>, state: &Map<String, Value>, now: NaiveDateTime) -> R<Map<String, Value>> {
+    let mut pause = schedule_pause(state, now)?;
+    let live: Vec<&Value> = jobs(cfg).iter().filter(|j| enabled(j, false) && schedules(j).iter().any(|r| enabled(r, false))).collect();
     pause.insert("jobs".into(), json!(live.len()));
     pause.insert("rules".into(), json!(live.iter().map(|j| schedules(j).iter().filter(|r| enabled(r, false)).count()).sum::<usize>()));
-    Ok(Reply::json(200, &json!({"items": items, "pause": pause})))
+    Ok(pause)
 }
 
 /// カレンダーの一定間隔の要約の1日分（日付, 回数の合計, (対象とルールの鍵, 内訳) の並び）。

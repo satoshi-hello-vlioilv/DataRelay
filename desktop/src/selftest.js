@@ -142,6 +142,28 @@
     const sv = await r.json();
     const r2 = await fetch('/api/config', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cfg) });
     ok('移した API（設定の保存）は Rust の中身が答える（古い版は断る）', r.status === 200 && by(r) === 'core' && sv.ok && sv.settings_revision === cfg.settings_revision + 1 && r2.status === 409 && by(r2) === 'core', `${r.status} ${by(r)} 版${cfg.settings_revision}→${sv.settings_revision} / 古い版 ${r2.status}`);
+    // 画面からの書き込み（2.23.0〜 Rust の中身）。どれも元へ戻す（列の並びは今のまま保存し直す・止めたら戻す・作ったマスタは消す）
+    const post = (path, body) => fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    r = await post('/api/settings/columns', { layout: (cfg.settings && cfg.settings.column_layout) || {} });
+    const col = await r.json();
+    ok('移した API（一覧の列の並びの保存）は Rust の中身が答える', r.status === 200 && by(r) === 'core' && col.ok && Array.isArray(col.column_layout.order), `${r.status} ${by(r)}`);
+    r = await post('/api/schedule-pause', { paused: true });
+    const ps = await r.json();
+    let w2 = await post('/api/schedule-pause', { paused: false });
+    const pr = await w2.json();
+    ok('移した API（自動実行の一時停止と再開）は Rust の中身が答える', r.status === 200 && by(r) === 'core' && ps.pause.paused === true && w2.status === 200 && by(w2) === 'core' && pr.pause.paused === false, `${r.status} ${by(r)} 止める=${ps.pause && ps.pause.paused} / 戻す=${pr.pause && pr.pause.paused}`);
+    r = await post('/api/text-layouts', { name: '自己診断の仮', columns: [{ name: 'a', start: 1, length: 3 }] });
+    const nl = await r.json();
+    w2 = await fetch('/api/text-layouts/' + encodeURIComponent((nl.layout && nl.layout.id) || 'x'), { method: 'DELETE' });
+    const dl0 = await w2.json();
+    ok('移した API（読取マスタの保存と削除）は Rust の中身が答える', r.status === 200 && by(r) === 'core' && nl.ok && nl.layout.shape === '1列 / 3バイト' && w2.status === 200 && by(w2) === 'core' && dl0.ok, `${r.status} ${by(r)} ${nl.layout && nl.layout.shape} / 削除 ${w2.status} ${by(w2)}`);
+    r = await post('/api/join-recipes', { name: '自己診断の仮', sources: [{ path: 'a.csv' }, { path: 'b.csv' }], joins: [{ keys: [{ left: 'k', right: 'k' }] }] });
+    const nr = await r.json();
+    w2 = await fetch('/api/join-recipes/' + encodeURIComponent((nr.recipe && nr.recipe.id) || 'x'), { method: 'DELETE' });
+    const dr = await w2.json();
+    const r3 = await fetch('/api/m-queries/' + encodeURIComponent('自己診断の無いクエリ'), { method: 'DELETE' });
+    const dq = await r3.json();
+    ok('移した API（結合マスタの保存と削除・クエリの削除）は Rust の中身が答える', r.status === 200 && by(r) === 'core' && nr.ok && w2.status === 200 && by(w2) === 'core' && dr.ok && r3.status === 200 && by(r3) === 'core' && dq.ok === false, `${r.status} ${by(r)} / 削除 ${w2.status} ${by(w2)} / クエリ ${r3.status} ${by(r3)}`);
     // 版を進めたので、画面にも読み直してもらう（古い版のままだと、画面の次の自動保存が断られて変更を落とす）
     if (typeof window.init === 'function') await window.init();
     r = await fetch('/api/text-layouts');
