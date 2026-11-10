@@ -21,7 +21,9 @@
   "DELETE /api/join-recipes/<recipe_id>": "tests/test_rust_writes.py（同じ写しを2つ用意し、同じ書き込みの手順を Python と Rust に流して、答え・写しの中身・書き戻したマスターを比べる）",
   "DELETE /api/m-queries/<query_id>": "tests/test_rust_writes.py（同じ写しを2つ用意し、同じ書き込みの手順を Python と Rust に流して、答え・写しの中身・書き戻したマスターを比べる）",
   "POST /api/run-history/delete": "tests/test_rust_writes.py（同じ写しを2つ用意し、同じ問い合わせを Python と Rust に流して、答えと写しの中身を比べる）",
-  "POST /api/preview-filename": "tests/test_rust_writes.py（同じ写しを2つ用意し、同じ問い合わせを Python と Rust に流して、答えと写しの中身を比べる）"
+  "POST /api/preview-filename": "tests/test_rust_writes.py（同じ写しを2つ用意し、同じ問い合わせを Python と Rust に流して、答えと写しの中身を比べる）",
+  "POST /api/text-preview": "tests/test_rust_text.py（業務のファイルで起きることを入れた見本と、乱数の読取マスタ・ファイル 300 組で Python と比べる。文字コードは全部の2バイトの組まで）",
+  "POST /api/text-sniff": "tests/test_rust_text.py（業務のファイルで起きることを入れた見本と、乱数の読取マスタ・ファイル 300 組で Python と比べる。文字コードは全部の2バイトの組まで）"
  },
  "cases": [
   {

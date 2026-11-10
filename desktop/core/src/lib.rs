@@ -24,6 +24,7 @@ pub mod routes;
 pub mod schedule;
 pub mod secret;
 pub mod settings;
+pub mod textread;
 pub mod version;
 pub mod writer;
 

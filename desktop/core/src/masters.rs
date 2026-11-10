@@ -112,7 +112,7 @@ pub fn layout_width(l: &Value) -> i64 {
 }
 
 /// delimiter_label（区切りの呼び名。文字を指定・正規表現は中身まで）。
-fn delimiter_label(l: &Value) -> String {
+pub(crate) fn delimiter_label(l: &Value) -> String {
     let d = l.get("delimiter").and_then(Value::as_str).unwrap_or("comma");
     let text = l.get("delimiter_text").and_then(Value::as_str).unwrap_or("");
     match d {
@@ -356,7 +356,7 @@ pub(crate) fn get_m_queries_export(core: &Core, ask: &Ask, _: &[String]) -> Repl
 // クエリの保存は M の式を読んで確かめる（navi_m）ので、Power Query の段まで Python が受け持つ。
 
 /// navi_text._stamp_plan の役割だけ（YYYY/YY/MM/DD/HH/MI(NN)/SS を順に拾う。ほかの字は区切り）。→ (役割, 桁数)。
-fn stamp_plan(pattern: &str) -> Vec<(Option<char>, usize)> {
+pub(crate) fn stamp_plan(pattern: &str) -> Vec<(Option<char>, usize)> {
     const TOKENS: [(&str, char); 8] =
         [("YYYY", 'Y'), ("YY", 'y'), ("MM", 'M'), ("DD", 'D'), ("HH", 'h'), ("MI", 'm'), ("NN", 'm'), ("SS", 's')];
     let p: Vec<char> = pattern.chars().collect();
@@ -413,7 +413,7 @@ fn s(v: &Value) -> &str {
 }
 
 /// navi_text.validate_layout（整えた読取マスタを、このままでは使えない理由）。正規表現の区切りは Python の re で確かめるので Pass。
-fn validate_layout(l: &Value) -> R<Vec<String>> {
+pub(crate) fn validate_layout(l: &Value) -> R<Vec<String>> {
     let mut bad = Vec::new();
     let cols = columns(l);
     if s(&l["name"]).is_empty() {
