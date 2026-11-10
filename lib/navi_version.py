@@ -4,5 +4,5 @@
 changelog.toml（navi_changelog.py が読む）にある ―― 3000行余りの読みものなので、それを必要としない経路
 （抽出ワーカー）が読み込まずに済むように分けてある。
 """
-APP_VERSION='2.24.0'; APP_VERSION_TITLE='カレンダーの実施記録の削除と、ファイル名の試し表示を Rust の中身が受け持つようにした'; APP_RELEASED_AT='2026-11-10'
+APP_VERSION='2.25.0'; APP_VERSION_TITLE='アイコンと起動画面を、アプリの働き（データを表から整えて送り出す）から形を起こした製品の見た目にした'; APP_RELEASED_AT='2026-11-10'
 BUILD_VERSION=f'{APP_VERSION}-web'
