@@ -27,6 +27,7 @@ pub mod schedule;
 pub mod secret;
 pub mod settings;
 pub mod textread;
+pub mod variants;
 pub mod version;
 pub mod viewer;
 pub mod writer;

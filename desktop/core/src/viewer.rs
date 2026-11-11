@@ -5,12 +5,13 @@
 //!
 //! CSV は CPython の _csv.c（excel の決まり: 区切り , か \t・囲み " ・"" は " ・strict でない）と同じ順で読む。
 //! 文字コードは utf-8-sig → cp932 → utf-8 の順に、読み切れた物を使う（textread.rs と同じ読み方）。
-//! EXCEL・ACCESS、値ごとに分けて出す対象、1 欄が 131072 字を超える CSV、SQLite のバイト列・数でない小数は Python へ回す。
+//! 値ごとに分けて出す対象は、値ごとのファイルを並べる（variants.rs。2.29.0〜）。
+//! EXCEL・ACCESS、1 欄が 131072 字を超える CSV、SQLite のバイト列・数でない小数は Python へ回す。
 use crate::config::{self, Pass};
 use crate::http::{Ask, Reply};
 use crate::localcopy::{self, CopyError};
 use crate::textread::{self, Enc};
-use crate::{joinplan, naming, paths, pyish, routes::Core, schedule};
+use crate::{joinplan, naming, paths, pyish, routes::Core, schedule, variants};
 use serde_json::{json, Map, Value};
 
 type R<T> = Result<T, Pass>;
@@ -264,13 +265,6 @@ fn readable_format(job: &Map<String, Value>, name: &str) -> Option<&'static str>
     }
 }
 
-/// navi_variants.active（値ごとに分けて出すか）。
-fn variants_active(job: &Map<String, Value>) -> R<bool> {
-    let v = config::normalize_variants(job.get("variants").unwrap_or(&Value::Null))?;
-    let has_values = v["values"].as_array().is_some_and(|a| !a.is_empty());
-    Ok(v["enabled"] == json!(true) && pyish::truthy(&v["item"]) && (has_values || v["scope"] == json!("all")))
-}
-
 fn jobs(cfg: &Map<String, Value>) -> &[Value] {
     cfg.get("jobs").and_then(Value::as_array).map(Vec::as_slice).unwrap_or(&[])
 }
@@ -292,13 +286,30 @@ fn answer_jobs(core: &Core) -> R<Reply> {
     let mut items = Vec::new();
     for j in jobs(&c) {
         let Value::Object(j) = j else { return Err(Pass) };
-        if variants_active(j)? {
-            return Err(Pass); // 値ごとのファイルの道（variant_jobs）は、まだ Python が受け持つ
-        }
-        let path = joinplan::viewer_output_path(core, &b, j, &c, &runs);
+        let (path, files) = if variants::active(j)? {
+            let files = variants::viewer_files(core, &b, j, &c, &runs)?;
+            if files.iter().any(|x| x.path.is_empty()) {
+                return Err(Pass); // Path('') は今いるフォルダー（Python と同じ時刻を作れない）
+            }
+            let path = match files.first() {
+                Some(x) => x.path.clone(),
+                None => joinplan::viewer_output_path(core, &b, j, &c, &runs),
+            };
+            let list: Vec<Value> = files
+                .iter()
+                .map(|x| {
+                    json!({"value": x.value, "file": paths::py_name(&x.path), "exists": is_file(&x.path), "rows": x.rows,
+                                "modified": mtime_text(&x.path)})
+                })
+                .collect();
+            (path, Some((files.iter().any(|x| is_file(&x.path)), list)))
+        } else {
+            (joinplan::viewer_output_path(core, &b, j, &c, &runs), None)
+        };
         let fmt = naming::normalize_output_format(j.get("output_format"), Some(&json!(paths::py_name(&path))));
+        let (exists, list) = files.unwrap_or_else(|| (is_file(&path), vec![]));
         items.push(json!({"id": j.get("id").cloned().unwrap_or(Value::Null), "name": j.get("name").cloned().unwrap_or(Value::Null),
-                          "format": fmt, "exists": is_file(&path), "files": []}));
+                          "format": fmt, "exists": exists, "files": list}));
     }
     Ok(Reply::json(200, &json!({"items": items})))
 }
@@ -308,19 +319,48 @@ pub(crate) fn get_viewer(core: &Core, ask: &Ask, params: &[String]) -> Reply {
     answer_viewer(core, ask, &params[0]).unwrap_or_else(|_| Reply::pass())
 }
 
-/// 問い合わせの ?value=（無ければ None。%XX を戻す）。
+/// 問い合わせの ?value=（無ければ None）。request.args.get('value') と同じく、& で区切り、+ を空白に、%XX を戻す（最初の値）。
+/// 戻した字が UTF-8 でなければ Pass（Python は置き換えの字を入れる）。
 fn query_value(ask: &Ask) -> R<Option<String>> {
     for kv in ask.query.split('&').filter(|x| !x.is_empty()) {
         let (k, v) = kv.split_once('=').unwrap_or((kv, ""));
-        if k == "value" {
-            // 字の戻し方（+ や %XX）の細かな違いを避け、ASCII の英数字と - _ . だけ Rust で読む
-            if v.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b)) {
-                return Ok(Some(v.to_string()));
-            }
-            return Err(Pass);
+        if unquote(k)? == "value" {
+            return unquote(v).map(Some);
         }
     }
     Ok(None)
+}
+
+/// urllib.parse.unquote_plus（%XX の形でない % はそのまま残す）。
+fn unquote(s: &str) -> R<String> {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        let hex = |c: u8| (c as char).to_digit(16);
+        match b[i] {
+            b'+' => out.push(b' '),
+            b'%' if i + 2 < b.len() => {
+                if let (Some(h), Some(l)) = (hex(b[i + 1]), hex(b[i + 2])) {
+                    out.push((h * 16 + l) as u8);
+                    i += 3;
+                    continue;
+                }
+                out.push(b'%');
+            }
+            c => out.push(c),
+        }
+        i += 1;
+    }
+    String::from_utf8(out).map_err(|_| Pass)
+}
+
+/// _mtime_text（'%m-%d %H:%M'。読めなければ空）。
+fn mtime_text(p: &str) -> String {
+    std::fs::metadata(p)
+        .and_then(|m| m.modified())
+        .map(|t| chrono::DateTime::<chrono::Local>::from(t).format("%m-%d %H:%M").to_string())
+        .unwrap_or_default()
 }
 
 fn not_found(msg: String) -> R<Reply> {
@@ -332,17 +372,31 @@ fn answer_viewer(core: &Core, ask: &Ask, job_id: &str) -> R<Reply> {
     let Some(Value::Object(job)) = jobs(&c).iter().find(|x| x.get("id").and_then(Value::as_str) == Some(job_id)) else {
         return not_found("対象が見つかりません".into());
     };
-    if variants_active(job)? {
-        return Err(Pass);
-    }
     let b = core.bases().ok_or(Pass)?;
-    let path = joinplan::viewer_output_path(core, &b, job, &c, &runs);
     let want = query_value(ask)?;
-    if let Some(w) = &want {
-        if !w.is_empty() {
+    let (value, path) = if variants::active(job)? {
+        let files = variants::viewer_files(core, &b, job, &c, &runs)?;
+        let one = match &want {
+            Some(w) => match files.iter().find(|x| &x.value == w) {
+                Some(x) => Some(x),
+                None => return not_found(format!("「{w}」は、この対象の値にありません")),
+            },
+            None => None,
+        };
+        if files.is_empty() {
+            return not_found("まだ値ごとのファイルを作っていません。実行すると、出てきた値ごとのファイルを開けます".into());
+        }
+        let one = one.or_else(|| files.iter().find(|x| is_file(&x.path))).unwrap_or(&files[0]);
+        if one.path.is_empty() {
+            return Err(Pass); // Path('') は今いるフォルダー
+        }
+        (one.value.clone(), one.path.clone())
+    } else {
+        if let Some(w) = want.as_deref().filter(|w| !w.is_empty()) {
             return not_found(format!("「{w}」は、この対象の値にありません"));
         }
-    }
+        (String::new(), joinplan::viewer_output_path(core, &b, job, &c, &runs))
+    };
     if !is_file(&path) {
         return not_found(format!("出力ファイルが見つかりません: {path}"));
     }
@@ -382,7 +436,7 @@ fn answer_viewer(core: &Core, ask: &Ask, job_id: &str) -> R<Reply> {
         .map_err(|_| Pass)?;
     Ok(Reply::json(
         200,
-        &json!({"ok": true, "name": name, "value": "", "format": d.fmt, "path": path, "modified": modified,
+        &json!({"ok": true, "name": name, "value": value, "format": d.fmt, "path": path, "modified": modified,
                 "headers": d.headers, "rows": rows, "total_rows": d.total, "preview_limit": rows.len(),
                 "truncated": d.total > rows.len(), "total_columns": n, "row_budget": keep, "row_budget_limited": limited}),
     ))

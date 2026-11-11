@@ -48,6 +48,10 @@ F={
  'has_template_variables':lambda a:app.has_template_variables(a['pattern']),
  'render_filename_template':lambda a:app.render_filename_template(a['template'],job=a.get('job'),rne_path=a.get('rne_path'),now=dt(a)),
  'render_filename_segments':lambda a:app.render_filename_segments(a['template'],job=a.get('job'),rne_path=a.get('rne_path'),now=dt(a)),
+ 'render_path_template':lambda a:app.render_path_template(a['template'],job=a.get('job'),rne_path=a.get('rne_path'),now=dt(a)),
+ 'variants_has_token':lambda a:navi_variants.has_token(a['text']),
+ 'variants_plan':lambda a:navi_variants.plan(a['job'],lambda t,v:app.render_filename_template(t,job={**a['job'],'_variant_value':v},now=dt(a)),a['base'],a['folder'],
+                                             lambda t,v:app.render_path_template(t,job={**a['job'],'_variant_value':v},now=dt(a)),a['values']),
  'py_name':lambda a:Path(a['value']).name,
  'py_name_nt':lambda a:PureWindowsPath(a['value']).name,
  'py_stem':lambda a:Path(a['value']).stem,
@@ -212,6 +216,17 @@ def cases(seed=20261102):
  for _ in range(400):
   add('render_filename_template',template=gen_template(r),job=r.choice(jobs),dt=r.choice(dts))
   add('render_filename_segments',template=gen_template(r),job=r.choice(jobs),dt=r.choice(dts))
+ pjobs=jobs+[{'_variant_value':v,'name':'n'} for v in ['..','.',' . ','a/b','x:..',' 東京 ','.a.','...','',' ']]
+ for _ in range(300):
+  add('render_path_template',template=r.choice(['D:\\出力\\','/srv/','',' ','..\\','{値}/','a/'])+gen_template(r)+r.choice(['','\\x','/y',' ']),job=r.choice(pjobs),dt=r.choice(dts))
+ for _ in range(80):add('variants_has_token',text=gen_template(r)+r.choice(['','{値:','{value}','{値 }','値']))
+ vals=['東京','大阪','TOKYO','tokyo','..','a/b','ab','AB',' ','x']
+ for _ in range(300):
+  v={'enabled':True,'item':'拠点','values':r.sample(vals,r.randint(0,4)),'pattern':r.choice(['','{値}','固定','{name}_{値:upper}','{date}','{値:lower}_{rne}']),
+     'folder':r.choice(['','D:\\{値}','/o/{値:upper}','固定','{値}{date}'])}
+  job={'name':r.choice(['受注','a b']),'naming_mode':r.choice(['template','fixed','TEMPLATE','']),'output_pattern':r.choice(['','{name}_{値}','{date}','{value:lower}x']),
+       'variants':v}
+  add('variants_plan',job=job,base=r.choice(['受注','a{name}','']),folder=r.choice(['','D:\\out']),values=r.choice([None,r.sample(vals,r.randint(0,4))]) or v['values'],dt=r.choice(dts))
  for v in ['','.','..','a','a.b','.a','a.','a.b.c','dir/','/','//x','a/b/c.d','C:','C:\\','C:x.y','c:/a/b.c','\\\\srv\\sh','\\\\srv\\sh\\f.g','a\\b.c','  ','x/./y','...']:
   for fn in ('py_name','py_name_nt','py_stem','py_suffix'):add(fn,value=v)
  home=str(Path.home())

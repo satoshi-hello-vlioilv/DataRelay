@@ -20,7 +20,7 @@ fn jobs(cfg: &Map<String, Value>) -> &[Value] {
 }
 
 /// resolve_path(job.get('output_folder') or cfg.get('default_output_folder'))。
-fn output_folder(b: &Bases, job: &Map<String, Value>, cfg: &Map<String, Value>) -> String {
+pub(crate) fn output_folder(b: &Bases, job: &Map<String, Value>, cfg: &Map<String, Value>) -> String {
     let v = job.get("output_folder").filter(|v| pyish::truthy(v)).or_else(|| cfg.get("default_output_folder"));
     match v {
         None | Some(Value::Null) => b.resolve_path(None, None),

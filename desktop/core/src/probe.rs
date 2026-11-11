@@ -131,6 +131,35 @@ pub fn call(name: &str, a: &Value) -> Result<Value, String> {
             };
             r.unwrap_or_else(|_| json!({"error": true}))
         }
+        "render_path_template" => {
+            let job = a["job"].as_object().cloned().unwrap_or_default();
+            let t = naming::Tokens::new(&job, opt(a, "rne_path"), when(a)?);
+            crate::variants::render_path_template(s(a, "template"), &t).map(|x| json!(x)).unwrap_or_else(|_| json!({"error": true}))
+        }
+        "variants_has_token" => json!(crate::variants::has_token(s(a, "text"))),
+        "variants_plan" => {
+            let job = a["job"].as_object().cloned().unwrap_or_default();
+            let v = match crate::config::normalize_variants(job.get("variants").unwrap_or(&Value::Null)) {
+                Ok(v) => v,
+                Err(_) => return Ok(json!({"pass": true})),
+            };
+            let at = when(a)?;
+            let tokens = |value: &str| {
+                let mut j = job.clone();
+                j.insert("_variant_value".into(), json!(value));
+                naming::Tokens::new(&j, None, at)
+            };
+            let values: Vec<String> = a["values"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|x| x.as_str().map(String::from).unwrap_or_else(|| crate::pyish::py_str(x)))
+                .collect();
+            match crate::variants::plan(&job, &v, tokens, s(a, "base"), s(a, "folder"), &values) {
+                Ok(xs) => json!(xs.into_iter().map(|x| json!({"value": x.value, "stem": x.stem, "folder": x.folder})).collect::<Vec<_>>()),
+                Err(_) => json!({"error": true}),
+            }
+        }
         "py_name" => json!(paths::py_name(s(a, "value"))),
         "py_name_nt" => json!(paths::py_name_nt(s(a, "value"))),
         "py_stem" => json!(paths::py_stem(s(a, "value"))),
