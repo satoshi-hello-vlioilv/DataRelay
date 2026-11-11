@@ -176,6 +176,14 @@
     w2 = await post('/api/text-sniff', { path: '.\\config\\requirements.txt', layout: { encoding: 'utf-8' } });
     const ts = await w2.json();
     ok('移した API（テキストの下読み・区切りの見当付け）は Rust の中身が答える', r.status === 200 && by(r) === 'core' && tp.ok && tp.rows.length >= 1 && tp.headers[0] === '名前' && w2.status === 200 && by(w2) === 'core' && ts.ok && ts.columns.length >= 1, `${r.status} ${by(r)} ${tp.rows && tp.rows.length}行 / 見当付け ${w2.status} ${by(w2)} ${ts.label}`);
+    // 結合マスタの組み立ての助け（2.27.0〜 Rust の中身）。候補・材料の持ち主・写しの片づけ
+    r = await fetch('/api/join-candidates');
+    const jc = await r.json();
+    w2 = await post('/api/join-order', { recipe: { sources: [{ path: 'a.csv' }, { path: 'b.csv' }] } });
+    const jo = await w2.json();
+    const r4 = await post('/api/join-cache/clear', {});
+    const jk = await r4.json();
+    ok('移した API（結合の候補・材料の持ち主・写しの片づけ）は Rust の中身が答える', r.status === 200 && by(r) === 'core' && Array.isArray(jc.items) && jc.cache && w2.status === 200 && by(w2) === 'core' && jo.ok && jo.sources.length === 2 && jo.wait && r4.status === 200 && by(r4) === 'core' && jk.ok, `${r.status} ${by(r)} 候補${(jc.items || []).length} / 持ち主 ${w2.status} ${by(w2)} / 片づけ ${r4.status} ${by(r4)}`);
     // 版を進めたので、画面にも読み直してもらう（古い版のままだと、画面の次の自動保存が断られて変更を落とす）
     if (typeof window.init === 'function') await window.init();
     r = await fetch('/api/text-layouts');

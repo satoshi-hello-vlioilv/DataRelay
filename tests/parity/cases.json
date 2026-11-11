@@ -23,7 +23,10 @@
   "POST /api/run-history/delete": "tests/test_rust_writes.py（同じ写しを2つ用意し、同じ問い合わせを Python と Rust に流して、答えと写しの中身を比べる）",
   "POST /api/preview-filename": "tests/test_rust_writes.py（同じ写しを2つ用意し、同じ問い合わせを Python と Rust に流して、答えと写しの中身を比べる）",
   "POST /api/text-preview": "tests/test_rust_text.py（業務のファイルで起きることを入れた見本と、乱数の読取マスタ・ファイル 300 組で Python と比べる。文字コードは全部の2バイトの組まで）",
-  "POST /api/text-sniff": "tests/test_rust_text.py（業務のファイルで起きることを入れた見本と、乱数の読取マスタ・ファイル 300 組で Python と比べる。文字コードは全部の2バイトの組まで）"
+  "POST /api/text-sniff": "tests/test_rust_text.py（業務のファイルで起きることを入れた見本と、乱数の読取マスタ・ファイル 300 組で Python と比べる。文字コードは全部の2バイトの組まで）",
+  "GET /api/join-candidates": "tests/test_rust_join.py（出力の決まりが分かれる対象と結合マスタの見本を Python 自身に作らせ、決まった日時で答えを比べる。写しの片づけは同じ写しを2つ用意して比べる）",
+  "POST /api/join-order": "tests/test_rust_join.py（出力の決まりが分かれる対象と結合マスタの見本を Python 自身に作らせ、決まった日時で答えを比べる。写しの片づけは同じ写しを2つ用意して比べる）",
+  "POST /api/join-cache/clear": "tests/test_rust_join.py（出力の決まりが分かれる対象と結合マスタの見本を Python 自身に作らせ、決まった日時で答えを比べる。写しの片づけは同じ写しを2つ用意して比べる）"
  },
  "cases": [
   {

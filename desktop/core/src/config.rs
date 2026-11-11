@@ -958,7 +958,7 @@ pub fn load(core: &Core, c: &Connection) -> R<Map<String, Value>> {
 }
 
 /// RNE の在りか（resolve_rne_path）。字でない値は Python と同じ字にしてから読む。
-fn rne_path(core: &Core, job: &Map<String, Value>, cfg: &Map<String, Value>) -> Option<String> {
+pub(crate) fn rne_path(core: &Core, job: &Map<String, Value>, cfg: &Map<String, Value>) -> Option<String> {
     let bases = core.bases()?;
     let v = job.get("rne_path").filter(|v| pyish::truthy(v)).or_else(|| job.get("rne"));
     let folder = naming::text_or(cfg.get("rne_folder"), r".\rne");
