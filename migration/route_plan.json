@@ -193,13 +193,13 @@
   },
   "POST /api/join-cache/clear": {
    "area": "読取マスタ・結合マスタ",
-   "to": "python",
-   "note": ""
+   "to": "core",
+   "note": "2.27.0（joinplan.rs）。ローカルの写し（work\\read-cache）を全部捨てる"
   },
   "GET /api/join-candidates": {
    "area": "読取マスタ・結合マスタ",
-   "to": "python",
-   "note": ""
+   "to": "core",
+   "note": "2.27.0（joinplan.rs）。対象の出力（前回のファイル・次に作る名前・追加の形式）と、結合マスタが使うファイルを、実物があって新しい順に。写しの置き場の様子も"
   },
   "POST /api/join-keys": {
    "area": "読取マスタ・結合マスタ",
@@ -208,8 +208,8 @@
   },
   "POST /api/join-order": {
    "area": "読取マスタ・結合マスタ",
-   "to": "python",
-   "note": ""
+   "to": "core",
+   "note": "2.27.0（joinplan.rs）。結合の材料を作る対象と、材料を待つ設定。待つ設定が int() で読めない値（Python は落ちる）は Python へ回す"
   },
   "POST /api/join-preview": {
    "area": "読取マスタ・結合マスタ",

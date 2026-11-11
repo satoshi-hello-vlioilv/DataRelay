@@ -468,7 +468,7 @@ pub fn last_run_info(run: Option<&Map<String, Value>>) -> R<Map<String, Value>> 
 }
 
 /// load_job_runs（対象ごとの最後の実行。鍵は job_id の値そのもの）。
-fn job_runs(c: &Connection) -> R<Vec<(Value, Map<String, Value>)>> {
+pub(crate) fn job_runs(c: &Connection) -> R<Vec<(Value, Map<String, Value>)>> {
     let mut out = Vec::new();
     for r in config::rows(c, "SELECT * FROM job_runs", &[])? {
         let mut run = Map::new();

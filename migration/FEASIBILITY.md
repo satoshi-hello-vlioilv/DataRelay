@@ -421,6 +421,7 @@ Windows は、ほかのプロセスが開いているファイルを置き換え
 | 3e | 画面からの書き込み（edits.rs・masters.rs）: 一覧の列の決め方・カレンダーからの1回実行ルール・自動実行の一時停止・読取マスタと結合マスタの保存・マスタ3種の削除。どれも writer::transact の1つの取引で「読む → 直す → 書く」を行う。Python でしか同じに決められない物（正規表現の区切り・FULL JOIN・全角の数字・時差付きの時刻）は Python へ回す。同じ写しを2つ用意して、同じ書き込みの手順を両方に流して比べる（tests/test_rust_writes.py） | 2.23.0 |
 | 3f | 画面の受け口のうち、移した部品で答えられる物: ファイル名の試し表示（POST /api/preview-filename。naming.rs。RNE の更新・作成時刻は OS ごとに Python と同じ物を読む）と、カレンダーの実施記録の削除（POST /api/run-history/delete）。tests/test_rust_writes.py で比べる | 2.24.0 |
 | 4a | テキストの読み取り（textread.rs）: 読取マスタの下読み（POST /api/text-preview）と区切りの見当付け（POST /api/text-sniff）。文字コードは Python の codecs と同じ字にする（cp932 は CPython の読み方で、全部の2バイトの組を比べる）。行の分け方（字で開く・バイトで開く）・囲み・型も Python と同じ。乱数の読取マスタとファイルで比べる（tests/test_rust_text.py）。比べている途中で、数の列が符号だけのとき Python が落ちる不具合を見つけて直した | 2.26.0 |
+| 4b | 結合マスタの組み立ての助けのうち、設定から答える物（joinplan.rs）: つなぐ相手の候補（GET /api/join-candidates）・材料を作る対象（POST /api/join-order）・写しの片づけ（POST /api/join-cache/clear）。前回の出力・次に作る名前・追加の形式・相対の出力先を Python と同じ決まりで引く（tests/test_rust_join.py）。ファイルの中身を読む受け口（join-source・join-keys・join-preview）は、データビュワーと同じ読み手を使うので出力の段で移す | 2.27.0 |
 | 3 の残り | クエリの保存（M の式を読むので段 6 と一緒に）、マスタの取り込み・出力でできること（EXCEL・pywin32 を使うので段 4 と一緒に）、RNE を読む受け口（期間の対象・RNE の形・値ごとの試し表示。RNE の読み方と一緒に段 5 で）、記録の消去と付け替え（実行中かを見るので実行と一緒に）、スケジューラーと実行の記録（実行の待ち行列・実行中かどうか・取り直しと一体なので、実行の段 4・5 と一緒に移す） | これから |
 | 3 | 画面の読み書き（対象・設定・カレンダー）とスケジューラー | これから |
 | 4 | テキスト読取・結合・並べ替え・出力（xlsx・SQLite・ACCDB） | これから |

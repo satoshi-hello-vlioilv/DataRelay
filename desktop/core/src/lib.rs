@@ -12,6 +12,7 @@ pub mod applog;
 pub mod config;
 pub mod edits;
 pub mod http;
+pub mod joinplan;
 mod login;
 pub mod masters;
 pub mod naming;
