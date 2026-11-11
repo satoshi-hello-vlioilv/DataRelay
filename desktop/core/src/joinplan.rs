@@ -33,7 +33,7 @@ fn is_file(p: &str) -> bool {
 }
 
 /// _viewer_output_path（前回の実行が作ったファイル。無ければ、いまの名前で作るファイル。どちらも無ければ前回の名前）。
-fn viewer_output_path(
+pub(crate) fn viewer_output_path(
     core: &Core,
     b: &Bases,
     job: &Map<String, Value>,

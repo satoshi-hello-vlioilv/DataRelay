@@ -174,6 +174,11 @@ pub fn call(name: &str, a: &Value) -> Result<Value, String> {
                 None => json!("pass"),
             }
         }
+        // list(csv.reader(io.StringIO(text, newline=''), delimiter=d))。Python と同じに読めると言えない物は "pass"
+        "csv" => match crate::viewer::read_csv(s(a, "text"), s(a, "delimiter").chars().next().unwrap_or(',')) {
+            Ok(rows) => json!(rows),
+            Err(_) => json!("pass"),
+        },
         "last_run_info" => passed(crate::schedule::last_run_info(a["run"].as_object()).map(Value::Object)),
         "seconds_in" => json!(crate::schedule::seconds_in(s(a, "detail"))),
         _ => return Err(format!("知らない問い: {name}")),

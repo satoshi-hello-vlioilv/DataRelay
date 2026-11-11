@@ -13,6 +13,7 @@ pub mod config;
 pub mod edits;
 pub mod http;
 pub mod joinplan;
+pub mod localcopy;
 mod login;
 pub mod masters;
 pub mod naming;
@@ -27,6 +28,7 @@ pub mod secret;
 pub mod settings;
 pub mod textread;
 pub mod version;
+pub mod viewer;
 pub mod writer;
 
 pub use http::{Ask, Reply};

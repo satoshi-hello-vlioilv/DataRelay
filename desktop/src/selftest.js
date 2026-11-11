@@ -184,6 +184,12 @@
     const r4 = await post('/api/join-cache/clear', {});
     const jk = await r4.json();
     ok('移した API（結合の候補・材料の持ち主・写しの片づけ）は Rust の中身が答える', r.status === 200 && by(r) === 'core' && Array.isArray(jc.items) && jc.cache && w2.status === 200 && by(w2) === 'core' && jo.ok && jo.sources.length === 2 && jo.wait && r4.status === 200 && by(r4) === 'core' && jk.ok, `${r.status} ${by(r)} 候補${(jc.items || []).length} / 持ち主 ${w2.status} ${by(w2)} / 片づけ ${r4.status} ${by(r4)}`);
+    // データビュワー（2.28.0〜 Rust の中身）。見本に対象が無いので、一覧と、無い対象の答えを見る
+    r = await fetch('/api/data-viewer/jobs');
+    const dv = await r.json();
+    w2 = await fetch('/api/data-viewer/' + encodeURIComponent('自己診断の無い対象'));
+    const dn = await w2.json();
+    ok('移した API（データビュワーの一覧・無い対象）は Rust の中身が答える', r.status === 200 && by(r) === 'core' && Array.isArray(dv.items) && w2.status === 404 && by(w2) === 'core' && dn.ok === false, `${r.status} ${by(r)} ${(dv.items || []).length}件 / 無い対象 ${w2.status} ${by(w2)}`);
     // 版を進めたので、画面にも読み直してもらう（古い版のままだと、画面の次の自動保存が断られて変更を落とす）
     if (typeof window.init === 'function') await window.init();
     r = await fetch('/api/text-layouts');

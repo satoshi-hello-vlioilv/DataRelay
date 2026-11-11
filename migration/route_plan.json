@@ -78,8 +78,8 @@
   },
   "GET /api/data-viewer/<job_id>": {
    "area": "データビュワー",
-   "to": "python",
-   "note": ""
+   "to": "core",
+   "note": "2.28.0（viewer.rs・localcopy.rs）。CSV・TXT・SQLite3 を、公開先を手元へ写してから読む（docs/SHARED_READ.md の R1〜R9。写しの名前は Python と同じ）。CSV は CPython の _csv.c と同じ順で読む。EXCEL・ACCESS・値ごとの対象・1欄 131072 字超・SQLite のバイト列は Python へ回す"
   },
   "POST /api/data-viewer/export-pivot": {
    "area": "データビュワー",
@@ -88,8 +88,8 @@
   },
   "GET /api/data-viewer/jobs": {
    "area": "データビュワー",
-   "to": "python",
-   "note": ""
+   "to": "core",
+   "note": "2.28.0（viewer.rs）。値ごとに分けて出す対象が1つでもあれば Python へ回す（値ごとのファイルの道 variant_jobs は、まだ Python）"
   },
   "GET /api/defaults": {
    "area": "配布と更新",
