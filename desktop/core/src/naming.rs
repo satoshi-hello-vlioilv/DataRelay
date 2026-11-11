@@ -564,7 +564,7 @@ fn created(_: &std::fs::Metadata) -> Option<std::time::SystemTime> {
 }
 
 /// 型の `{…}` を順に拾う（正規表現 `\{([^}]*)\}` と同じ当て方）。→ (始まり, 終わり, 中身) のバイト位置。
-fn braces(s: &str) -> Vec<(usize, usize, &str)> {
+pub(crate) fn braces(s: &str) -> Vec<(usize, usize, &str)> {
     let mut out = Vec::new();
     let mut pos = 0;
     while let Some(a) = s[pos..].find('{').map(|i| i + pos) {
@@ -579,7 +579,7 @@ fn is_illegal(c: char) -> bool {
     matches!(c, '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|')
 }
 
-fn drop_illegal(s: &str) -> String {
+pub(crate) fn drop_illegal(s: &str) -> String {
     s.chars().filter(|c| !is_illegal(*c)).collect()
 }
 
