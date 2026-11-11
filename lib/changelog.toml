@@ -15,6 +15,19 @@ summary = "SymNaviA.dll が公開する関数・定数・呼び出し順序の�
 source = "Navigator Visual Basic Interface API 9.6.0 / FUJITSU Interstage Navigator Server V9.4.1"
 
 [[release]]
+version = "2.28.0"
+date = "2026-11-11"
+title = "データビュワー（CSV・TXT・SQLite3）を Rust の中身が受け持つようにした"
+notes = [
+  """\
+    【Rust への作り直し・段 4c】<b>データビュワー</b>で CSV・TXT・SQLite3 の出力を開くところを Rust へ移しました。見た目と操作は変わりません。\
+    公開先は直接開かず、手元へ写してから読む決まり（公開している途中なら待つ・写す間に入れ替わったら使わない）もこれまでどおりです。""",
+  """\
+    【写しを使い回す】手元の写しの名前は Python と同じ決め方にしたので、同じ版の写しがあれば、どちらが開いても写し直しません。\
+    EXCEL・ACCESS の出力と、値ごとに分けて出す対象は、これまでどおり Python が開きます。""",
+]
+
+[[release]]
 version = "2.27.0"
 date = "2026-11-11"
 title = "結合マスタの組み立てを助ける受け口（つなぐ相手の候補・材料を作る対象・写しの片づけ）を Rust の中身が受け持つようにした"

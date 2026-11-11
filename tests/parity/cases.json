@@ -26,7 +26,9 @@
   "POST /api/text-sniff": "tests/test_rust_text.py（業務のファイルで起きることを入れた見本と、乱数の読取マスタ・ファイル 300 組で Python と比べる。文字コードは全部の2バイトの組まで）",
   "GET /api/join-candidates": "tests/test_rust_join.py（出力の決まりが分かれる対象と結合マスタの見本を Python 自身に作らせ、決まった日時で答えを比べる。写しの片づけは同じ写しを2つ用意して比べる）",
   "POST /api/join-order": "tests/test_rust_join.py（出力の決まりが分かれる対象と結合マスタの見本を Python 自身に作らせ、決まった日時で答えを比べる。写しの片づけは同じ写しを2つ用意して比べる）",
-  "POST /api/join-cache/clear": "tests/test_rust_join.py（出力の決まりが分かれる対象と結合マスタの見本を Python 自身に作らせ、決まった日時で答えを比べる。写しの片づけは同じ写しを2つ用意して比べる）"
+  "POST /api/join-cache/clear": "tests/test_rust_join.py（出力の決まりが分かれる対象と結合マスタの見本を Python 自身に作らせ、決まった日時で答えを比べる。写しの片づけは同じ写しを2つ用意して比べる）",
+  "GET /api/data-viewer/jobs": "tests/test_rust_viewer.py（業務の出力の見本で、同じ写しを2つ用意して答えと手元の写しの名前を比べる。CSV の読み方は乱数の字で csv.reader と比べる）",
+  "GET /api/data-viewer/<job_id>": "tests/test_rust_viewer.py（業務の出力の見本で、同じ写しを2つ用意して答えと手元の写しの名前を比べる。CSV の読み方は乱数の字で csv.reader と比べる）"
  },
  "cases": [
   {

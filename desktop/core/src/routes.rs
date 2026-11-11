@@ -5,7 +5,7 @@
 
 use crate::http::{Ask, Reply};
 use crate::paths::{self, Bases};
-use crate::{applog, config, edits, joinplan, login, masters, period, places, schedule, textread, version, writer};
+use crate::{applog, config, edits, joinplan, login, masters, period, places, schedule, textread, version, viewer, writer};
 use chrono::{Datelike, Local, NaiveDateTime};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
@@ -52,6 +52,9 @@ pub const ROUTES: &[(&str, &str, Handler)] = &[
     ("GET", "/api/join-candidates", joinplan::get_candidates),
     ("POST", "/api/join-order", joinplan::post_order),
     ("POST", "/api/join-cache/clear", joinplan::post_cache_clear),
+    // jobs を先に（Flask は決まった道を <job_id> より先に当てる。こちらは上から順に当てる）
+    ("GET", "/api/data-viewer/jobs", viewer::get_jobs),
+    ("GET", "/api/data-viewer/<job_id>", viewer::get_viewer),
 ];
 
 /// 中身（Rust の側）。アプリの場所から、置き場・データの基準を Python と同じ決まりで知る。
@@ -123,16 +126,16 @@ impl Core {
     /// アプリの場所を知らない中身（試験）は、場所を使うルートを答えない。
     pub fn handle(&self, ask: &Ask) -> Option<Reply> {
         let method = if ask.method == "HEAD" { "GET" } else { ask.method };
-        ROUTES.iter().find_map(|(m, pattern, f)| {
-            if *m != method {
-                return None;
-            }
-            let params = match_path(pattern, ask.path)?;
-            if self.program_root.is_none() && !matches!(*pattern, "/api/version" | "/api/period-preview") {
-                return None;
-            }
-            Some(f(self, ask, &params)).filter(|r| r.status != 0)
-        })
+        // 最初に当たったルートだけが答える（Flask と同じ）。そのルートが Python へ回すと決めたら、表の残りは見ない
+        // （/api/data-viewer/jobs を回したあとに /api/data-viewer/<job_id> が「jobs」という対象として受けないように）
+        let (pattern, f, params) = ROUTES
+            .iter()
+            .filter(|(m, _, _)| *m == method)
+            .find_map(|(_, pattern, f)| Some((*pattern, f, match_path(pattern, ask.path)?)))?;
+        if self.program_root.is_none() && !matches!(pattern, "/api/version" | "/api/period-preview") {
+            return None;
+        }
+        Some(f(self, ask, &params)).filter(|r| r.status != 0)
     }
 
     /// 設定のマスターの版。前に読んだときから更新時刻も大きさも変わっていなければ、控えを返す。
@@ -245,6 +248,15 @@ mod tests {
         assert!(c.handle(&ask("GET", "/api/config", b"")).is_none(), "アプリの場所を知らない中身は設定を答えない");
         assert!(c.handle(&ask("POST", "/api/version", b"")).is_none(), "メソッドが違えば答えない");
         assert!(c.handle(&ask("HEAD", "/api/version", b"")).is_some());
+    }
+
+    #[test]
+    fn first_matching_route_decides() {
+        // 決まった道（jobs）が Python へ回しても、<job_id> の道が受け直さない
+        let c = Core::with_program(Path::new("/nonexistent-datarelay"));
+        assert!(c.handle(&ask("GET", "/api/data-viewer/jobs", b"")).is_none());
+        let first = ROUTES.iter().position(|(m, p, _)| *m == "GET" && match_path(p, "/api/data-viewer/jobs").is_some());
+        assert_eq!(first.map(|i| ROUTES[i].1), Some("/api/data-viewer/jobs"));
     }
 
     #[test]
