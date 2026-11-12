@@ -179,19 +179,19 @@ fn junk_row(cells: &[String]) -> bool {
 }
 
 /// 読み取りの答え（read_preview_data）: (形式, 見出し, 行, 件数, 切る前の列数)。
-struct Data {
-    fmt: &'static str,
-    headers: Vec<String>,
-    rows: Vec<Vec<String>>,
-    total: usize,
+pub(crate) struct Data {
+    pub(crate) fmt: &'static str,
+    pub(crate) headers: Vec<String>,
+    pub(crate) rows: Vec<Vec<String>>,
+    pub(crate) total: usize,
 }
 
 /// 読めない理由（画面へ出す文。Python の例外の文と同じ）。
-enum ReadFail {
+pub(crate) enum ReadFail {
     Message(String),
 }
 
-fn read_text_table(bytes: &[u8], fmt: &'static str, limit: usize) -> R<Result<Data, ReadFail>> {
+pub(crate) fn read_text_table(bytes: &[u8], fmt: &'static str, limit: usize) -> R<Result<Data, ReadFail>> {
     let delim = if fmt == "csv" { ',' } else { '\t' };
     let mut data = None;
     for enc in [Enc::Utf8Sig, Enc::Cp932, Enc::Utf8] {
@@ -221,7 +221,7 @@ fn sql_text(v: rusqlite::types::ValueRef) -> R<String> {
     }
 }
 
-fn read_sqlite(path: &str, job: &Map<String, Value>, limit: usize) -> R<Result<Data, ReadFail>> {
+pub(crate) fn read_sqlite(path: &str, job: &Map<String, Value>, limit: usize) -> R<Result<Data, ReadFail>> {
     let c =
         rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX)
             .map_err(|_| Pass)?;

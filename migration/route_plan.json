@@ -243,8 +243,8 @@
   },
   "POST /api/join-source": {
    "area": "読取マスタ・結合マスタ",
-   "to": "python",
-   "note": ""
+   "to": "core",
+   "note": "2.30.0（joinplan.rs・localcopy.rs の sample）。CSV・TXT・SQLite3・読取マスタのテキストの見出しと件数。組み立ての写しの名前は Python と同じ。EXCEL・ACCESS・1欄 131072 字超・64MB を超えて写さなかったテキストは Python へ回す"
   },
   "GET /api/log": {
    "area": "ログ・仕様書・版",

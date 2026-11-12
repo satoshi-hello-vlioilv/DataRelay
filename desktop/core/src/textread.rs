@@ -666,13 +666,18 @@ fn answer_preview(core: &Core, ask: &Ask) -> R<Reply> {
         Some(v) => pyish::int_opt(v).ok().flatten().ok_or(Pass)?,
     };
     let path = resolve_text(core, &c, &raw)?;
+    let mut out = preview_text(&l, &path, lines)?;
+    out["width"] = json!(masters::layout_width(&l));
+    Ok(Reply::json(if out["ok"] == json!(true) { 200 } else { 400 }, &out))
+}
+
+/// navi_text.preview_text（下読み。生の行と、切り出した結果を並べる。読めなければ ok: false と error）。l は整えた読取マスタ。
+pub(crate) fn preview_text(l: &Value, path: &str, lines: i64) -> R<Value> {
     let mut out = json!({"ok": false, "path": path, "headers": [], "rows": [], "raw": [], "stat": {},
-                         "overlaps": masters::layout_overlaps(&l), "gaps": masters::layout_gaps(&l), "notes": []});
-    let width = masters::layout_width(&l);
+                         "overlaps": masters::layout_overlaps(l), "gaps": masters::layout_gaps(l), "notes": []});
     let fail = |mut out: Value, msg: String| {
         out["error"] = json!(msg);
-        out["width"] = json!(width);
-        Ok(Reply::json(400, &out))
+        Ok(out)
     };
     // 名前は保存のための決まりで、切り方とは関係が無い（作りかけでも下読みできる）
     let mut named = l.clone();
@@ -683,9 +688,10 @@ fn answer_preview(core: &Core, ask: &Ask) -> R<Reply> {
     if !bad.is_empty() {
         return fail(out, bad.join("／"));
     }
-    let Some(bytes) = file_bytes(&path)? else { return fail(out, format!("ファイルがありません: {path}")) };
+    let Some(bytes) = file_bytes(path)? else { return fail(out, format!("ファイルがありません: {path}")) };
     let limit = lines.clamp(1, 100) as usize;
-    let r = read_rows(&bytes, &l, limit)?;
+    let r = read_rows(&bytes, l, limit)?;
+    let width = masters::layout_width(l);
     let mode = r.stat["mode"].as_str().unwrap_or("").to_string();
     let n = |k: &str| r.stat[k].as_u64().unwrap_or(0);
     let mut notes: Vec<String> = Vec::new();
@@ -725,7 +731,7 @@ fn answer_preview(core: &Core, ask: &Ask) -> R<Reply> {
             ex.join("、")
         ));
     }
-    let overlaps = masters::layout_overlaps(&l);
+    let overlaps = masters::layout_overlaps(l);
     if !overlaps.is_empty() {
         let ps: Vec<String> =
             overlaps.iter().take(3).map(|p| format!("{}↔{}", p[0].as_str().unwrap_or(""), p[1].as_str().unwrap_or(""))).collect();
@@ -737,15 +743,14 @@ fn answer_preview(core: &Core, ask: &Ask) -> R<Reply> {
     out["raw"] = json!(r.raws);
     out["stat"] = Value::Object(r.stat);
     out["size"] = json!(bytes.len());
-    out["types"] = Value::Array(columns(&l).iter().map(|c| c["type"].clone()).collect());
+    out["types"] = Value::Array(columns(l).iter().map(|c| c["type"].clone()).collect());
     if mode == "delimited" {
         if let Some(first) = out["raw"].as_array().and_then(|a| a.first()).and_then(Value::as_str) {
-            out["fields"] = json!(Splitter::new(&l)?.split(first));
+            out["fields"] = json!(Splitter::new(l)?.split(first));
         }
     }
     out["notes"] = json!(notes);
-    out["width"] = json!(width);
-    Ok(Reply::json(200, &out))
+    Ok(out)
 }
 
 const SNIFF_DELIMITERS: [&str; 4] = ["tab", "comma", "semicolon", "pipe"];
