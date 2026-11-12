@@ -184,6 +184,11 @@
     const r4 = await post('/api/join-cache/clear', {});
     const jk = await r4.json();
     ok('移した API（結合の候補・材料の持ち主・写しの片づけ）は Rust の中身が答える', r.status === 200 && by(r) === 'core' && Array.isArray(jc.items) && jc.cache && w2.status === 200 && by(w2) === 'core' && jo.ok && jo.sources.length === 2 && jo.wait && r4.status === 200 && by(r4) === 'core' && jk.ok, `${r.status} ${by(r)} 候補${(jc.items || []).length} / 持ち主 ${w2.status} ${by(w2)} / 片づけ ${r4.status} ${by(r4)}`);
+    // 結合の材料1つの見出し（2.30.0〜 Rust の中身）。見本にファイルが無いので、無いファイルと空の場所の断りを見る
+    w2 = await post('/api/join-source', { path: '自己診断の無いファイル.csv' });
+    const js = await w2.json();
+    const r5 = await post('/api/join-source', { path: ' ' });
+    ok('移した API（結合の材料の見出し）は Rust の中身が答える', w2.status === 400 && by(w2) === 'core' && js.ok === false && String(js.error).startsWith('ファイルがありません') && r5.status === 400 && by(r5) === 'core', `${w2.status} ${by(w2)} ${js.error} / 空 ${r5.status} ${by(r5)}`);
     // データビュワー（2.28.0〜 Rust の中身）。見本に対象が無いので、一覧と、無い対象の答えを見る
     r = await fetch('/api/data-viewer/jobs');
     const dv = await r.json();

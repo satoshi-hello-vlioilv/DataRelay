@@ -136,6 +136,10 @@ pub fn call(name: &str, a: &Value) -> Result<Value, String> {
             let t = naming::Tokens::new(&job, opt(a, "rne_path"), when(a)?);
             crate::variants::render_path_template(s(a, "template"), &t).map(|x| json!(x)).unwrap_or_else(|_| json!({"error": true}))
         }
+        "trim_to_line" => {
+            let b: Vec<u8> = a["bytes"].as_array().into_iter().flatten().map(|x| x.as_u64().unwrap_or(0) as u8).collect();
+            json!(crate::localcopy::trim_to_line(&b))
+        }
         "variants_has_token" => json!(crate::variants::has_token(s(a, "text"))),
         "variants_plan" => {
             let job = a["job"].as_object().cloned().unwrap_or_default();

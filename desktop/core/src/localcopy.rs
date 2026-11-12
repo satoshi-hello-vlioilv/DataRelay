@@ -85,7 +85,7 @@ pub fn cache_dir() -> String {
 }
 
 /// 大きさの言い方（_size）。
-fn size_text(n: u64) -> String {
+pub(crate) fn size_text(n: u64) -> String {
     if n < 1024 {
         format!("{n}バイト")
     } else if n < 1048576 {
@@ -267,6 +267,192 @@ pub fn read_copy(src: &str, log: &dyn Fn(&str)) -> Result<String, CopyError> {
     let name = paths::py_name(&dst);
     prune(&name, log);
     Ok(dst)
+}
+
+// ==== 組み立てのための見本の写し（navi_localcopy.sample。結合の材料を選ぶ間だけ使う） =========
+
+/// 先頭だけ写す形式と、丸ごとでないと壊れる形式（PREFIX_FORMATS・WHOLE_FORMATS）。
+const PREFIX_FORMATS: [&str; 3] = ["csv", "txt", "fixed"];
+const WHOLE_FORMATS: [&str; 3] = ["xlsx", "sqlite3", "accdb"];
+/// 先頭だけ写すときの上限（4MB）と、丸ごと写すときの上限（64MB）。
+const PREFIX_BYTES: u64 = 4 * 1024 * 1024;
+const WHOLE_BYTES: u64 = 64 * 1024 * 1024;
+
+/// 見本の写し（sample の答え）。path が None なら写していない（元のファイルを読む）。info は画面へそのまま渡す内訳。
+pub struct Sample {
+    pub path: Option<String>,
+    pub info: serde_json::Map<String, serde_json::Value>,
+}
+
+/// plan_for（その形式・大きさなら、どう写すか → (写し方, 写すバイト数, 理由)）。
+fn plan_for(size: u64, fmt: &str) -> (Option<&'static str>, u64, String) {
+    let fmt = fmt.to_lowercase();
+    if PREFIX_FORMATS.contains(&fmt.as_str()) {
+        return (Some("prefix"), size.min(PREFIX_BYTES), String::new());
+    }
+    if WHOLE_FORMATS.contains(&fmt.as_str()) {
+        if size <= WHOLE_BYTES {
+            return (Some("whole"), size, String::new());
+        }
+        let mb = format!("{:.0}", size as f64 / 1048576.0);
+        return (None, 0, format!("{mb}MBあるので写していません（途中で切ると壊れる形式です）。元のファイルを読みます"));
+    }
+    (None, 0, "この形式は写しません".into())
+}
+
+/// 行の切れ目で切る（_trim_to_line。途中で切れた最後の1行は捨て、囲みが開いたままなら閉じるところまで戻す）。
+pub fn trim_to_line(data: &[u8]) -> &[u8] {
+    let Some(cut) = data.iter().rposition(|b| *b == b'\n') else { return &[] };
+    let mut out = &data[..cut + 1];
+    while out.iter().filter(|b| **b == b'"').count() % 2 == 1 {
+        let Some(cut) = out[..out.len() - 1].iter().rposition(|b| *b == b'\n') else { return &[] };
+        out = &out[..cut + 1];
+    }
+    out
+}
+
+/// st_mtime（秒の float）を int にした物。Python は 秒 + ナノ秒 * 1e-9 の float を作ってから切り捨てる。
+fn mtime_int(m: &std::fs::Metadata) -> Option<i64> {
+    let t = m.modified().ok()?;
+    let (s, ns) = match t.duration_since(UNIX_EPOCH) {
+        Ok(d) => (d.as_secs() as i64, d.subsec_nanos() as i64),
+        Err(e) => {
+            let d = e.duration();
+            let (mut s, mut ns) = (-(d.as_secs() as i64), -(d.subsec_nanos() as i64));
+            if ns < 0 {
+                s -= 1;
+                ns += 1_000_000_000;
+            }
+            (s, ns)
+        }
+    };
+    Some((s as f64 + ns as f64 * 1e-9).trunc() as i64)
+}
+
+/// 写しの名前（_key: sha1('<道の小文字>|<大きさ>|<int(更新時刻)>|<写す量>') の先頭16字＋拡張子）。
+fn sample_key(src: &str, size: u64, mtime: i64, want: u64) -> String {
+    let h = sha1_hex(format!("{}|{size}|{mtime}|{want}", src.to_lowercase()).as_bytes());
+    format!("{}{}", &h[..16], paths::py_suffix(src).to_lowercase())
+}
+
+/// 前に写した控え（.json）から内訳を作る。読めない・形が違えば None（Python は写し直す）。
+fn cached_info(meta: &str, mode: &serde_json::Value) -> Result<Option<(serde_json::Value, i64, serde_json::Value)>, ()> {
+    use serde_json::Value;
+    let Ok(text) = std::fs::read(meta) else { return Ok(None) };
+    let Ok(text) = String::from_utf8(text) else { return Ok(None) };
+    // BOM 付きは json.loads が断る（Python は写し直す）
+    let Ok(Value::Object(m)) = serde_json::from_str::<Value>(if text.starts_with('\u{feff}') { "" } else { &text }) else {
+        return Ok(None);
+    };
+    let pick = |k: &str| m.get(k).filter(|v| crate::pyish::truthy(v)).cloned();
+    let bytes = match pick("bytes") {
+        None => 0,
+        Some(v) => match crate::pyish::int_opt(&v) {
+            Ok(Some(n)) => n,
+            Ok(None) => return Ok(None),
+            Err(_) => return Err(()),
+        },
+    };
+    Ok(Some((pick("mode").unwrap_or_else(|| mode.clone()), bytes, pick("note").unwrap_or_else(|| Value::String(String::new())))))
+}
+
+/// 最近使ったものとして残す（os.utime(dst, None)）。
+fn touch(p: &str) -> bool {
+    let now = SystemTime::now();
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(p)
+        .and_then(|f| f.set_times(std::fs::FileTimes::new().set_accessed(now).set_modified(now)))
+        .is_ok()
+}
+
+/// shutil.copy2（中身と、更新・参照の時刻を写す）。
+fn copy2(src: &str, dst: &str) -> std::io::Result<u64> {
+    std::fs::copy(src, dst)?;
+    let m = std::fs::metadata(src)?;
+    let mut t = std::fs::FileTimes::new().set_modified(m.modified()?);
+    if let Ok(a) = m.accessed() {
+        t = t.set_accessed(a);
+    }
+    std::fs::OpenOptions::new().write(true).open(dst)?.set_times(t)?;
+    Ok(std::fs::metadata(dst)?.len())
+}
+
+/// sample（1つのファイルを手元へ写す）。Err（Other）は Python と同じ文を作れない失敗（OS の例外の文。呼ぶ側が Python へ回す）。
+pub fn sample(src: &str, fmt: &str, log: &dyn Fn(&str)) -> Result<Sample, CopyError> {
+    use serde_json::{json, Value};
+    let mut info: serde_json::Map<String, Value> = serde_json::Map::new();
+    for (k, v) in [
+        ("ok", json!(false)),
+        ("mode", Value::Null),
+        ("bytes", json!(0)),
+        ("total", json!(0)),
+        ("elapsed", json!(0.0)),
+        ("cached", json!(false)),
+        ("note", json!("")),
+    ] {
+        info.insert(k.into(), v);
+    }
+    let st = std::fs::metadata(src).map_err(|_| CopyError::Other)?;
+    let size = st.len();
+    info.insert("total".into(), json!(size));
+    let (mode, want, why) = plan_for(size, fmt);
+    let Some(mode) = mode else {
+        info.insert("note".into(), json!(why));
+        return Ok(Sample { path: None, info });
+    };
+    let dst = paths::join(&cache_dir(), &sample_key(src, size, mtime_int(&st).ok_or(CopyError::Other)?, want));
+    let meta = format!("{dst}.json");
+    let is_file = |p: &str| std::fs::metadata(p).map(|m| m.is_file()).unwrap_or(false);
+    if is_file(&dst) && is_file(&meta) {
+        if let Some((m, bytes, note)) = cached_info(&meta, &json!(mode)).map_err(|_| CopyError::Other)? {
+            if touch(&dst) {
+                info.insert("ok".into(), json!(true));
+                info.insert("cached".into(), json!(true));
+                info.insert("mode".into(), m);
+                info.insert("bytes".into(), json!(bytes));
+                info.insert("note".into(), note);
+                return Ok(Sample { path: Some(dst), info });
+            }
+        }
+    }
+    let started = Instant::now();
+    let wrote = if mode == "whole" {
+        copy2(src, &dst).map_err(|_| CopyError::Other)?
+    } else {
+        use std::io::Read;
+        let mut data = Vec::new();
+        std::fs::File::open(src).and_then(|f| f.take(want).read_to_end(&mut data)).map_err(|_| CopyError::Other)?;
+        if size > want {
+            let n = trim_to_line(&data).len();
+            if n == 0 {
+                info.insert("note".into(), json!("1行も切り出せませんでした（1行が長すぎます）。元のファイルを読みます"));
+                return Ok(Sample { path: None, info });
+            }
+            data.truncate(n);
+        }
+        std::fs::write(&dst, &data).map_err(|_| CopyError::Other)?;
+        data.len() as u64
+    };
+    let elapsed = started.elapsed().as_secs_f64();
+    let note = if mode == "whole" {
+        format!("まるごとローカルへ写しました（{}）", size_text(wrote))
+    } else if size > wrote {
+        format!("先頭{}をローカルへ写しました（元は{}）", size_text(wrote), size_text(size))
+    } else {
+        format!("ローカルへ写しました（{}）", size_text(wrote))
+    };
+    let at = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0);
+    let m = json!({"source": src, "mode": mode, "bytes": wrote, "total": size, "note": note, "at": at});
+    let _ = std::fs::write(&meta, m.to_string());
+    info.insert("ok".into(), json!(true));
+    info.insert("mode".into(), json!(mode));
+    info.insert("bytes".into(), json!(wrote));
+    info.insert("elapsed".into(), json!((elapsed * 1000.0).round() / 1000.0));
+    info.insert("note".into(), json!(note));
+    log(&format!("JOIN_CACHE_COPY src={src} mode={mode} bytes={wrote} total={size} elapsed={elapsed:.2}s"));
+    prune(&paths::py_name(&dst), log);
+    Ok(Sample { path: Some(dst), info })
 }
 
 #[cfg(test)]

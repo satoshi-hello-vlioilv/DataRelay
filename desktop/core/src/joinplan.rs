@@ -10,7 +10,7 @@
 use crate::config::{self, Pass};
 use crate::http::{Ask, Reply};
 use crate::paths::{self, Bases};
-use crate::{naming, pyish, routes::Core, schedule, writer};
+use crate::{localcopy, naming, pyish, routes::Core, schedule, writer};
 use serde_json::{json, Map, Value};
 
 type R<T> = Result<T, Pass>;
@@ -70,7 +70,7 @@ fn plan(core: &Core, job: &Map<String, Value>, cfg: &Map<String, Value>) -> Vec<
 }
 
 /// resolve_join_path（結合で読むファイルの場所。書き方の決まりは RNE・テキストと同じ）。
-fn join_path(b: &Bases, cfg: &Map<String, Value>, value: &Value) -> String {
+pub(crate) fn join_path(b: &Bases, cfg: &Map<String, Value>, value: &Value) -> String {
     let raw = pyish::text_or_empty(Some(value));
     if pyish::strip(&raw).is_empty() {
         return ".".into();
@@ -283,4 +283,115 @@ pub(crate) fn post_cache_clear(core: &Core, _: &Ask, _: &[String]) -> Reply {
     }
     core.log(&format!("JOIN_CACHE_CLEAR removed={n}"));
     Reply::json(200, &json!({"ok": true, "removed": n, "cache": cache_stats()}))
+}
+
+// ==== 材料1つの見出しと件数 ==================================================
+
+/// POST /api/join-source（join_source_probe。1つのファイルの見出しと件数と、先頭の数行）
+pub(crate) fn post_source(core: &Core, ask: &Ask, _: &[String]) -> Reply {
+    answer_source(core, ask).unwrap_or_else(|_| Reply::pass())
+}
+
+fn bad(msg: String) -> R<Reply> {
+    Ok(Reply::json(400, &json!({"ok": false, "error": msg})))
+}
+
+fn answer_source(core: &Core, ask: &Ask) -> R<Reply> {
+    let src = match writer::body_json(ask, true)? {
+        Some(Value::Object(m)) => m,
+        Some(v) if pyish::truthy(&v) => return Err(Pass),
+        _ => Map::new(),
+    };
+    let c = config::read(core)?;
+    let raw = pyish::strip(&naming::text_or(src.get("path"), "")).to_string();
+    if raw.is_empty() {
+        return bad("ファイルの場所を入れてください".into());
+    }
+    let fmt = pyish::strip(&naming::text_or(src.get("format"), "")).to_lowercase();
+    let b = core.bases().ok_or(Pass)?;
+    let origin = join_path(&b, &c, &json!(raw));
+    let exists = is_file(&origin);
+    let suffix = paths::py_suffix(&origin);
+    let copy_fmt = if fmt.is_empty() { suffix.trim_start_matches('.').to_string() } else { fmt.clone() };
+    if fmt != "fixed" {
+        if !exists {
+            return bad(format!("ファイルがありません: {origin}"));
+        }
+        // EXCEL・ACCESS は Python が読む（写す前に回す。写しを2度作らない）
+        let read_name = paths::py_name(&origin);
+        let want = json!(if fmt.is_empty() { paths::py_suffix(&read_name).trim_start_matches('.').to_lowercase() } else { fmt.clone() });
+        if !matches!(naming::normalize_output_format(Some(&want), Some(&json!(read_name))), "csv" | "txt" | "sqlite3") {
+            return Err(Pass);
+        }
+    }
+    let log = |m: &str| core.log(m);
+    let (read_path, copy) = if exists {
+        let s = localcopy::sample(&origin, &copy_fmt, &log).map_err(|_| Pass)?;
+        (s.path.unwrap_or_else(|| origin.clone()), Value::Object(s.info))
+    } else {
+        (origin.clone(), json!({"ok": false, "note": ""}))
+    };
+    if fmt == "fixed" {
+        let lid = pyish::strip(&naming::text_or(src.get("layout_id"), "")).to_string();
+        let lay = if lid.is_empty() {
+            None
+        } else {
+            c.get("text_layouts")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .find(|x| x.get("id").and_then(Value::as_str) == Some(&lid))
+        };
+        let Some(lay) = lay else { return bad("読取マスタを選んでください".into()) };
+        let Value::Object(lay) = lay else { return Err(Pass) };
+        let l = config::normalize_layout(lay)?;
+        let pv = crate::textread::preview_text(&l, &read_path, 5)?;
+        if pv["ok"] != json!(true) {
+            let e = pv.get("error").filter(|v| pyish::truthy(v)).cloned().unwrap_or(json!("読み取れませんでした"));
+            return Ok(Reply::json(400, &json!({"ok": false, "error": e})));
+        }
+        let sample: Vec<Value> = pv["rows"].as_array().map(|a| a.iter().take(3).cloned().collect()).unwrap_or_default();
+        return Ok(Reply::json(
+            200,
+            &json!({"ok": true, "columns": pv["headers"], "rows": null, "sample": sample, "path": origin, "format": "fixed",
+                    "copy": copy, "note": "テキスト（件数は実行時に数えます）"}),
+        ));
+    }
+    let out_fmt = json!(if fmt.is_empty() { paths::py_suffix(&read_path).trim_start_matches('.').to_string() } else { fmt.clone() });
+    let used = naming::normalize_output_format(Some(&out_fmt), Some(&json!(paths::py_name(&read_path))));
+    let job = Map::from_iter([("table".to_string(), json!(naming::text_or(src.get("table"), "")))]);
+    let read = match used {
+        "sqlite3" => crate::viewer::read_sqlite(&read_path, &job, 3)?,
+        "csv" | "txt" => {
+            let m = std::fs::metadata(&read_path).map_err(|_| Pass)?;
+            if m.len() > 64 << 20 {
+                return Err(Pass); // 大きなファイルは丸ごと読まない（Python へ回す）
+            }
+            crate::viewer::read_text_table(&std::fs::read(&read_path).map_err(|_| Pass)?, used, 3)?
+        }
+        _ => return Err(Pass),
+    };
+    let d = match read {
+        Ok(d) => d,
+        Err(crate::viewer::ReadFail::Message(m)) => return bad(format!("読み取れませんでした: {m}")),
+    };
+    let n = d.headers.len();
+    let rows: Vec<Vec<String>> = d.rows.into_iter().map(|r| r.into_iter().take(n).collect()).collect();
+    let tables: Vec<String> = if used == "sqlite3" { sqlite_tables(&read_path) } else { vec![] };
+    let partial = copy["mode"] == json!("prefix") && copy["bytes"].as_u64().unwrap_or(0) < copy["total"].as_u64().unwrap_or(0);
+    Ok(Reply::json(
+        200,
+        &json!({"ok": true, "columns": d.headers, "rows": d.total, "sample": rows, "path": origin, "format": used,
+                "tables": tables, "sheets": [], "copy": copy, "partial": partial}),
+    ))
+}
+
+/// SQLite の表の名前（_ で始まる物を除き、名前の順。読めなければ空）。
+fn sqlite_tables(path: &str) -> Vec<String> {
+    let flags = rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX;
+    let Ok(c) = rusqlite::Connection::open_with_flags(path, flags) else { return vec![] };
+    let Ok(mut st) = c.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name") else { return vec![] };
+    let Ok(it) = st.query_map([], |r| r.get::<_, String>(0)) else { return vec![] };
+    let Ok(names) = it.collect::<Result<Vec<String>, _>>() else { return vec![] };
+    names.into_iter().filter(|n| !n.starts_with('_')).collect()
 }

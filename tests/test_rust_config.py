@@ -26,7 +26,7 @@ import json,sys
 from datetime import datetime
 from pathlib import Path,PureWindowsPath
 sys.path[:0]=[sys.argv[1],sys.argv[1]+'/lib']
-import app,navi_variants,navi_viewer,navi_post,navi_groups,navi_text,navi_join,navi_mrun,navi_output,navi_paths
+import app,navi_localcopy,navi_variants,navi_viewer,navi_post,navi_groups,navi_text,navi_join,navi_mrun,navi_output,navi_paths
 def dt(a):return datetime.fromisoformat(a['dt'])
 F={
  'py_str':lambda a:str(a['v']),
@@ -49,6 +49,7 @@ F={
  'render_filename_template':lambda a:app.render_filename_template(a['template'],job=a.get('job'),rne_path=a.get('rne_path'),now=dt(a)),
  'render_filename_segments':lambda a:app.render_filename_segments(a['template'],job=a.get('job'),rne_path=a.get('rne_path'),now=dt(a)),
  'render_path_template':lambda a:app.render_path_template(a['template'],job=a.get('job'),rne_path=a.get('rne_path'),now=dt(a)),
+ 'trim_to_line':lambda a:list(navi_localcopy._trim_to_line(bytes(a['bytes']))),
  'variants_has_token':lambda a:navi_variants.has_token(a['text']),
  'variants_plan':lambda a:navi_variants.plan(a['job'],lambda t,v:app.render_filename_template(t,job={**a['job'],'_variant_value':v},now=dt(a)),a['base'],a['folder'],
                                              lambda t,v:app.render_path_template(t,job={**a['job'],'_variant_value':v},now=dt(a)),a['values']),
@@ -219,6 +220,7 @@ def cases(seed=20261102):
  pjobs=jobs+[{'_variant_value':v,'name':'n'} for v in ['..','.',' . ','a/b','x:..',' 東京 ','.a.','...','',' ']]
  for _ in range(300):
   add('render_path_template',template=r.choice(['D:\\出力\\','/srv/','',' ','..\\','{値}/','a/'])+gen_template(r)+r.choice(['','\\x','/y',' ']),job=r.choice(pjobs),dt=r.choice(dts))
+ for _ in range(300):add('trim_to_line',bytes=[r.choice(b'a"\n,\r') for _ in range(r.randint(0,14))])
  for _ in range(80):add('variants_has_token',text=gen_template(r)+r.choice(['','{値:','{value}','{値 }','値']))
  vals=['東京','大阪','TOKYO','tokyo','..','a/b','ab','AB',' ','x']
  for _ in range(300):
