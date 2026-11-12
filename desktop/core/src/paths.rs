@@ -969,6 +969,21 @@ impl Bases {
     }
 
     /// 設定値が、どこの物を指すのか（navi_paths.locate）。`folder` を渡すと、名前だけの指定はそのフォルダーの中として読む。
+    /// missing_message（ファイルが見つからないときの知らせ。探した場所を、先に見た順にすべて並べる）。
+    pub fn missing_message(&self, what: &str, value: &str, folder: Option<&str>) -> String {
+        let d = self.locate(value, folder);
+        let list = |k: &str| {
+            d[k].as_array().map(|a| a.iter().map(|x| x.as_str().unwrap_or("").to_string()).collect::<Vec<String>>()).unwrap_or_default()
+        };
+        let (tried, from) = (list("tried"), list("tried_from"));
+        let where_: Vec<String> =
+            tried.iter().zip(from.iter()).map(|(x, lb)| if lb.is_empty() { x.clone() } else { format!("{lb} {x}") }).collect();
+        if where_.len() <= 1 {
+            return format!("{what}が見つかりません: {}", where_.first().cloned().unwrap_or_else(|| value.to_string()));
+        }
+        format!("{what}が見つかりません（設定: {}）。探した順: {}", pyish::strip(value), where_.join(" → "))
+    }
+
     pub fn locate(&self, value: &str, folder: Option<&str>) -> Map<String, Value> {
         let mut out = self.locate_raw(value, folder);
         let label = base_label(out["base"].as_str().unwrap_or(""));

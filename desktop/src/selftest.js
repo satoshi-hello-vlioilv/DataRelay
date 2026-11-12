@@ -189,6 +189,12 @@
     const js = await w2.json();
     const r5 = await post('/api/join-source', { path: ' ' });
     ok('移した API（結合の材料の見出し）は Rust の中身が答える', w2.status === 400 && by(w2) === 'core' && js.ok === false && String(js.error).startsWith('ファイルがありません') && r5.status === 400 && by(r5) === 'core', `${w2.status} ${by(w2)} ${js.error} / 空 ${r5.status} ${by(r5)}`);
+    // 結合の下読みとキーの見当（2.31.0〜 Rust の中身）。見本にファイルが無いので、ファイルが1つの断りと、つなぎ目の番号の外を見る
+    w2 = await post('/api/join-preview', { recipe: { sources: [{ path: '自己診断の無いファイル.csv' }] } });
+    const jp = await w2.json();
+    const r6 = await post('/api/join-keys', { recipe: { sources: [{ path: '自己診断の無いファイル.csv' }] } });
+    const jk2 = await r6.json();
+    ok('移した API（結合の下読み・キーの見当）は Rust の中身が答える', w2.status === 400 && by(w2) === 'core' && jp.ok === false && String(jp.error).includes('2つ以上') && r6.status === 400 && by(r6) === 'core' && jk2.error === 'つなぎ目がありません', `${w2.status} ${by(w2)} ${jp.error} / キー ${r6.status} ${by(r6)} ${jk2.error}`);
     // データビュワー（2.28.0〜 Rust の中身）。見本に対象が無いので、一覧と、無い対象の答えを見る
     r = await fetch('/api/data-viewer/jobs');
     const dv = await r.json();

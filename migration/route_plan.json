@@ -203,8 +203,8 @@
   },
   "POST /api/join-keys": {
    "area": "読取マスタ・結合マスタ",
-   "to": "python",
-   "note": ""
+   "to": "core",
+   "note": "2.31.0（joinrun.rs）。材料2つを手元の写しから読み、値の重なりでキーの見当を付ける。重なり・種類の多さ・名前の近さが同じ組の並びは、Python では文字列のハッシュで決まり起こすたびに変わるので、Rust は値が初めて出た順にする。EXCEL・ACCESS は写す前に Python へ回す"
   },
   "POST /api/join-order": {
    "area": "読取マスタ・結合マスタ",
@@ -213,8 +213,8 @@
   },
   "POST /api/join-preview": {
    "area": "読取マスタ・結合マスタ",
-   "to": "python",
-   "note": ""
+   "to": "core",
+   "note": "2.31.0（joinrun.rs）。Python と同じ SQL をメモリ上の SQLite に流す（できあがり・件数・つなぎ目ごとの一致）。EXCEL・ACCESS の材料と FULL OUTER JOIN（使えるかが Python の SQLite の版で決まる）は写す前に Python へ回す"
   },
   "GET /api/join-recipes": {
    "area": "読取マスタ・結合マスタ",

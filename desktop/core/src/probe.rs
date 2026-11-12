@@ -136,6 +136,12 @@ pub fn call(name: &str, a: &Value) -> Result<Value, String> {
             let t = naming::Tokens::new(&job, opt(a, "rne_path"), when(a)?);
             crate::variants::render_path_template(s(a, "template"), &t).map(|x| json!(x)).unwrap_or_else(|_| json!({"error": true}))
         }
+        "suggest_keys" => {
+            let strs =
+                |v: &Value| -> Vec<String> { v.as_array().into_iter().flatten().map(|x| x.as_str().unwrap_or("").to_string()).collect() };
+            let rows = |v: &Value| -> Vec<Vec<String>> { v.as_array().into_iter().flatten().map(strs).collect() };
+            json!(crate::joinrun::suggest_keys(&strs(&a["lh"]), &rows(&a["lr"]), &strs(&a["rh"]), &rows(&a["rr"]), 5))
+        }
         "trim_to_line" => {
             let b: Vec<u8> = a["bytes"].as_array().into_iter().flatten().map(|x| x.as_u64().unwrap_or(0) as u8).collect();
             json!(crate::localcopy::trim_to_line(&b))

@@ -15,6 +15,19 @@ summary = "SymNaviA.dll が公開する関数・定数・呼び出し順序の�
 source = "Navigator Visual Basic Interface API 9.6.0 / FUJITSU Interstage Navigator Server V9.4.1"
 
 [[release]]
+version = "2.31.0"
+date = "2026-11-12"
+title = "結合の下読みとキーの見当付けを、Rust の中身が受け持つようにした"
+notes = [
+  """\
+    【Rust への作り直し・段 4f】<b>結合マスタ</b>の組み立てで、繋いだ結果の下読み（できあがりの先頭と、つなぎ目ごとに何件合ったか）と、\
+    突き合わせる列（キー）の見当付けを Rust へ移しました。CSV・TXT・SQLite3・読取マスタのテキストを繋ぐ取り決めが対象です。見た目と操作は変わりません。""",
+  """\
+    【同じ繋ぎ方】繋ぎ方は Python と同じ SQL をメモリ上の SQLite で流すので、できあがりの並びと一致の数え方も同じです。\
+    EXCEL・ACCESS を材料に含む取り決めと、「どちらも全部残す」は、これまでどおり Python が受け持ちます。本番の実行（中間CSVを作る）も、まだ Python です。""",
+]
+
+[[release]]
 version = "2.30.0"
 date = "2026-11-12"
 title = "結合の材料1つの見出しと件数を、Rust の中身が読むようにした"

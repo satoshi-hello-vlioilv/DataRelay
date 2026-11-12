@@ -13,6 +13,7 @@ pub mod config;
 pub mod edits;
 pub mod http;
 pub mod joinplan;
+pub mod joinrun;
 pub mod localcopy;
 mod login;
 pub mod masters;
