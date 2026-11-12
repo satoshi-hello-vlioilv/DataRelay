@@ -472,7 +472,7 @@ pub(crate) fn validate_layout(l: &Value) -> R<Vec<String>> {
 }
 
 /// navi_join.validate_recipe。「どちらも全部残す」は Python の SQLite が書けるかで決まるので Pass。
-fn validate_recipe(r: &Value) -> R<Vec<String>> {
+pub(crate) fn validate_recipe(r: &Value) -> R<Vec<String>> {
     let mut bad = Vec::new();
     let arr = |k: &str| r[k].as_array().map(Vec::as_slice).unwrap_or(&[]);
     if s(&r["name"]).is_empty() {

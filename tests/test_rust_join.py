@@ -1,13 +1,17 @@
 """結合マスタの組み立てを助ける受け口のうち、設定から答える物が、Python（navi_web・navi_joinrun・navi_order・navi_localcopy）と
 Rust（desktop/core の joinplan.rs）で同じ答えになるか（2.27.0）。
 
-比べるルート: GET /api/join-candidates・POST /api/join-order・POST /api/join-cache/clear、POST /api/join-source（2.30.0。joinplan.rs・localcopy.sample）
+比べるルート: GET /api/join-candidates・POST /api/join-order・POST /api/join-cache/clear、POST /api/join-source（2.30.0。joinplan.rs・localcopy.sample）、
+POST /api/join-keys・POST /api/join-preview（2.31.0。joinrun.rs）
 見本の設定: 決まった名前で出す対象（追加の形式つき）・名前を型で作る対象（今日の名前のファイルがある）・出力先を共通の既定から取る対象
 （前回の実行の記録に別の名前のファイルが残っている）・相対の出力先・結合マスタ（自分の対象が作るファイル・読取フォルダーの名前だけの指定・無いファイル）。
 写しの置き場（work\\read-cache）には、写し・控えの .json・フォルダーを置いて、数え方と消し方を比べる。
 POST /api/join-source は、CSV（cp932・先頭だけ写す 4MB 超・囲みの中の改行で切り戻す・1行が長すぎて写せない）・TXT・SQLite3（表の選び方・_ で始まる表・
 表の無い物）・固定長と区切りのテキスト（読取マスタ）・読めない文字コード・無いファイル・無い読取マスタで比べ、2回目は写しを使い回すこと、
 写しの名前が Python と同じことも比べる。EXCEL・ACCESS は Python へ回す。
+POST /api/join-keys・POST /api/join-preview は、明細と台帳（2,000 行を超える・右に同じキーが2つ）・SQLite3 の3つ目（鎖の前のほうの列をキーにする）・
+固定長の読取マスタ・出す列の指定（別名・無い列）・一致しないキー・右に無い列（SQLite の断り）・大文字小文字だけ違う列（SQLite の断り）・
+空のファイル・読めない文字コード・無いファイル・ファイルが1つ・つなぎ目の番号の外・行数の上限で比べる。
 実行: python -m unittest tests.test_rust_join -v
 """
 import json,os,shutil,sqlite3,sys,unittest
@@ -127,8 +131,66 @@ class JoinPlanParityTest(unittest.TestCase):
   again=self.py(ASK,'srs',json.dumps([src(path=str(o/'受注.csv'))],ensure_ascii=False),NOW)[0]
   self.assertTrue(json.loads(again['body'])['copy']['cached'],'Rust の写しを Python が使い回す')
 
+ def join_sources(self):
+  o=self.sources()
+  rows=['受注番号,品番,数量']+[f'O{i:05d},P{i%50+1:03d},{i%9+1}' for i in range(2500)]
+  (o/'明細.csv').write_bytes(('\r\n'.join(rows)+'\r\n').encode('cp932'))
+  led=['ITEM_CD,品名,単価']+[f'P{i:03d},品{i},{100+i*7}' for i in range(1,81)]+['P003,品3の別名,999']
+  (o/'台帳.csv').write_bytes(('\n'.join(led)+'\n').encode('utf-8-sig'))
+  (o/'大小.csv').write_bytes(b'a,A\n1,2\n')
+  (o/'空.csv').write_bytes(b'')
+  db=o/'倉庫.sqlite3'
+  if db.exists():db.unlink()
+  with closing(sqlite3.connect(str(db))) as c,c:
+   c.execute('CREATE TABLE "倉庫" (品番 TEXT, 棚 TEXT, 数 INTEGER)')
+   c.executemany('INSERT INTO "倉庫" VALUES(?,?,?)',[(f'P{i:03d}',f'棚{i%4}',i) for i in range(1,40,2)])
+  return o
+
+ def test_join_keys_and_preview(self):
+  o=self.join_sources()
+  self.make('kbase')
+  self.py(ASK,'kbase',json.dumps([post('/api/text-layouts',dict(DELIM,id='L2'))],ensure_ascii=False),NOW)
+  self.twin('kbase','kpy','krs')
+  A={'path':str(o/'明細.csv')};B={'path':str(o/'台帳.csv')};C={'path':str(o/'倉庫.sqlite3'),'table':'倉庫'}
+  k=lambda l,r,t='inner':{'type':t,'keys':[{'left':l,'right':r}]}
+  rec=lambda srcs,joins,**x:dict({'name':'','sources':srcs,'joins':joins},**x)
+  keys=lambda r,**x:post('/api/join-keys',dict({'recipe':r},**x))
+  pre=lambda r,**x:post('/api/join-preview',dict({'recipe':r},**x))
+  reqs=[keys(rec([A,B],[])),keys(rec([A,B,C],[]),index=1),keys(rec([A,B,C],[]),index='1',limit=1),keys(rec([A,B],[]),index=5),
+        keys(rec([A,{'path':str(o/'無い.csv')}],[])),keys(rec([B,{'path':str(o/'bad.csv')}],[])),keys(rec([{'path':str(o/'受注.csv')},{'path':str(o/'大きい.csv')}],[])),
+        keys(rec([A,{'path':str(o/'区切り.dat'),'format':'fixed','layout_id':'L2'}],[])),keys({}),post('/api/join-keys','null'),
+        pre(rec([A,B],[k('品番','ITEM_CD')])),pre(rec([A,B],[k('品番','ITEM_CD','left')],name='名前つき',columns=[{'source':'A','name':'受注番号'},{'source':'B','name':'品名','as':'名前'},{'source':'B','name':'無い列'},{'source':'Z','name':'数量'}]),lines=3),
+        pre(rec([A,B,C],[k('品番','ITEM_CD'),k('品番','品番','left')]),lines=500),pre(rec([A,B],[k('数量','ITEM_CD')])),pre(rec([A,B],[k('品番','無い列')])),
+        pre(rec([A,{'path':str(o/'大小.csv')}],[k('品番','a')])),pre(rec([A,{'path':str(o/'空.csv')}],[k('品番','x')])),pre(rec([A,{'path':str(o/'bad.csv')}],[k('品番','x')])),
+        pre(rec([A,{'path':str(o/'無い.csv')}],[k('品番','x')])),pre(rec([A],[])),pre(rec([A,B],[{'type':'left','keys':[]}])),
+        pre(rec([B,{'path':str(o/'区切り.dat'),'format':'fixed','layout_id':'L2'}],[k('ITEM_CD','x')])),pre(rec([B,{'path':str(o/'区切り.dat'),'format':'fixed','layout_id':'無い'}],[k('ITEM_CD','a')])),
+        pre(rec([{'path':str(o/'受注.csv')},{'path':str(o/'大きい.csv')}],[k('コード','k')])),pre(rec([A,B],[k('品番','ITEM_CD')]),lines='2'),pre({}),
+        pre(rec([A,B],[k('品番','ITEM_CD')],columns=[{'name':'無い'}]))]
+  py=self.py(ASK,'kpy',json.dumps(reqs,ensure_ascii=False),NOW)
+  rs=self.rust('krs',reqs)
+  def same(body):
+   d=json.loads(body.replace('/kpy/','/K/').replace('/krs/','/K/').replace('\\\\kpy\\\\','\\\\K\\\\').replace('\\\\krs\\\\','\\\\K\\\\'))
+   for x in d.get('copies') or []:x['elapsed']=0   # 写すのにかかった秒は毎回違う
+   return d
+  for q,p,x in zip(reqs,py,rs):
+   what=f'{q["path"]} {q["body"][:200]}'
+   self.assertNotEqual(x['status'],0,f'Rust が答えなかった: {what}')
+   self.assertEqual((x['status'],same(x['body'])),(p['status'],same(p['body'])),what)
+  b=[json.loads(p['body']) for p in py]
+  # 見本が中身を持っていること
+  self.assertEqual((b[0]['items'][0]['left'],b[0]['items'][0]['right'],b[0]['items'][0]['score'],b[0]['sampled']),('品番','ITEM_CD',1.0,True))
+  self.assertFalse(b[0]['items'][0]['unique'])
+  self.assertEqual(b[1]['items'][0]['right'],'品番');self.assertEqual(len(b[2]['items']),1)
+  self.assertEqual([py[i]['status'] for i in (3,4,5)],[400,400,400])
+  self.assertTrue(b[10]['ok'] and b[10]['partial'] and b[10]['stats']['rows']>2000 and b[10]['stats']['joins'][0]['paired']>b[10]['stats']['joins'][0]['both'])
+  self.assertEqual(b[11]['headers'],['受注番号','名前','数量']);self.assertEqual(len(b[11]['rows']),3)
+  self.assertEqual(len(b[12]['rows']),200);self.assertEqual(b[13]['stats']['joins'][0]['both'],0)
+  self.assertIn('no such column',b[14]['error']);self.assertIn('duplicate column',b[15]['error'])
+  self.assertIn('に列がありません',b[16]['error']);self.assertTrue(b[21]['ok'],b[21])
+  self.assertTrue(any('ローカルへ写した先頭だけ' in n for n in b[23]['notes']))
+
  def test_python_only_cases(self):
-  """待つ設定が int() で読めない値（Python は落ちる）・辞書でない本文・EXCEL と ACCESS の材料は、Python へ回す。"""
+  """待つ設定・行数が int() で読めない値（Python は落ちる）・辞書でない本文・EXCEL と ACCESS の材料・「どちらも全部残す」は、Python へ回す。"""
   self.make('jbad',settings={'join_wait_max_seconds':'abc'})
   rs=self.rust('jbad',[post('/api/join-order',{'recipe':{}}),post('/api/join-order','[1]'),post('/api/join-order',{'recipe':[1]})])
   self.assertEqual([x['status'] for x in rs],[0,0,0])
@@ -137,6 +199,12 @@ class JoinPlanParityTest(unittest.TestCase):
   rs=self.rust('jbad',[post('/api/join-source',{'path':str(o/'表.xlsx')}),post('/api/join-source',{'path':str(o/'表.accdb')}),
                        post('/api/join-source',{'path':str(o/'表.accdb'),'format':'xlsx'}),post('/api/join-source','[1]')])
   self.assertEqual([x['status'] for x in rs],[0,0,0,0])
+  # 結合の下読みとキーの見当: EXCEL・ACCESS を読む取り決め、「どちらも全部残す」、行数が int() で読めない値
+  two=lambda b,**k:{'recipe':{'sources':[{'path':str(o/'表.accdb')},b],'joins':[{'type':k.get('t','inner'),'keys':[{'left':'a','right':'b'}]}]}}
+  rs=self.rust('jbad',[post('/api/join-preview',two({'path':'x.csv'})),post('/api/join-keys',two({'path':'x.csv'})),
+                       post('/api/join-preview',{'recipe':{'sources':[{'path':'a.csv'},{'path':'b.csv'}],'joins':[{'type':'full','keys':[{'left':'a','right':'b'}]}]}}),
+                       post('/api/join-preview',{'recipe':{},'lines':'x'}),post('/api/join-keys',{'recipe':{},'index':'x'}),post('/api/join-preview',{'recipe':[1]})])
+  self.assertEqual([x['status'] for x in rs],[0,0,0,0,0,0])
   self.assertFalse([n for n in os.listdir(self.t/'jbad'/'local'/'work'/'read-cache') if n.endswith('.xlsx') or n.endswith('.accdb')])
   os.remove(self.paths('jbad')[1])
   self.assertEqual(self.rust('jbad',[get('/api/join-candidates')])[0]['status'],0,'写しを替える場合は回す')

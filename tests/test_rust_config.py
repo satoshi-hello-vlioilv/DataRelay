@@ -26,8 +26,16 @@ import json,sys
 from datetime import datetime
 from pathlib import Path,PureWindowsPath
 sys.path[:0]=[sys.argv[1],sys.argv[1]+'/lib']
-import app,navi_localcopy,navi_variants,navi_viewer,navi_post,navi_groups,navi_text,navi_join,navi_mrun,navi_output,navi_paths
+import app,navi_join,navi_localcopy,navi_variants,navi_viewer,navi_post,navi_groups,navi_text,navi_join,navi_mrun,navi_output,navi_paths
 def dt(a):return datetime.fromisoformat(a['dt'])
+def key_tie(a):
+ # 重なり・種類の多さ・名前の近さが同じ組があると、Python の並びは値の集合の並び（文字列のハッシュ）で決まり、起こすたびに変わる。そういう問いは比べない
+ ls=navi_join._key_sets(a['lh'],a['lr']);rs=navi_join._key_sets(a['rh'],a['rr']);ranks=[]
+ for i,lv in ls.items():
+  for j,rv in rs.items():
+   n=len(lv&rv);small=min(len(lv),len(rv))
+   if n and n/small>=navi_join.KEY_MIN_SCORE:ranks.append((n/small,min(1.0,small/50),navi_join._name_score(a['lh'][i],a['rh'][j])))
+ return len(ranks)!=len(set(ranks))
 F={
  'py_str':lambda a:str(a['v']),
  'normalize_variants':lambda a:navi_variants.normalize(a['v']),
@@ -49,6 +57,7 @@ F={
  'render_filename_template':lambda a:app.render_filename_template(a['template'],job=a.get('job'),rne_path=a.get('rne_path'),now=dt(a)),
  'render_filename_segments':lambda a:app.render_filename_segments(a['template'],job=a.get('job'),rne_path=a.get('rne_path'),now=dt(a)),
  'render_path_template':lambda a:app.render_path_template(a['template'],job=a.get('job'),rne_path=a.get('rne_path'),now=dt(a)),
+ 'suggest_keys':lambda a:navi_join.suggest_keys(a['lh'],a['lr'],a['rh'],a['rr']) if not key_tie(a) else 'TIE',
  'trim_to_line':lambda a:list(navi_localcopy._trim_to_line(bytes(a['bytes']))),
  'variants_has_token':lambda a:navi_variants.has_token(a['text']),
  'variants_plan':lambda a:navi_variants.plan(a['job'],lambda t,v:app.render_filename_template(t,job={**a['job'],'_variant_value':v},now=dt(a)),a['base'],a['folder'],
@@ -220,6 +229,13 @@ def cases(seed=20261102):
  pjobs=jobs+[{'_variant_value':v,'name':'n'} for v in ['..','.',' . ','a/b','x:..',' 東京 ','.a.','...','',' ']]
  for _ in range(300):
   add('render_path_template',template=r.choice(['D:\\出力\\','/srv/','',' ','..\\','{値}/','a/'])+gen_template(r)+r.choice(['','\\x','/y',' ']),job=r.choice(pjobs),dt=r.choice(dts))
+ names=['品番','ITEM_CD','品目コード','数','区分','名前','id','ID','コード']
+ for _ in range(400):
+  def side(n):
+   hs=r.sample(names,n);cols=[[f'v{r.randint(0,r.choice([5,12,40,150]))+r.choice([0,0,7,20])}' for _ in range(80)]+['',' ',' v1 '] for _ in hs]
+   return hs,[[r.choice(cols[i]) for i in range(r.randint(0,n+1)) if i<n] for _ in range(r.randint(0,70))]
+  lh,lr=side(r.randint(1,4));rh,rr=side(r.randint(1,4))
+  add('suggest_keys',lh=lh,lr=lr,rh=rh,rr=rr)
  for _ in range(300):add('trim_to_line',bytes=[r.choice(b'a"\n,\r') for _ in range(r.randint(0,14))])
  for _ in range(80):add('variants_has_token',text=gen_template(r)+r.choice(['','{値:','{value}','{値 }','値']))
  vals=['東京','大阪','TOKYO','tokyo','..','a/b','ab','AB',' ','x']
@@ -262,9 +278,11 @@ class ConfigFunctionParityTest(unittest.TestCase):
   qs=cases();py,rs=run_both(qs)
   self.assertEqual(len(py),len(qs));self.assertEqual(len(rs),len(qs))
   bad=[];passed={}
+  ties=0
   for q,p,x in zip(qs,py,rs):
    if not x.get('ok'):bad.append(f'{q["fn"]} {json.dumps(q["args"],ensure_ascii=False)[:300]}: Rust が失敗 {x.get("error")}');continue
    got=x['result']
+   if p['ok'] and p['result']=='TIE':ties+=1;continue   # 同じ順位の組があり、Python の並びが決まらない問い
    if got=={'pass':True}:
     # Rust は答えない（Python へ回す）。Python が落ちる値なら当然。Python が答える値でも許すが、数を数えて出す
     passed[q['fn']]=passed.get(q['fn'],0)+(0 if not p['ok'] else 1);continue
@@ -276,6 +294,9 @@ class ConfigFunctionParityTest(unittest.TestCase):
   self.assertEqual(bad,[],f'{len(bad)} 件の食い違い:\n'+'\n'.join(bad[:40]))
   # Python が答えるのに Rust が回した数（多すぎれば、Rust が答えられる範囲が狭すぎる）
   self.assertLessEqual(sum(passed.values()),len(qs)//100,f'Python が答えるのに Rust が回した数: {passed}')
+  keys=sum(q['fn']=='suggest_keys' for q in qs)
+  self.assertGreaterEqual(keys-ties,keys//2,f'キーの見当で比べられた問いが少なすぎます（同じ順位 {ties}/{keys}）')
+  print(f'\n  キーの見当: {keys-ties}/{keys} 件を比べた（残りは同じ順位の組があり、Python の並びが決まらない）')
   print(f'\n  関数ごとの突き合わせ: {len(qs)} 件（Python が答えるのに Rust が回した: {passed or 0}）')
 
 

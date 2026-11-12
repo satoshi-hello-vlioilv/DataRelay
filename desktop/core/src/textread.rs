@@ -886,6 +886,19 @@ fn answer_sniff(core: &Core, ask: &Ask) -> R<Reply> {
     ))
 }
 
+/// 見出しと本体（行は字の並び）。
+pub(crate) type Table = (Vec<String>, Vec<Vec<String>>);
+
+/// navi_text.read_text_rows の見出しと本体（結合の材料に使う）。Err(Ok(文)) は Python の ValueError の文、Err(Err(Pass)) は Python へ回す。
+pub(crate) fn text_rows(path: &str, l: &Value, limit: usize) -> Result<Table, R<String>> {
+    if columns(l).is_empty() {
+        return Err(Ok("読取マスタに列がありません".into()));
+    }
+    let Some(bytes) = file_bytes(path).map_err(Err)? else { return Err(Err(Pass)) };
+    let r = read_rows(&bytes, l, limit).map_err(Err)?;
+    Ok((r.headers.iter().map(pyish::py_str).collect(), r.body))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
