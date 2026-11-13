@@ -146,6 +146,68 @@ pub fn call(name: &str, a: &Value) -> Result<Value, String> {
             let row: Vec<String> = a["row"].as_array().into_iter().flatten().map(|x| x.as_str().unwrap_or("").to_string()).collect();
             json!(crate::viewer::csv_row(&row, if s(a, "delimiter") == "\t" { '\t' } else { ',' }))
         }
+        // 実行の記録（runs.rs）。設定の写しへ書く。日時は DATARELAY_FIXED_NOW で決める
+        "record_job_run" | "record_rne_result" | "record_local_result" => {
+            let mut core = crate::routes::Core::with_program(Path::new(s(a, "base")));
+            if let Ok(t) = std::env::var("DATARELAY_FIXED_NOW") {
+                core.fixed_now = chrono::NaiveDateTime::parse_from_str(&t, "%Y-%m-%dT%H:%M:%S%.f").ok();
+            }
+            let job = a["job"].as_object().cloned().unwrap_or_default();
+            let result = a["result"].as_object().cloned().unwrap_or_default();
+            let trigger = s(a, "trigger");
+            let (one, rec) = match name {
+                "record_rne_result" => {
+                    let (one, rec) = crate::runs::from_rne_result(&job, &result, trigger);
+                    (one, rec)
+                }
+                "record_local_result" => (Value::Null, crate::runs::from_local_result(&job, &result, trigger)),
+                _ => {
+                    let r = &a["record"];
+                    let rec = crate::runs::JobRecord {
+                        job_id: r["job_id"].clone(),
+                        job_name: r["job_name"].clone(),
+                        status: s(r, "status").into(),
+                        trigger: s(r, "trigger").into(),
+                        detail: s(r, "detail").into(),
+                        rows: r["rows"].clone(),
+                        cols: r["cols"].clone(),
+                        output_file: s(r, "output_file").into(),
+                        metrics: r["metrics"].clone(),
+                    };
+                    (Value::Null, rec)
+                }
+            };
+            let written = crate::runs::record_job_run(&core, &rec).is_ok();
+            core.settle_writes("probe");
+            json!({"one": one, "written": written})
+        }
+        // ワーカーを起こして終わりまで見守る（worker.rs）。見えた工程の様子を順に返す
+        "run_worker" => {
+            let payload = a["payload"].clone();
+            let spawn = crate::worker::Spawn {
+                python: Path::new(s(a, "python")),
+                program_root: Path::new(s(a, "program_root")),
+                dir: Path::new(s(a, "dir")),
+                payload: &payload,
+                line: s(a, "line"),
+            };
+            let mut w = crate::worker::Worker::spawn(&spawn).map_err(|e| e.to_string())?;
+            let limit = a["limit_seconds"].as_f64().map(std::time::Duration::from_secs_f64);
+            let mut seen: Vec<Value> = Vec::new();
+            let end = loop {
+                if let Some(st) = w.status() {
+                    let st = Value::Object(st);
+                    if seen.last() != Some(&st) {
+                        seen.push(st);
+                    }
+                }
+                if let Some(end) = w.poll(limit) {
+                    break end;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(30));
+            };
+            json!({"result": end.result, "code": end.code, "timed_out": end.timed_out, "statuses": seen, "line": w.line})
+        }
         "trim_to_line" => {
             let b: Vec<u8> = a["bytes"].as_array().into_iter().flatten().map(|x| x.as_u64().unwrap_or(0) as u8).collect();
             json!(crate::localcopy::trim_to_line(&b))

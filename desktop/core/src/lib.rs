@@ -25,6 +25,7 @@ mod places;
 pub mod probe;
 mod pyish;
 pub mod routes;
+pub mod runs;
 pub mod schedule;
 pub mod secret;
 pub mod settings;
@@ -32,6 +33,7 @@ pub mod textread;
 pub mod variants;
 pub mod version;
 pub mod viewer;
+pub mod worker;
 pub mod writer;
 
 pub use http::{Ask, Reply};
