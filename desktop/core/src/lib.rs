@@ -31,6 +31,7 @@ pub mod routes;
 pub mod runner;
 pub mod runs;
 pub mod schedule;
+pub mod scheduler;
 pub mod secret;
 pub mod settings;
 pub mod textread;
