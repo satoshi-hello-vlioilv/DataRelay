@@ -73,6 +73,8 @@ cancel_requested=threading.Event(); active_workers_lock=threading.Lock(); active
 chdir_lock=threading.RLock()
 # 並列ライン数として動作を確認している上限。既定値・移行・クランプはすべてこの値を基準にする。
 PARALLEL_LINES_SUPPORTED_MAX=24
+# 同時実行ラインの既定（2.40.1 で 6 → 12。実機の余裕を見て上げた）
+PARALLEL_LINES_DEFAULT=12
 # SymNaviA.dllを探す既定の範囲。製品側の標準配置 → アプリ同梱 の順。設定画面から増減できる。
 DEFAULT_DLL_SEARCH_ROOTS=(r'C:\NAVIAP','.\\Config\\NAVIAP','.\\NAVIAP')
 # 2.1.2 で撤去した設定。読み込みで落とし、保存し直すと設定からも消える。
@@ -396,8 +398,21 @@ def ensure_settings_migrations():
  try:
   with settings_connection() as c:
    done={r['key'] for r in c.execute("SELECT key FROM schema_info WHERE key LIKE 'migrated_%'")}
-   if 'migrated_parallel_max_lines_24' in done:return
    row=c.execute("SELECT value,value_type FROM app_settings WHERE key='settings'").fetchone()
+   # 同時実行ラインの既定を 6 → 12 にした（2.40.1）。古い既定の 6 のままなら 12 へ上げる。6 以外は利用者が選んだ数なので触らない
+   if 'migrated_parallel_lines_12' not in done:
+    if row:
+     settings=_decode_setting(row) or {}
+     if settings.get('api_parallel_lines')==6 and not isinstance(settings.get('api_parallel_lines'),bool):
+      settings['api_parallel_lines']=PARALLEL_LINES_DEFAULT
+      encoded,kind=_encode_setting(settings)
+      c.execute("UPDATE app_settings SET value=?,value_type=?,updated_at=? WHERE key='settings'",(encoded,kind,datetime.now().isoformat(timespec='seconds')))
+      log.info('SETTINGS_MIGRATION api_parallel_lines 6 -> %s',PARALLEL_LINES_DEFAULT)
+      row=c.execute("SELECT value,value_type FROM app_settings WHERE key='settings'").fetchone()
+    c.execute("INSERT OR REPLACE INTO schema_info(key,value) VALUES('migrated_parallel_lines_12','1')")
+   if 'migrated_parallel_max_lines_24' in done:
+    if 'migrated_parallel_lines_12' not in done:_mark_settings_dirty()
+    return
    if row:
     settings=_decode_setting(row) or {}
     current=int(settings.get('api_parallel_max_lines',0) or 0)
@@ -2226,7 +2241,7 @@ def resolve_text_path(job,cfg):
 
 # 共通設定の既定値。読み込みで足りないものを埋め、画面はこれを「推奨」として出す（2.1.2。出どころを1つにする）。
 # 結合の待ち合わせの既定値は navi_order が持つ（判断もあちら）。
-SETTING_DEFAULTS={'api_parallel_lines':6,'variant_method':navi_variants.DEFAULT_METHOD,
+SETTING_DEFAULTS={'api_parallel_lines':PARALLEL_LINES_DEFAULT,'variant_method':navi_variants.DEFAULT_METHOD,
                   'retry_enabled':True,'retry_delay_minutes':5,'retry_max':1,'schedule_catchup_minutes':30,
                   'api_worker_stagger_ms':700,'local_parallel_lines':0,'api_worker_timeout_minutes':120,
                   'log_max_mb':10,'log_keep':5,'reject_zero_rows':True,
@@ -2254,8 +2269,8 @@ def load():
   # （画面を2つ開いていると、あとから保存したほうが相手の追加した対象を消していた）。
   _rev=c.execute("SELECT value FROM schema_info WHERE key='settings_revision'").fetchone()
   cfg['settings_revision']=int(_rev[0]) if _rev and str(_rev[0]).strip().lstrip('-').isdigit() else 0; cfg['settings'].setdefault('api_parallel_max_lines',PARALLEL_LINES_SUPPORTED_MAX)
-  # 旧テスト実装の名残（stability_profile='stable_api_serial' で毎回1ラインへ戻していた）が残る環境だけ、一度6へ戻す。
-  if cfg['settings'].get('stability_profile')=='stable_api_serial':cfg['settings']['api_parallel_lines']=6
+  # 旧テスト実装の名残（stability_profile='stable_api_serial' で毎回1ラインへ戻していた）が残る環境だけ、既定へ戻す。
+  if cfg['settings'].get('stability_profile')=='stable_api_serial':cfg['settings']['api_parallel_lines']=PARALLEL_LINES_DEFAULT
   # 使わなくなった設定は読み込みで落とす（次に保存したとき設定からも消える）。DDE 方式の設定（2.1.2 で撤去）と、どこからも読まれていない設定
   for _k in REMOVED_SETTINGS:cfg['settings'].pop(_k,None)
   for _k in REMOVED_TOP_KEYS:cfg.pop(_k,None)
@@ -4782,8 +4797,39 @@ def join_running(item,selected,cfg):
  log.info('COMMAND_QUEUE_JOIN id=%s into=%s jobs=%s trigger=%s',item['id'],item['joined_to'],item['job_names'],item['trigger'])
  return True
 
+def absorb_waiting():
+ """待機キューの先頭から、手動の指令を走っている実行へ合流させる（2.40.1）。合流させた数。
+
+ 実行を入れてから黒板（合流を受け付ける所）ができるまでの数秒に入れた実行は、合流できずに待機キューへ並ぶ。
+ いったん並ぶと、あとから入れた実行も追い越さない決まりで全部並ぶ。並んだ指令をここで拾わないと、
+ 並列ライン数に余裕があっても前の実行の終わりを待ち、1件ずつ順に流れる（2.40.0 まで実際にそうなっていた）。
+ 先頭から順に見て、合流できない指令が来たらそこで止める（追い越さない）。自動実行は合流させない（join_running と同じ）。
+ """
+ n=0;cfg=None
+ while True:
+  with command_queue_lock:
+   if active_command is None or not command_queue:return n
+   head=command_queue[0]
+   if not str(head.get('trigger') or '').startswith('manual'):return n
+   cfg=cfg or load()
+   selected=[j for j in cfg['jobs'] if j.get('enabled') and j['id'] in (head.get('job_ids') or [])]
+   if not selected or not navi_lanerun.join_live(selected,cfg,head['trigger']):return n
+   command_queue.pop(0)
+   active_command.setdefault('joined_ids',[]).extend(head['job_ids'])
+   active_command.setdefault('joined_names',[]).extend(head['job_names'])
+  n+=1
+  log.info('COMMAND_QUEUE_JOIN_WAITING id=%s into=%s jobs=%s trigger=%s',head['id'],active_command.get('id'),head['job_names'],head['trigger'])
+
+def command_absorber():
+ """走っている間、待機キューに並んだ手動の指令を、空きができしだい合流させる見張り（毎秒）。
+ 実行そのもの（process）は command_dispatcher のスレッドで走り、その間あちらの輪は回らないので、別に持つ。"""
+ while not stop_event.wait(1.0):
+  try:absorb_waiting()
+  except Exception:log.exception('COMMAND_QUEUE_JOIN_WAITING_FAILED')
+
 def command_dispatcher():
  global active_command
+ threading.Thread(target=command_absorber,daemon=True,name='command-absorber').start()
  while not stop_event.is_set():
   command_queue_event.wait(1.0)
   if stop_event.is_set():break

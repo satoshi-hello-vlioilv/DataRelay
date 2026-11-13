@@ -695,7 +695,7 @@ fn decode_setting(v: &Value, t: &Value) -> R<Value> {
 /// 共通設定の既定値（app.SETTING_DEFAULTS。navi_order.WAIT_DEFAULTS を含む）。
 pub fn setting_defaults() -> Map<String, Value> {
     let v = json!({
-        "api_parallel_lines": 6, "variant_method": "combined",
+        "api_parallel_lines": 12, "variant_method": "combined",
         "retry_enabled": true, "retry_delay_minutes": 5, "retry_max": 1, "schedule_catchup_minutes": 30,
         "api_worker_stagger_ms": 700, "local_parallel_lines": 0, "api_worker_timeout_minutes": 120,
         "log_max_mb": 10, "log_keep": 5, "reject_zero_rows": true,
@@ -910,7 +910,7 @@ pub fn load(core: &Core, c: &Connection) -> R<Map<String, Value>> {
     let Value::Object(st) = settings else { return Err(Pass) };
     st.entry("api_parallel_max_lines").or_insert(json!(24));
     if st.get("stability_profile") == Some(&json!("stable_api_serial")) {
-        st.insert("api_parallel_lines".into(), json!(6));
+        st.insert("api_parallel_lines".into(), json!(12));
     }
     for k in REMOVED_SETTINGS {
         st.remove(k);
@@ -1166,8 +1166,10 @@ pub fn settled(core: &Core, local: &Path, c: &Connection) -> bool {
             return false;
         }
     }
-    let migrated: bool =
-        c.query_row("SELECT 1 FROM schema_info WHERE key='migrated_parallel_max_lines_24'", [], |_| Ok(true)).unwrap_or(false);
+    // 設定値の移行（app.ensure_settings_migrations）が済んでいること。済んでいなければ Python が移行してから読む
+    let migrated = ["migrated_parallel_max_lines_24", "migrated_parallel_lines_12"]
+        .iter()
+        .all(|k| c.query_row("SELECT 1 FROM schema_info WHERE key=?", [k], |_| Ok(true)).unwrap_or(false));
     if !migrated {
         return false;
     }
