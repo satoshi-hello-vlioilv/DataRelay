@@ -186,4 +186,27 @@ print(json.dumps({'cfg':app.load()},ensure_ascii=False))
   self.assertTrue(runs[0]['detail'].startswith('2件/2列 / '))
 
 
+ def test_publishing_markers(self):
+  """材料のファイルへ、いま公開の書き込みが来ているか（隣の .<名前>.*.incoming。15 分より古い印は見ない）。"""
+  d=self.t/'pub';d.mkdir(exist_ok=True)
+  for n in ('.a.csv.123.incoming','.b.csv.9.incoming','.c.csv..incoming','.d.csv.incoming','.E.csv.1.incoming','x.f.csv.1.incoming'):(d/n).write_bytes(b'')
+  old=__import__('time').time()-1000;os.utime(d/'.b.csv.9.incoming',(old,old))
+  inputs=[str(d/n) for n in ('a.csv','b.csv','c.csv','d.csv','e.csv','f.csv','無い.csv')]+['',str(self.t/'無いフォルダー'/'a.csv')]
+  code=r'''
+import json,sys
+sys.path[:0]=[sys.argv[1],sys.argv[1]+'/lib']
+from datetime import datetime
+import app,navi_order
+a=json.loads(sys.stdin.read())
+print(json.dumps(navi_order.wait_reasons({'id':'j'},{},datetime(2026,11,1),deps={},running_ids=set(),queued_ids=set(),next_run_of=lambda o:None,
+                                         inputs=a['inputs'],lookahead_seconds=60),ensure_ascii=False))
+'''
+  self.base('pubbase')
+  py=self.py(code,'pubbase',json.dumps({'inputs':inputs},ensure_ascii=False))
+  rs,=self.call('pubbase',[{'fn':'wait_reasons','args':{'job':'j','deps':{},'running':[],'queued':[],'next':{},'inputs':inputs,'lookahead':60,
+                                                       'dt':'2026-11-01T00:00:00.000000'}}])
+  self.assertEqual(rs,py)
+  self.assertEqual([x['job'] for x in py],['a.csv','c.csv'] if os.name!='nt' else ['a.csv','c.csv','e.csv'])
+
+
 if __name__=='__main__':unittest.main()

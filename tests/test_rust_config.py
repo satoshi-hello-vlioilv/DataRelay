@@ -28,6 +28,22 @@ from pathlib import Path,PureWindowsPath
 sys.path[:0]=[sys.argv[1],sys.argv[1]+'/lib']
 import app,navi_join,navi_localcopy,navi_variants,navi_viewer,navi_post,navi_groups,navi_text,navi_join,navi_mrun,navi_output,navi_paths
 def dt(a):return datetime.fromisoformat(a['dt'])
+def lane_all(a):
+ import navi_lane,navi_order
+ jobs=[{'id':j['id'],'name':j['name']} for j in a['jobs']];deps={k:set(v) for k,v in a['deps'].items()}
+ done,started,failed=set(a['done']),set(a['started']),set(a['failed'])
+ plan=navi_lane.build_plan(jobs,deps,a['kinds']);ids=lambda v:[e['id'] for e in v]
+ return {'plan':[{'id':e['id'],'kind':e['kind'],'tier':e['tier'],'order':e['order'],'needs':sorted(e['needs'])} for e in plan],
+         'ready':ids(navi_lane.ready(plan,done,started)),'ready_local':ids(navi_lane.ready(plan,done,started,navi_lane.LOCAL_KINDS)),
+         'unreachable':ids(navi_lane.unreachable(plan,failed,done)),'names':navi_lane.names_of(set(a['some']),plan),
+         'blocking':[navi_lane.blocking_names(e,plan,done) for e in plan],'plan_text':navi_lane.plan_text(plan),'wait_text':navi_lane.wait_text(plan),
+         'order':[j['id'] for j in navi_order.order_jobs(jobs,deps)],'upstream':[sorted(navi_order.upstream_of(j['id'],deps)) for j in jobs],
+         'local_lines':navi_lane.local_lines(a['configured'],a['batch_lines'],a['local_count']),'reason_text':navi_order.reason_text(a['reasons'])}
+def wait_reasons(a):
+ import navi_order
+ nxt=lambda o:datetime.fromisoformat(a['next'][o]) if a['next'].get(o) else None
+ return navi_order.wait_reasons({'id':a['job']},{},dt(a),deps={k:set(v) for k,v in a['deps'].items()},running_ids=set(a['running']),
+                                queued_ids=set(a['queued']),next_run_of=nxt,inputs=a['inputs'],lookahead_seconds=a['lookahead'],name_of=lambda o:'名'+o)
 def key_tie(a):
  # 重なり・種類の多さ・名前の近さが同じ組があると、Python の並びは値の集合の並び（文字列のハッシュ）で決まり、起こすたびに変わる。そういう問いは比べない
  ls=navi_join._key_sets(a['lh'],a['lr']);rs=navi_join._key_sets(a['rh'],a['rr']);ranks=[]
@@ -58,6 +74,8 @@ F={
  'render_filename_segments':lambda a:app.render_filename_segments(a['template'],job=a.get('job'),rne_path=a.get('rne_path'),now=dt(a)),
  'render_path_template':lambda a:app.render_path_template(a['template'],job=a.get('job'),rne_path=a.get('rne_path'),now=dt(a)),
  'suggest_keys':lambda a:navi_join.suggest_keys(a['lh'],a['lr'],a['rh'],a['rr']) if not key_tie(a) else 'TIE',
+ 'lane_all':lane_all,
+ 'wait_reasons':wait_reasons,
  'trim_to_line':lambda a:list(navi_localcopy._trim_to_line(bytes(a['bytes']))),
  'variants_has_token':lambda a:navi_variants.has_token(a['text']),
  'variants_plan':lambda a:navi_variants.plan(a['job'],lambda t,v:app.render_filename_template(t,job={**a['job'],'_variant_value':v},now=dt(a)),a['base'],a['folder'],
@@ -236,6 +254,22 @@ def cases(seed=20261102):
    return hs,[[r.choice(cols[i]) for i in range(r.randint(0,n+1)) if i<n] for _ in range(r.randint(0,70))]
   lh,lr=side(r.randint(1,4));rh,rr=side(r.randint(1,4))
   add('suggest_keys',lh=lh,lr=lr,rh=rh,rr=rr)
+ pool=['a','b','c','d','e','f','受注','在庫']
+ for _ in range(600):
+  ids=r.sample(pool,r.randint(0,7))
+  extra=pool+['z','']
+  kinds_pool=['rne','text','mquery','join','','other']
+  reasons=[{'kind':r.choice(['running','queued','scheduled','writing','謎']),'job':r.choice(['A','',None,'在庫']),
+            **({'at':r.choice(['2026-11-02T09:00:00','',None])} if r.random()<0.5 else {})} for _ in range(r.randint(0,6))]
+  add('lane_all',jobs=[{'id':i,'name':'名'+i} for i in ids],deps={i:r.sample(extra,r.randint(0,3)) for i in ids if r.random()<0.8},
+      kinds={i:r.choice(kinds_pool) for i in ids if r.random()<0.9},done=r.sample(extra,r.randint(0,4)),started=r.sample(extra,r.randint(0,3)),
+      failed=r.sample(extra,r.randint(0,2)),some=r.sample(extra,r.randint(0,4)),configured=r.choice([0,'3',2.7,'x',None,-1,8,'',1]),
+      batch_lines=r.randint(0,6),local_count=r.randint(0,5),reasons=reasons)
+ for _ in range(300):
+  ids=r.sample(pool,r.randint(1,6));me=ids[0]
+  nxt={o:r.choice(['2026-11-01T09:05:07','2026-11-01T09:06:00','2026-11-01T09:05:00','2026-11-01T10:00:00','2026-10-31T09:00:00','']) for o in ids if r.random()<0.7}
+  add('wait_reasons',job=me,deps={me:r.sample(ids+['z'],r.randint(0,len(ids)))},running=r.sample(ids,r.randint(0,min(2,len(ids)))),queued=r.sample(ids,r.randint(0,min(2,len(ids)))),
+      next=nxt,inputs=[],lookahead=r.choice([0,60,3600,-5]),dt='2026-11-01T09:05:07.000000')
  for _ in range(300):add('trim_to_line',bytes=[r.choice(b'a"\n,\r') for _ in range(r.randint(0,14))])
  for _ in range(80):add('variants_has_token',text=gen_template(r)+r.choice(['','{値:','{value}','{値 }','値']))
  vals=['東京','大阪','TOKYO','tokyo','..','a/b','ab','AB',' ','x']
