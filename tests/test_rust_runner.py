@@ -307,4 +307,82 @@ print(json.dumps(navi_order.wait_reasons({'id':'j'},{},datetime(2026,11,1),deps=
   self.assertEqual(sorted(out['status']['queue_completed_ids']),['V','W'])
   self.assertGreaterEqual(out['outcome']['elapsed'],0.6,'待ちきるまで V は走らない')
 
+ # ---- RNE 単位の控え（runs.rs。2.39.0）: 実績・列名・所要時間の基準 ----
+ def test_rne_notes(self):
+  d=self.t/'rnefiles';d.mkdir(exist_ok=True);rne=d/'受注.RNE';rne.write_bytes(b'x'*123);os.utime(rne,ns=(1767225600123456789,1767225600123456789))
+  link=d/'別名.RNE'
+  try:link.symlink_to(rne)
+  except OSError:link=rne
+  key=os.path.normcase(os.path.normpath(str(rne.resolve())))
+  seed=[['INSERT INTO rne_runs(rne_key,rne_path,finished_at) VALUES(?,?,?)',[key,str(rne),f'2026-01-01T00:00:{i%60:02d}']] for i in range(2000)]
+  self.py(MAKE,'nbase',json.dumps({'cfg':{'jobs':[]},'sql':seed},ensure_ascii=False));self.twin('nbase','npy','nrs')
+  job={'id':'j1','name':'受注'}
+  full={'split_shape':'row','split_how':'行3分割','split_parts':'3','row_axis':'日付','rows':120,'cols':8,'elapsed':12.5,'execute_seconds':3.25,
+        'save_seconds':1,'merge_seconds':None,'axis_seconds':0.5,'transfer_bytes':123456789012,'transfer_kbs':55.5,'lines':2}
+  ops=[{'fn':'record_rne_run','rne_path':str(link),'job':job,'status':'ok','trigger':'schedule:朝','metrics':full,'engine':'api','fmt':'csv'},
+       {'fn':'record_rne_run','rne_path':str(d/'無い.RNE'),'job':{'id':5},'status':'failed','trigger':'','metrics':{'format':'xlsx','lines':0},'engine':'api','fmt':'csv'},
+       {'fn':'record_rne_run','rne_path':'','job':job,'status':'ok','trigger':'manual','metrics':{},'engine':'api','fmt':''},
+       {'fn':'record_rne_run','rne_path':'相対/x.RNE','job':{},'status':'ok','trigger':'manual','metrics':{'split_parts':2.9},'engine':'api','fmt':''},
+       {'fn':'save_column_cache','rne_path':str(rne),'columns':['番号',' ',2,None,'品名'],'rows':10,'source':'run','job':job},
+       {'fn':'save_column_cache','rne_path':str(d/'無い.RNE'),'columns':[],'rows':None,'source':'run','job':job},
+       {'fn':'save_column_cache','rne_path':str(link),'columns':['a'],'rows':None,'source':'run','job':{}},
+       {'fn':'save_rne_timing','rne_path':str(rne),'execute':0,'save':0,'total':5,'rows':1,'cols':1},
+       {'fn':'save_rne_timing','rne_path':str(rne),'execute':2.5,'save':0,'total':3.75,'rows':120,'cols':8},
+       {'fn':'save_rne_timing','rne_path':str(d/'無い.RNE'),'execute':None,'save':1,'total':None,'rows':None,'cols':None}]
+  code=r"""
+import json,os,sys
+sys.path[:0]=[sys.argv[1],sys.argv[1]+'/lib']
+from datetime import datetime as _dt
+from pathlib import Path
+import app
+class Fixed(_dt):
+ @classmethod
+ def now(cls,tz=None):return _dt.fromisoformat(sys.argv[2])
+app.datetime=Fixed
+a=json.loads(sys.stdin.read());out=[]
+for op in a['ops']:
+ f=op['fn']
+ if f=='record_rne_run':out.append(app.record_rne_run(op['rne_path'],op['job'],op['status'],op['trigger'],op['metrics'],engine=op['engine'],fmt=op['fmt']))
+ elif f=='save_column_cache':out.append(app.save_column_cache(op['rne_path'],op['columns'],rows=op['rows'],source=op['source'],job=op['job']))
+ else:out.append(app.save_rne_timing(op['rne_path'],op['execute'],op['save'],op['total'],op['rows'],op['cols']))
+print(json.dumps({'results':out,'keys':[[app._rne_key(p),list(app.rne_signature(p))] for p in a['paths']],'cpu':os.cpu_count()},ensure_ascii=False))
+"""
+  paths=[str(rne),str(link),str(d/'無い.RNE'),'相対/x.RNE','',str(d/'.'/'..'/'rnefiles'/'受注.RNE')]
+  py=self.py(code,'npy',json.dumps({'ops':ops,'paths':paths},ensure_ascii=False),NOW)
+  rs,=self.call('nrs',[{'fn':'rne_notes','args':{'base':str(ROOT),'ops':ops,'paths':paths}}])
+  self.assertEqual(rs['keys'],py['keys']);self.assertEqual(rs['cpu'],py['cpu'])
+  # NTFS は更新日時を 100 ナノ秒の刻みで持つので、Windows では下2桁が 00 になる
+  self.assertEqual(py['keys'][0][1],['1767225600123456700' if os.name=='nt' else '1767225600123456789',123])
+  # 戻り値: 記録できたか（True/False）・控えた列名（無ければ None）。所要時間は Python が None しか返さないので、DB だけで比べる
+  self.assertEqual(rs['results'][:7],py['results'][:7])
+  self.assertEqual(py['results'][:7],[True,True,False,True,['番号','2','None','品名'],None,['a']])
+  def table(name,sql):
+   with closing(sqlite3.connect(str(self.paths(name)[0]))) as c:
+    c.row_factory=sqlite3.Row
+    return [{k:r[k] for k in r.keys() if k!='id'} for r in c.execute(sql)]
+  for sql in ('SELECT * FROM rne_runs ORDER BY id','SELECT * FROM rne_columns ORDER BY rne_key','SELECT * FROM rne_timing ORDER BY rne_key'):
+   self.assertEqual(table('nrs',sql),table('npy',sql),sql)
+  with closing(sqlite3.connect(str(self.paths('npy')[0]))) as c:
+   n,last=c.execute('SELECT COUNT(*),MAX(id) FROM rne_runs WHERE rne_key=?',(key,)).fetchone()
+   row=c.execute('SELECT hour,weekday,parts,lines,format,host FROM rne_runs WHERE id=?',(last,)).fetchone()
+   timing=c.execute('SELECT execute_seconds,save_seconds,total_seconds FROM rne_timing WHERE rne_key=?',(key,)).fetchone()
+  self.assertEqual(n,2000,'RNE ごとに直近 2000 件だけ残す');self.assertEqual(row[:5],(9,0,3,2,'csv'));self.assertTrue(row[5])
+  self.assertEqual(timing,(2.5,0,3.75),'実行・保存がどちらも 0 の回は基準を書き換えない')
+
+ def test_board_keeps_rne_notes(self):
+  """黒板は RNE が終わるたびに、実績（成否とも）・列名（成功して持ち帰ったとき）・所要時間（成功して分割していないとき）を残す。"""
+  d=self.t/'brne';d.mkdir(exist_ok=True)
+  for n in ('a','b','c'):(d/f'{n}.RNE').write_bytes(b'r')
+  def job(i,result,code=0):return {'id':i,'name':i,'_fake':{'result':dict(result,rne_path=str(d/f'{i}.RNE')),'code':code}}
+  jobs=[job('a',{'ok':True,'result':'a','rows':5,'columns':2,'column_names':['x','y'],'execute_seconds':1.5,'save_seconds':0.5,'total_seconds':2.25}),
+        job('b',{'ok':True,'result':'b','rows':9,'columns':3,'column_names':['p'],'split_parts':2,'execute_seconds':1,'save_seconds':1}),
+        job('c',{'ok':False,'error':'だめ','column_names':['z'],'execute_seconds':1},code=2)]
+  self.board('bnotes',jobs,{i:'rne' for i in 'abc'},api_lines=2,cap=3)
+  with closing(sqlite3.connect(str(self.paths('bnotes')[0]))) as c:
+   runs=sorted(c.execute('SELECT job_id,status,lines,trigger,rows,cols FROM rne_runs'))
+   cols=sorted(r[0] for r in c.execute('SELECT job_id FROM rne_columns'))
+   timing=[r[0] for r in c.execute('SELECT rne_path FROM rne_timing')]
+  self.assertEqual(runs,[('a','ok',2,'schedule:朝',5,2),('b','ok',2,'schedule:朝',9,3),('c','failed',2,'schedule:朝',None,None)])
+  self.assertEqual(cols,['a','b']);self.assertEqual(timing,[str(d/'a.RNE')])
+
 if __name__=='__main__':unittest.main()

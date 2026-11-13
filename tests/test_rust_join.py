@@ -14,13 +14,14 @@ POST /api/join-keys・POST /api/join-preview は、明細と台帳（2,000 行�
 空のファイル・読めない文字コード・無いファイル・ファイルが1つ・つなぎ目の番号の外・行数の上限で比べる。
 実行: python -m unittest tests.test_rust_join -v
 """
-import json,os,shutil,sqlite3,sys,unittest
+import json,os,shutil,sqlite3,subprocess,sys,unittest
 from contextlib import closing
 
 sys.path.insert(0,os.path.dirname(os.path.abspath(__file__)))
 import test_rust_save  # noqa: E402
 from test_rust_writes import ASK,LAYOUT,DELIM,post  # noqa: E402
 from test_rust_config import MAKE  # noqa: E402
+from test_rust_parity import ROOT  # noqa: E402
 
 NOW='2026-11-02T09:05:07.123456'
 
@@ -74,6 +75,47 @@ class JoinPlanParityTest(unittest.TestCase):
   self.assertEqual(first['cache']['count'],1)
   self.assertEqual(order['made_count'],3);self.assertEqual(order['wait'],{'enabled':True,'lookahead':30,'max_wait':600,'poll':5})
   self.assertEqual(json.loads(py[4]['body'])['removed'],2,'写しと控えを消し、フォルダーは消さない')
+
+ def test_job_dependencies(self):
+  """材料の関係（navi_orderrun.job_dependencies と joinplan::dependencies。2.39.0）。黒板が、どの対象を先に流すかを決めるのに使う。
+  クエリの対象（M の式を読む）が入っていれば、段 6 までは Python へ回す。"""
+  a=self.t/'depA';b=self.t/'depB';a.mkdir(exist_ok=True);b.mkdir(exist_ok=True);(b/'old.txt').write_bytes(b'x')
+  cfg={'default_output_folder':str(b),'text_folder':str(b),
+       'jobs':[{'id':'j1','name':'受注','output_folder':str(a),'output_format':'csv','output_file':'a.csv','extra_formats':['xlsx'],'naming_mode':'fixed'},
+               {'id':'j2','name':'日次','output_folder':str(a),'output_format':'sqlite','naming_mode':'template','output_pattern':'{name}_固定'},
+               {'id':'j3','name':'在庫','output_folder':'','output_format':'txt','output_file':'b.txt'},
+               {'id':'j5','name':'結合1','source':'join','recipe_id':'R1','output_folder':str(a),'output_format':'csv','output_file':'結合1.csv','naming_mode':'fixed'},
+               {'id':'j6','name':'結合2','source':'join','recipe_id':' R2 ','output_folder':str(b),'output_format':'csv','output_file':'結合2.csv','naming_mode':'fixed'},
+               {'id':'j7','name':'無いマスタ','source':'join','recipe_id':'R9','output_file':'n.csv'},
+               {'id':'j8','name':'マスタなし','source':'join','recipe_id':'','output_file':'m.csv'},
+               {'id':'j9','name':'テキスト','source':'text','output_file':'t.csv'},
+               {'id':'jm','name':'クエリ','source':'mquery','query_id':'Q1','output_file':'q.csv'}]}
+  def recipe(rid,sources):
+   return ['INSERT INTO join_recipes (id,display_order,name,description,sources_json,joins_json,columns_json,updated_at) VALUES(?,?,?,?,?,?,?,?)',
+           [rid,0,rid,'',json.dumps(sources,ensure_ascii=False),'[]','[]','t']]
+  sql=[recipe('R1',[{'path':str(a/'a.csv')},{'path':'old.txt'},{'path':str(a/'A.XLSX')},{'path':str(a/'結合1.csv')},{'path':'無い.csv'},{'path':''}]),
+       recipe('R2',[{'path':str(a/'日次_固定.sqlite3')},{'path':str(a/'結合1.csv')},{'path':str(b/'b.txt')}]),
+       ["INSERT OR REPLACE INTO job_runs(job_id,job_name,finished_at,status,trigger,detail,rows,cols,output_file,updated_at,metrics) VALUES('j3','在庫','t','ok','manual','',1,1,'old.txt','t','')",[]]]
+  self.py(MAKE,'depbase',json.dumps({'cfg':cfg,'sql':sql},ensure_ascii=False))
+  code=r"""
+import json,sys
+sys.path[:0]=[sys.argv[1],sys.argv[1]+'/lib']
+import app,navi_orderrun
+a=json.loads(sys.stdin.read());c=app.load();out=[]
+for ids in a:
+ jobs=[j for j in c['jobs'] if not ids or j['id'] in ids]
+ out.append({k:sorted(v) for k,v in navi_orderrun.job_dependencies(jobs,c).items()})
+print(json.dumps(out,ensure_ascii=False))
+"""
+  asks=[['j1','j2','j3','j5','j6','j7','j8','j9'],['j6'],[]]
+  py=self.py(code,'depbase',json.dumps(asks),NOW)
+  r=subprocess.run([str(self.exe),'call'],input=''.join(json.dumps({'fn':'job_dependencies','args':{'base':str(ROOT),'ids':i}})+'\n' for i in asks),
+                   env=dict(self.env('depbase'),DATARELAY_FIXED_NOW=NOW),cwd=str(ROOT),capture_output=True,text=True,encoding='utf-8',timeout=300)
+  rs=[json.loads(x)['result'] for x in r.stdout.splitlines() if x.strip()]
+  self.assertEqual(rs[:2],py[:2])
+  self.assertEqual(rs[2],{'pass':True},'クエリの対象が入っていれば Python へ回す')
+  want={'j1':[],'j2':[],'j3':[],'j5':['j1','j3'],'j6':['j2','j3','j5'],'j7':[],'j8':[],'j9':[]}
+  self.assertEqual(py[0],want,'大文字小文字だけ違う材料も作り手にたどり着く。自分の出力は数えない')
 
  def sources(self):
   o=self.t/'src';o.mkdir(exist_ok=True)

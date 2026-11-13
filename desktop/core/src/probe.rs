@@ -186,6 +186,66 @@ pub fn call(name: &str, a: &Value) -> Result<Value, String> {
             core.settle_writes("probe");
             json!({"one": one, "written": written})
         }
+        // RNE 単位の控え（runs.rs）と、その鍵・指紋・端末
+        "rne_notes" => {
+            let mut core = crate::routes::Core::with_program(Path::new(s(a, "base")));
+            if let Ok(t) = std::env::var("DATARELAY_FIXED_NOW") {
+                core.fixed_now = chrono::NaiveDateTime::parse_from_str(&t, "%Y-%m-%dT%H:%M:%S%.f").ok();
+            }
+            let mut out = vec![];
+            for op in a["ops"].as_array().into_iter().flatten() {
+                let job = op["job"].as_object().cloned().unwrap_or_default();
+                let rp = s(op, "rne_path");
+                let r = match s(op, "fn") {
+                    "record_rne_run" => crate::runs::record_rne_run(
+                        &core,
+                        rp,
+                        &job,
+                        s(op, "status"),
+                        s(op, "trigger"),
+                        &op["metrics"].as_object().cloned().unwrap_or_default(),
+                        s(op, "engine"),
+                        s(op, "fmt"),
+                    )
+                    .map(|x| json!(x)),
+                    "save_column_cache" => {
+                        crate::runs::save_column_cache(&core, rp, &op["columns"], &op["rows"], s(op, "source"), &job).map(|x| json!(x))
+                    }
+                    _ => crate::runs::save_rne_timing(&core, rp, &op["execute"], &op["save"], &op["total"], &op["rows"], &op["cols"])
+                        .map(|x| json!(x)),
+                };
+                out.push(r.unwrap_or_else(|_| json!({"pass": true})));
+            }
+            core.settle_writes("probe");
+            json!({"results": out, "keys": a["paths"].as_array().into_iter().flatten().map(|p| {
+                let p = s_of_val(p);
+                json!([crate::runs::rne_key(&p), crate::runs::rne_signature(&p)])
+            }).collect::<Vec<_>>(), "cpu": crate::runs::cpu_count()})
+        }
+        // 材料の関係（joinplan::dependencies）。クエリの対象が入っていれば Python へ回す
+        "job_dependencies" => {
+            let mut core = crate::routes::Core::with_program(Path::new(s(a, "base")));
+            if let Ok(t) = std::env::var("DATARELAY_FIXED_NOW") {
+                core.fixed_now = chrono::NaiveDateTime::parse_from_str(&t, "%Y-%m-%dT%H:%M:%S%.f").ok();
+            }
+            let b = core.bases().ok_or("置き場が分からない")?;
+            let Ok((c, runs)) = crate::config::read_with(&core, |_, conn| crate::schedule::job_runs(conn)) else {
+                return Ok(json!({"pass": true}));
+            };
+            let want: Vec<String> = a["ids"].as_array().into_iter().flatten().map(s_of_val).collect();
+            let run_jobs: Vec<Map<String, Value>> = c
+                .get("jobs")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|j| j.as_object().cloned())
+                .filter(|j| want.is_empty() || want.contains(&j.get("id").map(s_of_val).unwrap_or_default()))
+                .collect();
+            match crate::joinplan::dependencies(&core, &b, &c, &runs, &run_jobs, &|_| None) {
+                Ok(d) => json!(d.into_iter().collect::<std::collections::BTreeMap<_, _>>()),
+                Err(_) => json!({"pass": true}),
+            }
+        }
         // ワーカーを起こして終わりまで見守る（worker.rs）。見えた工程の様子を順に返す
         "run_worker" => {
             let payload = a["payload"].clone();
