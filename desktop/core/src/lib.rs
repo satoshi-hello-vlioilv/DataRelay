@@ -15,6 +15,7 @@ pub mod edits;
 pub mod http;
 pub mod joinplan;
 pub mod joinrun;
+pub mod lane;
 pub mod localcopy;
 mod login;
 pub mod masters;

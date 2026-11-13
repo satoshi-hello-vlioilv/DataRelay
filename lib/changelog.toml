@@ -15,6 +15,18 @@ summary = "SymNaviA.dll が公開する関数・定数・呼び出し順序の�
 source = "Navigator Visual Basic Interface API 9.6.0 / FUJITSU Interstage Navigator Server V9.4.1"
 
 [[release]]
+version = "2.37.0"
+date = "2026-11-13"
+title = "ラインの割り当てと材料の待ち合わせの決まりを、Rust の中身に用意した"
+notes = [
+  """\
+    【Rust への作り直し・段 5d の2回目】実行の流れを Rust へ移すための部品として、<b>何を・どの順で・いくつ同時に流すか</b>\
+    （RNE → テキスト・クエリ → 結合、材料を作る対象を先に、材料が失敗した対象は走らせない）と、<b>材料がそろうのを待つかどうか</b>\
+    （材料を作る対象が実行中・順番待ち・まもなく予定、材料へ公開の書き込みが来ている）の決まりを Rust の中身に用意しました。\
+    まだ使っていないので、実行のしかたは変わりません。""",
+]
+
+[[release]]
 version = "2.36.0"
 date = "2026-11-13"
 title = "実行の記録とワーカーの見守りを、Rust の中身に用意した"

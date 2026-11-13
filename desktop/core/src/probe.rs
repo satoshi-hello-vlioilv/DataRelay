@@ -11,6 +11,11 @@ fn s<'a>(a: &'a Value, k: &str) -> &'a str {
     a.get(k).and_then(Value::as_str).unwrap_or("")
 }
 
+/// 値を字に（id・名前は字のことがほとんど。数でもそのまま字にする）。
+fn s_of_val(v: &Value) -> String {
+    v.as_str().map(String::from).unwrap_or_else(|| crate::pyish::py_str(v))
+}
+
 fn opt<'a>(a: &'a Value, k: &str) -> Option<&'a str> {
     a.get(k).and_then(Value::as_str)
 }
@@ -207,6 +212,56 @@ pub fn call(name: &str, a: &Value) -> Result<Value, String> {
                 std::thread::sleep(std::time::Duration::from_millis(30));
             };
             json!({"result": end.result, "code": end.code, "timed_out": end.timed_out, "statuses": seen, "line": w.line})
+        }
+        // ラインの割り当ての決まり（lane.rs）をまとめて1回で
+        "lane_all" => {
+            use std::collections::{BTreeSet, HashMap};
+            let strs = |v: &Value| -> BTreeSet<String> { v.as_array().into_iter().flatten().map(s_of_val).collect() };
+            let jobs: Vec<(String, String)> =
+                a["jobs"].as_array().into_iter().flatten().map(|j| (s_of_val(&j["id"]), s_of_val(&j["name"]))).collect();
+            let deps: HashMap<String, BTreeSet<String>> =
+                a["deps"].as_object().into_iter().flatten().map(|(k, v)| (k.clone(), strs(v))).collect();
+            let kinds: HashMap<String, String> =
+                a["kinds"].as_object().into_iter().flatten().map(|(k, v)| (k.clone(), s_of_val(v))).collect();
+            let (done, started, failed) = (strs(&a["done"]), strs(&a["started"]), strs(&a["failed"]));
+            let plan = crate::lane::build_plan(&jobs, &deps, &kinds);
+            let ids = |v: Vec<&crate::lane::Entry>| json!(v.iter().map(|e| e.id.clone()).collect::<Vec<_>>());
+            let ids_vec: Vec<String> = jobs.iter().map(|(i, _)| i.clone()).collect();
+            let (order, _cycle) = crate::lane::order_jobs(&ids_vec, &deps);
+            json!({
+                "plan": plan.iter().map(|e| json!({"id": e.id, "kind": e.kind, "tier": e.tier, "order": e.order, "needs": e.needs})).collect::<Vec<_>>(),
+                "ready": ids(crate::lane::ready(&plan, &done, &started, None)),
+                "ready_local": ids(crate::lane::ready(&plan, &done, &started, Some(&crate::lane::LOCAL_KINDS))),
+                "unreachable": ids(crate::lane::unreachable(&plan, &failed, &done)),
+                "names": crate::lane::names_of(&strs(&a["some"]), &plan),
+                "blocking": plan.iter().map(|e| crate::lane::blocking_names(e, &plan, &done)).collect::<Vec<_>>(),
+                "plan_text": crate::lane::plan_text(&plan),
+                "wait_text": crate::lane::wait_text(&plan),
+                "order": order,
+                "upstream": jobs.iter().map(|(i, _)| crate::lane::upstream_of(i, &deps, 6)).collect::<Vec<_>>(),
+                "local_lines": crate::lane::local_lines(&a["configured"], a["batch_lines"].as_i64().unwrap_or(0), a["local_count"].as_i64().unwrap_or(0)),
+                "reason_text": crate::lane::reason_text(a["reasons"].as_array().map(Vec::as_slice).unwrap_or(&[])),
+            })
+        }
+        "wait_reasons" => {
+            use std::collections::{BTreeSet, HashMap};
+            let strs = |v: &Value| -> BTreeSet<String> { v.as_array().into_iter().flatten().map(s_of_val).collect() };
+            let deps: HashMap<String, BTreeSet<String>> =
+                a["deps"].as_object().into_iter().flatten().map(|(k, v)| (k.clone(), strs(v))).collect();
+            let next = a["next"].as_object().cloned().unwrap_or_default();
+            let at = |v: &Value| chrono::NaiveDateTime::parse_from_str(v.as_str().unwrap_or(""), "%Y-%m-%dT%H:%M:%S").ok();
+            let inputs: Vec<String> = a["inputs"].as_array().into_iter().flatten().map(s_of_val).collect();
+            json!(crate::lane::wait_reasons(
+                s(a, "job"),
+                &deps,
+                &strs(&a["running"]),
+                &strs(&a["queued"]),
+                |o| next.get(o).and_then(at),
+                &inputs,
+                when(a)?,
+                a["lookahead"].as_i64().unwrap_or(60),
+                |o| format!("名{o}"),
+            ))
         }
         "trim_to_line" => {
             let b: Vec<u8> = a["bytes"].as_array().into_iter().flatten().map(|x| x.as_u64().unwrap_or(0) as u8).collect();
