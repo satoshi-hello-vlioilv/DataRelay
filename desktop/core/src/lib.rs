@@ -28,6 +28,7 @@ mod places;
 pub mod probe;
 mod pyish;
 pub mod routes;
+pub mod runner;
 pub mod runs;
 pub mod schedule;
 pub mod secret;

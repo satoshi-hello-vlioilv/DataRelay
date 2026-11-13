@@ -273,6 +273,72 @@ pub fn call(name: &str, a: &Value) -> Result<Value, String> {
             };
             json!({"result": end.result, "code": end.code, "timed_out": end.timed_out, "statuses": seen, "line": w.line})
         }
+        // 実行の受け付けと流す役（runner.rs）。流す役と見張りを別のスレッドで回し、決めた時刻に実行を入れる・中止する
+        "run_commands" => {
+            use std::time::{Duration, Instant};
+            let core = crate::routes::Core::with_program(Path::new(s(a, "base")));
+            let runner = crate::runner::Runner::new("test");
+            let env = crate::runner::Env {
+                python: PathBuf::from(s(a, "python")),
+                program_root: PathBuf::from(s(a, "program_root")),
+                work: PathBuf::from(s(a, "work")),
+                tick: Duration::from_millis(40),
+            };
+            let stop = std::sync::atomic::AtomicBool::new(false);
+            let t0 = Instant::now();
+            let mut enq = vec![];
+            let mut dispatched = 0usize;
+            std::thread::scope(|sc| {
+                let h = sc.spawn(|| {
+                    let mut n = 0;
+                    while !stop.load(std::sync::atomic::Ordering::SeqCst) {
+                        if runner.dispatch_one(&core, &env) {
+                            n += 1;
+                        } else {
+                            std::thread::sleep(Duration::from_millis(30));
+                        }
+                    }
+                    n
+                });
+                for op in a["ops"].as_array().into_iter().flatten() {
+                    let at = Duration::from_secs_f64(op["at"].as_f64().unwrap_or(0.0));
+                    if let Some(w) = at.checked_sub(t0.elapsed()) {
+                        std::thread::sleep(w);
+                    }
+                    match s(op, "op") {
+                        "cancel" => {
+                            let (was, cleared) = runner.cancel();
+                            enq.push(json!({"cancel": was, "cleared": cleared}));
+                        }
+                        _ => {
+                            let ids: Vec<String> = op["ids"].as_array().into_iter().flatten().map(s_of_val).collect();
+                            enq.push(match runner.enqueue(&core, &ids, s(op, "trigger"), op.get("lines"), 0) {
+                                Ok((item, pos)) => {
+                                    json!({"joined": item.get("joined").is_some(), "position": pos, "t": t0.elapsed().as_secs_f64()})
+                                }
+                                Err(e) => json!({"error": e}),
+                            });
+                        }
+                    }
+                }
+                let give_up = Duration::from_secs_f64(a["timeout"].as_f64().unwrap_or(30.0));
+                loop {
+                    let idle = {
+                        let st = runner.st.lock().unwrap_or_else(|e| e.into_inner());
+                        st.cmds.active.is_none() && st.cmds.queue.is_empty()
+                    };
+                    if idle || t0.elapsed() > give_up {
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+                stop.store(true, std::sync::atomic::Ordering::SeqCst);
+                dispatched = h.join().unwrap_or(0);
+            });
+            core.settle_writes("probe");
+            let st = runner.st.lock().unwrap_or_else(|e| e.into_inner());
+            json!({"enq": enq, "dispatched": dispatched, "status": st.status, "alerts": st.cmds.alerts_view(), "queue": st.cmds.snapshot()})
+        }
         // 実行の指令の待機キュー・知らせ・取り直し（commands.rs）。ops を順に当て、それぞれの答えを返す。
         // 消す・動かす・読んだ知らせは、いまの並びの何番目かで指す（id は作るたびに違うので）
         "commands" => {
