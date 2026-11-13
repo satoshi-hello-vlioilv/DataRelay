@@ -15,7 +15,7 @@ NAVI_TXT=2
 NAVI_XLSX=5
 NAVI_XLS=9
 NAVI_NOCHANGE=16
-NAVI_NONREPEAT=8
+NAVI_NONREPEAT=8   # 同じ値を省く（RNE の設定より優先する。アプリからは使わない）
 NAVI_REPEAT=4      # 表側・表頭とも、同じ値を省かずに繰り返して書く
 NAVI_DBMS_ANYDB=8
 # 期間指定の方法（時間型管理ポイントの変更で使用）
@@ -658,19 +658,20 @@ class NavigatorApi:
     def dimensions(self,h):
         rc=ctypes.c_long();rows=ctypes.c_long();cols=ctypes.c_long();self.dll.NaviGetRecordNumber(h,ctypes.byref(rc),ctypes.byref(rows));self._check('NaviGetRecordNumber',rc);self.dll.NaviGetFieldNumber(h,ctypes.byref(rc),ctypes.byref(cols));self._check('NaviGetFieldNumber',rc)
         return int(rows.value),int(cols.value)
-    def save_data(self,h,path,ftype,repeat=NAVI_NONREPEAT):
+    def save_data(self,h,path,ftype,repeat=NAVI_NOCHANGE):
         rc=ctypes.c_long();t=time.perf_counter();self.dll.NaviSaveData(h,ctypes.byref(rc),_ansi(path),int(ftype),int(repeat));self._check('NaviSaveData',rc,str(path));return time.perf_counter()-t
     def save_csv(self,h,path,repeat_labels=False):
         """repeat_labels … 表側・表頭の同じ値を省かず、毎行・毎列に書く（NAVI_REPEAT）。
-        集計表をリストとして読むときに要る。省く書き方（NAVI_NONREPEAT）では、
-        上の行と同じ表側の値が空欄になり、その行が何の行か分からなくなる。"""
-        return self.save_data(h,path,NAVI_CSV,NAVI_REPEAT if repeat_labels else NAVI_NONREPEAT)
+        集計表をリストとして読むとき（表頭あり）・値ごとに分けて出すときは、アプリの側で必ず要る。
+        それ以外は RNE に保存した設定のまま（NAVI_NOCHANGE）。省く書き方（NAVI_NONREPEAT）を渡すと、
+        RNE で「ラベルを繰り返す」にしていても上の行と同じ表側の値が空欄になり、その行が何の行か分からなくなる（2.39.0 まで）。"""
+        return self.save_data(h,path,NAVI_CSV,NAVI_REPEAT if repeat_labels else NAVI_NOCHANGE)
     def save_txt(self,h,path):
-        return self.save_data(h,path,NAVI_TXT,NAVI_NONREPEAT)
+        return self.save_data(h,path,NAVI_TXT)
     def save_xlsx(self,h,path):
-        return self.save_data(h,path,NAVI_XLSX,NAVI_NONREPEAT)
+        return self.save_data(h,path,NAVI_XLSX)
     def save_xls(self,h,path):
-        return self.save_data(h,path,NAVI_XLS,NAVI_NONREPEAT)
+        return self.save_data(h,path,NAVI_XLS)
     def supports_period_change(self):
         # 相対期間（動的日付）変更に最低限必要なAPIが公開されているか。
         return hasattr(self.dll,'NaviChangePeriod') and (hasattr(self.dll,'NaviGetControlPoint') or hasattr(self.dll,'NaviGetControlPointForTimeSpan'))

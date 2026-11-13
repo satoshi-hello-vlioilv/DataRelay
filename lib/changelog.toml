@@ -15,6 +15,18 @@ summary = "SymNaviA.dll が公開する関数・定数・呼び出し順序の�
 source = "Navigator Visual Basic Interface API 9.6.0 / FUJITSU Interstage Navigator Server V9.4.1"
 
 [[release]]
+version = "2.39.1"
+date = "2026-11-13"
+title = "RNE の「ラベルを繰り返す」設定が出力に効くようにした"
+notes = [
+  """\
+    【不具合の修正】表頭の無い集計表の RNE（表側に管理ポイントを並べて件数・合計を出す形）で、RNE を<b>ラベルを繰り返す</b>設定に\
+    していても、出力では上の行と同じ表側の値が省かれて空欄になっていました。Navigator へ保存を頼むとき、アプリがいつも\
+    「省く」を指定していたためです。これからは RNE に保存した設定のまま書き出します（XLSX を直接受け取るとき・分割して取るときも同じ）。\
+    表頭のある集計表と、値ごとに分けて出す対象は、これまでどおり必ず繰り返して書きます。""",
+]
+
+[[release]]
 version = "2.39.0"
 date = "2026-11-13"
 title = "RNE の控えと材料の関係を、Rust の中身に用意した"

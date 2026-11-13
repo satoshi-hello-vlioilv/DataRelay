@@ -4426,7 +4426,7 @@ def _process_api_job_once(j,job_index,total_jobs,cfg,user,pw,server,dde_work,bac
      if db.exists():
       try:db.unlink()
       except:pass
-     save_wall_started=time.perf_counter();t=phase_log('api_save_xlsx_direct',job=j['name'],line=line_name,target=db,repeat='NAVI_NONREPEAT',ftype='NAVI_XLSX')
+     save_wall_started=time.perf_counter();t=phase_log('api_save_xlsx_direct',job=j['name'],line=line_name,target=db,repeat='NAVI_NOCHANGE',ftype='NAVI_XLSX')
      with line_ticker(line_name,j,'transfer',growing_file_tick(db,_expect_bytes)):
       save_elapsed=api_client.save_xlsx(handle,db)
      save_wall_elapsed=time.perf_counter()-save_wall_started;phase_log('api_save_xlsx_direct',t,job=j['name'],line=line_name,api_elapsed=f'{save_elapsed:.2f}s',wall_elapsed=f'{save_wall_elapsed:.2f}s',size=db.stat().st_size if db.exists() else 0,throughput_kb_s=f'{(db.stat().st_size/1024/save_wall_elapsed):.1f}' if db.exists() and save_wall_elapsed>0 else '0')
@@ -4442,7 +4442,7 @@ def _process_api_job_once(j,job_index,total_jobs,cfg,user,pw,server,dde_work,bac
    if not api_direct_output:
     update_parallel_line(line_name,job=j['name'],job_id=j['id'],state='受信・保存',percent=line_percent('transfer',0),detail='受信待ち',phase='transfer')
     api_csv=dde_work/f'navi_{job_index}_{stamp}.csv'
-    t=phase_log('api_save_csv',job=j['name'],line=line_name,repeat='NAVI_REPEAT' if (crosstab or override) else 'NAVI_NONREPEAT')
+    t=phase_log('api_save_csv',job=j['name'],line=line_name,repeat='NAVI_REPEAT' if (crosstab or override) else 'NAVI_NOCHANGE')
     with line_ticker(line_name,j,'transfer',growing_file_tick(api_csv,_expect_bytes)):
      save_elapsed=api_client.save_csv(handle,api_csv,repeat_labels=crosstab or bool(override))
     phase_log('api_save_csv',t,job=j['name'],line=line_name,api_elapsed=f'{save_elapsed:.2f}s',**save_metrics(api_csv,save_elapsed,expected_rows))
