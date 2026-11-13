@@ -16,6 +16,7 @@ from contextlib import closing
 
 sys.path.insert(0,os.path.dirname(os.path.abspath(__file__)))
 import test_rust_save  # noqa: E402
+from test_rust_parity import ROOT  # noqa: E402
 from test_rust_config import MAKE,full_cfg,layout_sql  # noqa: E402
 
 NOW='2026-11-02T09:05:07.123456'
@@ -203,6 +204,44 @@ class WritesParityTest(unittest.TestCase):
    self.assertEqual(self.rust('hrs',[post('/api/run-history/delete',body)])[0]['status'],0,body)
   self.assertEqual(self.rust('hrs',[post('/api/preview-filename','[1]')])[0]['status'],0)
 
+ def rust_q(self,name,reqs):
+  """道と ?以降（query）を分けて Rust の答え口へ送る（取り込みは ?filename= を見る）。"""
+  lines=''.join(json.dumps({'method':q['method'],'path':q['path'].split('?')[0],'query':q['path'].split('?',1)[1] if '?' in q['path'] else '',
+                            'body':q.get('body',''),'headers':{'Content-Type':q.get('type','application/json')}},ensure_ascii=False)+'\n' for q in reqs)
+  r=subprocess.run([str(self.exe),'answer','--base',str(ROOT)],input=lines,env=dict(self.env(name),DATARELAY_FIXED_NOW=NOW),cwd=str(ROOT),
+                   capture_output=True,text=True,encoding='utf-8',timeout=120)
+  if r.returncode:raise AssertionError(r.stderr[-3000:])
+  return [json.loads(x) for x in r.stdout.split('\n') if x.strip()]
+
+ def test_master_import(self):
+  """読取マスタ・結合マスタの取り込み（JSON の持ち出しファイル）。同じ名前は置き換え、読めない物は理由を返す。"""
+  self.make('ibase');self.twin('ibase','ipy','irs')
+  LK,RK='symfonavi-text-layouts','symfonavi-join-recipes'
+  imp=lambda kind,body,**k:post(f'/api/{kind}/import'+k.pop('q',''),body if isinstance(body,str) else json.dumps(body,ensure_ascii=False),type='application/octet-stream',**k)
+  reqs=[imp('text-layouts',{'kind':LK,'layouts':[dict(LAYOUT,name='固定'),BAD_LAYOUT,DELIM,dict(DELIM,id='X',name='新しい区切り'),None,{}]}),
+        imp('text-layouts',[dict(DELIM,name='壊れた JSON'),dict(DELIM,name='壊れた JSON')],q='?filename=a.JSON'),
+        imp('text-layouts','\ufeff'+json.dumps({'kind':LK,'layouts':[dict(LAYOUT,name='BOM 付き')]},ensure_ascii=False)),
+        imp('text-layouts',{'kind':'other','layouts':[LAYOUT]}),imp('text-layouts',{'layouts':[LAYOUT]}),imp('text-layouts',{'kind':5}),
+        imp('text-layouts','"x"'),imp('text-layouts',{'kind':LK,'layouts':[]}),imp('text-layouts',{'kind':LK,'layouts':None}),
+        imp('text-layouts',{'kind':LK,'layouts':[BAD_LAYOUT,dict(BAD_LAYOUT,name='名')]}),imp('text-layouts','[]'),
+        imp('join-recipes',{'kind':RK,'recipes':[dict(RECIPE,name='結合'),BAD_RECIPE,dict(RECIPE,name='新しい結合',id='Z')]}),
+        imp('join-recipes',[RECIPE]),imp('join-recipes',{'kind':LK,'recipes':[RECIPE]}),imp('join-recipes',{'kind':RK}),
+        {'method':'GET','path':'/api/text-layouts'},{'method':'GET','path':'/api/join-recipes'}]
+  py=self.py(ASK,'ipy',json.dumps(reqs,ensure_ascii=False),NOW)
+  rs=self.rust_q('irs',reqs)
+  mp,mr=Masker(),Masker()
+  for q,p,x in zip(reqs,py,rs):
+   what=f'{q["method"]} {q["path"]} {q.get("body","")[:100]}'
+   self.assertNotEqual(x['status'],0,f'Rust が答えなかった: {what}')
+   self.assertEqual((x['status'],mr(json.loads(x['body']))),(p['status'],mp(json.loads(p['body']))),what)
+  self.assertEqual([p['status'] for p in py],[200,200,200,400,400,400,400,400,400,400,400,200,200,400,400,200,200])
+  b=[json.loads(p['body']) for p in py]
+  self.assertEqual((b[0]['added'],b[0]['replaced'],len(b[0]['skipped'])),(['区切り','新しい区切り'],['固定'],3))
+  self.assertEqual(b[1]['replaced'],['壊れた JSON','壊れた JSON']);self.assertEqual(b[11]['replaced'],['結合'])
+  a,c=mp(dump(self.paths('ipy')[0])),mr(dump(self.paths('irs')[0]))
+  for k in a:self.assertEqual(a[k],c[k],f'写しの {k} が違う')
+  self.assertEqual(len(a['text_layouts']),5)   # 元の2件（1件は置き換え）＋区切り・新しい区切り・BOM 付き
+
  def test_python_only_cases(self):
   """Python でしか同じに決められない場合は、Rust は書かずに Python へ回す。写しを替える場合（マスターが無い）も同じ。"""
   self.make('obase');self.twin('obase','opy','ors')
@@ -214,7 +253,13 @@ class WritesParityTest(unittest.TestCase):
         post('/api/schedule-pause',{'paused':True,'until':'2026-12-01T08'}),
         post('/api/settings/columns','[1]'),
         post('/api/text-layouts','{bad'),
-        post('/api/schedule/quick-add',{'job_id':'j1','date':'2026-12-01','name':{'x':1}})]
+        post('/api/schedule/quick-add',{'job_id':'j1','date':'2026-12-01','name':{'x':1}}),
+        # 取り込み: EXCEL（中身の PK・名前の .xlsx）・multipart・JSON として読めない・16 桁を超える数・並びでない一覧
+        post('/api/text-layouts/import','PK\x03\x04',type='application/octet-stream'),
+        post('/api/join-recipes/import',json.dumps([RECIPE]),type='multipart/form-data; boundary=x'),
+        post('/api/text-layouts/import','{bad',type='application/octet-stream'),
+        post('/api/text-layouts/import',json.dumps({'kind':'symfonavi-text-layouts','layouts':[dict(LAYOUT,skip_head=12345678901234567890)]}),type='application/octet-stream'),
+        post('/api/join-recipes/import',json.dumps({'kind':'symfonavi-join-recipes','recipes':'abc'}),type='application/octet-stream')]
   self.assertEqual([x['status'] for x in self.rust('ors',reqs)],[0]*len(reqs))
   self.assertEqual(dump(self.paths('ors')[0]),before,'回したときは何も書かない')
   py=[p['status'] for p in self.py(ASK,'opy',json.dumps(reqs,ensure_ascii=False),NOW)]

@@ -142,6 +142,10 @@ pub fn call(name: &str, a: &Value) -> Result<Value, String> {
             let rows = |v: &Value| -> Vec<Vec<String>> { v.as_array().into_iter().flatten().map(strs).collect() };
             json!(crate::joinrun::suggest_keys(&strs(&a["lh"]), &rows(&a["lr"]), &strs(&a["rh"]), &rows(&a["rr"]), 5))
         }
+        "csv_row" => {
+            let row: Vec<String> = a["row"].as_array().into_iter().flatten().map(|x| x.as_str().unwrap_or("").to_string()).collect();
+            json!(crate::viewer::csv_row(&row, if s(a, "delimiter") == "\t" { '\t' } else { ',' }))
+        }
         "trim_to_line" => {
             let b: Vec<u8> = a["bytes"].as_array().into_iter().flatten().map(|x| x.as_u64().unwrap_or(0) as u8).collect();
             json!(crate::localcopy::trim_to_line(&b))

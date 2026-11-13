@@ -2,6 +2,7 @@
 //!
 //!   - GET /api/data-viewer/jobs     … ビュワーで選べる対象（形式・ファイルがあるか）
 //!   - GET /api/data-viewer/<job_id> … 1つの出力ファイルの中身（公開先は直接開かず、手元へ写してから読む。localcopy.rs）
+//!   - POST /api/data-viewer/export-pivot … 集計表を CSV・TXT で書き出す（2.32.0〜。EXCEL は Python が書く）
 //!
 //! CSV は CPython の _csv.c（excel の決まり: 区切り , か \t・囲み " ・"" は " ・strict でない）と同じ順で読む。
 //! 文字コードは utf-8-sig → cp932 → utf-8 の順に、読み切れた物を使う（textread.rs と同じ読み方）。
@@ -319,42 +320,6 @@ pub(crate) fn get_viewer(core: &Core, ask: &Ask, params: &[String]) -> Reply {
     answer_viewer(core, ask, &params[0]).unwrap_or_else(|_| Reply::pass())
 }
 
-/// 問い合わせの ?value=（無ければ None）。request.args.get('value') と同じく、& で区切り、+ を空白に、%XX を戻す（最初の値）。
-/// 戻した字が UTF-8 でなければ Pass（Python は置き換えの字を入れる）。
-fn query_value(ask: &Ask) -> R<Option<String>> {
-    for kv in ask.query.split('&').filter(|x| !x.is_empty()) {
-        let (k, v) = kv.split_once('=').unwrap_or((kv, ""));
-        if unquote(k)? == "value" {
-            return unquote(v).map(Some);
-        }
-    }
-    Ok(None)
-}
-
-/// urllib.parse.unquote_plus（%XX の形でない % はそのまま残す）。
-fn unquote(s: &str) -> R<String> {
-    let b = s.as_bytes();
-    let mut out = Vec::with_capacity(b.len());
-    let mut i = 0;
-    while i < b.len() {
-        let hex = |c: u8| (c as char).to_digit(16);
-        match b[i] {
-            b'+' => out.push(b' '),
-            b'%' if i + 2 < b.len() => {
-                if let (Some(h), Some(l)) = (hex(b[i + 1]), hex(b[i + 2])) {
-                    out.push((h * 16 + l) as u8);
-                    i += 3;
-                    continue;
-                }
-                out.push(b'%');
-            }
-            c => out.push(c),
-        }
-        i += 1;
-    }
-    String::from_utf8(out).map_err(|_| Pass)
-}
-
 /// _mtime_text（'%m-%d %H:%M'。読めなければ空）。
 fn mtime_text(p: &str) -> String {
     std::fs::metadata(p)
@@ -373,7 +338,7 @@ fn answer_viewer(core: &Core, ask: &Ask, job_id: &str) -> R<Reply> {
         return not_found("対象が見つかりません".into());
     };
     let b = core.bases().ok_or(Pass)?;
-    let want = query_value(ask)?;
+    let want = ask.arg("value").map_err(|_| Pass)?;
     let (value, path) = if variants::active(job)? {
         let files = variants::viewer_files(core, &b, job, &c, &runs)?;
         let one = match &want {
@@ -440,6 +405,108 @@ fn answer_viewer(core: &Core, ask: &Ask, job_id: &str) -> R<Reply> {
                 "headers": d.headers, "rows": rows, "total_rows": d.total, "preview_limit": rows.len(),
                 "truncated": d.total > rows.len(), "total_columns": n, "row_budget": keep, "row_budget_limited": limited}),
     ))
+}
+
+// ==== 集計表の書き出し（CSV・TXT。EXCEL は Python が書く） ====================
+
+/// csv.writer（excel の決まり・QUOTE_MINIMAL・行の終わりは \r\n）の1行。区切り・" ・\r・\n を含む欄は囲み、" は "" にする。
+/// 欄が1つで空の行は "" と書く（Python と同じ）。
+pub fn csv_row(row: &[String], delim: char) -> String {
+    let mut out = String::new();
+    for (i, v) in row.iter().enumerate() {
+        if i > 0 {
+            out.push(delim);
+        }
+        let quote = v.chars().any(|c| c == delim || c == '"' || c == '\r' || c == '\n') || (row.len() == 1 && v.is_empty());
+        if quote {
+            out.push('"');
+            out.push_str(&v.replace('"', "\"\""));
+            out.push('"');
+        } else {
+            out.push_str(v);
+        }
+    }
+    out.push_str("\r\n");
+    out
+}
+
+/// urllib.parse.quote（英数字と _.-~/ のほかを %XX に）。
+fn url_quote(s: &str) -> String {
+    s.bytes()
+        .map(|b| if b.is_ascii_alphanumeric() || b"_.-~/".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") })
+        .collect()
+}
+
+/// POST /api/data-viewer/export-pivot（集計表の表示内容を CSV・TXT で書き出す）
+pub(crate) fn post_export_pivot(core: &Core, ask: &Ask, _: &[String]) -> Reply {
+    answer_export_pivot(core, ask).unwrap_or_else(|_| Reply::pass())
+}
+
+fn answer_export_pivot(core: &Core, ask: &Ask) -> R<Reply> {
+    let bad = |m: String| Ok(Reply::json(400, &json!({"ok": false, "error": m})));
+    let data = match crate::writer::body_json(ask, false)? {
+        Some(Value::Object(m)) => m,
+        Some(v) if pyish::truthy(&v) => return Err(Pass), // data.get が落ちる
+        _ => Map::new(),
+    };
+    let want = data.get("format").filter(|v| pyish::truthy(v)).cloned().unwrap_or(json!("csv"));
+    let fmt = naming::normalize_output_format(Some(&want), None);
+    if !matches!(fmt, "csv" | "txt" | "xlsx") {
+        return bad(format!("集計結果の出力に未対応の形式です: {fmt}"));
+    }
+    if fmt == "xlsx" {
+        return Err(Pass); // EXCEL は Python が書く
+    }
+    let matrix = match data.get("matrix") {
+        Some(Value::Array(a)) if !a.is_empty() => a,
+        _ => return bad("出力する集計結果がありません".into()),
+    };
+    if matrix.len() > 1_048_576 {
+        let n = matrix.len().to_string();
+        let mut grouped = String::new();
+        for (i, c) in n.chars().enumerate() {
+            if i > 0 && (n.len() - i) % 3 == 0 {
+                grouped.push(',');
+            }
+            grouped.push(c);
+        }
+        return bad(format!("行数が多すぎます（{grouped}行）。絞り込んでから出力してください"));
+    }
+    let cell = |v: &Value| if v.is_null() { String::new() } else { pyish::py_str(v) };
+    let mut rows: Vec<Vec<String>> = matrix
+        .iter()
+        .map(|r| match r {
+            Value::Array(a) => a.iter().map(cell).collect(),
+            other => vec![cell(other)],
+        })
+        .collect();
+    let width = rows.iter().map(Vec::len).max().unwrap_or(0);
+    for r in &mut rows {
+        r.resize(width, String::new());
+    }
+    let name = naming::text_or(data.get("name"), "集計結果");
+    let replaced: String =
+        name.chars().map(|c| if matches!(c, '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|') { '_' } else { c }).collect();
+    let stem = pyish::strip(&replaced);
+    let stem = if stem.is_empty() { "集計結果" } else { stem };
+    let filename = format!("{stem}_{}{}", core.now().format("%Y%m%d_%H%M%S"), naming::output_extension(fmt));
+    let delim = if fmt == "csv" { ',' } else { '\t' };
+    let mut text = String::from("\u{feff}");
+    for r in &rows {
+        text.push_str(&csv_row(r, delim));
+    }
+    let payload = text.into_bytes();
+    core.log(&format!("PIVOT_EXPORT format={fmt} rows={} columns={width} size={} file={filename}", rows.len() - 1, payload.len()));
+    let ctype = if fmt == "csv" { "text/csv; charset=utf-8" } else { "text/plain; charset=utf-8" };
+    Ok(Reply {
+        status: 200,
+        headers: vec![
+            ("Content-Type".into(), ctype.into()),
+            ("Content-Disposition".into(), format!("attachment; filename*=UTF-8''{}", url_quote(&filename))),
+            ("Cache-Control".into(), "no-store".into()),
+        ],
+        body: payload,
+    })
 }
 
 #[cfg(test)]

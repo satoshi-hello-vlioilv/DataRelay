@@ -195,6 +195,12 @@
     const r6 = await post('/api/join-keys', { recipe: { sources: [{ path: '自己診断の無いファイル.csv' }] } });
     const jk2 = await r6.json();
     ok('移した API（結合の下読み・キーの見当）は Rust の中身が答える', w2.status === 400 && by(w2) === 'core' && jp.ok === false && String(jp.error).includes('2つ以上') && r6.status === 400 && by(r6) === 'core' && jk2.error === 'つなぎ目がありません', `${w2.status} ${by(w2)} ${jp.error} / キー ${r6.status} ${by(r6)} ${jk2.error}`);
+    // マスタの取り込み（JSON）と集計表の書き出し（2.32.0〜 Rust の中身）。取り込みは印の違う物を断る（何も書かない）
+    w2 = await fetch('/api/text-layouts/import', { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: JSON.stringify({ kind: '自己診断' }) });
+    const im = await w2.json();
+    const r7 = await post('/api/data-viewer/export-pivot', { format: 'csv', name: '自己診断', matrix: [['用途', '件数'], ['缶材', 3]] });
+    const saved3 = decodeURIComponent(r7.headers.get('X-DR-Saved') || '');
+    ok('移した API（マスタの取り込み・集計表の CSV）は Rust の中身が答え、CSV は窓が保存する', w2.status === 400 && by(w2) === 'core' && String(im.error).includes('持ち出しファイルではありません') && r7.status === 204 && by(r7) === 'core' && /\.csv$/.test(saved3), `${w2.status} ${by(w2)} ${im.error} / CSV ${r7.status} ${by(r7)} ${saved3}`);
     // データビュワー（2.28.0〜 Rust の中身）。見本に対象が無いので、一覧と、無い対象の答えを見る
     r = await fetch('/api/data-viewer/jobs');
     const dv = await r.json();
@@ -399,7 +405,8 @@
 
     const info2 = await (await fetch('/__desktop/info')).json();
     ok('通知領域のアイコンがある', info2.tray === true, info2.tray);
-    ok('保存したファイルを窓が覚えている', info2.saved.length === 2, info2.saved.join(' | '));
+    // 保存した物: 登録内容の ZIP・集計表の EXCEL（Python）・集計表の CSV（Rust の中身。2.32.0〜）
+    ok('保存したファイルを窓が覚えている', info2.saved.length === 3 && ['.zip', '.xlsx', '.csv'].every((x) => info2.saved.some((p) => p.endsWith(x))), `${info2.saved.length}件: ${info2.saved.map((p) => p.split(/[\\/]/).pop()).join(' | ')}`);
 
     // 常駐: 自動実行の予定を入れてから × を押す → 窓は隠れ、通知領域に残る（終わらない）
     const cur = await (await fetch('/api/config')).json();
