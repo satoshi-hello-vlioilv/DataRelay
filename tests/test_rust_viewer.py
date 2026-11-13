@@ -8,6 +8,8 @@ Rust（desktop/core の viewer.rs・localcopy.rs）で同じ答えになるか�
 - 手元の写し（work\\read-cache）の名前が Python と同じ（同じ版の写しを Python と Rust で使い回せる）ことも比べる
 - 値ごとに分けて出す対象（2.29.0。variants.rs）: 指定した値だけ・出てきた値すべて・値ごとの名前と置き場の型・対象の名前の型の {値}・
   前回の実行が作ったファイル（実行記録の variant_results）・同じ名前になる値・?value= の %XX と + で比べる
+- 集計表の書き出し（POST /api/data-viewer/export-pivot。2.32.0）: CSV・TXT の中身（BOM・囲み・行の終わり）と、ファイル名・見出しを比べる。
+  CSV の書き方は乱数の字で csv.writer と比べる。EXCEL は Python が書く
 - EXCEL・同じ名前になる値（道が決まらない）・写しを替える場合は、Rust が Python へ回す
 実行: python -m unittest tests.test_rust_viewer -v
 """
@@ -34,7 +36,7 @@ class ViewerParityTest(unittest.TestCase):
  def rust(self,name,reqs):
   """道と ?以降（query）を分けて Rust の答え口へ送る。"""
   lines=''.join(json.dumps({'method':q['method'],'path':q['path'].split('?')[0],'query':q['path'].split('?',1)[1] if '?' in q['path'] else '',
-                            'body':q.get('body',''),'headers':{}},ensure_ascii=False)+'\n' for q in reqs)
+                            'body':q.get('body',''),'headers':{'Content-Type':q.get('type','application/json')}},ensure_ascii=False)+'\n' for q in reqs)
   r=subprocess.run([str(self.exe),'answer','--base',str(ROOT)],input=lines,env=dict(self.env(name),DATARELAY_FIXED_NOW=NOW),cwd=str(ROOT),
                    capture_output=True,text=True,encoding='utf-8',timeout=120)
   if r.returncode:raise AssertionError(r.stderr[-3000:])
@@ -154,6 +156,47 @@ class ViewerParityTest(unittest.TestCase):
   self.assertEqual((b[10]['value'],b[10]['ok']),('大阪',True));self.assertEqual(b[14]['value'],'..')
   self.assertEqual(py[12]['status'],404);self.assertEqual(py[4]['status'],404)
 
+ def test_csv_writer_like_python(self):
+  rnd=random.Random(11)
+  al=['a',',','"','\n','\r','\t',' ','あ','','x"y','\x00']
+  rows=[[''.join(rnd.choice(al) for _ in range(rnd.randrange(0,5))) for _ in range(rnd.randrange(0,4))] for _ in range(3000)]
+  ds=[rnd.choice([',','\t']) for _ in rows]
+  q=''.join(json.dumps({'fn':'csv_row','args':{'row':r,'delimiter':d}})+'\n' for r,d in zip(rows,ds))
+  r=subprocess.run([str(self.exe),'call'],input=q,capture_output=True,text=True,encoding='utf-8',timeout=300)
+  rs=[json.loads(x)['result'] for x in r.stdout.split('\n') if x.strip()]
+  self.assertEqual(len(rs),len(rows))
+  def py(row,d):
+   b=io.StringIO();csv.writer(b,delimiter=d,quoting=csv.QUOTE_MINIMAL).writerow(row);return b.getvalue()
+  bad=[(row,d,x) for row,d,x in zip(rows,ds,rs) if py(row,d)!=x]
+  self.assertEqual(bad[:5],[])
+
+ def test_export_pivot(self):
+  self.make('pbase');self.twin('pbase','ppy','prs')
+  P=lambda body,**k:{'method':'POST','path':'/api/data-viewer/export-pivot','body':body if isinstance(body,str) else json.dumps(body,ensure_ascii=False),**k}
+  m=[['用途','件数','メモ'],['缶材',3,None],['箔, 薄物',1.5,'改行\nあり'],['"引用"',True,{'a':[1,None]}],'1列だけ',[],['',''],[0,-0.0,1e20]]
+  reqs=[P({'format':'csv','name':'集計 結果','matrix':m}),P({'format':'TXT','name':' a/b:c*?"<>| ','matrix':m}),P({'matrix':[['x']]}),
+        P({'format':'text','name':'','matrix':[['']]}),P({'format':'pdf','matrix':m}),P({'format':'csv','matrix':[]}),P({'format':'csv','matrix':'x'}),
+        P({'format':'csv'}),P('null'),P('{bad'),P({'matrix':[['x']]},type='text/plain'),P({'name':'東京','matrix':[[1],[2,3]]})]
+  script=ASK.replace("out.append({'status':r.status_code,'body':r.get_data(as_text=True)})",
+                     "out.append({'status':r.status_code,'body':r.get_data(as_text=True),'headers':{k:r.headers.get(k) for k in ('Content-Type','Content-Disposition','Cache-Control')}})")
+  self.assertNotEqual(script,ASK,'Python の答えに見出しを足せていない')
+  py=self.py(script,'ppy',json.dumps(reqs,ensure_ascii=False),NOW)
+  lines=''.join(json.dumps({'method':q['method'],'path':q['path'],'query':'','body':q['body'],'headers':{'Content-Type':q.get('type','application/json')}},ensure_ascii=False)+'\n' for q in reqs)
+  r=subprocess.run([str(self.exe),'answer','--base',str(ROOT)],input=lines,env=dict(self.env('prs'),DATARELAY_FIXED_NOW=NOW),cwd=str(ROOT),
+                   capture_output=True,text=True,encoding='utf-8',timeout=120)
+  rs=[json.loads(x) for x in r.stdout.split('\n') if x.strip()]
+  for q,p,x in zip(reqs,py,rs):
+   self.assertNotEqual(x['status'],0,f'Rust が答えなかった: {q["body"]}')
+   self.assertEqual(x['status'],p['status'],q['body'])
+   if p['status']==200 and p['headers']['Content-Disposition']:
+    self.assertEqual(x['body'],p['body'],q['body'])
+    self.assertEqual({k:v for k,v in x['headers'] if k in p['headers']},p['headers'],q['body'])
+   else:
+    self.assertEqual(json.loads(x['body']),json.loads(p['body']),q['body'])
+  self.assertTrue(py[0]['body'].startswith('\ufeff用途,件数,メモ\r\n') and '"箔, 薄物",1.5,"改行\nあり"' in py[0]['body'])
+  self.assertIn("filename*=UTF-8''%E9%9B%86%E8%A8%88%20%E7%B5%90%E6%9E%9C_20261102_090507.csv",py[0]['headers']['Content-Disposition'])
+  self.assertEqual([p['status'] for p in py],[200,200,200,400,400,400,400,400,400,400,400,200])   # 'text' は形式の別名ではない（未対応の形式）
+
  def test_python_only_cases(self):
   """EXCEL・同じ名前になる値・写しを替える場合は、Python へ回す。"""
   o=self.make('vonly',extra_jobs=[dict(id='x1',name='表計算',output_folder=str(self.t/'viewer'),output_file='受注.xlsx',output_format='xlsx'),
@@ -161,8 +204,10 @@ class ViewerParityTest(unittest.TestCase):
                                         variants={'enabled':True,'item':'拠点','values':['東京','大阪'],'pattern':'固定'})])
   (o/'受注.xlsx').write_bytes(b'PK')
   # 同じ名前になる値は道が決まらず、Python は Path('')（今いるフォルダー）を見るので、Rust は答えない
-  rs=self.rust('vonly',[get('/api/data-viewer/x1'),get('/api/data-viewer/x2'),get('/api/data-viewer/jobs')])
-  self.assertEqual([x['status'] for x in rs],[0,0,0])
+  xl={'method':'POST','path':'/api/data-viewer/export-pivot','body':json.dumps({'format':'xlsx','matrix':[['a']]})}
+  big={'method':'POST','path':'/api/data-viewer/export-pivot','body':json.dumps({'matrix':[[12345678901234567890]]})}
+  rs=self.rust('vonly',[get('/api/data-viewer/x1'),get('/api/data-viewer/x2'),get('/api/data-viewer/jobs'),xl,big])
+  self.assertEqual([x['status'] for x in rs],[0,0,0,0,0])   # EXCEL の集計表・Python と同じに読めない数も回す
   os.remove(self.paths('vonly')[1])
   self.assertEqual(self.rust('vonly',[get('/api/data-viewer/v1')])[0]['status'],0)
 

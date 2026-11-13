@@ -83,8 +83,8 @@
   },
   "POST /api/data-viewer/export-pivot": {
    "area": "データビュワー",
-   "to": "python",
-   "note": "同上（EXCEL）"
+   "to": "core",
+   "note": "2.32.0（viewer.rs）。CSV・TXT（BOM 付き UTF-8・csv.writer と同じ囲み）。EXCEL は Python が書く"
   },
   "GET /api/data-viewer/jobs": {
    "area": "データビュワー",
@@ -238,8 +238,8 @@
   },
   "POST /api/join-recipes/import": {
    "area": "読取マスタ・結合マスタ",
-   "to": "python",
-   "note": "同上"
+   "to": "core",
+   "note": "2.32.0（masters.rs）。JSON の持ち出しファイル（印の確かめ・1件ずつの検査・同じ名前の置き換え）。EXCEL（中身が PK・名前が .xlsx）・multipart・JSON として読めない本文は Python へ回す"
   },
   "POST /api/join-source": {
    "area": "読取マスタ・結合マスタ",
@@ -653,8 +653,8 @@
   },
   "POST /api/text-layouts/import": {
    "area": "読取マスタ・結合マスタ",
-   "to": "python",
-   "note": "同上"
+   "to": "core",
+   "note": "2.32.0（masters.rs）。JSON の持ち出しファイル（印の確かめ・1件ずつの検査・同じ名前の置き換え）。EXCEL（中身が PK・名前が .xlsx）・multipart・JSON として読めない本文は Python へ回す"
   },
   "POST /api/text-preview": {
    "area": "読取マスタ・結合マスタ",

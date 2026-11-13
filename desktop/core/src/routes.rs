@@ -41,8 +41,10 @@ pub const ROUTES: &[(&str, &str, Handler)] = &[
     ("POST", "/api/schedule/quick-add", edits::post_quick_add),
     ("POST", "/api/schedule-pause", edits::post_schedule_pause),
     ("POST", "/api/text-layouts", masters::post_text_layout),
+    ("POST", "/api/text-layouts/import", masters::post_text_layouts_import),
     ("DELETE", "/api/text-layouts/<layout_id>", masters::delete_text_layout),
     ("POST", "/api/join-recipes", masters::post_join_recipe),
+    ("POST", "/api/join-recipes/import", masters::post_join_recipes_import),
     ("DELETE", "/api/join-recipes/<recipe_id>", masters::delete_join_recipe),
     ("DELETE", "/api/m-queries/<query_id>", masters::delete_m_query),
     ("POST", "/api/run-history/delete", edits::post_run_history_delete),
@@ -57,6 +59,7 @@ pub const ROUTES: &[(&str, &str, Handler)] = &[
     ("POST", "/api/join-preview", joinrun::post_preview),
     // jobs を先に（Flask は決まった道を <job_id> より先に当てる。こちらは上から順に当てる）
     ("GET", "/api/data-viewer/jobs", viewer::get_jobs),
+    ("POST", "/api/data-viewer/export-pivot", viewer::post_export_pivot),
     ("GET", "/api/data-viewer/<job_id>", viewer::get_viewer),
 ];
 

@@ -15,6 +15,19 @@ summary = "SymNaviA.dll が公開する関数・定数・呼び出し順序の�
 source = "Navigator Visual Basic Interface API 9.6.0 / FUJITSU Interstage Navigator Server V9.4.1"
 
 [[release]]
+version = "2.32.0"
+date = "2026-11-13"
+title = "マスタの取り込み（JSON）と集計表の書き出し（CSV・TXT）を、Rust の中身が受け持つようにした"
+notes = [
+  """\
+    【Rust への作り直し・段 4g】<b>読取マスタ</b>と<b>結合マスタ</b>の取り込みのうち、JSON の持ち出しファイルを読むところと、\
+    <b>データビュワー</b>の集計表を CSV・TXT で書き出すところを Rust へ移しました。見た目と操作は変わりません。""",
+  """\
+    【これまでどおり】同じ名前のマスタは置き換え、読めなかった物は理由を添えて知らせます。書き出す CSV・TXT は BOM 付きの UTF-8 で、\
+    囲み方も同じです。EXCEL の取り込みと、集計表の EXCEL への書き出しは、これまでどおり Python が受け持ちます。""",
+]
+
+[[release]]
 version = "2.31.0"
 date = "2026-11-12"
 title = "結合の下読みとキーの見当付けを、Rust の中身が受け持つようにした"

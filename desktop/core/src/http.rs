@@ -36,6 +36,10 @@ impl Reply {
     }
 }
 
+/// 問い合わせの ?… を戻した字が UTF-8 でない（Python は置き換えの字を入れる）。
+#[derive(Debug)]
+pub struct BadQuery;
+
 impl Ask<'_> {
     /// 本文を JSON として読む（Flask の `request.get_json(force=True) or {}` に当たる）。
     /// 空・JSON でない → Err（Flask は 400 を返す）。null・false・0・"" など偽の値は空の辞書として扱う。
@@ -43,4 +47,40 @@ impl Ask<'_> {
         let v: Value = serde_json::from_slice(self.body).map_err(|_| Reply::error(400, "問い合わせの本文を JSON として読めません"))?;
         Ok(if crate::pyish::truthy(&v) { v } else { Value::Object(Default::default()) })
     }
+
+    /// 問い合わせの ?key=（無ければ None）。request.args.get(key) と同じく、& で区切り、+ を空白に、%XX を戻す（最初の値）。
+    /// 戻した字が UTF-8 でなければ Err（Python は置き換えの字を入れるので、呼ぶ側が Python へ回す）。
+    pub fn arg(&self, key: &str) -> Result<Option<String>, BadQuery> {
+        for kv in self.query.split('&').filter(|x| !x.is_empty()) {
+            let (k, v) = kv.split_once('=').unwrap_or((kv, ""));
+            if unquote(k)? == key {
+                return unquote(v).map(Some);
+            }
+        }
+        Ok(None)
+    }
+}
+
+/// urllib.parse.unquote_plus（%XX の形でない % はそのまま残す）。
+fn unquote(s: &str) -> Result<String, BadQuery> {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        let hex = |c: u8| (c as char).to_digit(16);
+        match b[i] {
+            b'+' => out.push(b' '),
+            b'%' if i + 2 < b.len() => {
+                if let (Some(h), Some(l)) = (hex(b[i + 1]), hex(b[i + 2])) {
+                    out.push((h * 16 + l) as u8);
+                    i += 3;
+                    continue;
+                }
+                out.push(b'%');
+            }
+            c => out.push(c),
+        }
+        i += 1;
+    }
+    String::from_utf8(out).map_err(|_| BadQuery)
 }

@@ -575,7 +575,18 @@ fn answer_save_layout(core: &Core, ask: &Ask) -> R<Reply> {
     if !bad.is_empty() {
         return Ok(refused(&bad));
     }
-    let cols = columns(&l);
+    let (id, now) = save_layout(core, &l)?;
+    let mut saved = stamped(l.clone(), &id, &now);
+    let extra = json!({"width": layout_width(&saved), "shape": layout_shape(&saved)});
+    if let (Value::Object(m), Value::Object(e)) = (&mut saved, extra) {
+        m.extend(e);
+    }
+    Ok(Reply::json(200, &json!({"ok": true, "layout": saved})))
+}
+
+/// save_text_layout（整えて確かめた1件を登録・更新する。id が空なら新規）。→ (id, 更新時刻)。
+fn save_layout(core: &Core, l: &Value) -> R<(String, String)> {
+    let cols = columns(l);
     let parse: Map<String, Value> =
         ["mode", "delimiter", "delimiter_text", "quote", "collapse"].iter().map(|k| (k.to_string(), l[*k].clone())).collect();
     let int = |k: &str| Sql::Integer(l[k].as_i64().unwrap_or(0));
@@ -584,14 +595,14 @@ fn answer_save_layout(core: &Core, ask: &Ask) -> R<Reply> {
         format!(
             "TEXT_LAYOUT_SAVE id={id} name={} 読み方={} 列={} 単位={} 文字コード={} 幅={}",
             s(&l["name"]),
-            mode(&l),
+            mode(l),
             cols.len(),
             s(&l["unit"]),
             s(&l["encoding"]),
-            layout_width(&l)
+            layout_width(l)
         )
     };
-    let (id, now) = upsert(
+    upsert(
         core,
         "text_layouts",
         s(&l["id"]),
@@ -616,13 +627,7 @@ fn answer_save_layout(core: &Core, ask: &Ask) -> R<Reply> {
             ]
         },
         line,
-    )?;
-    let mut saved = stamped(l.clone(), &id, &now);
-    let extra = json!({"width": layout_width(&saved), "shape": layout_shape(&saved)});
-    if let (Value::Object(m), Value::Object(e)) = (&mut saved, extra) {
-        m.extend(e);
-    }
-    Ok(Reply::json(200, &json!({"ok": true, "layout": saved})))
+    )
 }
 
 /// POST /api/join-recipes … 結合マスタ1件を登録・更新する（id が無ければ新規）。
@@ -636,6 +641,12 @@ fn answer_save_recipe(core: &Core, ask: &Ask) -> R<Reply> {
     if !bad.is_empty() {
         return Ok(refused(&bad));
     }
+    let (id, now) = save_recipe(core, &r)?;
+    Ok(Reply::json(200, &json!({"ok": true, "recipe": stamped(r.clone(), &id, &now)})))
+}
+
+/// save_join_recipe（整えて確かめた1件を登録・更新する。id が空なら新規）。→ (id, 更新時刻)。
+fn save_recipe(core: &Core, r: &Value) -> R<(String, String)> {
     let n = |k: &str| r[k].as_array().map(Vec::len).unwrap_or(0);
     let line = |id: &str| {
         let cols = n("columns");
@@ -647,7 +658,7 @@ fn answer_save_recipe(core: &Core, ask: &Ask) -> R<Reply> {
             if cols == 0 { "（自動）".to_string() } else { cols.to_string() }
         )
     };
-    let (id, now) = upsert(
+    upsert(
         core,
         "join_recipes",
         s(&r["id"]),
@@ -665,8 +676,154 @@ fn answer_save_recipe(core: &Core, ask: &Ask) -> R<Reply> {
             ]
         },
         line,
-    )?;
-    Ok(Reply::json(200, &json!({"ok": true, "recipe": stamped(r.clone(), &id, &now)})))
+    )
+}
+
+// ==== 取り込み（JSON。EXCEL は Python が読む） ===============================
+
+/// 取り込む物の種類ごとの違い（読取マスタ・結合マスタ）。
+struct Import {
+    /// 持ち出しファイルの印（kind）と、中の並びの鍵
+    kind: &'static str,
+    list: &'static str,
+    /// 設定の中の一覧の鍵（同じ名前の物を置き換えるため）
+    table: &'static str,
+    /// 印が違うときの言い方・1件も無いときの言い方・取り込める物が無いときの断り
+    what: &'static str,
+    none: &'static str,
+    empty: &'static str,
+    log: &'static str,
+    normalize: fn(&Map<String, Value>) -> R<Value>,
+    validate: fn(&Value) -> R<Vec<String>>,
+    save: fn(&Core, &Value) -> R<(String, String)>,
+}
+
+const LAYOUT_IMPORT: Import = Import {
+    kind: "symfonavi-text-layouts",
+    list: "layouts",
+    table: "text_layouts",
+    what: "読取マスタ",
+    none: "取り込めるマスタが1件もありませんでした",
+    empty: "取り込めるマスタがありません",
+    log: "TEXT_LAYOUT_IMPORT",
+    normalize: config::normalize_layout,
+    validate: validate_layout,
+    save: save_layout,
+};
+
+const RECIPE_IMPORT: Import = Import {
+    kind: "symfonavi-join-recipes",
+    list: "recipes",
+    table: "join_recipes",
+    what: "結合マスタ",
+    none: "取り込める結合マスタが1件もありませんでした",
+    empty: "取り込める結合マスタがありません",
+    log: "JOIN_RECIPE_IMPORT",
+    normalize: config::normalize_recipe,
+    validate: validate_recipe,
+    save: save_recipe,
+};
+
+/// POST /api/text-layouts/import（JSON の持ち出しファイル。EXCEL は Python が読む）
+pub(crate) fn post_text_layouts_import(core: &Core, ask: &Ask, _: &[String]) -> Reply {
+    answer_import(core, ask, &LAYOUT_IMPORT).unwrap_or_else(|_| Reply::pass())
+}
+
+/// POST /api/join-recipes/import（同上）
+pub(crate) fn post_join_recipes_import(core: &Core, ask: &Ask, _: &[String]) -> Reply {
+    answer_import(core, ask, &RECIPE_IMPORT).unwrap_or_else(|_| Reply::pass())
+}
+
+/// layouts_import・recipes_import（読めた物と、読めなかった理由）。
+fn read_import(text: &str, how: &Import) -> R<(Vec<Value>, Vec<String>)> {
+    // JSON として読めない文は Python の json の例外の文を作れないので回す。16 桁を超える数も（Rust は小数で読む）
+    if text.as_bytes().windows(16).any(|w| w.iter().all(u8::is_ascii_digit)) {
+        return Err(Pass);
+    }
+    let payload: Value = serde_json::from_str(text).map_err(|_| Pass)?;
+    let payload = match payload {
+        Value::Array(a) => Map::from_iter([("kind".to_string(), json!(how.kind)), (how.list.to_string(), Value::Array(a))]),
+        Value::Object(m) => m,
+        _ => return Ok((vec![], vec![format!("{}の持ち出しファイルではありません", how.what)])),
+    };
+    let kind = payload.get("kind").filter(|v| pyish::truthy(v));
+    if kind.map(pyish::py_str).as_deref() != Some(how.kind) {
+        let shown = kind.map(pyish::py_str).unwrap_or_else(|| "なし".into());
+        return Ok((vec![], vec![format!("{}の持ち出しファイルではありません（kind={shown}）", how.what)]));
+    }
+    let items = match payload.get(how.list) {
+        Some(Value::Array(a)) => a.clone(),
+        Some(v) if pyish::truthy(v) => return Err(Pass), // 並びでない物は Python が落ちる（文字の並びとして読む）
+        _ => vec![],
+    };
+    let (mut out, mut bad) = (Vec::new(), Vec::new());
+    for (i, x) in items.iter().enumerate() {
+        let x = match x {
+            Value::Object(m) => m.clone(),
+            v if !pyish::truthy(v) => Map::new(),
+            _ => return Err(Pass), // dict(x) が落ちる・並びを辞書にする書き方は Python へ
+        };
+        let mut l = (how.normalize)(&x)?;
+        l["id"] = json!("");
+        let problems = (how.validate)(&l)?;
+        if !problems.is_empty() {
+            let name = s(&l["name"]);
+            bad.push(format!("{}件目「{}」: {}", i + 1, if name.is_empty() { "名前なし" } else { name }, problems.join("／")));
+            continue;
+        }
+        out.push(l);
+    }
+    if out.is_empty() && bad.is_empty() {
+        bad.push(how.none.to_string());
+    }
+    Ok((out, bad))
+}
+
+fn answer_import(core: &Core, ask: &Ask, how: &Import) -> R<Reply> {
+    // 画面は本文をそのまま送る。multipart（request.files）は Python が受ける
+    if ask.headers.iter().any(|(k, v)| k.eq_ignore_ascii_case("content-type") && v.to_ascii_lowercase().starts_with("multipart/")) {
+        return Err(Pass);
+    }
+    let blob = ask.body;
+    let fname = ask.arg("filename").map_err(|_| Pass)?.unwrap_or_default().to_lowercase();
+    if blob.starts_with(b"PK") || fname.ends_with(".xlsx") || fname.ends_with(".xlsm") {
+        return Err(Pass); // EXCEL は Python が読む
+    }
+    let text = std::str::from_utf8(blob.strip_prefix(b"\xef\xbb\xbf").unwrap_or(blob)).map_err(|_| Pass)?;
+    let (items, bad) = read_import(text, how)?;
+    if items.is_empty() {
+        let error = if bad.is_empty() { how.empty.to_string() } else { bad.join("／") };
+        return Ok(Reply::json(400, &json!({"ok": false, "error": error})));
+    }
+    // 同じ名前があれば置き換える（取り込みのたびに増え続けると、どれが最新か分からなくなる）
+    let cfg = config::read(core)?;
+    let mut have: Vec<(String, String)> = Vec::new();
+    for x in list(&cfg, how.table) {
+        let (n, id) = (s(&x["name"]).to_string(), s(&x["id"]).to_string());
+        match have.iter_mut().find(|(k, _)| *k == n) {
+            Some(slot) => slot.1 = id,
+            None => have.push((n, id)),
+        }
+    }
+    let (mut added, mut replaced) = (Vec::new(), Vec::new());
+    for mut l in items {
+        let name = s(&l["name"]).to_string();
+        match have.iter().find(|(k, _)| *k == name) {
+            Some((_, id)) => {
+                l["id"] = json!(id);
+                replaced.push(name);
+            }
+            None => added.push(name),
+        }
+        (how.save)(core, &l)?;
+    }
+    core.log(&format!("{} 追加={} 置き換え={} 読めなかったもの={}", how.log, py_list(&added), py_list(&replaced), bad.len()));
+    Ok(Reply::json(200, &json!({"ok": true, "added": added, "replaced": replaced, "skipped": bad})))
+}
+
+/// 記録に書く str(list)（['a', 'b']）。
+fn py_list(v: &[String]) -> String {
+    pyish::py_repr(&json!(v))
 }
 
 /// navi_mrun.m_query_usage（入力に使う対象と、後処理に使う対象の両方）。
