@@ -15,6 +15,17 @@ summary = "SymNaviA.dll が公開する関数・定数・呼び出し順序の�
 source = "Navigator Visual Basic Interface API 9.6.0 / FUJITSU Interstage Navigator Server V9.4.1"
 
 [[release]]
+version = "2.42.0"
+date = "2026-11-13"
+title = "予定実行の巡回を、Rust の中身に用意した"
+notes = [
+  """\
+    【Rust への作り直し・段 5e の3回目】実行を Rust へ切り替える前の部品として、<b>予定実行の巡回</b>（時刻が来た予定を見つけて\
+    まとめて実行キューへ入れる・取り直しを先に流す・一時停止中は飛ばす・再開の時刻で一時停止を解く・実行中に猶予の切れた予定を知らせる）を\
+    Rust の中身に用意しました。まだ使っていないので、自動実行のしかたは変わりません。""",
+]
+
+[[release]]
 version = "2.41.0"
 date = "2026-11-13"
 title = "実行の受け付けと、実行を最後まで流す役を、Rust の中身に用意した"

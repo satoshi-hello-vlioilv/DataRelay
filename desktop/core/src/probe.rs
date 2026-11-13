@@ -273,6 +273,68 @@ pub fn call(name: &str, a: &Value) -> Result<Value, String> {
             };
             json!({"result": end.result, "code": end.code, "timed_out": end.timed_out, "statuses": seen, "line": w.line})
         }
+        // 予定実行の巡回（scheduler.rs）。巡回のたびに予定の状態を読み直し、待機キューへ入った指令を取り出して返す
+        "scheduler" => {
+            let core = crate::routes::Core::with_program(Path::new(s(a, "base")));
+            let runner = crate::runner::Runner::new("test");
+            let at = |k: &str, op: &Value| chrono::NaiveDateTime::parse_from_str(s(op, k), "%Y-%m-%dT%H:%M:%S").map_err(|e| e.to_string());
+            let mut out = vec![];
+            for op in a["ops"].as_array().into_iter().flatten() {
+                let r = match s(op, "op") {
+                    "tick" => {
+                        let now = at("now", op)?;
+                        let cfg = crate::config::read(&core).map_err(|_| "設定を読めない")?;
+                        let mut st = crate::scheduler::load_state(&core).map_err(|_| "状態を読めない")?;
+                        match crate::scheduler::tick(&core, &runner, &cfg, &mut st, now) {
+                            Ok(mut v) => {
+                                let q = runner.lock_cmds(|c| std::mem::take(&mut c.queue));
+                                v["queued"] = json!(q
+                                    .iter()
+                                    .map(|x| json!([x["job_ids"], x["trigger"], x["parallel_lines"], x["attempt"]]))
+                                    .collect::<Vec<_>>());
+                                v
+                            }
+                            Err(_) => json!({"pass": true}),
+                        }
+                    }
+                    "retry" => {
+                        let now = at("now", op)?;
+                        let cfg = crate::config::read(&core).map_err(|_| "設定を読めない")?;
+                        let ids = op["job_ids"].as_array().cloned().unwrap_or_default();
+                        let names = op["names"].as_array().cloned().unwrap_or_default();
+                        let att = op["attempt"].as_i64().unwrap_or(1);
+                        runner.lock_cmds(|c| c.schedule_retry(&ids, &names, &op["lines"], att, &cfg, now)).map_err(|_| "取り直し")?;
+                        Value::Null
+                    }
+                    "pause" => {
+                        crate::scheduler::save_state(&core, crate::scheduler::PAUSE_KEY, s(op, "value")).map_err(|_| "書けない")?;
+                        Value::Null
+                    }
+                    "missed" => {
+                        let cfg = crate::config::read(&core).map_err(|_| "設定を読めない")?;
+                        let st = crate::scheduler::load_state(&core).map_err(|_| "状態を読めない")?;
+                        json!(crate::scheduler::missed(&cfg, &st, at("since", op)?, at("now", op)?, op["catchup"].as_i64().unwrap_or(30)))
+                    }
+                    "alerts" => json!(runner.lock_cmds(|c| c
+                        .alerts
+                        .iter()
+                        .map(|x| json!([x["kind"], x["title"], x["detail"]]))
+                        .collect::<Vec<_>>())),
+                    "key" => {
+                        let rule = op["rule"].as_object().cloned().unwrap_or_default();
+                        match crate::scheduler::schedule_key(&rule, at("now", op)?, op["grace"].as_i64().unwrap_or(0)) {
+                            Ok(k) => json!(k),
+                            Err(_) => json!({"pass": true}),
+                        }
+                    }
+                    other => return Err(format!("知らない op: {other}")),
+                };
+                out.push(r);
+            }
+            core.settle_writes("probe");
+            let st = crate::scheduler::load_state(&core).unwrap_or_default();
+            json!({"out": out, "state": st})
+        }
         // 実行の受け付けと流す役（runner.rs）。流す役と見張りを別のスレッドで回し、決めた時刻に実行を入れる・中止する
         "run_commands" => {
             use std::time::{Duration, Instant};

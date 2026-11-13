@@ -241,17 +241,9 @@ impl Runner {
         true
     }
 
-    /// 時刻が来た取り直しを、待機キューへ積む（スケジューラーの巡回が呼ぶ。scheduler の due_retries のところ）。
-    pub fn enqueue_due_retries(&self, core: &Core) -> usize {
-        let due = self.lock().cmds.due_retries(core.now());
-        let n = due.len();
-        for r in due {
-            let ids: Vec<String> = r.job_ids.iter().map(pyish::py_str).collect();
-            if let Err(e) = self.enqueue(core, &ids, "schedule:retry", Some(&r.lines), r.attempt) {
-                core.log(&format!("RETRY_ENQUEUE_FAILED jobs={:?} error={e}", r.names));
-            }
-        }
-        n
+    /// 待機キュー・知らせ・取り直しを触る（スケジューラーの巡回が、取り直しを取り出す・知らせを足すのに使う）。
+    pub fn lock_cmds<T>(&self, f: impl FnOnce(&mut Commands) -> T) -> T {
+        f(&mut self.lock().cmds)
     }
 
     /// process（指令1つを最後まで流す）。中止は正常に戻る（status の step が cancelled）。失敗は Err(画面へ出す文)。
