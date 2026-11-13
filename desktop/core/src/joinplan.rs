@@ -188,7 +188,7 @@ fn answer_candidates(core: &Core) -> R<Reply> {
 // ==== 材料の持ち主 ==========================================================
 
 /// navi_order.wait_settings（材料を待つ設定。int() で読めない値は Python が落ちるので Pass）。
-fn wait_settings(cfg: &Map<String, Value>) -> R<Value> {
+pub(crate) fn wait_settings_of(cfg: &Map<String, Value>) -> R<Value> {
     let s = cfg.get("settings").and_then(Value::as_object).cloned().unwrap_or_default();
     let int = |k: &str, default: i64, zero: i64| -> R<i64> {
         match s.get(k).unwrap_or(&json!(default)) {
@@ -245,7 +245,27 @@ fn answer_order(core: &Core, ask: &Ask) -> R<Reply> {
         out.push(json!({"alias": sx["alias"], "name": paths::py_name(&path), "path": path, "exists": is_file(&path), "made_by": made}));
     }
     let made_count = out.iter().filter(|x| x["made_by"].as_array().is_some_and(|a| !a.is_empty())).count();
-    Ok(Reply::json(200, &json!({"ok": true, "sources": out, "made_count": made_count, "wait": wait_settings(&c)?})))
+    Ok(Reply::json(200, &json!({"ok": true, "sources": out, "made_count": made_count, "wait": wait_settings_of(&c)?})))
+}
+
+/// navi_order.job_inputs（この対象が材料として読むファイル。結合以外は空。Power Query の材料は M の式を読むので段 6）。
+pub(crate) fn job_inputs(b: &Bases, c: &Map<String, Value>, job: &Map<String, Value>) -> Vec<String> {
+    if pyish::text_or_empty(job.get("source")) != "join" {
+        return vec![];
+    }
+    let rid = pyish::strip(&pyish::text_or_empty(job.get("recipe_id"))).to_string();
+    let recipes = c.get("join_recipes").and_then(Value::as_array).map(Vec::as_slice).unwrap_or(&[]);
+    let Some(r) = (!rid.is_empty()).then(|| recipes.iter().find(|r| r.get("id").and_then(Value::as_str) == Some(rid.as_str()))).flatten()
+    else {
+        return vec![];
+    };
+    r.get("sources")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|sx| sx.get("path").is_some_and(pyish::truthy))
+        .map(|sx| join_path(b, c, &sx["path"]))
+        .collect()
 }
 
 /// 材料の持ち主の表（navi_order.output_owners）: 出力ファイルの見出し → それを作る対象。
