@@ -213,6 +213,102 @@ pub fn call(name: &str, a: &Value) -> Result<Value, String> {
             };
             json!({"result": end.result, "code": end.code, "timed_out": end.timed_out, "statuses": seen, "line": w.line})
         }
+        // 実行の黒板（board.rs）を偽のワーカーで最後まで回す。札の移り変わり・締め・記録を返す
+        "run_board" => {
+            use std::collections::{BTreeSet, HashMap};
+            use std::time::{Duration, Instant};
+            let mut core = crate::routes::Core::with_program(Path::new(s(a, "base")));
+            if let Ok(t) = std::env::var("DATARELAY_FIXED_NOW") {
+                core.fixed_now = chrono::NaiveDateTime::parse_from_str(&t, "%Y-%m-%dT%H:%M:%S%.f").ok();
+            }
+            let strs = |v: &Value| -> BTreeSet<String> { v.as_array().into_iter().flatten().map(s_of_val).collect() };
+            let map_sets = |v: &Value| -> HashMap<String, BTreeSet<String>> {
+                v.as_object().into_iter().flatten().map(|(k, v)| (k.clone(), strs(v))).collect()
+            };
+            let map_strs = |v: &Value| -> HashMap<String, String> {
+                v.as_object().into_iter().flatten().map(|(k, v)| (k.clone(), s_of_val(v))).collect()
+            };
+            let objs = |v: &Value| -> Vec<Map<String, Value>> {
+                v.as_array().into_iter().flatten().filter_map(|j| j.as_object().cloned()).collect()
+            };
+            let secs = |k: &str, d: f64| Duration::from_secs_f64(a[k].as_f64().unwrap_or(d));
+            let settings = crate::board::Settings {
+                python: PathBuf::from(s(a, "python")),
+                program_root: PathBuf::from(s(a, "program_root")),
+                work: PathBuf::from(s(a, "work")),
+                backup: PathBuf::from(s(a, "work")).join("backup"),
+                cfg: a["cfg"].clone(),
+                api_lines: a["api_lines"].as_u64().unwrap_or(2) as usize,
+                local_lines: a["local_lines"].as_u64().unwrap_or(1) as usize,
+                cap: a["cap"].as_u64().unwrap_or(4) as usize,
+                trigger: s(a, "trigger").into(),
+                worker_limit: a["limit_seconds"].as_f64().map(Duration::from_secs_f64),
+                stagger: secs("stagger_seconds", 0.0),
+                login: a["login"].as_array().map(|x| (s_of_val(&x[0]), s_of_val(&x[1]))),
+                wait_enabled: a["wait_enabled"].as_bool().unwrap_or(true),
+                max_wait: secs("max_wait_seconds", 30.0),
+                poll: secs("poll_seconds", 0.05),
+            };
+            let cells: HashMap<String, i64> =
+                a["cells"].as_object().into_iter().flatten().map(|(k, v)| (k.clone(), v.as_i64().unwrap_or(0))).collect();
+            let mut board = crate::board::Board::new(settings, objs(&a["jobs"]), &map_sets(&a["deps"]), &map_strs(&a["kinds"]), &cells);
+            // 待つ理由: 対象 id → 何回見直すまで待たせるか
+            let waits = std::cell::RefCell::new(
+                a["waits"]
+                    .as_object()
+                    .into_iter()
+                    .flatten()
+                    .map(|(k, v)| (k.clone(), v.as_i64().unwrap_or(0)))
+                    .collect::<HashMap<String, i64>>(),
+            );
+            let waiter = |j: &Map<String, Value>| -> Vec<Value> {
+                let id = j.get("id").map(s_of_val).unwrap_or_default();
+                let mut w = waits.borrow_mut();
+                match w.get_mut(&id) {
+                    Some(n) if *n > 0 => {
+                        *n -= 1;
+                        vec![json!({"kind": "running", "job": "上流", "job_id": "up"})]
+                    }
+                    _ => vec![],
+                }
+            };
+            let t0 = Instant::now();
+            let mut joins = objs(&a["joins"]);
+            let cancel_at = a["cancel_after_seconds"].as_f64();
+            let mut joined: Vec<Value> = vec![];
+            let mut seen: Vec<Value> = vec![];
+            let mut peak = 0usize;
+            loop {
+                let t = t0.elapsed().as_secs_f64();
+                while joins.first().is_some_and(|j| j["after_seconds"].as_f64().unwrap_or(0.0) <= t) {
+                    let j = joins.remove(0);
+                    joined.push(json!(board.join(
+                        &core,
+                        objs(&j["jobs"]),
+                        &map_sets(&j["deps"]),
+                        &map_strs(&j["kinds"]),
+                        s(&Value::Object(j.clone()), "trigger")
+                    )));
+                }
+                if cancel_at.is_some_and(|c| c <= t) {
+                    board.cancel();
+                }
+                let more = board.tick(&core, &waiter);
+                let st = board.status();
+                peak = peak.max(st["queue_active"].as_u64().unwrap_or(0) as usize);
+                let brief =
+                    json!({"running": st["queue_running_ids"], "done": st["queue_completed_ids"], "failed": st["queue_failed_ids"]});
+                if seen.last() != Some(&brief) {
+                    seen.push(brief);
+                }
+                if !more || t > a["give_up_seconds"].as_f64().unwrap_or(60.0) {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            core.settle_writes("probe");
+            json!({"status": board.status(), "outcome": board.outcome(), "steps": seen, "peak": peak, "joined": joined})
+        }
         // ラインの割り当ての決まり（lane.rs）をまとめて1回で
         "lane_all" => {
             use std::collections::{BTreeSet, HashMap};
