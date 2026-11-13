@@ -339,9 +339,49 @@ impl Board {
         self.job_results.push(one);
         self.record(core, &rec);
         if a.kind == "rne" {
+            self.keep_rne_notes(core, &a.id, &job, &end.result, ok);
             self.rne_slots.insert(a.slot);
         } else {
             self.local_slots.insert(a.slot);
+        }
+    }
+
+    /// RNE 単位の控え（run_api_process_batch の WORKER_END のあと）。設定 DB へ書くのは親1本にまとめる。
+    ///   - 実績（時間帯・端末・分け方・内訳）: rne_path があれば、成否にかかわらず
+    ///   - 列名: 成功してワーカーが列名を持ち帰ったとき
+    ///   - 所要時間の基準: 成功して分割していないとき（分割で取った回は基準にならない）
+    fn keep_rne_notes(&self, core: &Core, id: &str, job: &Map<String, Value>, result: &Map<String, Value>, ok: bool) {
+        let rne_path = result.get("rne_path").filter(|v| pyish::truthy(v)).map(pyish::py_str).unwrap_or_default();
+        let get = |k: &str| result.get(k).cloned().unwrap_or(Value::Null);
+        if !rne_path.is_empty() {
+            let mut m = result.clone();
+            m.insert("rows".into(), get("rows"));
+            m.insert("cols".into(), get("columns"));
+            m.insert("lines".into(), json!(self.s.api_lines));
+            let status = if ok { "ok" } else { "failed" };
+            if !matches!(runs::record_rne_run(core, &rne_path, job, status, &self.trigger_of(id), &m, "api", ""), Ok(true)) {
+                core.log(&format!("RNE_RUN_RECORD_FAILED rne={rne_path}"));
+            }
+        }
+        if ok && result.get("column_names").is_some_and(pyish::truthy) {
+            let saved = runs::save_column_cache(core, &rne_path, &get("column_names"), &get("rows"), "run", job);
+            if saved.is_err() {
+                core.log(&format!("COLUMN_CACHE_SAVE_FAILED rne={rne_path}"));
+            }
+        }
+        if ok && !rne_path.is_empty() && !result.get("split_parts").is_some_and(pyish::truthy) {
+            let saved = runs::save_rne_timing(
+                core,
+                &rne_path,
+                &get("execute_seconds"),
+                &get("save_seconds"),
+                &get("total_seconds"),
+                &get("rows"),
+                &get("columns"),
+            );
+            if saved.is_err() {
+                core.log(&format!("RNE_TIMING_SAVE_FAILED rne={rne_path}"));
+            }
         }
     }
 

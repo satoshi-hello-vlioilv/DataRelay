@@ -223,27 +223,7 @@ fn answer_order(core: &Core, ask: &Ask) -> R<Reply> {
         _ => Map::new(),
     };
     let recipe = config::normalize_recipe(&raw)?;
-    // 出力ファイルの場所 → それを作る対象（いま在るファイルと、次に作る名前の両方）
-    let mut owners: Vec<(String, Vec<&Map<String, Value>>)> = Vec::new();
-    for j in jobs(&c) {
-        let Value::Object(j) = j else { return Err(Pass) };
-        let folder = output_folder(&b, j, &c);
-        let mut ps = vec![viewer_output_path(core, &b, j, &c, &runs)];
-        ps.extend(plan(core, j, &c).iter().map(|x| paths::join(&folder, x["file"].as_str().unwrap_or(""))));
-        for p in ps {
-            let k = owner_key(&p);
-            let at = match owners.iter().position(|(x, _)| *x == k) {
-                Some(i) => i,
-                None => {
-                    owners.push((k, vec![]));
-                    owners.len() - 1
-                }
-            };
-            if !owners[at].1.iter().any(|x| x.get("id") == j.get("id")) {
-                owners[at].1.push(j);
-            }
-        }
-    }
+    let owners = output_owners(core, &b, &c, &runs)?;
     let mut out = Vec::new();
     for sx in recipe["sources"].as_array().map(Vec::as_slice).unwrap_or(&[]) {
         if !pyish::truthy(&sx["path"]) {
@@ -266,6 +246,87 @@ fn answer_order(core: &Core, ask: &Ask) -> R<Reply> {
     }
     let made_count = out.iter().filter(|x| x["made_by"].as_array().is_some_and(|a| !a.is_empty())).count();
     Ok(Reply::json(200, &json!({"ok": true, "sources": out, "made_count": made_count, "wait": wait_settings(&c)?})))
+}
+
+/// 材料の持ち主の表（navi_order.output_owners）: 出力ファイルの見出し → それを作る対象。
+/// 実行のたびに名前が変わる対象もあるので、いま在るファイルと次に作る名前の両方を載せる。見出しは載せた順。
+pub(crate) type Owners<'a> = Vec<(String, Vec<&'a Map<String, Value>>)>;
+
+pub(crate) fn output_owners<'a>(core: &Core, b: &Bases, c: &'a Map<String, Value>, runs: &[(Value, Map<String, Value>)]) -> R<Owners<'a>> {
+    let mut owners: Owners = Vec::new();
+    for j in jobs(c) {
+        let Value::Object(j) = j else { return Err(Pass) };
+        let folder = output_folder(b, j, c);
+        let mut ps = vec![viewer_output_path(core, b, j, c, runs)];
+        ps.extend(plan(core, j, c).iter().map(|x| paths::join(&folder, x["file"].as_str().unwrap_or(""))));
+        for p in ps {
+            let k = owner_key(&p);
+            let at = match owners.iter().position(|(x, _)| *x == k) {
+                Some(i) => i,
+                None => {
+                    owners.push((k, vec![]));
+                    owners.len() - 1
+                }
+            };
+            if !owners[at].1.iter().any(|x| x.get("id") == j.get("id")) {
+                owners[at].1.push(j);
+            }
+        }
+    }
+    Ok(owners)
+}
+
+/// クエリ（mquery）の対象が読む材料（ファイル, フォルダー）。M の式を読むので、段 6 までは呼ぶ側が持つ（None なら Python へ回す）。
+pub(crate) type QueryInputs<'q> = &'q dyn Fn(&Map<String, Value>) -> Option<(Vec<String>, Vec<String>)>;
+
+/// navi_orderrun.job_dependencies（対象 id → その材料を作る対象 id の集合）。jobs は今回流す対象、持ち主は設定の全部の対象から引く。
+/// 自分の出力を自分で読む（積み増しの結合）ときは数えない（数えると永遠に自分を待つ）。
+pub fn dependencies(
+    core: &Core,
+    b: &Bases,
+    c: &Map<String, Value>,
+    runs: &[(Value, Map<String, Value>)],
+    run_jobs: &[Map<String, Value>],
+    query_inputs: QueryInputs,
+) -> R<std::collections::HashMap<String, std::collections::BTreeSet<String>>> {
+    let owners = output_owners(core, b, c, runs)?;
+    let id_of = |j: &Map<String, Value>| j.get("id").map(pyish::py_str).unwrap_or_else(|| "None".into());
+    let recipes = c.get("join_recipes").and_then(Value::as_array).map(Vec::as_slice).unwrap_or(&[]);
+    let mut deps = std::collections::HashMap::new();
+    for j in run_jobs {
+        let me = id_of(j);
+        let source = pyish::text_or_empty(j.get("source"));
+        let (mut files, mut folders) = (Vec::new(), Vec::new());
+        if source == "join" {
+            let rid = pyish::strip(&pyish::text_or_empty(j.get("recipe_id"))).to_string();
+            let recipe =
+                (!rid.is_empty()).then(|| recipes.iter().find(|r| r.get("id").and_then(Value::as_str) == Some(rid.as_str()))).flatten();
+            if let Some(r) = recipe {
+                for sx in r.get("sources").and_then(Value::as_array).map(Vec::as_slice).unwrap_or(&[]) {
+                    if sx.get("path").is_some_and(pyish::truthy) {
+                        files.push(join_path(b, c, &sx["path"]));
+                    }
+                }
+            }
+        } else if source == "mquery" {
+            (files, folders) = query_inputs(j).ok_or(Pass)?;
+        }
+        let mut need = std::collections::BTreeSet::new();
+        for p in &files {
+            let k = owner_key(p);
+            for (_, js) in owners.iter().filter(|(x, _)| *x == k) {
+                need.extend(js.iter().map(|o| id_of(o)).filter(|o| *o != me));
+            }
+        }
+        for f in &folders {
+            let head = format!("{}/", owner_key(f).trim_end_matches('/'));
+            for (_, js) in owners.iter().filter(|(x, _)| x.starts_with(&head)) {
+                need.extend(js.iter().map(|o| id_of(o)).filter(|o| *o != me));
+            }
+        }
+        deps.insert(me, need);
+    }
+    Ok(deps)
 }
 
 // ==== 写しを捨てる ==========================================================

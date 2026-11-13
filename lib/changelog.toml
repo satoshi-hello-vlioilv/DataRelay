@@ -15,6 +15,18 @@ summary = "SymNaviA.dll が公開する関数・定数・呼び出し順序の�
 source = "Navigator Visual Basic Interface API 9.6.0 / FUJITSU Interstage Navigator Server V9.4.1"
 
 [[release]]
+version = "2.39.0"
+date = "2026-11-13"
+title = "RNE の控えと材料の関係を、Rust の中身に用意した"
+notes = [
+  """\
+    【Rust への作り直し・段 5d の4回目】黒板が RNE を流し終えるたびに残す<b>RNE ごとの控え</b>\
+    （時間帯・PC・分け方まで含めた実績、列名、分割しなかった回の所要時間）と、どの対象を先に流すかを決める<b>材料の関係</b>\
+    （結合の材料を、どの対象が作るか）を Rust の中身に用意しました。Power Query の材料は式を読む必要があるので、\
+    Power Query の対象が入る実行は、式の読み方を移す段まで Python が受け持ちます。まだ使っていないので、実行のしかたは変わりません。""",
+]
+
+[[release]]
 version = "2.38.0"
 date = "2026-11-13"
 title = "実行を最後まで回す黒板を、Rust の中身に用意した"
