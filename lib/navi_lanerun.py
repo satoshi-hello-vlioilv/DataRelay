@@ -516,6 +516,17 @@ def run_api_process_batch(jobs,cfg,user,pw,server,dde_work,backup,max_lines,trig
 
 
 # ---- 手元側（スレッド） -------------------------------------------------------
+def local_lane_say(line,j,slot,started):
+ """手元の処理1件の工程を、ラインの帯へ書く係（その場のスレッドでも、ワーカーでも同じ言い方。2.35.0）。
+ ワーカーの中では update_parallel_line が NAVI_WORKER_STATUS へも書くので、親がそれを読んで画面へ渡す。"""
+ def say(stage,**kw):
+  pct,label=LOCAL_STAGE.get(stage,(50,'処理中'))
+  detail=str(kw.get('activity') or kw.get('source') or '')
+  if stage=='wait':detail=navi_order.reason_text(kw.get('reasons') or [])
+  update_parallel_line(line,job=j.get('name',''),job_id=j.get('id',''),state=label,percent=pct,
+                       slot=slot,detail=detail,elapsed=round(time.perf_counter()-started,1))
+ return say
+
 def _local_lane(slot,board,cfg,work,backup,trigger,progress_fn):
  """手元の処理を受け持つライン1本。黒板から次を取り、無くなるまで回す。"""
  line=f'ライン {slot}'
@@ -529,12 +540,7 @@ def _local_lane(slot,board,cfg,work,backup,trigger,progress_fn):
   # 全体の工程・進捗率・実行中の対象は黒板（LaneBoard）が持つ。ここから global の
   # progress() も呼んでいたため、ラインごとの値で全体の表示を上書きし合い、進捗が
   # 行ったり来たりしていた。ここが触るのは自分のラインの帯だけにする。
-  def say(stage,**kw):
-   pct,label=LOCAL_STAGE.get(stage,(50,'処理中'))
-   detail=str(kw.get('activity') or kw.get('source') or '')
-   if stage=='wait':detail=navi_order.reason_text(kw.get('reasons') or [])
-   update_parallel_line(line,job=j.get('name',''),job_id=j.get('id',''),state=label,percent=pct,
-                        slot=slot,detail=detail,elapsed=round(time.perf_counter()-started,1))
+  say=local_lane_say(line,j,slot,started)
   # 同じ実行のなかの順番は黒板が見ている。ここでの待ち合わせは、別の実行や別のPCが
   # 同じファイルを触っているときのためのもの ―― 二重に待たせない。
   try:
