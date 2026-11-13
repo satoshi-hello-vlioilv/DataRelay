@@ -15,6 +15,18 @@ summary = "SymNaviA.dll が公開する関数・定数・呼び出し順序の�
 source = "Navigator Visual Basic Interface API 9.6.0 / FUJITSU Interstage Navigator Server V9.4.1"
 
 [[release]]
+version = "2.40.0"
+date = "2026-11-13"
+title = "実行の待機キュー・知らせ・取り直しを、Rust の中身に用意した"
+notes = [
+  """\
+    【Rust への作り直し・段 5e の1回目】実行を Rust へ切り替える前の部品として、<b>実行の待機キュー</b>（積む・並べ替える・消す・\
+    中止で空にする）、<b>知らせ</b>（直近 50 件・既読）、<b>取り直し</b>（自動実行で失敗した対象だけを、少し待ってから流し直す）と、\
+    実行が終わったところで何を知らせ・何を取り直すかの決まりを、Rust の中身に用意しました。\
+    まだ使っていないので、実行のしかたは変わりません。""",
+]
+
+[[release]]
 version = "2.39.1"
 date = "2026-11-13"
 title = "RNE の「ラベルを繰り返す」設定が出力に効くようにした"
