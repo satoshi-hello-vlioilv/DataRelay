@@ -52,6 +52,19 @@ def main():
                                   sp.get('row_axis'))
         atomic_json(os.environ['NAVI_WORKER_RESULT'],result)
         return 0 if result.get('ok') else 2
+    if payload.get('local'):
+        # 手元のファイルから作る対象1件（テキスト・結合・クエリ。2.35.0）。Navigator へはつながない。
+        # 材料の待ち合わせと実行の記録は親が受け持つ（記録は答えの record に入れて返す）。
+        import time
+        import app  # noqa: F401 ―― 本体を先に読む（部品は本体から名前を借りるので、部品から読み始めると循環する）
+        from navi_textrun import run_local_in_worker
+        from navi_lanerun import local_lane_say
+        lc=payload['local'];j=payload['job']
+        say=local_lane_say(os.environ.get('NAVI_WORKER_LINE') or 'ライン 1',j,lc.get('slot') or 1,time.perf_counter())
+        result=run_local_in_worker(j,payload['cfg'],Path(payload['work']),Path(payload['backup']),lc.get('trigger') or 'manual',
+                                   payload.get('job_index') or 1,payload.get('total_jobs') or 1,say=say,held=lc.get('held'))
+        atomic_json(os.environ['NAVI_WORKER_RESULT'],result)
+        return 0 if result.get('ok') else 2
     from app import process_api_parallel_job
     result=process_api_parallel_job(payload['job'],payload['job_index'],payload['total_jobs'],payload['cfg'],payload['user'],payload['password'],payload['server'],Path(payload['dde_work']),Path(payload['backup']))
     atomic_json(os.environ['NAVI_WORKER_RESULT'],result)

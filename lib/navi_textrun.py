@@ -241,25 +241,17 @@ def local_progress_say(progress_fn,j):
   elif stage=='extras':progress_fn('publish',f'{j["name"]}: 同じデータからあと{len(kw.get("extras") or [])}形式を作成しています',95,activity_detail='同時出力')
  return say
 
-def run_one_local(j,cfg,work,backup,trigger,index,total_all,say=None):
- """手元のファイルから作る対象を1件、最後まで通す。結果は辞書で返す（例外は投げない）。
+def local_failure(j,e):
+ """手元の処理1件が失敗したときの (記録, 答え)。記録は record_job_run へそのまま渡す形。"""
+ record={'status':'failed','detail':str(e)}
+ return record,{'ok':False,'job':j.get('name',''),'error':str(e),'detail':str(e),
+                'job_result':{'job':j['name'],'job_id':j['id'],'status':'failed','detail':str(e)}}
 
- 1件ずつ順に流すときも、ラインに分けて同時に流すときも、通す道はここ1本にする ――
- 別々に書くと、片方にしか直しが入らない壊れ方をまた繰り返す。
- 画面の状態（どれが実行中か・完了か）は呼ぶ側が持つ。ここで書くと、同時に流したとき
- あとから書いたほうが前を消してしまう。
- """
- kind=normalize_job_source(j.get('source'))
- try:
-  # 走り出す前に材料の様子を見る。作っている最中か、もうすぐ作り始めるなら待つ
-  # ―― 擦れ違うと、正しい形をした「1回ぶん古いファイル」が出来上がる。
-  held=wait_for_sources(j,cfg,say=say)
-  fin,target,rows,cols,stat,fmt,extras=process_local_job(j,cfg,work,backup,trigger,index,total_all,say)
- except Exception as e:
-  log.exception('LOCAL_JOB_FAILED job=%s kind=%s',j.get('name'),kind)
-  record_job_run(j['id'],j['name'],'failed',trigger,detail=str(e))
-  return {'ok':False,'job':j.get('name',''),'error':str(e),'detail':str(e),
-          'job_result':{'job':j['name'],'job_id':j['id'],'status':'failed','detail':str(e)}}
+def local_outcome(j,kind,fin,target,stat,fmt,held=None):
+ """手元の処理1件が済んだときの (記録, 答え)。記録は record_job_run へそのまま渡す形。
+
+ その場で流すとき（run_one_local）も、ワーカーで流すとき（run_local_in_worker。2.35.0）も、ここ1本で作る ――
+ 別々に書くと、記録の項目や言い方が片方にしか入らない。"""
  total=fin['total']
  if fin['unchanged']:
   detail=f'前回と同じ内容のため更新しませんでした / {total:.1f}秒'
@@ -280,15 +272,53 @@ def run_one_local(j,cfg,work,backup,trigger,index,total_all,say=None):
   metrics.update(join_sources=len(stat['sources']),
                  join_matched=[x.get('both') for x in stat['joins']])
  if fin.get('post'):metrics.update(post=fin['post']['summary'],post_rows_in=fin['post']['rows_in'],post_error_cells=fin['post']['error_cells'])
- if held.get('waited'):metrics.update(wait_seconds=held['waited'])
- record_job_run(j['id'],j['name'],'ok',trigger,detail=detail,rows=fin['rows'],cols=fin['cols'],
-                output_file=j['output_file'],metrics=metrics)
+ if (held or {}).get('waited'):metrics.update(wait_seconds=held['waited'])
+ record={'status':'ok','detail':detail,'rows':fin['rows'],'cols':fin['cols'],'output_file':j['output_file'],'metrics':metrics}
  # 何で作ったかを、作った方法どおりに残す。1.88.0まで結合でも engine=text と書いていて、
  # ログを読み返すと「テキストから作った」ようにしか見えなかった。
  log.info('JOB_RESULT job=%s engine=%s format=%s rows=%s columns=%s elapsed=%.2fs target=%s',
           j['name'],kind,fmt,fin['rows'],fin['cols'],total,target)
- return {'ok':True,'job':j['name'],'result':f'{j["name"]}: '+detail,'detail':detail,'elapsed':total,
-         'job_result':{'job':j['name'],'job_id':j['id'],'status':'ok','detail':detail,'rows':fin['rows'],
-                       'cols':fin['cols'],'elapsed':round(total,1),'target':str(target),
-                       'published':bool(fin['published']),'pending':str(fin.get('pending') or ''),
-                       'unchanged':bool(fin['unchanged'])}}
+ return record,{'ok':True,'job':j['name'],'result':f'{j["name"]}: '+detail,'detail':detail,'elapsed':total,
+                'job_result':{'job':j['name'],'job_id':j['id'],'status':'ok','detail':detail,'rows':fin['rows'],
+                              'cols':fin['cols'],'elapsed':round(total,1),'target':str(target),
+                              'published':bool(fin['published']),'pending':str(fin.get('pending') or ''),
+                              'unchanged':bool(fin['unchanged'])}}
+
+def run_one_local(j,cfg,work,backup,trigger,index,total_all,say=None):
+ """手元のファイルから作る対象を1件、最後まで通す。結果は辞書で返す（例外は投げない）。
+
+ 1件ずつ順に流すときも、ラインに分けて同時に流すときも、通す道はここ1本にする ――
+ 別々に書くと、片方にしか直しが入らない壊れ方をまた繰り返す。
+ 画面の状態（どれが実行中か・完了か）は呼ぶ側が持つ。ここで書くと、同時に流したとき
+ あとから書いたほうが前を消してしまう。
+ """
+ kind=normalize_job_source(j.get('source'))
+ try:
+  # 走り出す前に材料の様子を見る。作っている最中か、もうすぐ作り始めるなら待つ
+  # ―― 擦れ違うと、正しい形をした「1回ぶん古いファイル」が出来上がる。
+  held=wait_for_sources(j,cfg,say=say)
+  fin,target,rows,cols,stat,fmt,extras=process_local_job(j,cfg,work,backup,trigger,index,total_all,say)
+ except Exception as e:
+  log.exception('LOCAL_JOB_FAILED job=%s kind=%s',j.get('name'),kind)
+  record,out=local_failure(j,e)
+  record_job_run(j['id'],j['name'],trigger=trigger,status_value=record.pop('status'),**record)
+  return out
+ record,out=local_outcome(j,kind,fin,target,stat,fmt,held)
+ record_job_run(j['id'],j['name'],trigger=trigger,status_value=record.pop('status'),**record)
+ return out
+
+def run_local_in_worker(j,cfg,work,backup,trigger,index,total_all,say=None,held=None):
+ """手元の対象1件を、ワーカー（別プロセス。lib/api_worker.py の local）で通す（2.35.0）。
+
+ run_one_local との違いは2つ。材料の待ち合わせはしない（どの対象が実行中・順番待ちかは親だけが知っている。
+ 親が待ってから起こす）。実行の記録も書かない（設定DBへ書くのは親1本に集約する。RNE のワーカーと同じ約束）。
+ 書くべき記録は答えの record に入れて返し、親がそのまま record_job_run へ渡す。"""
+ kind=normalize_job_source(j.get('source'))
+ try:
+  fin,target,rows,cols,stat,fmt,extras=process_local_job(j,cfg,work,backup,trigger,index,total_all,say)
+ except Exception as e:
+  log.exception('LOCAL_JOB_FAILED job=%s kind=%s',j.get('name'),kind)
+  record,out=local_failure(j,e)
+  return dict(out,record=record)
+ record,out=local_outcome(j,kind,fin,target,stat,fmt,held)
+ return dict(out,record=record)
