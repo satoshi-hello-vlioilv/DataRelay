@@ -184,9 +184,12 @@ class LiveJoinTest(unittest.TestCase):
  def test_over_the_line_count_waits_in_the_queue(self):
   o = run('over_cap')
   key = 'C@manual'
-  self.assertFalse(o['enq'][key]['joined'], '並列ライン数（2）を超えるぶんは、これまでどおり実行キューで待つ')
-  self.assertGreaterEqual(at(o, 'C', 'start'), min(at(o, 'A', 'end'), at(o, 'B', 'end')) - 0.05)
-  self.assertEqual(len(o['done']), 2)
+  self.assertFalse(o['enq'][key]['joined'], '並列ライン数（2）を超えるぶんは、入れた時点では実行キューで待つ')
+  self.assertGreaterEqual(at(o, 'C', 'start'), min(at(o, 'A', 'end'), at(o, 'B', 'end')) - 0.05, 'ラインが空くまでは走らない')
+  # 2.40.1: ラインが1本空いたら、走っている実行へ合流する（前の実行が全部終わるのを待たない）
+  self.assertLess(at(o, 'C', 'start'), max(at(o, 'A', 'end'), at(o, 'B', 'end')) + 1.5, '空いたラインですぐ走る')
+  self.assertEqual(len(o['done']), 1, '合流したので実行は1回で締まる')
+  self.assertEqual((o['done'][0]['ids'], o['done'][0]['joined']), (['A', 'B'], ['C']))
 
  def test_same_job_is_not_run_twice_at_once(self):
   o = run('same_job')

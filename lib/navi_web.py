@@ -41,7 +41,7 @@ import navi_post     # 後処理（2.6.0）の取り決めの形と、手順か�
 
 from app import (
     variant_jobs, load_variant_count, save_variant_count,
-    APP_ID, APP_NAME, APP_RELEASED_AT, APP_VERSION, APP_VERSION_TITLE, BASE, BUILD_VERSION, CHANGELOG, CONFIG_DIR, DATA_ROOT,
+    APP_ID, APP_NAME, PARALLEL_LINES_DEFAULT, APP_RELEASED_AT, APP_VERSION, APP_VERSION_TITLE, BASE, BUILD_VERSION, CHANGELOG, CONFIG_DIR, DATA_ROOT,
     DATA_ROOT_SOURCE, LOCAL_ROOT, RELEASE_WATCH, release_check, release_place, release_shared, restart_block_reason,
     DEFAULT_DLL_SEARCH_ROOTS, DOCS, INSPECT_ALL_ORDER, INSPECT_ALL_SPEC,
     INSPECT_TASK_SPECS, INSTANCE_ID, LOCAL_RUNTIME, LOG_FILTERS, LOG_PATH, LOG_READ_BYTES,
@@ -378,7 +378,7 @@ def variants_preview():
  # 取り方: 実際に動く方（対象の選択か共通の既定）と、並列のときに同時に動かす数の見込み（1つだけ動かすとき。
  # 同時に動かす対象が多いと、並列ライン数を対象で分けるぶん減る）
  how=navi_variants.method(job,st)
- lines=max(1,min(len(v['values']) or 1,int(st.get('api_parallel_lines',6) or 1)))
+ lines=max(1,min(len(v['values']) or 1,int(st.get('api_parallel_lines',PARALLEL_LINES_DEFAULT) or 1)))
  return jsonify(ok=not error,error=error,conditions=conditions,files=files,tokens=list(navi_variants.TOKENS),
                 method=how,method_name=navi_variants.METHOD_NAMES[how],default_method=navi_variants.default_method(st),
                 parallel_lines=lines,side_has_item=bool(v['item'] and v['item'] in side),counted=counted,sample=sample,
@@ -606,7 +606,7 @@ def column_plan():
           panchors or '(なし)',pcov)
  if incompatible or dupes:best,best_gain=1,1.0
  # 「次に実行したらどうなるか」。この対象を単独で実行したときの持ち分で判定して見せる。
- solo_budget=max(1,int(c['settings'].get('api_parallel_lines',6) or 6))
+ solo_budget=max(1,int(c['settings'].get('api_parallel_lines',PARALLEL_LINES_DEFAULT) or PARALLEL_LINES_DEFAULT))
  chosen,why=plan_run_split(rp,job,c,normalize_output_format(job.get('output_format'),job.get('output_file')),solo_budget)
  runtime_split=runtime_split_view(rp,job,c,chosen,why,solo_budget)
  log.info('COLUMN_PLAN rne=%s job=%s source=%s basis=%s columns=%s removable=%s fixed=%s recommend=%s gain=%s incompatible=%s elapsed=%.2fs',
@@ -664,7 +664,7 @@ def run_split_state():
  if data.get('split_shape'):job=dict(job,split_shape=normalize_split_shape(data.get('split_shape')))
  try:rp=resolve_rne_path(job,c)
  except Exception as e:return jsonify(ok=False,error=f'RNEパスの解決に失敗しました: {e}'),200
- budget=max(1,int(c['settings'].get('api_parallel_lines',6) or 6))
+ budget=max(1,int(c['settings'].get('api_parallel_lines',PARALLEL_LINES_DEFAULT) or PARALLEL_LINES_DEFAULT))
  fmt=normalize_output_format(job.get('output_format'),job.get('output_file'))
  try:chosen,why=plan_run_split(rp,job,c,fmt,budget)
  except Exception as e:
