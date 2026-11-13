@@ -34,6 +34,7 @@
   "GET /api/freshness": "tests/test_rust_diag.py（予定・実績の間隔・失敗・反映待ちの見本を2つ用意して、決まった日時で答えを比べる）",
   "POST /api/path-check": "tests/test_rust_diag.py（在る物・無い物・値を差し替えて確かめる）",
   "POST /api/apply-path-suggestion": "tests/test_rust_diag.py（置き場の中と外の候補で、答えと直したあとの設定の写しを比べる）",
+  "GET /api/machine-paths": "tests/test_rust_diag.py（場所の設定の役割と状態が分かれる見本を3つ用意して答えを比べる）",
   "POST /api/join-order": "tests/test_rust_join.py（出力の決まりが分かれる対象と結合マスタの見本を Python 自身に作らせ、決まった日時で答えを比べる。写しの片づけは同じ写しを2つ用意して比べる）",
   "POST /api/join-cache/clear": "tests/test_rust_join.py（出力の決まりが分かれる対象と結合マスタの見本を Python 自身に作らせ、決まった日時で答えを比べる。写しの片づけは同じ写しを2つ用意して比べる）",
   "GET /api/data-viewer/jobs": "tests/test_rust_viewer.py（業務の出力の見本で、同じ写しを2つ用意して答えと手元の写しの名前を比べる。CSV の読み方は乱数の字で csv.reader と比べる。値ごとに分けて出す対象の files・?value= も比べる）",
