@@ -273,6 +273,104 @@ pub fn call(name: &str, a: &Value) -> Result<Value, String> {
             };
             json!({"result": end.result, "code": end.code, "timed_out": end.timed_out, "statuses": seen, "line": w.line})
         }
+        // 実行の指令の待機キュー・知らせ・取り直し（commands.rs）。ops を順に当て、それぞれの答えを返す。
+        // 消す・動かす・読んだ知らせは、いまの並びの何番目かで指す（id は作るたびに違うので）
+        "commands" => {
+            let cfg = a["cfg"].as_object().cloned().unwrap_or_default();
+            let mut c = crate::commands::Commands::default();
+            let mut out = vec![];
+            for op in a["ops"].as_array().into_iter().flatten() {
+                let now = chrono::NaiveDateTime::parse_from_str(s(op, "now"), "%Y-%m-%dT%H:%M:%S").map_err(|e| e.to_string())?;
+                let qid = |c: &crate::commands::Commands| {
+                    op["index"]
+                        .as_u64()
+                        .and_then(|i| c.queue.get(i as usize))
+                        .and_then(|x| x["id"].as_str().map(String::from))
+                        .unwrap_or_default()
+                };
+                let r = match s(op, "op") {
+                    "enqueue" => {
+                        let ids: Vec<String> = op["job_ids"].as_array().into_iter().flatten().map(s_of_val).collect();
+                        let lines = op.get("lines");
+                        match crate::commands::Commands::new_item(
+                            &cfg,
+                            &ids,
+                            s(op, "trigger"),
+                            lines,
+                            op["attempt"].as_i64().unwrap_or(0),
+                            now,
+                        ) {
+                            Ok(item) => json!({"position": c.enqueue(item)}),
+                            Err(e) => json!({"error": e}),
+                        }
+                    }
+                    "start" => {
+                        c.active = if c.queue.is_empty() { None } else { Some(c.queue.remove(0)) };
+                        Value::Null
+                    }
+                    "join" => {
+                        if let Some(x) = c.active.as_mut() {
+                            for (k, v) in [("joined_ids", &op["ids"]), ("joined_names", &op["names"])] {
+                                let mut cur = x.get(k).and_then(Value::as_array).cloned().unwrap_or_default();
+                                cur.extend(v.as_array().cloned().unwrap_or_default());
+                                x.insert(k.into(), json!(cur));
+                            }
+                        }
+                        Value::Null
+                    }
+                    "finish" => {
+                        let item = c.active.take().unwrap_or_default();
+                        let st = op["status"].as_object().cloned().unwrap_or_default();
+                        c.after_command(&item, &st, s(op, "error"), op["cancelled"].as_bool().unwrap_or(false), &cfg, now);
+                        Value::Null
+                    }
+                    "snapshot" => c.snapshot(),
+                    "delete" => {
+                        let id = qid(&c);
+                        json!(c.delete(&id).is_some())
+                    }
+                    "move" => {
+                        let id = qid(&c);
+                        json!(c.move_item(&id, &op["direction"]).is_some())
+                    }
+                    "clear" => json!(c.clear_queue()),
+                    "alert" => {
+                        let jobs = op["jobs"].as_array().cloned().unwrap_or_default();
+                        c.add_alert(s(op, "kind"), s(op, "title"), s(op, "detail"), &jobs, now);
+                        Value::Null
+                    }
+                    "alerts" => c.alerts_view(),
+                    "ack" => {
+                        let ids: Vec<Value> = op["indexes"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .filter_map(|i| c.alerts.get(i.as_u64().unwrap_or(0) as usize).map(|x| x["id"].clone()))
+                            .collect();
+                        let (removed, count) = c.ack(&ids);
+                        json!({"removed": removed, "count": count})
+                    }
+                    "retry" => {
+                        let ids = op["job_ids"].as_array().cloned().unwrap_or_default();
+                        let names = op["names"].as_array().cloned().unwrap_or_default();
+                        match c.schedule_retry(&ids, &names, &op["lines"], op["attempt"].as_i64().unwrap_or(0), &cfg, now) {
+                            Ok(due) => json!(due.map(|d| d.format("%Y-%m-%dT%H:%M:%S").to_string())),
+                            Err(_) => json!({"pass": true}),
+                        }
+                    }
+                    "due" => json!(c
+                        .due_retries(now)
+                        .into_iter()
+                        .map(|r| json!({"job_ids": r.job_ids, "names": r.names, "lines": r.lines, "attempt": r.attempt}))
+                        .collect::<Vec<_>>()),
+                    "cancel_retries" => json!(c.cancel_retries()),
+                    "clamp" => json!(crate::commands::clamp_lines(op.get("value"), &cfg, 1)),
+                    other => return Err(format!("知らない op: {other}")),
+                };
+                out.push(r);
+            }
+            json!(out)
+        }
         // 実行の黒板（board.rs）を偽のワーカーで最後まで回す。札の移り変わり・締め・記録を返す
         "run_board" => {
             use std::collections::{BTreeSet, HashMap};

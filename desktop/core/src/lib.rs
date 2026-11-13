@@ -10,6 +10,7 @@
 
 pub mod applog;
 pub mod board;
+pub mod commands;
 pub mod config;
 pub mod diag;
 pub mod edits;
