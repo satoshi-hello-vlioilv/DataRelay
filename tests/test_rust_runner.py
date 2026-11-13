@@ -58,9 +58,12 @@ p=json.loads(open(sys.argv[1],encoding='utf-8').read());j=p['job'];f=j.get('_fak
 def put(env,data):
  path=os.environ[env];tmp=path+'.tmp';open(tmp,'w',encoding='utf-8').write(json.dumps(data,ensure_ascii=False));os.replace(tmp,path)
 for st in f.get('statuses') or []:put('NAVI_WORKER_STATUS',dict(st,line=os.environ['NAVI_WORKER_LINE']));time.sleep(0.15)
-if f.get('trace'):open(f['trace'],'a',encoding='utf-8').write(json.dumps(['start',j['id'],time.time(),sorted(p),p.get('job_index')])+'\n')
+def trace(*ev):
+ # 出来事ごとに別のファイルへ（1つのファイルへ追記すると、Windows では同時に書いた行が消えることがある）
+ if f.get('trace'):os.makedirs(f['trace'],exist_ok=True);open(os.path.join(f['trace'],f'{ev[0]}.{j["id"]}.json'),'w',encoding='utf-8').write(json.dumps(list(ev)))
+trace('start',j['id'],time.time(),sorted(p),p.get('job_index'))
 if f.get('sleep'):time.sleep(f['sleep'])
-if f.get('trace'):open(f['trace'],'a',encoding='utf-8').write(json.dumps(['end',j['id'],time.time()])+'\n')
+trace('end',j['id'],time.time())
 if 'result' in f:put('NAVI_WORKER_RESULT',f['result'])
 sys.exit(f.get('code',0))
 '''
@@ -224,14 +227,14 @@ print(json.dumps(navi_order.wait_reasons({'id':'j'},{},datetime(2026,11,1),deps=
   return out
 
  def trace(self,path):
-  return [json.loads(x) for x in Path(path).read_text(encoding='utf-8').splitlines()] if Path(path).exists() else []
+  return [json.loads(x.read_text(encoding='utf-8')) for x in sorted(Path(path).glob('*.json'))]
 
  def local_ok(self,i,rows=3):
   return {'ok':True,'job':i,'result':f'{i}: {rows}件','record':{'status':'ok','detail':f'{rows}件','rows':rows,'cols':2,'output_file':i+'.csv','metrics':{}}}
 
  def test_board_order_and_cascade(self):
   """材料のそろった物から流し、材料が失敗した物は走らせずに理由を付けて落とす。記録は親が書く。"""
-  tr=str(self.t/'trace_order.jsonl')
+  tr=str(self.t/'trace_order')
   def job(i,result,code=0,sleep=0.2):return {'id':i,'name':'名'+i,'_fake':{'result':result,'code':code,'sleep':sleep,'trace':tr}}
   jobs=[job('R1',{'ok':True,'job':'名R1','result':'名R1: 10件','rows':10,'columns':2,'elapsed':0.2,'target':'/o/R1.csv'}),
         job('R2',{'ok':False,'job':'名R2','error':'RNEが見つかりません'},code=2),
@@ -262,7 +265,7 @@ print(json.dumps(navi_order.wait_reasons({'id':'j'},{},datetime(2026,11,1),deps=
 
  def test_board_heavy_first_and_cap(self):
   """RNE は前回の 行×列 が大きい物（実績の無い物はさらに先）から。同時に流すのは cap 本まで。"""
-  tr=str(self.t/'trace_cap.jsonl')
+  tr=str(self.t/'trace_cap')
   jobs=[{'id':i,'name':i,'_fake':{'result':{'ok':True,'job':i,'result':i},'sleep':0.3,'trace':tr}} for i in ('a','b','c','d','e')]
   out=self.board('bcap',jobs,{i:'rne' for i in 'abcde'},api_lines=3,cap=2,cells={'a':10,'b':500,'c':0,'d':40,'e':20})
   t=self.trace(tr);starts=[i for _n,i in sorted((x[4],x[1]) for x in t if x[0]=='start')]
@@ -274,7 +277,7 @@ print(json.dumps(navi_order.wait_reasons({'id':'j'},{},datetime(2026,11,1),deps=
 
  def test_board_join_cycle_and_login(self):
   """走っている間に入れた対象を合流させる（同じ対象・上限超えは断る）。輪は先頭の待ちを解く。接続情報が無い RNE は失敗にする。"""
-  tr=str(self.t/'trace_join.jsonl')
+  tr=str(self.t/'trace_join')
   def job(i,sleep=0.1):return {'id':i,'name':i,'_fake':{'result':self.local_ok(i),'sleep':sleep,'trace':tr}}
   out=self.board('bjoin',[job('X',1.0),job('P'),job('Q')],{'X':'text','P':'text','Q':'join'},{'P':['Q'],'Q':['P']},local_lines=1,cap=4,
                  joins=[{'after_seconds':0.3,'jobs':[job('N')],'kinds':{'N':'text'},'deps':{},'trigger':'manual'},
@@ -298,7 +301,7 @@ print(json.dumps(navi_order.wait_reasons({'id':'j'},{},datetime(2026,11,1),deps=
   self.assertEqual(out['status']['job_errors'],[{'job':'H','error':'ユーザーにより中断されました'}])
   runs={x['job_id']:x['status'] for x in rows_of(self.paths('bcan')[0])[0]}
   self.assertEqual(runs,{'H':'cancelled','H2':'cancelled'})
-  tr=str(self.t/'trace_wait.jsonl')
+  tr=str(self.t/'trace_wait')
   jobs=[{'id':i,'name':i,'_fake':{'result':self.local_ok(i),'trace':tr}} for i in ('W','V')]
   out=self.board('bwait',jobs,{'W':'text','V':'text'},local_lines=2,cap=2,waits={'W':4,'V':1000},max_wait_seconds=0.6,poll_seconds=0.1)
   self.assertEqual(sorted(out['status']['queue_completed_ids']),['V','W'])
