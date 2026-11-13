@@ -9,7 +9,7 @@
   "GET /api/alerts": {
    "area": "実行・キュー・予定",
    "to": "python",
-   "note": ""
+   "note": "実行している Python の中の状態（メモリ）を読む。実行を移す段で一緒に移す"
   },
   "POST /api/alerts/ack": {
    "area": "実行・キュー・予定",
@@ -23,13 +23,13 @@
   },
   "POST /api/apply-path-suggestion": {
    "area": "設定・対象の登録",
-   "to": "python",
-   "note": ""
+   "to": "core",
+   "note": "2.33.0（diag.rs）。候補で設定を直す（置き場の中なら .\\… で持つ）。相対の候補（Python の今いるフォルダーから読む）は Python へ回す"
   },
   "GET /api/background-tasks": {
    "area": "実行・キュー・予定",
    "to": "python",
-   "note": ""
+   "note": "実行している Python の中の状態（メモリ）を読む。実行を移す段で一緒に移す"
   },
   "POST /api/browser-closing": {
    "area": "起動・常駐・終了",
@@ -139,7 +139,7 @@
   "GET /api/execution-queue": {
    "area": "実行・キュー・予定",
    "to": "python",
-   "note": ""
+   "note": "実行している Python の中の状態（メモリ）を読む。実行を移す段で一緒に移す"
   },
   "DELETE /api/execution-queue/<queue_id>": {
    "area": "実行・キュー・予定",
@@ -153,8 +153,8 @@
   },
   "GET /api/freshness": {
    "area": "実行・キュー・予定",
-   "to": "python",
-   "note": ""
+   "to": "core",
+   "note": "2.33.0（diag.rs）。予定の間隔・実績の間隔の中央値・既定の3日を目安に、いまのデータがいつのものかを見分ける。Rust で同じに読めない時刻の形（小数の秒が1〜5桁など）は Python へ回す"
   },
   "POST /api/heartbeat": {
    "area": "起動・常駐・終了",
@@ -408,8 +408,8 @@
   },
   "POST /api/path-check": {
    "area": "設定・対象の登録",
-   "to": "python",
-   "note": ""
+   "to": "core",
+   "note": "2.33.0（diag.rs）。在るか・探した場所の並び。見つからない物の近くを探す（find_nearby_file。フォルダーを歩く順が Python の版で違う）ときは Python へ回す"
   },
   "POST /api/path-convert": {
    "area": "設定・対象の登録",
@@ -624,7 +624,7 @@
   "GET /api/status": {
    "area": "実行・キュー・予定",
    "to": "python",
-   "note": ""
+   "note": "実行している Python の中の状態（メモリ）を読む。実行を移す段で一緒に移す"
   },
   "POST /api/stay-resident": {
    "area": "起動・常駐・終了",

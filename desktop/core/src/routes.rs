@@ -5,7 +5,7 @@
 
 use crate::http::{Ask, Reply};
 use crate::paths::{self, Bases};
-use crate::{applog, config, edits, joinplan, joinrun, login, masters, period, places, schedule, textread, version, viewer, writer};
+use crate::{applog, config, diag, edits, joinplan, joinrun, login, masters, period, places, schedule, textread, version, viewer, writer};
 use chrono::{Datelike, Local, NaiveDateTime};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
@@ -55,6 +55,9 @@ pub const ROUTES: &[(&str, &str, Handler)] = &[
     ("POST", "/api/join-order", joinplan::post_order),
     ("POST", "/api/join-cache/clear", joinplan::post_cache_clear),
     ("POST", "/api/join-source", joinplan::post_source),
+    ("GET", "/api/freshness", diag::get_freshness),
+    ("POST", "/api/path-check", diag::post_path_check),
+    ("POST", "/api/apply-path-suggestion", diag::post_apply_path_suggestion),
     ("POST", "/api/join-keys", joinrun::post_keys),
     ("POST", "/api/join-preview", joinrun::post_preview),
     // jobs を先に（Flask は決まった道を <job_id> より先に当てる。こちらは上から順に当てる）

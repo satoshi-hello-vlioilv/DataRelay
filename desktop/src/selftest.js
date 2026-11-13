@@ -201,6 +201,11 @@
     const r7 = await post('/api/data-viewer/export-pivot', { format: 'csv', name: '自己診断', matrix: [['用途', '件数'], ['缶材', 3]] });
     const saved3 = decodeURIComponent(r7.headers.get('X-DR-Saved') || '');
     ok('移した API（マスタの取り込み・集計表の CSV）は Rust の中身が答え、CSV は窓が保存する', w2.status === 400 && by(w2) === 'core' && String(im.error).includes('持ち出しファイルではありません') && r7.status === 204 && by(r7) === 'core' && /\.csv$/.test(saved3), `${w2.status} ${by(w2)} ${im.error} / CSV ${r7.status} ${by(r7)} ${saved3}`);
+    // データの新しさと場所の確かめ（2.33.0〜 Rust の中身）
+    w2 = await fetch('/api/freshness');
+    const fr = await w2.json();
+    const r8 = await post('/api/path-check', { item: '自己診断' });
+    ok('移した API（データの新しさ・場所の確かめ）は Rust の中身が答える', w2.status === 200 && by(w2) === 'core' && Array.isArray(fr.items) && typeof fr.summary === 'string' && r8.status === 400 && by(r8) === 'core', `${w2.status} ${by(w2)} ${fr.summary} / 確かめ ${r8.status} ${by(r8)}`);
     // データビュワー（2.28.0〜 Rust の中身）。見本に対象が無いので、一覧と、無い対象の答えを見る
     r = await fetch('/api/data-viewer/jobs');
     const dv = await r.json();

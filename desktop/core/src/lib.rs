@@ -10,6 +10,7 @@
 
 pub mod applog;
 pub mod config;
+pub mod diag;
 pub mod edits;
 pub mod http;
 pub mod joinplan;
