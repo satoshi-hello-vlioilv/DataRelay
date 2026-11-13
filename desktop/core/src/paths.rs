@@ -1090,6 +1090,33 @@ impl Bases {
     }
 }
 
+/// socket.gethostname（このPCの名前）。Windows は GetComputerNameExW(ComputerNamePhysicalDnsHostname)、Linux は uname の nodename。
+/// 読めなければ None（呼ぶ側が Python へ回す）。
+pub fn host_name() -> Option<String> {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::System::SystemInformation::{ComputerNamePhysicalDnsHostname, GetComputerNameExW};
+        let mut buf = vec![0u16; 256];
+        let mut n = buf.len() as u32;
+        // SAFETY: buf は n 字ぶんの書ける場所。成功すれば n に書いた字の数（終わりの 0 を含まない）が入る
+        let ok = unsafe { GetComputerNameExW(ComputerNamePhysicalDnsHostname, buf.as_mut_ptr(), &mut n) };
+        if ok == 0 {
+            return None;
+        }
+        String::from_utf16(&buf[..n as usize]).ok()
+    }
+    #[cfg(not(windows))]
+    {
+        std::fs::read_to_string("/proc/sys/kernel/hostname").ok().map(|s| s.trim_end_matches('\n').to_string()).filter(|s| !s.is_empty())
+    }
+}
+
+/// Path.home()（os.path.expanduser('~')。この OS の流儀で決まらなければ None）。
+pub fn home_dir() -> Option<String> {
+    let h = expand_user("~");
+    (h != "~").then_some(h)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

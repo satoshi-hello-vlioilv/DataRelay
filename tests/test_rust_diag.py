@@ -1,10 +1,12 @@
 """データの新しさと、場所の確かめ・直しが、Python（navi_diag・navi_web）と Rust（desktop/core の diag.rs）で同じ答えになるか（2.33.0）。
 
-比べるルート: GET /api/freshness・POST /api/path-check・POST /api/apply-path-suggestion
+比べるルート: GET /api/freshness・POST /api/path-check・POST /api/apply-path-suggestion、GET /api/machine-paths（2.34.0）
 - 新しさ: 予定の間隔（間隔・曜日・毎月・切ったルール・知らない種類）・実績の間隔（並びのずれた記録・読めない時刻・3回に満たない）・
   失敗・共有先へ反映できていない（理由と助言）・予定より遅れ・まだ無い・無効な対象で比べる
 - 場所の確かめ: symnavim.conf（在る）・RNE（在る・置き場の名前だけ・値を差し替えて確かめる・無い対象・不正な確認対象）
 - 場所の直し: 置き場の中の候補（.\… で持つ）・外の候補（絶対パス）・無い候補・不正な対象・無い対象。直したあとの設定の写しも比べる
+- このPCでの場所: 名前だけの RNE・個別のパス・出力先を持たない対象・ACCDB を同時に出す対象・結合マスタの名前だけのファイル・
+  別の利用者のフォルダー・<PC>・読める／壊れた symnavim.conf・このPCに接続情報があるとき・控えを取らない設定で比べる
 - 見つからない物の近くを探す（find_nearby_file）・相対の候補は Python へ回す
 実行: python -m unittest tests.test_rust_diag -v
 """
@@ -87,8 +89,42 @@ class DiagParityTest(unittest.TestCase):
   a,c=Masker()(dump(self.paths('dpy')[0])),Masker()(dump(self.paths('drs')[0]))
   for k in a:self.assertEqual(a[k],c[k],f'写しの {k} が違う')
 
+ def machine(self,name,conf,saved,backup=True):
+  sh=self.t/name/'share';sh.mkdir(parents=True,exist_ok=True)
+  (sh/'symnavim.conf').write_text(conf,encoding='utf-8')
+  jobs=[{'id':'m1','name':'名前だけ','rne':'在庫.RNE','output_format':'csv','extra_formats':['accdb']},
+        {'id':'m2','name':'個別','rne_path':str(sh/'x.RNE'),'output_folder':str(sh),'source':'text','text_path':'t.txt'}]
+  recipe=['INSERT INTO join_recipes (id,display_order,name,description,sources_json,joins_json,columns_json,updated_at) VALUES(?,?,?,?,?,?,?,?)',
+          ['R1',0,'結合','',json.dumps([{'path':'a.csv'},{'path':str(sh/'b.csv')}]),'[]','[]','t']]
+  cfg={'rne_folder':'.\\rne','text_folder':str(sh),'default_output_folder':str(sh/'無い'),'backup_folder':'<PC>\\backup',
+       'symnavim_conf':str(sh/'symnavim.conf'),'accdb_template':str(sh/'無い.accdb'),'navigator_api_dll':'C:\\Users\\other\\x.dll',
+       'settings':{'backup_enabled':backup},'jobs':jobs}
+  self.py(MAKE,name,json.dumps({'cfg':cfg,'sql':[recipe]},ensure_ascii=False))
+  if saved:(self.t/name/'s.json').write_text(json.dumps({'server':'s','user':'u','password':'p'}),encoding='utf-8')
+
+ def test_machine_paths(self):
+  cases=[('ma','[Default]\nSymNaviServer = srv\nSymNaviUSERID = 利用者\nSymNaviPASSWD = 秘密\n',False,True),
+         ('mb','[X]\nSymNaviServer=s\n',False,0),('mc','[X]\nSymNaviServer=s\n',True,False)]
+  for base,conf,saved,backup in cases:
+   self.machine(base,conf,saved,backup);self.twin(base,base+'py',base+'rs')
+   for n in (base+'py',base+'rs'):
+    (self.t/n/'share').mkdir(exist_ok=True);(self.t/n/'share'/'symnavim.conf').write_text(conf,encoding='utf-8')
+    if saved:(self.t/n/'s.json').write_text(json.dumps({'server':'s','user':'u','password':'p'}),encoding='utf-8')
+   py=self.py(DIAG_ASK,base+'py',json.dumps([get('/api/machine-paths')]),NOW)[0]
+   rs=self.rust(base+'rs',[get('/api/machine-paths')])[0]
+   self.assertNotEqual(rs['status'],0,f'Rust が答えなかった: {base}')
+   same=lambda body,n:json.loads(body.replace(json.dumps(str(self.t/n))[1:-1],'ENV'))
+   a,b=same(rs['body'],base+'rs'),same(py['body'],base+'py')
+   self.assertEqual((rs['status'],a),(py['status'],b),base)
+   d=json.loads(py['body']);st={x['key']:(x['state'],x['role']) for x in d['rows']}
+   # 見本が中身を持っていること
+   self.assertEqual(st['navigator_api_dll'][0],'ng');self.assertEqual(st['accdb_template'],('ng','required'))
+   self.assertEqual(st['backup_folder'][1],'required' if backup else 'unused')
+   self.assertEqual(st['symnavim_conf'],{'ma':('ok','fallback'),'mb':('ng','fallback'),'mc':('warn','unused')}[base])
+   self.assertEqual(len(d['fixed']),8);self.assertTrue(d['host'])
+
  def test_python_only_cases(self):
-  """見つからない物の近くを探す・相対の候補・本文が辞書でない・予定の値が int() で読めない、は Python へ回す。"""
+  """見つからない物の近くを探す・相対の候補・本文が辞書でない・同じに読めない時刻・symnavim.conf の書き方の誤り、は Python へ回す。"""
   sh=self.make('donly')
   rs=self.rust('donly',[post('/api/path-check',{'item':'accdb_template'}),post('/api/path-check',{'item':'rne','job_id':'f8','value':'無い.RNE'}),
                         post('/api/apply-path-suggestion',{'item':'rne','job_id':'f2','candidate':'候補.RNE'}),post('/api/path-check','null'),
@@ -99,6 +135,9 @@ class DiagParityTest(unittest.TestCase):
   self.make('dfrac')
   self.py(MAKE,'dfrac',json.dumps({'sql':[["UPDATE job_runs SET finished_at='2026-10-01T06:00:00.5' WHERE job_id='f8'",[]]]}))
   self.assertEqual(self.rust('dfrac',[get('/api/freshness')])[0]['status'],0)
+  # symnavim.conf の書き方の誤り（configparser の例外の文は Rust で同じにできない）なら、このPCでの場所は Python へ回す
+  self.machine('mdup','[A]\nSymNaviServer=s\n[A]\n',False)
+  self.assertEqual(self.rust('mdup',[get('/api/machine-paths')])[0]['status'],0)
 
 
 if __name__=='__main__':unittest.main()

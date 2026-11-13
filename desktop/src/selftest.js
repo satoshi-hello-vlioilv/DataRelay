@@ -206,6 +206,10 @@
     const fr = await w2.json();
     const r8 = await post('/api/path-check', { item: '自己診断' });
     ok('移した API（データの新しさ・場所の確かめ）は Rust の中身が答える', w2.status === 200 && by(w2) === 'core' && Array.isArray(fr.items) && typeof fr.summary === 'string' && r8.status === 400 && by(r8) === 'core', `${w2.status} ${by(w2)} ${fr.summary} / 確かめ ${r8.status} ${by(r8)}`);
+    // このPCでの場所（2.34.0〜 Rust の中身）
+    w2 = await fetch('/api/machine-paths');
+    const mp = await w2.json();
+    ok('移した API（このPCでの場所）は Rust の中身が答える', w2.status === 200 && by(w2) === 'core' && Array.isArray(mp.rows) && mp.rows.length === 7 && mp.fixed.length === 8 && !!mp.host, `${w2.status} ${by(w2)} ${mp.summary} / ${mp.host}`);
     // データビュワー（2.28.0〜 Rust の中身）。見本に対象が無いので、一覧と、無い対象の答えを見る
     r = await fetch('/api/data-viewer/jobs');
     const dv = await r.json();

@@ -5,6 +5,7 @@
 //!   - GET  /api/freshness             … 有効な対象ごとに、いまのデータがいつのものか（予定・実績の間隔から「古い」を見分ける）
 //!   - POST /api/path-check            … symnavim.conf・ACCDB の空テンプレート・対象の RNE が在るか（探した場所の並びも）
 //!   - POST /api/apply-path-suggestion … 見つけた候補を設定へ書く（置き場の中なら .\… の書き方で持つ）
+//!   - GET  /api/machine-paths         … 場所の設定が、このPCではどこを指し、いまの構成で要るのか（2.34.0〜）
 //!
 //! 見つからない物の近くを探す（find_nearby_file。フォルダーを深く歩く順が Python の版で違う）は Python へ回す。
 use crate::config::{self, Pass};
@@ -356,6 +357,282 @@ fn answer_apply(core: &Core, ask: &Ask) -> R<Reply> {
             Ok(Reply::json(200, &json!({"ok": true, "path": stored})))
         }
     }
+}
+
+// ==== このPCでの場所（machine_path_view） ====================================
+
+/// 場所の設定（PATH_SETTING_LABEL・PATH_SETTING_KIND。並びもこのまま）。
+const PATH_SETTINGS: [(&str, &str, &str); 7] = [
+    ("rne_folder", "RNE基本フォルダー", "folder"),
+    ("text_folder", "テキストの基本フォルダー", "folder"),
+    ("default_output_folder", "既定の出力先", "folder"),
+    ("backup_folder", "バックアップ先", "folder"),
+    ("symnavim_conf", "symnavim.conf", "file"),
+    ("accdb_template", "ACCDB空テンプレート", "file"),
+    ("navigator_api_dll", "Navigator API DLL", "file"),
+];
+
+/// データの基準をどこで決めたか（DATA_ROOT_NOTES）。
+fn data_root_note(source: &str) -> &'static str {
+    match source {
+        "app" => "相対パスと設定のマスターの基準。共有から直に動かしているので、アプリの場所と同じ",
+        "user" => "設定のマスターの基準。共有のユーザーのフォルダー（<ユーザーの置き場>\\<ログオン名>）。PC が変わっても、共有からインストールすればこのデータで起動します",
+        "pc" => "相対パスと設定のマスターの基準。このPCの手元（写しの data）。共有のユーザーのフォルダーが届かないときの形。置き場の「既定の設定」から作りました",
+        "install" => "設定のマスターの基準。共有の設定を使っています（2.0.0 より前に写したPC。手元へ移すかを画面で選べます）。相対パスは「相対パスの基準」（配布の置き場）を先に見ます",
+        "local" => "相対パスと設定のマスターの基準。このPCだけの上書き（config\\local.json）",
+        "env" => "相対パスと設定のマスターの基準。環境変数 NAVI_DATA_ROOT（確かめるとき）",
+        _ => "",
+    }
+}
+
+/// leans_on_rne_root・leans_on_text_root（名前だけの指定か。個別の道（絶対・UNC・.\ 始まり）なら基本フォルダーを見ない）。
+fn leans_on_root(raw: &str) -> bool {
+    let expanded = paths::expand_user_vars(raw);
+    if paths::is_absolute(&expanded) || expanded.starts_with("\\\\") {
+        return false;
+    }
+    !["./", "../", ".\\", "..\\"].iter().any(|x| raw.starts_with(x))
+}
+
+fn text_of(v: Option<&Value>) -> String {
+    pyish::strip(&crate::naming::text_or(v, "")).to_string()
+}
+
+/// path_setting_roles（それぞれの場所の設定が、いまの構成で要るのか → (required・fallback・unused, 理由)）。
+fn path_setting_roles(core: &Core, c: &Map<String, Value>) -> R<Map<String, Value>> {
+    let jobs = jobs(c);
+    let job = |j: &Value| j.as_object().cloned().ok_or(Pass);
+    let n_jobs = jobs.len();
+    let nobody = |kind: &str| {
+        if n_jobs == 0 {
+            "対象がまだ無いため、いまは使いません".to_string()
+        } else {
+            format!("登録済みの{n_jobs}件はすべて{kind}")
+        }
+    };
+    let (mut rne_users, mut out_users, mut text_users, mut accdb) = (0, 0, 0, 0);
+    for j in jobs {
+        let j = job(j)?;
+        let rne = j.get("rne_path").filter(|v| pyish::truthy(v)).or_else(|| j.get("rne"));
+        let raw = text_of(rne);
+        if raw.is_empty() || leans_on_root(&raw) {
+            rne_users += 1;
+        }
+        if text_of(j.get("output_folder")).is_empty() {
+            out_users += 1;
+        }
+        let tp = text_of(j.get("text_path"));
+        if crate::naming::text_or(j.get("source"), "") == "text" && !tp.is_empty() && leans_on_root(&tp) {
+            text_users += 1;
+        }
+        let extra = crate::naming::job_extra_formats(&j).ok_or(Pass)?;
+        if crate::naming::normalize_output_format(j.get("output_format"), j.get("output_file")) == "accdb" || extra.contains(&"accdb") {
+            accdb += 1;
+        }
+    }
+    let mut join_users = 0;
+    for r in c.get("join_recipes").and_then(Value::as_array).into_iter().flatten() {
+        for x in r.get("sources").and_then(Value::as_array).into_iter().flatten() {
+            let p = text_of(x.get("path"));
+            if !p.is_empty() && leans_on_root(&p) {
+                join_users += 1;
+            }
+        }
+    }
+    let role = |r: &str, why: String| json!([r, why]);
+    let mut out = Map::new();
+    out.insert(
+        "rne_folder".into(),
+        if rne_users > 0 {
+            role("required", format!("{rne_users}件の対象がこの場所を基準にします"))
+        } else {
+            role("fallback", nobody("個別のパスで解決できるため、この設定は使っていません"))
+        },
+    );
+    out.insert(
+        "default_output_folder".into(),
+        if out_users > 0 {
+            role("required", format!("{out_users}件の対象がこの場所へ出力します"))
+        } else {
+            role("fallback", nobody("出力先を個別に持っています"))
+        },
+    );
+    let mut who = Vec::new();
+    if text_users > 0 {
+        who.push(format!("{text_users}件の対象"));
+    }
+    if join_users > 0 {
+        who.push(format!("結合マスタの{join_users}ファイル"));
+    }
+    out.insert(
+        "text_folder".into(),
+        if who.is_empty() {
+            role("fallback", "ファイル名だけで登録したときの基準です。いまはすべて個別のパスで解決できています".into())
+        } else {
+            role("required", format!("{}がこの場所を基準にします", who.join("、")))
+        },
+    );
+    let local_root = std::path::PathBuf::from(core.bases().ok_or(Pass)?.local_root);
+    let saved = crate::secret::Vault::default_for(&local_root).load().ok().flatten().is_some_and(|v| pyish::truthy(&v));
+    out.insert(
+        "symnavim_conf".into(),
+        if saved {
+            role("unused", "接続情報はこのPCに登録済みのため、このファイルは読みません。共有に置いたままなら消してかまいません".into())
+        } else {
+            role(
+                "fallback",
+                "接続情報がこのPCに未登録のあいだだけ、ここから読みます。「Navigator の接続情報」で取り込めば要らなくなります".into(),
+            )
+        },
+    );
+    out.insert("navigator_api_dll".into(), role("fallback", "手動で指定したときだけ使います。空なら探す範囲から自動で選びます".into()));
+    out.insert(
+        "accdb_template".into(),
+        if accdb > 0 {
+            role("required", format!("{accdb}件の対象がACCDBで出力します"))
+        } else {
+            role("unused", "ACCDBで出力する対象がないため使いません".into())
+        },
+    );
+    // backup_enabled が False（0 も同じ）のときだけ控えを取らない
+    let backup = c.get("settings").and_then(Value::as_object).and_then(|s| s.get("backup_enabled")).cloned();
+    let off = matches!(&backup, Some(Value::Bool(false))) || backup.as_ref().and_then(Value::as_f64) == Some(0.0);
+    out.insert(
+        "backup_folder".into(),
+        if off {
+            role("unused", "控えを取らない設定のため使いません".into())
+        } else {
+            role("required", "出力を差し替える前に、いまのファイルをここへ控えます".into())
+        },
+    );
+    Ok(out)
+}
+
+/// path_writable（書けるかは、実際に書いてみないと分からない。フォルダーでなければ None）。
+fn path_writable(p: &str) -> Option<bool> {
+    if !std::fs::metadata(p).map(|m| m.is_dir()).unwrap_or(false) {
+        return None;
+    }
+    let probe = paths::join(p, &format!(".probe_{}", std::process::id()));
+    Some(std::fs::write(&probe, b"x").and_then(|_| std::fs::remove_file(&probe)).is_ok())
+}
+
+/// GET /api/machine-paths
+pub(crate) fn get_machine_paths(core: &Core, _: &Ask, _: &[String]) -> Reply {
+    answer_machine_paths(core).unwrap_or_else(|_| Reply::pass())
+}
+
+fn answer_machine_paths(core: &Core) -> R<Reply> {
+    let c = config::read(core)?;
+    let b = core.bases().ok_or(Pass)?;
+    let roles = path_setting_roles(core, &c)?;
+    let mut rows = Vec::new();
+    for (key, label, kind) in PATH_SETTINGS {
+        let raw = crate::naming::text_or(c.get(key), "");
+        let (role, why) = match &roles[key] {
+            Value::Array(a) => (a[0].as_str().unwrap_or("").to_string(), a[1].as_str().unwrap_or("").to_string()),
+            _ => ("required".into(), String::new()),
+        };
+        let real = b.resolve_path(Some(&raw), None);
+        let exists = !raw.is_empty() && std::fs::metadata(&real).is_ok();
+        let foreign = config::foreign_profile_path(&raw);
+        let writable = if kind == "folder" && exists { path_writable(&real) } else { None };
+        let pc = pyish::strip(&raw).starts_with(paths::PC_TOKEN);
+        let (mut state, mut note) = ("ok", String::new());
+        if let Some(f) = &foreign {
+            // 他人のフォルダーは、使う予定が無くても直す価値がある（別のPCで必ず詰まる）
+            state = "ng";
+            note = format!("別の利用者のフォルダー（{f}）を指しています。このPCでは使えません");
+        } else if exists {
+            if pc {
+                note = "このPCのローカル領域（PCごとに実体が変わります）".into();
+            }
+            if writable == Some(false) {
+                state = "warn";
+                note = "書き込めません（権限を確認してください）".into();
+            } else if key == "symnavim_conf" {
+                if role == "unused" {
+                    state = "warn";
+                    note =
+                        "接続情報はこのPCに登録済みです。このファイルには平文のパスワードが入っているので、共有から消してください".into();
+                } else {
+                    // 値そのものは出さない ―― どのセクションを使うかだけを言う。読めない理由の文（OS の例外）は Python へ
+                    let bytes = std::fs::read(&real).map_err(|_| Pass)?;
+                    // 書き方の誤り（configparser の例外の文）は Python と同じ文を作れないので Python へ回す
+                    let read = crate::secret::read_conf_text(&bytes).and_then(|t| match crate::secret::parse_conf(&t) {
+                        Ok(m) => Ok(m),
+                        Err(Err(m)) => Err(m),
+                        Err(Ok(_)) => Err(String::new()),
+                    });
+                    if read.as_ref().is_err_and(String::is_empty) {
+                        return Err(Pass);
+                    }
+                    match read {
+                        Ok(m) => {
+                            note = format!(
+                                "読み取れます（[{}] の利用者ID・パスワード・サーバー）。{why}",
+                                pyish::text_or_empty(m.get("section"))
+                            )
+                        }
+                        Err(e) => {
+                            state = "ng";
+                            note = format!("ファイルはありますが、読み取れません: {e}");
+                        }
+                    }
+                }
+            }
+        } else if role == "required" {
+            state = "ng";
+            note = if kind == "folder" {
+                format!("フォルダーがありません。{why}")
+            } else {
+                format!("ファイルがありません。{why}")
+            };
+        } else if role == "unused" {
+            note = format!("{why}{}", if raw.is_empty() { "（未設定）" } else { "" });
+        } else if raw.is_empty() {
+            note = why.clone();
+        } else if key == "default_output_folder" {
+            note = format!("いまはありません（{why}）。出力するときに作られます");
+        } else {
+            note = format!("いまはありませんが、{why}");
+        }
+        let portable = raw.is_empty() || pc || !paths::is_absolute(&raw);
+        rows.push(json!({"key": key, "label": label, "kind": kind, "configured": raw, "resolved": real, "where": b.locate(&raw, None),
+                         "exists": exists, "writable": writable, "role": role, "why": why, "portable": portable,
+                         "foreign": foreign.unwrap_or_default(), "state": state, "note": note}));
+    }
+    let local = b.local_root.clone();
+    let master = core.config_dir().map(|d| paths::join(&d, "app_settings.sqlite3")).ok_or(Pass)?;
+    let local_db = paths::py_path(&crate::settings::local_db(std::path::Path::new(&local)).to_string_lossy());
+    let fixed = json!([
+        {"label": "アプリの場所", "path": b.program_root, "note": "動いているプログラムの実体"},
+        {"label": "データの基準", "path": b.data_root, "note": data_root_note(&b.data_source)},
+        {"label": "相対パスの基準", "path": b.rel_root(), "note": "相対パス（.\\rne\\… など）を先に見る場所＝配布の置き場（入口の DataRelay.exe があるフォルダー。版が変わっても動きません）。ここに無い物は、データの基準・アプリの場所にあればそちらを使います"},
+        {"label": "このPCのローカル領域", "path": local, "note": "<PC> が指す先。作業・控え・ログ・キャッシュの親"},
+        {"label": "作業フォルダー", "path": paths::join(&local, "work"), "note": "抽出の途中ファイル。起動時に空にします"},
+        {"label": "ログ", "path": paths::join(&local, "logs"), "note": "実行ログの実体"},
+        {"label": "設定の控え（このPC）", "path": local_db, "note": "マスターから写した作業用"},
+        {"label": "設定のマスター", "path": master, "note": "BOX上の正本。全PCで共有"},
+    ]);
+    let count = |s: &str| rows.iter().filter(|x| x["state"] == json!(s)).count();
+    let (bad, warn) = (count("ng"), count("warn"));
+    let used = rows.iter().filter(|x| x["role"] != json!("unused")).count();
+    let summary = if bad > 0 {
+        format!("{bad}件がこのPCでは使えません")
+    } else if warn > 0 {
+        format!("{warn}件に注意があります")
+    } else {
+        format!("いま使う{used}件はすべてこのPCで解決できます")
+    };
+    let env = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
+    let user = env("USERNAME").or_else(|| env("USER")).unwrap_or_default();
+    let profile = paths::py_path(&paths::home_dir().ok_or(Pass)?);
+    let host = paths::host_name().ok_or(Pass)?;
+    Ok(Reply::json(
+        200,
+        &json!({"ok": bad == 0, "rows": rows, "fixed": fixed, "profile": profile, "user": user, "host": host, "summary": summary}),
+    ))
 }
 
 #[cfg(test)]

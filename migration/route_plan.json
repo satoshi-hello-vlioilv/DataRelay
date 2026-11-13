@@ -368,8 +368,8 @@
   },
   "GET /api/machine-paths": {
    "area": "設定・対象の登録",
-   "to": "python",
-   "note": ""
+   "to": "core",
+   "note": "2.34.0（diag.rs）。場所の設定ごとの役割と状態・固定の場所・このPCの名前。symnavim.conf の書き方の誤り（configparser の例外の文）は Python へ回す"
   },
   "GET /api/navigator-api-status": {
    "area": "Navigator APIの診断",
@@ -404,7 +404,7 @@
   "GET /api/output-capabilities": {
    "area": "設定・対象の登録",
    "to": "python",
-   "note": ""
+   "note": "Python の部品（openpyxl・pywin32 の COM）が使えるかを答えるので、出力を Rust へ移すまで Python のまま"
   },
   "POST /api/path-check": {
    "area": "設定・対象の登録",

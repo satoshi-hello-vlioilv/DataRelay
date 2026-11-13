@@ -56,6 +56,7 @@ pub const ROUTES: &[(&str, &str, Handler)] = &[
     ("POST", "/api/join-cache/clear", joinplan::post_cache_clear),
     ("POST", "/api/join-source", joinplan::post_source),
     ("GET", "/api/freshness", diag::get_freshness),
+    ("GET", "/api/machine-paths", diag::get_machine_paths),
     ("POST", "/api/path-check", diag::post_path_check),
     ("POST", "/api/apply-path-suggestion", diag::post_apply_path_suggestion),
     ("POST", "/api/join-keys", joinrun::post_keys),

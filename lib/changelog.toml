@@ -15,6 +15,19 @@ summary = "SymNaviA.dll が公開する関数・定数・呼び出し順序の�
 source = "Navigator Visual Basic Interface API 9.6.0 / FUJITSU Interstage Navigator Server V9.4.1"
 
 [[release]]
+version = "2.34.0"
+date = "2026-11-13"
+title = "このPCでの場所の診断を、Rust の中身が受け持つようにした"
+notes = [
+  """\
+    【Rust への作り直し・段 5b】<b>このPCでの場所</b>（場所の設定が、このPCではどこを指すのか・いまの構成で要るのか・書き込めるか・\
+    別の利用者のフォルダーを指していないか）を Rust へ移しました。見た目と操作は変わりません。""",
+  """\
+    【これまでどおり】symnavim.conf は、使うセクションの名前だけを示し、値そのものは出しません。書き方の誤りがあるときと、\
+    出力でできることの確かめ（EXCEL・ACCESS の部品）は、これまでどおり Python が受け持ちます。""",
+]
+
+[[release]]
 version = "2.33.0"
 date = "2026-11-13"
 title = "データの新しさと、場所の確かめ・直しを、Rust の中身が受け持つようにした"
