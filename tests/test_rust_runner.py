@@ -351,7 +351,8 @@ print(json.dumps({'results':out,'keys':[[app._rne_key(p),list(app.rne_signature(
   py=self.py(code,'npy',json.dumps({'ops':ops,'paths':paths},ensure_ascii=False),NOW)
   rs,=self.call('nrs',[{'fn':'rne_notes','args':{'base':str(ROOT),'ops':ops,'paths':paths}}])
   self.assertEqual(rs['keys'],py['keys']);self.assertEqual(rs['cpu'],py['cpu'])
-  self.assertEqual(py['keys'][0][1],['1767225600123456789',123])
+  # NTFS は更新日時を 100 ナノ秒の刻みで持つので、Windows では下2桁が 00 になる
+  self.assertEqual(py['keys'][0][1],['1767225600123456700' if os.name=='nt' else '1767225600123456789',123])
   # 戻り値: 記録できたか（True/False）・控えた列名（無ければ None）。所要時間は Python が None しか返さないので、DB だけで比べる
   self.assertEqual(rs['results'][:7],py['results'][:7])
   self.assertEqual(py['results'][:7],[True,True,False,True,['番号','2','None','品名'],None,['a']])
